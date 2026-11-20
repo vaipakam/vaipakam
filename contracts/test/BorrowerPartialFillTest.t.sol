@@ -13,6 +13,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
@@ -452,7 +453,10 @@ contract BorrowerPartialFillTest is SetupTest {
             collateralRequired: 500
         });
 
-        // Capture pre-match wallet balance for the dust-refund check.
+        // Capture the pre-match free balance and wallet for the dust-refund
+        // check (#3744: an offer's refund goes to its holder's vault).
+        uint256 borrowerFreePre =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0);
         uint256 borrowerWalletPre =
             ERC20(mockCollateralERC20).balanceOf(borrower);
 
@@ -485,13 +489,15 @@ contract BorrowerPartialFillTest is SetupTest {
 
         // Dust-close refunds residual collateral
         // (`collateralAmountMax - collateralAmountFilled = 5_000 -
-        // 1_500 = 3_500`) to the borrower's wallet.
-        uint256 borrowerWalletPost =
-            ERC20(mockCollateralERC20).balanceOf(borrower);
+        // 1_500 = 3_500`) into the borrower's vault as free balance; no
+        // wallet payment (#3744, the payout rule).
         assertEq(
-            borrowerWalletPost - borrowerWalletPre, 3_500,
-            "dust-close refunds residual collateral to wallet"
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0)
+                - borrowerFreePre,
+            3_500,
+            "dust-close frees the residual collateral in the holder's vault"
         );
+        assertEq(ERC20(mockCollateralERC20).balanceOf(borrower), borrowerWalletPre, "no wallet payment");
     }
 
     // ─────────────────────────────────────────────────────────────────

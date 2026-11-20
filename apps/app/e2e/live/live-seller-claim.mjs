@@ -28,9 +28,12 @@
 //   4. WITHDRAW=1 only, and only when every check above passed: press the
 //      row's Withdraw, then require the card's outcome for this loan, and
 //      from the chain: one `SellerInterestWithdrawn(loanId, seller)` with a
-//      positive amount in the principal asset, exactly that amount received
-//      by the wallet in the same transaction, and nothing left waiting at the
-//      withdrawal's block.
+//      positive amount in the principal asset, exactly that amount added to
+//      the seller's free vault balance (`getDepositoryHolding`, the block
+//      before against the withdrawal's block) with no principal-asset
+//      Transfer to the wallet in that transaction (the payout rule: a party
+//      is paid into its own vault, and only its own Withdraw reaches a
+//      wallet), and nothing left waiting at the withdrawal's block.
 //
 // Wallet posture: without WITHDRAW the injected wallet is read-only, so a
 // page asking for any signature gets a wallet error. With WITHDRAW=1 it is
@@ -151,9 +154,9 @@ const SEND_ONLY = [
   },
   {
     id: 'payout',
-    claim: 'the withdrawal paid this wallet, in the principal asset, exactly the amount the chain records',
+    claim: "the withdrawal added exactly the recorded amount, in the principal asset, to the seller's free vault balance and sent nothing to the wallet",
     checks: {
-      paid: "one SellerInterestWithdrawn(loanId, this wallet) with a positive amount and the principal asset, and the sum of principal-asset Transfer logs to this wallet in that transaction's receipt equal to it",
+      paid: "one SellerInterestWithdrawn(loanId, this wallet) with a positive amount and the principal asset; getDepositoryHolding(wallet, principalAsset, 0) at the receipt block less the block before equal to it; no principal-asset Transfer to this wallet in that transaction's receipt",
     },
   },
   {
@@ -515,7 +518,7 @@ try {
       check(
         'payout',
         'paid',
-        'the withdrawal paid this wallet exactly the recorded amount in the principal asset',
+        "the withdrawal added exactly the recorded amount to the seller's free vault balance, and nothing to the wallet",
         false,
         receipt.status === 'reverted'
           ? `the withdrawal reverted — ${hash} in block ${receipt.blockNumber}`
@@ -524,22 +527,43 @@ try {
     } else if (receipt) {
       const ev = events[0];
       const rightAsset = ev.args.asset.toLowerCase() === loan.principalAsset.toLowerCase();
-      const received = parseEventLogs({
+      const toWallet = parseEventLogs({
         abi: ERC20_TRANSFER,
         eventName: 'Transfer',
         logs: receipt.logs.filter((l) => l.address.toLowerCase() === loan.principalAsset.toLowerCase()),
       })
         .filter((t) => t.args.to.toLowerCase() === WALLET.toLowerCase())
         .reduce((sum, t) => sum + t.args.value, 0n);
-      check(
-        'payout',
-        'paid',
-        'the withdrawal paid this wallet exactly the recorded amount in the principal asset',
-        rightAsset && ev.args.amount > 0n && received === ev.args.amount,
-        !rightAsset
-          ? `the event names ${ev.args.asset}, not ${symbol} ${loan.principalAsset}, in ${hash}`
-          : `event ${fmt(ev.args.amount)}, received ${fmt(received)} (waiting before: ${fmt(heldBefore)}) in ${hash}`,
-      );
+      // The free vault balance on either side of the withdrawal's block: under
+      // the payout rule what the seller collects joins their own vault's free
+      // balance (the depository holding), never the wallet.
+      const holdingAt = (blockNumber) =>
+        readPinned(() =>
+          pub.readContract({
+            address: DIAMOND,
+            abi: DIAMOND_ABI,
+            functionName: 'getDepositoryHolding',
+            args: [WALLET, loan.principalAsset, 0n],
+            blockNumber,
+          }),
+        );
+      let freeGain = null;
+      try {
+        freeGain = (await holdingAt(receipt.blockNumber)) - (await holdingAt(receipt.blockNumber - 1n));
+      } catch (hErr) {
+        unsettled('payout', 'paid', `the direct RPC could not read the seller's free vault balance around the withdrawal (${hErr.message})`);
+      }
+      if (freeGain !== null) {
+        check(
+          'payout',
+          'paid',
+          "the withdrawal added exactly the recorded amount to the seller's free vault balance, and nothing to the wallet",
+          rightAsset && ev.args.amount > 0n && freeGain === ev.args.amount && toWallet === 0n,
+          !rightAsset
+            ? `the event names ${ev.args.asset}, not ${symbol} ${loan.principalAsset}, in ${hash}`
+            : `event ${fmt(ev.args.amount)}, free vault balance +${fmt(freeGain)}, to the wallet ${fmt(toWallet)} (waiting before: ${fmt(heldBefore)}) in ${hash}`,
+        );
+      }
       try {
         const left = await readPinned(() =>
           pub.readContract({
@@ -576,7 +600,7 @@ try {
       stopped = `${stopped ?? suspect?.message ?? held}; the wallet returned no hash — the withdrawal may still land; check the seller wallet by hand`;
     }
     if (receipt?.status === 'reverted') {
-      check('payout', 'paid', 'the withdrawal paid this wallet exactly the recorded amount in the principal asset', false, `the withdrawal reverted — ${hash} in block ${receipt.blockNumber}`);
+      check('payout', 'paid', "the withdrawal added exactly the recorded amount to the seller's free vault balance, and nothing to the wallet", false, `the withdrawal reverted — ${hash} in block ${receipt.blockNumber}`);
     } else if (receipt) {
       stopped = `${stopped ?? suspect?.message ?? held}; the withdrawal MINED (${hash}, block ${receipt.blockNumber})`;
     }

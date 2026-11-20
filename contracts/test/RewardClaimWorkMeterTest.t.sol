@@ -155,7 +155,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         uint256 n = reach * 3 + 5;
         uint256[] memory ids = _scene(n, 1, type(uint256).max); // no wallet ceiling: each entry's own share
         assertTrue(_claimOnce());
-        uint256 first = vpfi.balanceOf(alice);
+        uint256 first = _vaultFree(alice, address(vpfi));
         assertGt(first, 0);
         assertEq(first % reach, 0, "one share per entry reached");
         uint256 share = first / reach;
@@ -163,7 +163,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         uint256 calls = 1 + _claimUntilDone(8);
         assertEq(calls, 4, "the rest over three more claims");
         assertEq(_processedCount(ids), n, "every entry settled");
-        assertEq(vpfi.balanceOf(alice), n * share, "every entry paid its share, once");
+        assertEq(_vaultFree(alice, address(vpfi)), n * share, "every entry paid its share, once");
     }
 
     /// @dev Many entries over a month: the walk stops when the meter is spent
@@ -174,7 +174,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         _scene(n, days_);
         uint256 calls = _claimUntilDone(40);
         assertGt(calls, 1, "more than one call: one could not carry it");
-        assertEq(vpfi.balanceOf(alice), n * days_ * NEED, "every entry-day paid, once");
+        assertEq(_vaultFree(alice, address(vpfi)), n * days_ * NEED, "every entry-day paid, once");
     }
 
     /// @dev A backlog longer than one chunk opens a DOMAIN: its snapshot takes
@@ -190,7 +190,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertGt(calls, 0);
         (, , , , , , , , , , , , uint256 entryCount) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
         assertEq(entryCount, LibClaimWork.DOMAIN_MAX_ENTRIES, "the snapshot is bounded");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing paid while the domain prepares");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing paid while the domain prepares");
         // Reserve and resolve; then the entries outside the snapshot take the
         // next domain. Every claim and every page inside one transaction.
         _settleDomain();
@@ -203,7 +203,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertEq(_processedCount(ids), n, "every entry settled, the snapshot's and the rest");
         // The wallet's day ceiling (NEED x n) binds every day: the snapshot
         // takes it all, so the total is the ceiling over the backlog, once.
-        assertEq(vpfi.balanceOf(alice), NEED * n * days_, "every day paid, once");
+        assertEq(_vaultFree(alice, address(vpfi)), NEED * n * days_, "every day paid, once");
     }
 
     function _settleDomain() internal {
@@ -248,7 +248,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         _scene(reach + 1, 1, type(uint256).max); // no wallet ceiling: each entry's own share
         (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(alice);
         assertTrue(_claimOnce());
-        uint256 paid = vpfi.balanceOf(alice);
+        uint256 paid = _vaultFree(alice, address(vpfi));
         assertGt(previewed, 0);
         assertLe(previewed, paid, "a lower bound on the claim");
         assertEq(paid % reach, 0, "one share per entry reached");
@@ -322,7 +322,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertTrue(_claimOnce());
         uint256 reach = LibClaimWork.freshWalkCapacity();
         assertEq(_processedCount(ids), reach, "the meter's reach, inside the window");
-        uint256 share = vpfi.balanceOf(alice) / reach;
+        uint256 share = _vaultFree(alice, address(vpfi)) / reach;
         // The settled entries left the index, and the window moved on.
         (from, to, total) = _window();
         assertEq(total, n - reach, "the window's settled entries retired");
@@ -332,7 +332,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         uint256 calls = 1 + _claimUntilDone(32);
         assertLe(calls, 16);
         assertEq(_processedCount(ids), n, "every entry reached and settled");
-        assertEq(vpfi.balanceOf(alice), n * share, "every entry paid its share, once");
+        assertEq(_vaultFree(alice, address(vpfi)), n * share, "every entry paid its share, once");
         (from, to, total) = _window();
         assertEq(total, 0, "the index is empty");
     }
@@ -367,7 +367,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertEq(_windowChangedAt(), 0, "the window has not changed yet");
         vm.warp(block.timestamp + 1 hours);
         assertTrue(_claimOnce(), "a claim whose window paid nothing still moves the window");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing in the first window was claimable");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing in the first window was claimable");
         assertEq(_windowChangedAt(), block.timestamp, "the move is recorded for the expiry clocks");
         (from, to, total) = _window();
         assertEq(from, w, "the next claim reads the window behind it");
@@ -375,7 +375,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
 
         assertTrue(_claimOnce());
         assertEq(_processedCount(ids), 20, "the entries behind the first window are reached");
-        assertGt(vpfi.balanceOf(alice), 0, "and paid");
+        assertGt(_vaultFree(alice, address(vpfi)), 0, "and paid");
         (from, , ) = _window();
         assertEq(from, 0, "the window comes back to the start");
     }

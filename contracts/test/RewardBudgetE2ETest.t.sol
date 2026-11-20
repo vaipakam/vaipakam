@@ -229,11 +229,11 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         );
 
         // 3. FUNDED: the identical claim now succeeds and pays alice.
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paid, 0, "funded claim pays out");
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, paid, "alice received the VPFI");
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, paid, "alice received the VPFI");
         assertEq(
             vpfi.balanceOf(address(diamond)),
             1_000e18 - paid,
@@ -257,8 +257,8 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         (uint256 paidB, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paidA, 0, "alice paid");
         assertGt(paidB, 0, "bobby paid");
-        assertEq(vpfi.balanceOf(alice), paidA, "alice balance");
-        assertEq(vpfi.balanceOf(bobby), paidB, "bobby balance");
+        assertEq(_vaultFree(alice, address(vpfi)), paidA, "alice balance");
+        assertEq(_vaultFree(bobby, address(vpfi)), paidB, "bobby balance");
     }
 
     /// @notice A live mirror Diamond can already hold VPFI for other purposes
@@ -302,6 +302,6 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paid, 0, "funded claim pays out");
-        assertEq(vpfi.balanceOf(alice), paid, "alice received the VPFI");
+        assertEq(_vaultFree(alice, address(vpfi)), paid, "alice received the VPFI");
     }
 }

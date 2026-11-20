@@ -5,6 +5,7 @@ import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -35,6 +36,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
+import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
 
 /**
  * @title RefinanceRequestGuardTest
@@ -684,6 +687,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1); // past the cancel cooldown
         vm.prank(makeAddr("offsetCleaner"));
         OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
+        // #3744 — the refund lands in the vault as free balance; withdraw it.
+        LibTestPayout.withdrawAllFree(address(diamond), creator);
 
         assertEq(ERC20(mockERC20).balanceOf(creator), creatorWallet + deposited, "the creator gets back exactly the offset principal");
         assertEq(ERC20(mockCollateralERC20).balanceOf(creator), creatorCollateral, "no collateral reaches the creator");
@@ -772,5 +777,134 @@ contract RefinanceRequestGuardTest is SetupTest {
             if (isIt) return reads[i];
         }
         revert("index slot not found");
+    }
+
+    // ─── #3744 — the request's own token must stay with its creator ──
+
+    function _offerToken(uint256 offerId) internal view returns (uint256) {
+        return OfferCancelFacet(address(diamond)).getOffer(offerId).positionTokenId;
+    }
+
+    function _moveToken(uint256 tokenId, address from, address to) internal {
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
+        vm.prank(from);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(from, to, tokenId);
+    }
+
+    function _tokenMoved(uint256 loanId, uint256 offerId) internal pure returns (bytes memory) {
+        return abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestTokenMoved.selector, loanId, offerId);
+    }
+
+    /// Every reader of the one rule refuses a request whose token moved: it
+    /// does not stand, it no longer holds the loan, the check names the
+    /// reason, accept refuses with it, and both previews refuse.
+    function _assertRequestEndedByItsToken(uint256 loanId, uint256 offerId) internal {
+        assertEq(_live(loanId), 0, "the request no longer stands");
+        assertTrue(
+            _selectorOf(abi.encodeCall(RepayFacet.repayPartial, (loanId, 1)))
+                != IVaipakamErrors.RefinanceRequestOpen.selector,
+            "the loan is no longer held"
+        );
+        vm.expectRevert(_tokenMoved(loanId, offerId));
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, offerId);
+        _acceptExpectingRevert(offerId, _tokenMoved(loanId, offerId));
+        assertEq(
+            uint8(OfferPreviewFacet(address(diamond)).previewAccept(offerId, makeAddr("previewLender")).errorCode),
+            uint8(OfferAcceptFacet.AcceptError.RefinanceRequestUntakeable),
+            "the accept preview refuses"
+        );
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        vm.prank(lender);
+        uint256 lenderOffer = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Lender, 400, LibVaipakam.FillMode.Partial, 0, 0),
+            type(uint64).max
+        );
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, offerId, address(this), address(this)).errorCode),
+            uint8(LibOfferMatch.MatchError.RefinanceTagged),
+            "the match preview refuses"
+        );
+        assertTrue(OfferCancelFacet(address(diamond)).isOfferRouteDead(offerId), "anyone may clear it");
+    }
+
+    function test_movedRequestToken_endsTheRequest() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        assertEq(_live(loanId), r1, "precondition: the request stands");
+        _moveToken(_offerToken(r1), borrower, makeAddr("requestTokenBuyer"));
+        _assertRequestEndedByItsToken(loanId, r1);
+    }
+
+    function test_requestTokenRoundTrip_endsTheRequest() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        address away = makeAddr("requestTokenAway");
+        _moveToken(_offerToken(r1), borrower, away);
+        _moveToken(_offerToken(r1), away, borrower);
+        _assertRequestEndedByItsToken(loanId, r1);
+        // The loan's holder may post a request that displaces the moved one.
+        vm.warp(block.timestamp + 1);
+        uint256 r2 = _request(loanId, 0);
+        assertEq(_live(loanId), r2, "a fresh request displaces the moved one and stands");
+    }
+
+    /// Both tokens handed together to one wallet: the creator holds neither,
+    /// so the request is still refused, and the new wallet cannot fill it.
+    function test_bothTokensMovedTogether_stillRefuse() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        address w = makeAddr("bothTokensWallet");
+        _moveToken(LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId, borrower, w);
+        _moveToken(_offerToken(r1), borrower, w);
+        assertEq(_live(loanId), 0, "the request does not stand");
+        // The creator holds neither token: acceptance refuses (here on the
+        // loan's position, the first check it meets).
+        _acceptExpectingRevert(r1, abi.encodeWithSelector(LibAutoRefinanceCheck.RefinanceTargetNotBorrower.selector));
+    }
+
+    /// The creator, not the token's new holder, cancels a moved request: a
+    /// fresh pledge stays in the creator's own vault (free again), the token's
+    /// holder receives nothing, and the request's payoff permit is dropped.
+    function test_movedRequest_creatorCancels_pledgeAndPermitReleased() public {
+        uint256 loanId = _activeLoan();
+        vm.prank(borrower);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        LibVaipakam.CreateOfferParams memory p =
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0);
+        p.collateralAmount = LOAN_COLLATERAL + 200 ether; // not the loan's: a fresh pledge
+        p.collateralAmountMax = p.collateralAmount;
+        vm.prank(borrower);
+        uint256 r1 = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+        assertFalse(OfferCancelFacet(address(diamond)).getOffer(r1).refinanceCarryOver, "fixture: a fresh pledge");
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, r1);
+
+        address buyer = makeAddr("requestTokenHolder");
+        _moveToken(_offerToken(r1), borrower, buyer);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20(mockCollateralERC20).balanceOf(borrowerVault);
+
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, r1));
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(r1);
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1);
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit LibRefinancePayoff.RefinancePayoffPermitCleared(r1, borrower);
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(r1);
+
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(r1).creator, address(0), "the request is gone");
+        assertEq(
+            ERC20(mockCollateralERC20).balanceOf(borrowerVault), vaultBefore, "the pledge stays in the creator's vault"
+        );
+        address buyerVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(buyer);
+        if (buyerVault != address(0)) {
+            assertEq(ERC20(mockCollateralERC20).balanceOf(buyerVault), 0, "the token's holder receives nothing");
+        }
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, r1));
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(r1);
     }
 }

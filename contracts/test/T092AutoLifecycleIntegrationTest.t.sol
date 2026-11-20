@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
@@ -1869,7 +1870,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_2814_withdraw_returnsUnusedReserveToTheWallet() public {
         uint256 loanId = _buildActiveLoan();
         _fundReserve(loanId, borrower, 3 ether);
-        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 walletBefore = _freeOf(borrower);
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1881,7 +1882,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         emit StandingInstructionFacet.LoanReserveWithdrawn(loanId, borrower, 0, mockERC20, 3 ether, 0);
         vm.prank(borrower);
         _si().withdrawLoanReserve(borrower, loanId, 0, 3 ether);
-        assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 3 ether, "back in the wallet");
+        assertEq(_freeOf(borrower), walletBefore + 3 ether, "free in the depositor's vault");
         (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
         assertEq(reserved, 0, "nothing left reserved");
     }
@@ -1914,10 +1915,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         (, uint256 reserved, , uint256 chargeNow, ) = _f().getExtendFunding(loanId, borrower);
         assertEq(reserved, 2 ether, "the repayment took none of it");
         assertEq(chargeNow, 0, "a closed loan cannot be extended");
-        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 walletBefore = _freeOf(borrower);
         vm.prank(borrower);
         _si().withdrawLoanReserve(borrower, loanId, 0, 2 ether);
-        assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
+        assertEq(_freeOf(borrower), walletBefore + 2 ether, "released after the close");
     }
 
     /// @notice #2814 — only the current borrower-position holder funds, and
@@ -2068,5 +2069,76 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(gross, 0);
         assertEq(fee, 0);
         assertEq(paid, newPaid);
+    }
+
+    /// @dev Payout rule (2026-11-19): a released reserve is free balance in
+    ///      the depositor's own vault.
+    function _freeOf(address who) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, mockERC20, 0);
+    }
+
+    // ─── The extension's direct interest payment to the lender holder ───
+    //
+    // The extension pays the lender share straight into the lender-token
+    // holder's vault, creating it if needed (every other open-loan lender
+    // payment is held in the stored lender's vault). That is sound only
+    // while the entry checks the holder is unflagged, on the Terms, and
+    // the one who set the lender caps (design ruling 2026-11-19).
+
+    function _moveLenderToken(uint256 loanId, address to) internal {
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, to, tokenId);
+    }
+
+    /// @notice A lender token moved to a vault-less address that is then
+    ///         flagged: the extension is refused and creates no vault.
+    function test_extend_flaggedVaultlessLenderHolder_refusedNoVault() public {
+        uint256 loanId = _setupExtendableLoan();
+        address holder = makeAddr("flaggedNewLenderHolder");
+        _moveLenderToken(loanId, holder);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(holder, true);
+
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, holder));
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault created");
+    }
+
+    /// @notice A lender token moved to a clean holder that set no caps of its
+    ///         own: the previous holder's caps do not carry, so it is refused.
+    function test_extend_newLenderHolderWithoutOwnCaps_refused() public {
+        uint256 loanId = _setupExtendableLoan();
+        address holder = makeAddr("capslessNewLenderHolder");
+        _moveLenderToken(loanId, holder);
+
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.BothSideAutoExtendRequired.selector);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault created");
+    }
+
+    /// @notice Once the new holder sets its own caps the extension runs, the
+    ///         holder's vault is created, and the lender share arrives there
+    ///         as free balance.
+    function test_extend_newLenderHolderSetsCaps_paidAsFreeBalance() public {
+        uint256 loanId = _setupExtendableLoan();
+        address holder = makeAddr("consentingNewLenderHolder");
+        _moveLenderToken(loanId, holder);
+        vm.prank(holder);
+        _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, uint64(block.timestamp + 400 days));
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 45, "extended");
+        assertTrue(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder) != address(0), "vault created");
+        assertGt(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(holder, mockERC20, 0),
+            0,
+            "the lender share is the holder's free balance"
+        );
     }
 }

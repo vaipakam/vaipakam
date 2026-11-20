@@ -108,7 +108,8 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         bool fullyPaid
     );
 
-    /// @notice A seller withdrew what was waiting for them on a loan.
+    /// @notice A seller collected what was waiting for them on a loan into
+    ///         their own free vault balance.
     /// @custom:event-category state-change/claim-mutation
     event SellerInterestWithdrawn(
         uint256 indexed loanId,
@@ -241,12 +242,16 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
 
     // ─── Seller entry ──────────────────────────────────────────────────────
 
-    /// @notice Withdraws what is waiting for the caller as a past seller of
-    ///         `loanId`'s lender position. On a loan whose lender claim is
-    ///         final it first splits that claim, if nobody has yet.
-    /// @dev    Screened fail-closed: a seller confirmed flagged cannot withdraw
-    ///         during an oracle outage. Whatever reached their vault stays there
-    ///         until they read clean.
+    /// @notice Collects what is waiting for the caller as a past seller of
+    ///         `loanId`'s lender position into the caller's own free vault
+    ///         balance (payout rule, owner decision 2026-11-19); the
+    ///         ordinary Withdraw takes it to a wallet. On a loan whose lender
+    ///         claim is final it first splits that claim, if nobody has yet.
+    /// @dev    The amount is reserved in the seller's vault from payment to
+    ///         collection, so a seller is screened when they collect, not by
+    ///         whoever paid. Screened fail-closed: a seller confirmed flagged
+    ///         cannot collect during an oracle outage. Whatever reached their
+    ///         vault stays reserved until they read clean.
     function claimAsSeller(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -527,7 +532,9 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     function _withdraw(uint256 loanId, address seller, address asset) private returns (uint256 amount) {
         amount = LibEncumbrance.releaseSellerInterest(loanId, seller, asset);
         if (amount == 0) return 0;
-        LibVaultOutflow.toOwner(seller, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.SELLER_CLAIM);
+        // Payout rule (2026-11-19): into the seller's own free balance, in the
+        // vault that already holds it; the seller's Withdraw takes it out.
+        LibVaultOutflow.releaseOwn(seller, LibVaultOutflow.ERC20, asset, 0, amount, loanId, OutflowReason.SELLER_CLAIM);
         emit SellerInterestWithdrawn(loanId, seller, asset, amount);
     }
 }

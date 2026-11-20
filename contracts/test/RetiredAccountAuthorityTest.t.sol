@@ -380,17 +380,17 @@ contract RetiredAccountAuthorityTest is SetupTest {
         _retire(lender, nominee);
         address keeper = makeAddr("keeper");
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         ProfileFacet(address(diamond)).setOfferKeeperEnabled(offerId, keeper, true);
         vm.prank(nominee);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         ProfileFacet(address(diamond)).setOfferKeeperEnabled(offerId, keeper, true);
         // The maker's price-move guard follows the same rule.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
         vm.prank(nominee);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
     }
 }

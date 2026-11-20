@@ -132,7 +132,7 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             borrower,
             isLenderOffer
                 ? (s.acceptAckActive && s.acceptAckAcceptorFull)
-                : offer.creatorFull,
+                : LibFeeEntitlement.offerFullConsented(offerId, borrower),
             isLenderOffer
                 ? s.acceptAckAcceptorMaxCStar
                 : offer.creatorMaxCStar,

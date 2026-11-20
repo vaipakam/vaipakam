@@ -1467,8 +1467,16 @@ contract MeshThreeChainE2ETest is Test {
         for (uint256 d = 4; d <= 8; ++d) {
             _mut(ARB).setDayDeliveryLandedRaw(d, keccak256(abi.encode("witness-delivery", d)));
         }
+        // A claim delivers into the claimant's VAULT (the payout rule), through
+        // the vault factory's credit. This mesh Diamond carries the reward
+        // facets only, no vault factory or vault code, and the scene is about
+        // the reward ledgers, not the delivery: stand in for the credit.
+        vm.mockCall(
+            arbD, abi.encodeWithSignature("vaultCreditFromDiamondERC20(address,address,uint256)"), ""
+        );
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(arbD).claimInteractionRewards();
+        vm.clearMockedCalls();
         assertGt(paid, 0, "the claim surface is live on this mirror");
         assertEq(
             _mut(ARB).getArmedFreshPaidRaw(),

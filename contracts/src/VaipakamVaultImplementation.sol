@@ -825,7 +825,7 @@ contract VaipakamVaultImplementation is
         }
         if (
             c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
-                || c == VaultOutflowTypes.OutflowClass.Consolidation
+                || c == VaultOutflowTypes.OutflowClass.Consolidation || c == VaultOutflowTypes.OutflowClass.OfferHolder
         ) {
             return _isHolderVault(o.to, o.positionToken);
         }

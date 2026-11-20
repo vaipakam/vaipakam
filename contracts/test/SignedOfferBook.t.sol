@@ -762,6 +762,22 @@ contract SignedOfferBookTest is SetupTest {
         );
     }
 
+    /// #3744 — with KYC enforcement on, an unstored signed order's holder is
+    /// its signer (the fill materializes it so), so the preview clears when
+    /// the signer and the taker clear the tier, and names the signer's tier
+    /// when it does not.
+    function test_3744_signedPreview_kycReadsTheSigner() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1502, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+        ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
+
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.KYCRequired, "signer below the tier");
+        ProfileFacet(address(diamond)).updateKYCTier(signer, LibVaipakam.KYCTier.Tier2);
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.None, "signer and taker clear");
+    }
+
     function test_3552_previewReportsABadSignature() public {
         LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1502, 0);
         bytes memory sig = _sign(o);

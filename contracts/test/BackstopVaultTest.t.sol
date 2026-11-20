@@ -30,7 +30,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -116,11 +116,11 @@ contract BackstopVaultTest is SetupTest {
         address poker = makeAddr("poker-preview");
         vm.prank(poker);
         BackstopFacet(address(diamond)).backstopFill(offerId1); // the poker's one free action
-        LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
+        LibOfferMatch.IntentPreviewResult memory r = IntentPreviewFacet(address(diamond)).previewIntent(
             vault, poker, vault, mockERC20, mockCollateralERC20, 0, offerId2, PRINCIPAL
         );
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "the exhausted poker is named");
-        r = RiskPreviewFacet(address(diamond)).previewIntent(
+        r = IntentPreviewFacet(address(diamond)).previewIntent(
             vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, 0, offerId2, PRINCIPAL
         );
         assertTrue(r.ok, "a fresh initiator's free action covers the same fill");
@@ -607,7 +607,7 @@ contract BackstopVaultTest is SetupTest {
     function test_setOfferBackstopEligible_notCreator_reverts() public {
         (uint256 offerId, ) = _postBorrowerOffer(base + 7 days);
         vm.prank(makeAddr("notCreator"));
-        vm.expectRevert(BackstopFacet.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(
             offerId,
             base + 2 days

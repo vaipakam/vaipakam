@@ -15,6 +15,8 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LegalFacet} from "./LegalFacet.sol";
 import {RateLinkFacet} from "./RateLinkFacet.sol";
@@ -210,7 +212,9 @@ contract OfferPreviewFacet {
         // origination). Mirror that carve-out so the preview doesn't quote a
         // phantom fee; `lifEstimate` stays 0.
         if (_isErc20 && _saleLoanId == 0) {
-            address _borrower = _isLender ? acceptor : offer.creator;
+            // #3744 — a stored borrower offer's borrower is its token's holder
+            // (what the accept charges); an unstored signed offer's, its signer.
+            address _borrower = _isLender ? acceptor : _holderOf(offer);
             // Quote exactly what the accept will charge: the hold discount
             // (#1352, §F3, consent-gated, capped 50%, liquid only) and the
             // borrower's referral cut (#3722), by the one rule the charge
@@ -348,6 +352,16 @@ contract OfferPreviewFacet {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedCreator;
             return preview;
         }
+        // #3744 — the holder of the offer's token takes the creator's side
+        // of the loan, so a flagged holder makes the offer unfillable.
+        // An unstored signed offer (offerId 0) is materialized with its signer
+        // holding the token, so its holder is its creator.
+        address offerHolder =
+            offerId == 0 ? offer.creator : LibOfferRefund.holder(LibVaipakam.storageSlot().offers[offerId]);
+        if (offerHolder != offer.creator && LibVaipakam.isSanctionedAddress(offerHolder)) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedOfferHolder;
+            return preview;
+        }
         // Per-asset pause check — read storage directly so we don't
         // re-enter the reverting helper (`LibFacet.requireAssetNotPaused`).
         if (
@@ -394,16 +408,9 @@ contract OfferPreviewFacet {
                     preview.effectivePrincipal
                 )
                 : _unstoredTransactionValue(offer, preview.effectivePrincipal);
-            if (
-                !ProfileFacet(address(this)).meetsKYCRequirement(
-                    offer.creator,
-                    _valueNumeraire
-                )
-                    || !ProfileFacet(address(this)).meetsKYCRequirement(
-                        acceptor,
-                        _valueNumeraire
-                    )
-            ) {
+            // #3744 — the accept's own rule: creator, the offer token's
+            // holder and the acceptor.
+            if (!LibCompliance.offerPartiesMeetKYC(offer.creator, offerHolder, acceptor, _valueNumeraire)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.KYCRequired;
                 return preview;
             }
@@ -425,7 +432,9 @@ contract OfferPreviewFacet {
         //
         // Positioned exactly where the accept raises it: after KYC, before the
         // vault floor and the stale comparison.
-        if (acceptor == offer.creator) {
+        // #3744 — the accept also refuses the holder of the offer's token
+        // taking its own offer, so the preview does too.
+        if (acceptor == offer.creator || acceptor == _holderOf(offer)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SelfTrade;
             return preview;
         }
@@ -505,7 +514,10 @@ contract OfferPreviewFacet {
 
         // #3734 — loan creation asks both parties' Terms acceptance (the
         // exiting seller of a sale vehicle is not asked) before its cadence.
-        if (!_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)) {
+        if (
+            !_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)
+                || (_saleLoanId == 0 && offerHolder != offer.creator && !_termsClear(offerHolder, address(0)))
+        ) {
             preview.errorCode = OfferAcceptFacet.AcceptError.TermsNotAccepted;
             return preview;
         }
@@ -745,6 +757,13 @@ contract OfferPreviewFacet {
     ///      applies, read through the same `NumeraireValueFacet` view. A
     ///      signed order is never a lender-sale vehicle, so the collateral is
     ///      the offer's own and the vehicle substitution there does not arise.
+    /// @dev The holder of `offer`'s position token, or its creator when it
+    ///      has none (an unstored signed offer).
+    function _holderOf(LibVaipakam.Offer memory offer) private view returns (address h) {
+        if (offer.positionTokenId != 0) h = LibPositionNFT.core().holderOf(offer.positionTokenId);
+        if (h == address(0)) h = offer.creator;
+    }
+
     function _unstoredTransactionValue(LibVaipakam.Offer memory offer, uint256 principal)
         private
         view

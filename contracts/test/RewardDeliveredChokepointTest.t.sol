@@ -194,7 +194,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         vm.expectPartialRevert(DeliveredFreshBoundExceeded.selector);
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
-        assertEq(vpfi.balanceOf(alice), 0, "nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing paid");
         assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing left the Diamond");
         (uint256 paid1, ) = _rlens().getDeliveredFreshBound();
         assertEq(paid1, paid0, "the whole claim rolled back - no charge either");
@@ -218,7 +218,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         (uint256 claimed, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertApproxEqAbs(claimed, expected, 1e6, "paid in full (pool arithmetic rounds by wei)");
-        assertEq(vpfi.balanceOf(alice), claimed, "the claimant holds exactly what was paid");
+        assertEq(_vaultFree(alice, address(vpfi)), claimed, "the claimant holds exactly what was paid");
         (uint256 paid, uint256 remaining) = _rlens().getDeliveredFreshBound();
         assertEq(paid, claimed, "charged by the fresh component of what moved - all of it here");
         assertEq(remaining, delivered - claimed, "headroom is what is left");
@@ -247,7 +247,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         _deliverFresh(1, 0, 8); // the missing wei
         vm.prank(alice);
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
-        assertEq(vpfi.balanceOf(alice), actual, "paid once the bound is met");
+        assertEq(_vaultFree(alice, address(vpfi)), actual, "paid once the bound is met");
         (, uint256 remaining) = _rlens().getDeliveredFreshBound();
         assertEq(remaining, 0, "exactly consumed");
     }
@@ -259,7 +259,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         (uint256 claimed, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertApproxEqAbs(claimed, expected, 1e6, "pays as before");
-        assertEq(vpfi.balanceOf(alice), claimed, "claimant holds it");
+        assertEq(_vaultFree(alice, address(vpfi)), claimed, "claimant holds it");
         (uint256 paid, uint256 remaining) = _rlens().getDeliveredFreshBound();
         assertEq(paid, 0, "no charge outside the live ledger");
         assertEq(remaining, type(uint256).max, "unbounded");
@@ -372,7 +372,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
             assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "never expires while unfunded");
             remaining -= step;
         }
-        assertEq(vpfi.balanceOf(alice), 0, "nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing paid");
         // Fund it: the clock resumes and the entry expires after a full
         // horizon of EXECUTABLE time — charged to the ledger by its fresh.
         _deliverFresh(1_000_000e18, 0, 7);

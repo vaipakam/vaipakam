@@ -30,6 +30,7 @@ import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
 import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../../src/facets/SaleAdmissionFacet.sol";
 import {LenderIntentFacet} from "../../src/facets/LenderIntentFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {PrecloseOffsetFacet} from "../../src/facets/PrecloseOffsetFacet.sol";
@@ -216,7 +217,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](50);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -383,6 +384,12 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        // #3843 — the sale reads, split off RiskPreviewFacet.
+        cuts[49] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleAdmissionFacetSelectors()
         });
         cuts[36] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(LenderIntentFacet).name),

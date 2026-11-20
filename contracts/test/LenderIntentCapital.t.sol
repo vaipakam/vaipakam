@@ -3,10 +3,12 @@ pragma solidity ^0.8.29;
 
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -232,28 +234,32 @@ contract LenderIntentCapitalTest is SetupTest {
         );
     }
 
-    // ─── 3. Withdraw — returns to wallet + decrements ───────────────────────
+    // ─── 3. Withdraw — releases into the vault's free balance ──────────────
 
-    function test_withdraw_returnsToWallet_andDecrements() public {
+    /// @dev Payout rule (2026-11-19): the capital stays in the lender's vault
+    ///      and becomes free balance there; the wallet is untouched and the
+    ///      ordinary Withdraw takes it out.
+    function test_withdraw_releasesIntoFreeBalance_andDecrements() public {
         _setIntent();
         _fund(PRINCIPAL);
         uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 freeBefore = _depository(lender);
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
             lender, mockERC20, mockCollateralERC20, 0, PRINCIPAL
         );
         assertEq(_capital(), 0, "capital drained");
-        assertEq(
-            ERC20(mockERC20).balanceOf(lender),
-            walletBefore + PRINCIPAL,
-            "returned to wallet"
-        );
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "wallet untouched");
+        assertEq(_depository(lender), freeBefore + PRINCIPAL, "free balance rose");
+        vm.prank(lender);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(lender, 0, mockERC20, 0, PRINCIPAL, lender);
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore + PRINCIPAL, "the Withdraw pays it");
     }
 
     /// @dev Protected account mode — once a signer majority has replaced the
-    ///      lender's wallet, the old wallet can no longer take the intent's
-    ///      capital out, and the controller can: the payout queues to the
-    ///      controller behind the account's delay.
+    ///      lender's wallet, the old wallet can no longer release the intent's
+    ///      capital, and the controller can. Nothing is queued: the capital
+    ///      becomes free in the account's vault.
     function test_withdraw_byControllerAfterReplacement() public {
         _setIntent();
         _fund(PRINCIPAL);
@@ -268,16 +274,19 @@ contract LenderIntentCapitalTest is SetupTest {
             lender, mockERC20, mockCollateralERC20, 0, PRINCIPAL
         );
 
+        uint256 freeBefore = _depository(lender);
         vm.prank(nominee);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
             lender, mockERC20, mockCollateralERC20, 0, PRINCIPAL
         );
         assertEq(_capital(), 0, "capital released");
-        assertEq(ERC20(mockERC20).balanceOf(nominee), 0, "queued, not paid");
-        uint256 id = VaultPayoutFacet(address(diamond)).getPendingPayoutIds(lender)[0];
-        vm.warp(vm.getBlockTimestamp() + 2 days);
-        VaultPayoutFacet(address(diamond)).releasePayout(id);
-        assertEq(ERC20(mockERC20).balanceOf(nominee), PRINCIPAL, "paid to the controller");
+        assertEq(ERC20(mockERC20).balanceOf(nominee), 0, "nothing paid");
+        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(lender).length, 0, "nothing queued");
+        assertEq(_depository(lender), freeBefore + PRINCIPAL, "free in the vault");
+    }
+
+    function _depository(address who) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, mockERC20, 0);
     }
 
     function _replaceLender(address nominee) internal {
@@ -415,7 +424,11 @@ contract LenderIntentCapitalTest is SetupTest {
             lender, mockERC20, mockCollateralERC20, 0, PRINCIPAL
         );
         assertEq(_capital(), 0, "VPFI capital withdrawn");
-        assertEq(_tierDayClose(lender), 0, "tier record follows the withdrawal");
+        // The payout rule: the released capital is free balance in the same
+        // vault, so it still counts for the tier until the owner's Withdraw.
+        assertEq(_tierDayClose(lender), PRINCIPAL, "free VPFI in the vault still counts");
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
+        assertEq(_tierDayClose(lender), 0, "tier record follows the owner's Withdraw");
     }
 
     /// @dev #2860 — a funded intent whose lending asset becomes VPFI after

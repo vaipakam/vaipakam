@@ -6,6 +6,8 @@ import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../../src/facets/SaleAdmissionFacet.sol";
+import {IntentPreviewFacet} from "../../src/facets/IntentPreviewFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -186,56 +188,77 @@ library FacetSelectors {
         s[20] = VaipakamNFTFacet.markOfferPositions.selector;
     }
 
-    /// @notice Full external selector surface of {RiskPreviewFacet} (11) —
+    /// @notice Full external selector surface of {RiskPreviewFacet} (8) —
     ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
     ///
-    /// @dev    #1649. This facet is not itself refreshed for its own sake by the
-    ///         curated scripts; it is here because OTHER facets they refresh
-    ///         cross-call it. THREE sale hosts route their sale paths through
-    ///         `saleAdmission`, added in #1503 — `EarlyWithdrawalFacet` and
-    ///         `EarlyWithdrawalDirectFacet` (both RedeployFacets) and
-    ///         `OfferAcceptFacet` (ReplaceStaleFacets). Refreshing ANY of those
-    ///         hosts WITHOUT routing that selector installs sale entry points
-    ///         that cross-call an unrouted selector, so every sale reverts
-    ///         `FunctionDoesNotExist` through the Diamond fallback — new code
-    ///         live and broken. Same class of dependency the #658 note on
-    ///         `ConsolidationFacet` records for the liquidation family.
-    ///
-    ///         The count is three rather than two since #1780 split the direct
-    ///         lender-exit route into its own facet. The cross-call is not made
-    ///         by the facets directly — it is inside `LibSaleSolvency`, which
-    ///         INLINES into every caller, so the host set is "whoever calls that
-    ///         library", not a list any compile checks. Add a sale host and this
-    ///         enumeration is what tells you the new curated script must route
-    ///         `saleAdmission` too.
+    /// @dev    #1649 / #3326. This facet is not itself refreshed for its own
+    ///         sake by the curated scripts; it is here because OTHER facets
+    ///         they refresh cross-call it (the match core's hosts ask
+    ///         `initRiskBounds`). The sale reads it carried until #3843
+    ///         (`saleAdmission`, `quoteSellerBounds`, `getSaleListingBounds`)
+    ///         are on `SaleAdmissionFacet` now; see {saleAdmission} for why
+    ///         the curated scripts must route them. `previewIntent` is on
+    ///         `IntentPreviewFacet` since #3843 too; see {intentPreview}.
     ///
     ///         Consumers partition this list by live routing (Add the unrouted,
-    ///         Replace the routed), so it is correct against a pre-#1503 diamond
+    ///         Replace the routed), so it is correct against an older diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](8);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
         s[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
         s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector;
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector;
-        s[6] = RiskPreviewFacet.previewIntent.selector;
-        s[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 4 — listing bounds quote. Same reason the whole facet is
-        // enumerated here: a `Replace` cut must carry the WHOLE routed surface,
-        // so omitting a new selector leaves it pointed at stale bytecode after
-        // a curated refresh. (#1209 retired `sellerForfeitureWindow`; every
-        // curated script refuses a Diamond that predates that change, so no
-        // Diamond they cut still routes it.)
-        s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
-        // #2672 — the figures a standing listing recorded.
-        s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        s[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        s[6] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call
         // (moved here from OfferPreviewFacet in #3328).
-        s[11] = RiskPreviewFacet.initRiskBounds.selector;
+        s[7] = RiskPreviewFacet.initRiskBounds.selector;
+    }
+
+    /// @notice Full external selector surface of {IntentPreviewFacet} (1) —
+    ///         mirrors `DeployDiamond._getIntentPreviewSelectors`.
+    ///
+    /// @dev    #3843 split `previewIntent` off `RiskPreviewFacet`. It inlines
+    ///         the shared match core (`LibOfferMatch`), so the curated scripts
+    ///         that refresh the match hosts and RiskPreviewFacet carry it too.
+    ///         Consumers partition this list by live routing: on a Diamond cut
+    ///         before #3843 it is routed to `RiskPreviewFacet`, so it
+    ///         partitions to Replace, which moves it to this facet.
+    function intentPreview() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = IntentPreviewFacet.previewIntent.selector;
+    }
+
+    /// @notice Full external selector surface of {SaleAdmissionFacet} (3) —
+    ///         mirrors `DeployDiamond._getSaleAdmissionSelectors`.
+    ///
+    /// @dev    #3843 split these off `RiskPreviewFacet`; the reason they are
+    ///         listed is unchanged (#1649). The sale hosts route their sale
+    ///         paths through `saleAdmission` — the cross-call is inside
+    ///         `LibSaleSolvency`, which INLINES into every caller
+    ///         (`SaleExitVerdictFacet`, which both early-withdrawal entries
+    ///         self-call, plus `OfferAcceptFacet` and `OfferPreviewFacet`), so
+    ///         the host set is "whoever calls that library", not a list any
+    ///         compile checks. Refreshing ANY of those hosts WITHOUT routing
+    ///         this selector installs sale entry points that cross-call an
+    ///         unrouted selector, so every sale reverts `FunctionDoesNotExist`
+    ///         through the Diamond fallback — new code live and broken.
+    ///
+    ///         A `Replace` cut must carry the WHOLE routed surface, so the two
+    ///         listing reads ride with it. Consumers partition this list by live
+    ///         routing: on a Diamond cut before #3843 all three are routed to
+    ///         `RiskPreviewFacet`, so they partition to Replace, which moves
+    ///         them to this facet.
+    function saleAdmission() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = SaleAdmissionFacet.saleAdmission.selector;
+        // #1503 item 4 — listing bounds quote.
+        s[1] = SaleAdmissionFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        s[2] = SaleAdmissionFacet.getSaleListingBounds.selector;
     }
 
     /// @notice Full external selector surface of {RepayPeriodicFacet} (4).

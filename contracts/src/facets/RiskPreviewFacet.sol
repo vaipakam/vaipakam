@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
-import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
-import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
-import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
-import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
-import {ProfileFacet} from "./ProfileFacet.sol";
-import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
-import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
-import {RiskFacet} from "./RiskFacet.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 
@@ -31,12 +24,21 @@ import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
  *         (`OfferMatchFacet`, `PrecloseFacet`) cross-call — freeing header
  *         room on both facets for future work.
  *
+ *         #3843 — the sale side (`saleAdmission`, `quoteSellerBounds`,
+ *         `getSaleListingBounds`) moved to `SaleAdmissionFacet` when this
+ *         facet reached the EIP-170 ceiling. **Those reads are NOT here any
+ *         more**; the two facets are refreshed together. The standing-intent
+ *         fill preview (`previewIntent`, with the match core it inlines) moved
+ *         to `IntentPreviewFacet` in the same change. **`previewIntent` is NOT
+ *         here any more.** The match-actor resolver both facets use is
+ *         `LibRiskAccess.resolveMatchActors`.
+ *
  * @dev    Every function here is `external view`: it makes no state write,
  *         emits no event, and declares no local error. The gate DECISION logic
- *         lives entirely in `LibRiskAccess` (+ `LibOfferMatch` for the intent
- *         preview); this facet is a thin selector/glue layer that owns the
- *         actor-resolution + PairId construction the enforcing sites are too
- *         close to EIP-170 to inline. The two reverting asserts
+ *         lives entirely in `LibRiskAccess` (the match-actor resolution
+ *         included); this facet is a thin selector/glue layer that owns the
+ *         PairId construction the enforcing sites are too close to EIP-170 to
+ *         inline. The two reverting asserts
  *         (`assertMatchAllowed`, `assertObligationTransferAllowed`) revert with
  *         `RiskTierTooLow` / `IlliquidPairNotConsented`, both declared in
  *         `LibRiskAccess` via `assertActorMayTransact` — not here.
@@ -85,10 +87,11 @@ contract RiskPreviewFacet {
             // loan's pair (the exiting seller is exempt — Codex #729 r4).
             return LibRiskAccess.previewActorBlock(s, acceptor, pair);
         }
-        // Normal offer: the creator is re-gated against the LIVE state, then the
+        // Normal offer: the creator's side (#3744: the holder of the offer's
+        // token) is re-gated against the LIVE state, then the
         // acceptor, both against standing consent (#3231).
         uint8 creatorBlock =
-            LibRiskAccess.previewActorBlock(s, s.offers[offerId].creator, pair);
+            LibRiskAccess.previewActorBlock(s, LibOfferRefund.holder(s.offers[offerId]), pair);
         if (creatorBlock != 0) return creatorBlock;
         return LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
@@ -113,7 +116,7 @@ contract RiskPreviewFacet {
         if (!LibVaipakam.cfgRiskAccessGateEnabled()) return 0;
         if (s.saleOfferToLoanId[offerId] != 0) return 0; // exiting seller is exempt
         return LibRiskAccess.previewActorBlock(
-            s, s.offers[offerId].creator, _acceptGatePair(s, offerId)
+            s, LibOfferRefund.holder(s.offers[offerId]), _acceptGatePair(s, offerId)
         );
     }
 
@@ -234,7 +237,7 @@ contract RiskPreviewFacet {
     ///         a keeper match authors no #662 acknowledgement to substitute.
     /// @dev    Cross-facet entrypoint consumed by `LibOfferMatchExecute.executeMatch`
     ///         (which is near the EIP-170 ceiling, so the classifier lives here).
-    ///         The gated parties + pair come from {_resolveMatchActors}: a normal
+    ///         The gated parties + pair come from {LibRiskAccess.resolveMatchActors}: a normal
     ///         match gates BOTH creators against the borrower offer's pair; a
     ///         lender-sale vehicle exempts the exiting seller and gates only the
     ///         buyer against the linked loan's pair.
@@ -248,7 +251,7 @@ contract RiskPreviewFacet {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, s.offers[lenderOfferId].creator, borrowerOfferId);
+        ) = LibRiskAccess.resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
         LibRiskAccess.assertActorMayTransact(s, actorA, pair);
         if (actorB != address(0)) {
             LibRiskAccess.assertActorMayTransact(s, actorB, pair);
@@ -275,225 +278,13 @@ contract RiskPreviewFacet {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, s.offers[lenderOfferId].creator, borrowerOfferId);
+        ) = LibRiskAccess.resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
         uint8 a = LibRiskAccess.previewActorBlock(s, actorA, pair);
         if (a != 0) return a;
         if (actorB != address(0)) {
             return LibRiskAccess.previewActorBlock(s, actorB, pair);
         }
         return 0;
-    }
-
-    /// @notice #625 WI-2b — non-mutating preview of a `matchIntent` fill. A
-    ///         keeper calls this BEFORE submitting `matchIntent` to learn,
-    ///         off-chain and gas-free, whether the fill would succeed and — if
-    ///         not — the exact first reason it would revert. On success it also
-    ///         returns the principal / midpoint rate / required collateral the
-    ///         fill would lock, so a solver can size the call from one read.
-    /// @dev    The intent-level guards + the shared match-admission core run in
-    ///         {LibOfferMatch.previewIntent}; this wrapper layers the #671
-    ///         risk-access gate on top (it owns the actor resolver), exactly as
-    ///         `LibOfferMatchExecute.executeMatch` calls {assertMatchAllowed} after
-    ///         `previewMatch`. The binding guarantee that this preview agrees
-    ///         with the live fill is the `previewIntent` Ok ⟺ `matchIntent`
-    ///         succeeds agreement test (`LenderIntentPreview.t.sol`).
-    /// @param  solver  Prospective filler — `requiresKeeperAuth` is checked
-    ///         against THIS address, not this view's `msg.sender`, so a keeper
-    ///         can preview on behalf of the account that would submit.
-    /// @param  initiator  The route's OUTER initiator (#2459 r4) — the account the
-    ///         fill's capacity charge falls to when `solver` cannot be charged
-    ///         itself: the caller of `backstopFill` when `solver` is the backstop
-    ///         vault, else the transaction's originator (an aggregator adapter with
-    ///         no bound operator). Named, never read from the view's transaction —
-    ///         the real fill charges the initiator `backstopFill` records, which an
-    ///         `eth_call`'s originator need not be. For a solver that sends its own
-    ///         transaction, the solver.
-    /// @param  lender  Intent owner (slice creator).
-    /// @param  lendingAsset / collateralAsset / slot  Intent key (#3626: the slot
-    ///         the fill would draw from).
-    /// @param  counterpartyOfferId  The stored borrower offer to fill against.
-    /// @param  fillAmount  Principal the solver intends to lend this fill.
-    function previewIntent(
-        address solver,
-        address initiator,
-        address lender,
-        address lendingAsset,
-        address collateralAsset,
-        uint8 slot,
-        uint256 counterpartyOfferId,
-        uint256 fillAmount
-    ) external view returns (LibOfferMatch.IntentPreviewResult memory res) {
-        res = LibOfferMatch.previewIntent(
-            solver,
-            lender,
-            lendingAsset,
-            collateralAsset,
-            slot,
-            counterpartyOfferId,
-            fillAmount
-        );
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        // Live order in `executeMatch` (Codex #1115 r2): the intent-level guards
-        // and the slice's duration-cap + per-asset pause run BEFORE
-        // `_createOfferSetup`'s SLICE-CREATOR (lender) risk gate
-        // (`assertActorMayTransact`, gate-on only); the collateral floor, the
-        // >365d cadence bound, the sale-vehicle rejection, and the match core all
-        // run AFTER it; and the BORROWER-side `assertMatchAllowed` runs only once
-        // the slice has fully materialized. So the reported first reason must be:
-        //   • a PRE-gate failure (intent-level, slice duration-cap, slice pause)
-        //     as-is — the risk gate is never reached live;
-        //   • otherwise the SLICE-CREATOR (lender) risk block if it trips, since
-        //     it precedes every post-gate failure (floor / multi-year /
-        //     sale-vehicle / match-core) live;
-        //   • else the surviving post-gate failure, or (on a clean result) the
-        //     BORROWER risk block, then the accept gates.
-        // The post-gate `intentError` set is exactly {SliceCollateralBelowFloor,
-        // SliceMultiYearTerm, SaleVehicleTagged}; any `matchError` is post-gate
-        // too (the match core runs after materialization).
-        bool precedesLenderRisk = !res.ok
-            && res.matchError == LibOfferMatch.MatchError.Ok
-            && res.intentError != LibOfferMatch.IntentError.SliceCollateralBelowFloor
-            && res.intentError != LibOfferMatch.IntentError.SliceMultiYearTerm
-            && res.intentError != LibOfferMatch.IntentError.SaleVehicleTagged;
-        if (precedesLenderRisk) return res;
-
-        // #671 risk-access gate. Resolve the gated parties via the slice's
-        // CREATOR (= `lender`; the slice has no offer id) and the borrower offer;
-        // handles the lender-sale-vehicle branch identically to the enforcing
-        // path.
-        if (LibVaipakam.cfgRiskAccessGateEnabled()) {
-            (
-                address actorA,
-                address actorB,
-                LibRiskAccess.PairId memory pair
-            ) = _resolveMatchActors(s, lender, counterpartyOfferId);
-            // The slice-creator (lender) gate `_createOfferSetup` runs at 883 is
-            // ALWAYS against the materialized SLICE's own assets — the intent's
-            // lend / collateral legs (ERC-20, single-value; tokenIds 0 and prepay
-            // immaterial to the ERC-20 pair key) — for BOTH a normal match and a
-            // lender-sale vehicle. It is NOT the borrower offer's pair: for a
-            // well-formed counterparty the two coincide, but a malformed / stale
-            // one (asset-type mismatch => a post-gate `matchError`) has a
-            // different, possibly riskier borrower pair (Codex #1115 r3); and for
-            // a sale vehicle `executeMatch` reverts `SaleVehicleNotMatchable`
-            // before `assertMatchAllowed` ever gates the sold-loan pair, so the
-            // sold-loan pair must not gate the pre-match lender either (Codex
-            // #1115 r4). Hence: always the slice pair here.
-            LibRiskAccess.PairId memory slicePair = LibRiskAccess.PairId({
-                lendAsset: lendingAsset,
-                lendType: LibVaipakam.AssetType.ERC20,
-                lendTokenId: 0,
-                collAsset: collateralAsset,
-                collType: LibVaipakam.AssetType.ERC20,
-                collTokenId: 0,
-                prepayAsset: address(0)
-            });
-            uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, slicePair);
-            // The borrower gate (`assertMatchAllowed`) is reached live only after
-            // the slice fully materializes (assets matched, not a sale vehicle),
-            // so consult it — against the borrower/loan `pair` — only on a clean
-            // result, never letting a borrower block override an earlier post-gate
-            // failure.
-            if (rb == 0 && res.ok && actorB != address(0)) {
-                rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
-            }
-            res.riskBlock = rb;
-            if (rb != 0) {
-                // The risk gate is the live first-revert reason here; clear any
-                // stale post-gate failure code so consumers keying on
-                // intentError / matchError don't report the later reason.
-                res.ok = false;
-                res.intentError = LibOfferMatch.IntentError.Ok;
-                res.matchError = LibOfferMatch.MatchError.Ok;
-                return res;
-            }
-        }
-
-        // Risk gate cleared (or off): a surviving post-gate failure is now the
-        // correct first reason (its live check comes after the passed risk gate).
-        if (!res.ok) return res;
-
-        // #747 Codex r1/r2/r3 — accept-time gates. After the match + risk gate
-        // the live fill enters `acceptOfferInternal(counterpartyOfferId)` with
-        // the lender slice as acceptor, which can still reject on gates a
-        // borrower newly trips AFTER posting. Reproduce the gates that can fail
-        // on this deploy:
-        //   - sanctions on the borrower (offer creator);
-        //   - `offerConsumedBySale` — the terminal bit a Scenario-A parallel
-        //     sale sets, which `_acceptOffer` rejects with `OfferConsumedBySale`
-        //     even while the row still looks matchable (Codex r2);
-        //   - KYC, when governance has enabled enforcement (Codex r3). Reuse the
-        //     SAME value + predicate the accept path applies: the #627 public
-        //     `calculateTransactionValueNumeraire` (effectivePrincipal for a
-        //     match == the matched amount) and `ProfileFacet.meetsKYCRequirement`
-        //     for BOTH the borrower (offer creator) and the lender (acceptor).
-        //     Gated on the flag so retail (enforcement off) pays no oracle read;
-        //     `meetsKYCRequirement` itself also short-circuits true when off.
-        // (Per-asset pause is mirrored EARLIER at the slice-materialization
-        // stage, matching the live order. Country-pair is compile-time pure-true
-        // on the retail deploy — the gated variant is a separate industrial-fork
-        // function — so it can never block here. Already-accepted / expired are
-        // covered by the match core.)
-        bool kycBlocked;
-        if (s.kycEnforcementEnabled) {
-            uint256 valueNumeraire = OfferAcceptFacet(address(this))
-                .calculateTransactionValueNumeraire(
-                    counterpartyOfferId, res.matchAmount
-                );
-            kycBlocked =
-                !ProfileFacet(address(this)).meetsKYCRequirement(
-                    s.offers[counterpartyOfferId].creator, valueNumeraire
-                )
-                || !ProfileFacet(address(this)).meetsKYCRequirement(
-                    lender, valueNumeraire
-                );
-        }
-        if (
-            LibVaipakam.isSanctionedAddress(s.offers[counterpartyOfferId].creator)
-            || s.offerConsumedBySale[counterpartyOfferId]
-            || kycBlocked
-        ) {
-            res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
-            res.ok = false;
-            return res;
-        }
-        // #3358 — loan creation then asks the borrower offer's origination
-        // rules: the cadence admission and the maker's price-move guard. The
-        // slice is the other side and is minted in the fill, so it carries no
-        // guard a view could read. Same entry the accept and match previews
-        // use, so the three cannot disagree about a refusal.
-        {
-            OfferPriceGuardFacet.OriginationRefusal refusal = OfferPriceGuardFacet(address(this))
-                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0, lender, s.offers[counterpartyOfferId].creator);
-            if (refusal != OfferPriceGuardFacet.OriginationRefusal.None) {
-                res.matchError = refusal == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted
-                    ? LibOfferMatch.MatchError.CadenceNotAdmitted
-                    : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
-                        ? LibOfferMatch.MatchError.TermsNotAccepted
-                        : LibOfferMatch.MatchError.PriceGuardRefused;
-                res.ok = false;
-                return res;
-            }
-        }
-        // #1219 review — the fill's capacity charge is its LAST step (after the
-        // match), so it is this preview's last check, for the actor the fill's route
-        // names for `solver` and `initiator` (`LibServiceCapacity.routeActor`).
-        // #2559 (Codex #2563 r1) — the SAME capacity-or-credit rule the fill applies
-        // (`LibPriorityRouting.chargeFill`): a capacity refusal on an opted-in intent
-        // whose owner holds a priority credit is lifted, so the preview stays Ok
-        // exactly when the fill would succeed, and a keeper reading it does not
-        // stop at a fill a credit would carry. Codex #2563 r4 — and it says WHICH
-        // clear case applies (`spendsPriorityCredit`), so the one pre-check tells a
-        // solver whether the fill charges its capacity or spends the owner's credit.
-        if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
-            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset, slot)) {
-                res.spendsPriorityCredit = true;
-            } else {
-                res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
-                res.ok = false;
-            }
-        }
     }
 
     // ─── Internals ───────────────────────────────────────────────────────────
@@ -551,450 +342,6 @@ contract RiskPreviewFacet {
             collTokenId: collTokenId,
             prepayAsset: prepayAsset
         });
-    }
-
-    /// @dev Resolve the gated parties + the pair they are gated against for a
-    ///      keeper match — the single source of truth shared by the enforcing
-    ///      {assertMatchAllowed} and the non-reverting {previewMatchRiskBlock}.
-    ///      `actorA` is always gated; `actorB` is gated only when non-zero.
-    ///
-    ///      NORMAL match: `executeMatch` calls `acceptOfferInternal(borrowerOfferId)`,
-    ///      so the resulting loan copies its `tokenId` / `collateralTokenId` /
-    ///      `prepayAsset` from the BORROWER offer (the match-time asset check pins
-    ///      only the asset contracts + types, not those ids). Both creators are
-    ///      therefore gated against the BORROWER offer's pair — the actual loan —
-    ///      so the lender consents to the pair it joins, not its own offer's
-    ///      possibly-different one. actorA = lender-offer creator, actorB =
-    ///      borrower-offer creator.
-    ///
-    ///      LENDER-SALE vehicle (borrower offer linked via `saleOfferToLoanId`):
-    ///      the exiting seller (borrower-offer creator) is EXEMPT — that risk was
-    ///      accepted at the original loan — and only the BUYER (the lender-offer
-    ///      creator, who acquires the sold lender position) is gated, against the
-    ///      LINKED loan's pair. Mirrors `LoanFacet._maybeRunInitialRiskGates`'s
-    ///      sale-vehicle branch + the PR-2a sale-buyer treatment. actorA = buyer,
-    ///      actorB = address(0).
-    /// @dev The lender leg is passed as a CREATOR ADDRESS (not an offer id) so
-    ///      this same resolver serves a #625 auto-lend intent slice, which is
-    ///      never stored as an offer and so has no id to look up — only its
-    ///      `creator` (the intent owner) is needed here. The id-based callers
-    ///      pass `s.offers[lenderOfferId].creator`.
-    function _resolveMatchActors(
-        LibVaipakam.Storage storage s,
-        address lenderCreator,
-        uint256 borrowerOfferId
-    )
-        private
-        view
-        returns (address actorA, address actorB, LibRiskAccess.PairId memory pair)
-    {
-        uint256 soldLoanId = s.saleOfferToLoanId[borrowerOfferId];
-        if (soldLoanId != 0) {
-            LibVaipakam.Loan storage sold = s.loans[soldLoanId];
-            actorA = lenderCreator; // buyer (incoming lender)
-            actorB = address(0); // seller exempt
-            pair = LibRiskAccess.PairId({
-                lendAsset: sold.principalAsset,
-                lendType: sold.assetType,
-                lendTokenId: sold.tokenId,
-                collAsset: sold.collateralAsset,
-                collType: sold.collateralAssetType,
-                collTokenId: sold.collateralTokenId,
-                prepayAsset: sold.prepayAsset
-            });
-            return (actorA, actorB, pair);
-        }
-        LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
-        actorA = lenderCreator;
-        actorB = bo.creator;
-        pair = LibRiskAccess.PairId({
-            lendAsset: bo.lendingAsset,
-            lendType: bo.assetType,
-            lendTokenId: bo.tokenId,
-            collAsset: bo.collateralAsset,
-            collType: bo.collateralAssetType,
-            collTokenId: bo.collateralTokenId,
-            prepayAsset: bo.prepayAsset
-        });
-    }
-
-    /**
-     * @notice #1503 PR-E (design item 11) — whether `loanId` may admit a NEW
-     *         lender by sale, as a single classification.
-     *
-     * @dev    Lives HERE rather than inlined into the sale facets: both
-     *         `EarlyWithdrawalFacet` and `OfferAcceptFacet` were already at
-     *         the EIP-170 ceiling and the guard pushed each ~650 bytes over
-     *         it, and `RiskFacet` had too little headroom to take it. This
-     *         facet already hosts the risk-domain assert/classify surface the
-     *         mutating paths consult (`assertMatchAllowed`,
-     *         `assertObligationTransferAllowed`), so it is the consistent
-     *         home rather than merely the one with room.
-     *
-     *         Classifies rather than reverts so ONE selector serves both the
-     *         reverting guard and the read-only preview; `LibSaleSolvency`
-     *         maps the code onto the caller-side errors. An oracle that
-     *         cannot price a position REVERTS out of here, which the guard
-     *         treats as fail-closed and the preview as not-admissible.
-     *
-     * @return code 0 admissible;
-     *         1 live health factor below the loan's own admission floor;
-     *         2/3/4 inherited risk terms weaker than current — admission
-     *         health floor, liquidation LTV, init-LTV cap respectively;
-     *         5 live LTV above the cap a fresh admission would allow;
-     *         6 a leg is not priceable today, so nothing below can be measured
-     *         (#1655) — note this REFUSES, where the superseded
-     *         snapshot-based carve-out returned 0 for the same shape, and that
-     *         it refuses UNCONDITIONALLY: the progressive-risk-access consent
-     *         ladder classifies assets by identity and depth, never by live
-     *         priceability, so it cannot be deferred to here (Codex r8);
-     *         7 the inherited TREASURY-FEE snapshot is higher than the rate a
-     *         loan originated today would carry, so the incoming lender would
-     *         net less than their own offer's terms imply (#1918). Same
-     *         one-directional inherited-terms rule as 2/3/4 — a LOWER
-     *         inherited fee stays sellable — but reported separately because
-     *         it is an economic term rather than a risk bound, and telling a
-     *         buyer their collateral bounds are weak when the objection is the
-     *         fee would describe the wrong position.
-     * @return a The position's figure for the failing check (0 when code 0),
-     *         except code 6, where it names the unpriceable leg — 0 collateral,
-     *         1 principal — because a refusal for want of a measurement has no
-     *         figure to report.
-     * @return b The figure it is required to meet (0 when code 0, and 0 for
-     *         code 6 for the same reason).
-     */
-    /**
-     * @notice #1503 item 4 — the two bounds a listing made right now WOULD
-     *         record, so the seller can be shown what they are agreeing to
-     *         before they agree to it.
-     *
-     * @dev    Literally the same call the listing makes:
-     *         {LibSaleListing.projectSellerBounds} is what
-     *         {LibSaleListing.recordSellerBounds} stores, so the quote cannot
-     *         disagree with the bound — not "agrees today", but one computation
-     *         with two callers. That is the #1801 lesson applied ahead of time
-     *         rather than after: a client that mirrors the rule drifts from it
-     *         the moment the rule changes, and this rule has changed under
-     *         review more than once. There is nothing on-chain to read at
-     *         listing time — the listing does not exist yet — so the projection
-     *         has to be offered as a view or the client is forced to re-derive
-     *         it, which is the drift by a longer road.
-     *
-     *         `expiresAt` is passed rather than derived because the seller is
-     *         still choosing it: the whole point of the quote is to answer
-     *         "what would I be agreeing to if I listed for THIS long".
-     *
-     * @param loanId      The loan the seller is considering listing.
-     * @param saleRateBps The rate they would list at.
-     * @param expiresAt   The expiry the listing would carry.
-     * @return minSellerNet The floor that listing would record — the least the
-     *                      seller receives if it fills at any point before it
-     *                      expires.
-     * @return maxHeld      The ceiling it would record: money already set aside
-     *                      for the lender, which transfers with the position.
-     */
-    function quoteSellerBounds(
-        uint256 loanId,
-        uint256 saleRateBps,
-        uint256 expiresAt
-    ) external view returns (uint256 minSellerNet, uint256 maxHeld) {
-        return LibSaleListing.projectSellerBounds(
-            LibVaipakam.storageSlot(), loanId, saleRateBps, expiresAt
-        );
-    }
-
-    /**
-     * @notice #2672 — the figures a standing sale listing on `loanId`
-     *         recorded for the seller, so the app can state them (and the
-     *         buyer side can see a listing that has stopped being buyable)
-     *         instead of leaving the seller to find out from a refused fill.
-     * @dev    A read of what {LibSaleListing.recordSellerBounds} stored, plus
-     *         the live held balance the ceiling is compared with. Settlement
-     *         (`EarlyWithdrawalFacet.completeLoanSaleInternal`) refuses a fill
-     *         while `recorded` and the time is at or before `expiry` if the
-     *         seller would net less than `minSellerNet` (`SaleBelowSellerFloor`)
-     *         or `heldNow` exceeds `maxHeld` (`SaleAboveHeldCeiling`). The
-     *         ceiling half can be judged from these outputs alone; the floor
-     *         half depends on the fill's own proceeds and accrual, so it is not
-     *         predicted here.
-     * @return recorded     Whether the listing recorded bounds (false: none,
-     *                      or the listing is gone).
-     * @return minSellerNet The least the seller agreed to come out with.
-     * @return maxHeld      The most of the lender's held funds that may move
-     *                      with the position.
-     * @return expiry       The listing expiry the floor was computed for; past
-     *                      it the bounds are not enforced.
-     * @return heldNow      Funds held for the lender on this loan right now.
-     */
-    function getSaleListingBounds(uint256 loanId)
-        external
-        view
-        returns (bool recorded, uint256 minSellerNet, uint256 maxHeld, uint256 expiry, uint256 heldNow)
-    {
-        LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
-        return (
-            st.saleListingBoundsRecorded[loanId],
-            st.saleListingMinSellerNet[loanId],
-            st.saleListingMaxHeldTransfer[loanId],
-            st.saleListingBoundsExpiry[loanId],
-            st.heldForLender[loanId]
-        );
-    }
-
-    function saleAdmission(uint256 loanId)
-        external
-        view
-        returns (uint8 code, uint256 a, uint256 b)
-    {
-        LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = st.loans[loanId];
-
-        // Liquidity is judged RIGHT NOW, the same way origination judges it —
-        // `OracleFacet.checkLiquidity`, the live fail-closed classifier
-        // `LoanFacet` calls before stamping a loan, and the one
-        // `AddCollateralFacet` already consults rather than the snapshot when
-        // admitting new value into a live loan.
-        //
-        // Deliberately NOT `loan.collateralLiquidity` / `loan.principalLiquidity`:
-        // those are written once at origination and never refreshed, so they
-        // describe the market as it was, not as it is. A snapshot saying
-        // `Liquid` on a market that has since degraded would pass every check
-        // below against prices the protocol no longer considers usable, and
-        // never reach the illiquid branch at all (#1655). The same reasoning
-        // `FeeEntitlementFacet` records for the offer-creation snapshot, one
-        // level further out: the snapshot is right for the question it was
-        // taken to answer, and this is a different question.
-        //
-        // The snapshots remain right for what they are FOR: the existing loan's
-        // own lifecycle (`RiskFacet`, `RepayFacet`, the default and liquidation
-        // routing) is governed by the bargain struck at origination, and a
-        // market moving underneath it must not rewrite that. Sale admission is
-        // the one question asked about today rather than about origination.
-        // A leg is measurable only if BOTH sources say so, and that is not a
-        // redundant belt: they answer different questions and each can block on
-        // its own.
-        //
-        //   * The LIVE reading is whether the market can be priced today. Only
-        //     it can catch a snapshot that has gone stale in the dangerous
-        //     direction — still `Liquid` for a market that has degraded.
-        //   * The SNAPSHOT is whether risk math is available for this loan AT
-        //     ALL: `RiskFacet.calculateHealthFactor` gates on
-        //     `loan.collateralLiquidity` / `loan.principalLiquidity` and reverts
-        //     `IlliquidLoanNoRiskMath` when either is not `Liquid`. So a loan
-        //     carrying an illiquid snapshot has no health factor to compare,
-        //     whatever the market has since done.
-        //
-        // Requiring both is therefore the accurate statement of "the protocol
-        // can produce a figure for this position", not an arbitrary ratchet.
-        // Reading only the live value would send a stale-`Illiquid` loan into
-        // the health read and surface an opaque `IlliquidLoanNoRiskMath` where
-        // the honest answer is that the position is unpriceable.
-        LibVaipakam.LiquidityStatus collLiq = _measurable(
-            loan.collateralAsset,
-            loan.collateralLiquidity
-        );
-        LibVaipakam.LiquidityStatus prinLiq = _measurable(
-            loan.principalAsset,
-            loan.principalLiquidity
-        );
-        if (
-            collLiq != LibVaipakam.LiquidityStatus.Liquid ||
-            prinLiq != LibVaipakam.LiquidityStatus.Liquid
-        ) {
-            // An unpriceable leg cannot be measured: health factor is a ratio
-            // of oracle-priced values and REVERTS here rather than returning a
-            // conservative number, so none of the checks below can run. This is
-            // the design doc's Phase-1 exclusion for these positions
-            // (`LenderEarlyWithdrawalUXDesign.md` 717-736), and the refusal is
-            // UNCONDITIONAL — it does not consult the progressive-risk-access
-            // switch.
-            //
-            // An earlier revision of this branch DID consult it, admitting
-            // unpriceable positions when the gate was on so the buyer-consent
-            // gate could decide. That was wrong, and the reason generalises
-            // (Codex #1635 r8): **the consent ladder classifies assets, not
-            // measurements.** `LibRiskAccess._isBlueChip` returns true for WETH
-            // and every configured PAA asset by IDENTITY, with no liquidity
-            // read, so `_assetRequiredLevel` yields `BlueChipOnly` — the level
-            // every vault holds by default. A WETH leg whose ETH/numeraire feed
-            // has gone stale, or whose sequencer check fails, is therefore
-            // unpriceable AND still blue-chip: the gate requires no opt-up and
-            // no pair consent, and would wave the position through to a
-            // default-tier buyer on both sale paths.
-            //
-            // So the ladder cannot stand in for this check. It answers "how
-            // risky is this class of asset", which is a property of the asset;
-            // measurability is a property of the oracle's state right now, and
-            // there is nothing for a buyer to consent to when the protocol
-            // cannot say what the position is worth. Deferring to a gate on the
-            // assumption that it recognises a condition it never reads is the
-            // failure mode, not the switch itself.
-            //
-            // Refusing is not the "silent blocking" the design doc rules out:
-            // that objection is to a guard that reverts without saying why.
-            // This names the condition and the leg.
-            return (
-                6,
-                collLiq != LibVaipakam.LiquidityStatus.Liquid ? 0 : 1,
-                0
-            );
-        }
-
-        uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
-        uint256 floor = LibVaipakam.effectiveLoanMinHealthFactor(
-            loan.minHealthFactorAtInit
-        );
-        if (hf < floor) return (1, hf, floor);
-
-        // Inherited snapshots must be no WEAKER than a fresh loan's today.
-        // Migrating the position changes the lender, not the loan's terms, so
-        // without this the buyer can inherit a looser collateral-withdrawal
-        // floor and a later liquidation point than they could be sold today.
-        // One-directional on purpose: STRICTER than current is fine to sell.
-        // BRANCH-AWARE, mirroring `LoanFacet._snapshotRiskCaps` exactly: the
-        // depth-tiered regime admits at HF_LIQUIDATION_THRESHOLD (1e18) and
-        // only the non-tiered regime uses the tunable knob. Comparing a
-        // tiered-originated loan's 1e18 snapshot against the knob (>=1.2e18,
-        // 1.5e18 by default) would classify EVERY such loan as weaker and
-        // block it from both sale paths, which is a false positive rather
-        // than a tightening.
-        uint256 currentHf = LibVaipakam.admissionHealthFactorFloor();
-        if (floor < currentHf) return (2, floor, currentHf);
-
-        uint8 effTier = _effectiveTierOrZero(loan.collateralAsset);
-
-        uint256 curLiqLtv = LibVaipakam.cfgTierLiquidationLtvBps(effTier);
-        if (uint256(loan.liquidationLtvBpsAtInit) > curLiqLtv) {
-            return (3, uint256(loan.liquidationLtvBpsAtInit), curLiqLtv);
-        }
-
-        uint256 curCap = LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset);
-        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-            if (tierCap < curCap) curCap = tierCap;
-        }
-        uint256 inheritedCap = LibVaipakam.effectiveLoanInitLtvCapBps(
-            loan.initLtvCapBpsAtInit,
-            curCap
-        );
-        if (inheritedCap > curCap) return (4, inheritedCap, curCap);
-
-        // #1918 (#1503 design item 18) — the inherited-terms rule applied to
-        // the loan's ECONOMIC snapshot, not just its risk ones. A running loan
-        // keeps `treasuryFeeBpsAtInit` when the lender migrates, and settlement
-        // keeps reading it, so a buyer whose standing offer assumed today's
-        // schedule can be swapped into an older loan that pays a higher cut to
-        // treasury and therefore yields them less. Nothing above sees it: the
-        // fee is not a risk bound, not a term the buyer authored, and not
-        // visible in a health or LTV reading.
-        //
-        // ONE-DIRECTIONAL, exactly as the risk snapshots above, and that is the
-        // spec's answer rather than a judgement call here. `ProjectDetailsREADME`
-        // draws the line explicitly: an inherited term must be "no weaker than a
-        // loan originated today would carry", and "a position on STRICTER terms
-        // than today's stays sellable, since its buyer inherits a better
-        // position than a fresh loan would give them". A lower inherited fee is
-        // that better position, so refusing it would block a sale that harms
-        // nobody.
-        //
-        // It is deliberately NOT the exact-match rule the direct route applies
-        // to behavioural terms. That rule governs "terms the buyer authored"
-        // and is exact because the listed route could never deliver a mismatch;
-        // this fee is authored by GOVERNANCE, appears in no offer, and is
-        // mirrored by neither route — so it belongs to the inherited family,
-        // whose test is directional.
-        //
-        // The snapshot itself is untouched, which is the other half of the same
-        // spec rule: "Snapshot semantics continue to govern the EXISTING loan's
-        // ongoing operation... Admission of a NEW lender is judged against
-        // current standards instead." A retune still never re-prices an open
-        // loan (§"Fee rates are fixed at loan origination") — it can only make
-        // the position temporarily unsellable while remaining perfectly valid
-        // to hold, repay or liquidate, which the spec names as the accepted
-        // consequence.
-        //
-        // Compared through `effectiveTreasuryFeeBps`, not the raw field, so the
-        // frozen `LEGACY_TREASURY_FEE_BPS` fallback for pre-#957 loans is the
-        // figure tested. Reading the raw `0` those loans carry would compare a
-        // sentinel against a rate and call every one of them cheaper than
-        // today's — right by accident at 1% vs 2%, wrong the moment governance
-        // moves the knob below the legacy value.
-        uint256 inheritedFee = LibVaipakam.effectiveTreasuryFeeBps(loan);
-        uint256 curFee = LibVaipakam.cfgTreasuryFeeBps();
-        if (inheritedFee > curFee) return (7, inheritedFee, curFee);
-
-        // The LIVE LTV, not just the cap snapshots. Equal caps say nothing
-        // about where the position actually sits: accrued interest or
-        // principal appreciation can carry a loan above its init cap while
-        // the health factor stays above the floor. The tiered regime makes
-        // that stark — floor 1e18, Tier-3 init cap 73%, liquidation
-        // threshold 90% — so a position near 90% LTV would otherwise be
-        // assignable even though `LibNewLoanRisk.requireAdmissible` would
-        // reject the same collateralisation as a fresh admission, which is
-        // the standard a sale is meant to meet.
-        //
-        // Bound by `inheritedCap`, which the gate above has already proven
-        // is the stricter of the two, so this satisfies both the loan's own
-        // terms and today's.
-        uint256 liveLtv = RiskFacet(address(this)).calculateLTV(loanId);
-        if (liveLtv > inheritedCap) return (5, liveLtv, inheritedCap);
-
-        return (0, 0, 0);
-    }
-
-    /// @dev Whether one leg is measurable for sale admission: `Liquid` only
-    ///      when the live classification AND the loan's own snapshot both say
-    ///      so. See the note in `saleAdmission` for why both are load-bearing.
-    ///      Collapses to `Illiquid` — the refusing value — rather than
-    ///      reporting which source objected, since the caller's answer is the
-    ///      same either way and the leg index is what a consumer needs.
-    function _measurable(
-        address asset,
-        LibVaipakam.LiquidityStatus snapshot
-    ) private view returns (LibVaipakam.LiquidityStatus) {
-        if (snapshot != LibVaipakam.LiquidityStatus.Liquid) {
-            return LibVaipakam.LiquidityStatus.Illiquid;
-        }
-        return _liveLiquidity(asset);
-    }
-
-    /// @dev The live liquidity classification for one leg, read through the
-    ///      same entry point `LoanFacet` uses at origination so the two agree
-    ///      by construction rather than by inspection.
-    ///
-    ///      Degrades to `Illiquid` — the REFUSING value — when the call fails,
-    ///      rather than bubbling. `checkLiquidity` reverts `InvalidAsset` only
-    ///      for `address(0)`, which a live loan cannot carry (origination calls
-    ///      this on both legs and would itself have reverted), so this is a
-    ///      belt-and-braces path; if it is ever reached, an unanswerable
-    ///      liquidity question must refuse the sale, never pass it. Note the
-    ///      asymmetry with the health and LTV reads below, which are left to
-    ///      revert: those are measurements of a position we have already
-    ///      established is priceable, and a guard that cannot obtain one must
-    ///      stop the sale loudly rather than convert it into a classification.
-    function _liveLiquidity(address asset)
-        private
-        view
-        returns (LibVaipakam.LiquidityStatus)
-    {
-        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
-            abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset)
-        );
-        if (!ok || ret.length < 32) return LibVaipakam.LiquidityStatus.Illiquid;
-        return abi.decode(ret, (LibVaipakam.LiquidityStatus));
-    }
-
-    /// @dev Mirrors `LoanFacet._snapshotRiskCaps`'s tier lookup, fallback and
-    ///      all, so the comparison above is like-for-like with what would be
-    ///      stamped on a loan originated right now.
-    function _effectiveTierOrZero(address asset) private view returns (uint8) {
-        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
-            abi.encodeWithSelector(
-                OracleFacet.getEffectiveLiquidityTier.selector,
-                asset
-            )
-        );
-        return ok && ret.length >= 32 ? abi.decode(ret, (uint8)) : 0;
     }
 
     /**

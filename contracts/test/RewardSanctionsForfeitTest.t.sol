@@ -790,14 +790,14 @@ abstract contract RewardSanctionsTestBase is SetupTest, IVaipakamErrors {
         );
     }
 
-    /// @dev `user`'s own claim, to the wallet, so the venue is never in doubt.
+    /// @dev `user`'s own claim, to the vault (the only venue a claim may name since the payout rule).
     function _claimTo(address user, LibVaipakam.RewardDelivery venue) internal returns (uint256 paid) {
         vm.prank(user);
         (paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(venue);
     }
 
-    function _claimWallet(address user) internal returns (uint256 paid) {
-        return _claimTo(user, LibVaipakam.RewardDelivery.Wallet);
+    function _claimVault(address user) internal returns (uint256 paid) {
+        return _claimTo(user, LibVaipakam.RewardDelivery.Vault);
     }
 
     function _held(address who) internal view returns (uint256 held) {
@@ -1303,8 +1303,8 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice));
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
-        assertGt(_claimWallet(bob), 0, "the unmarked owner still claims during the outage");
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
+        assertGt(_claimVault(bob), 0, "the unmarked owner still claims during the outage");
     }
 
     /// @notice #1499 acceptance — barred during an oracle OUTAGE, on both
@@ -1335,7 +1335,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(bob);
         uint256 wallet0 = vpfi.balanceOf(bob);
         uint256 vault0 = vpfi.balanceOf(vault);
-        uint256 paid = _claimWallet(bob);
+        uint256 paid = _claimVault(bob);
         assertGt(paid, 0, "fixture: something to claim");
         assertEq(vpfi.balanceOf(bob), wallet0, "nothing reached the retired wallet");
         assertEq(vpfi.balanceOf(vault) - vault0, paid, "paid into the account's vault");
@@ -1359,10 +1359,10 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertFalse(_mut().entryExecutableNowRaw(idA), "marked, outage: non-executable");
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice));
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         assertTrue(_mut().entryExecutableNowRaw(idB), "unmarked, same outage: executable");
-        assertGt(_claimWallet(bob), 0, "unmarked, same outage: the claim pays");
+        assertGt(_claimVault(bob), 0, "unmarked, same outage: the claim pays");
         assertTrue(_entry(idB).processed, "and settles the entry");
         assertFalse(_entry(idA).processed, "the marked owner's entry is untouched");
     }
@@ -1517,13 +1517,13 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         vm.warp(_dayStart(L + 1));
         uint256 v = _value(F);
         assertGt(v, 0, "fixture LIVE: day F carries reward");
-        assertEq(_claimWallet(alice), v, "alice's day F pays in full: an unconfirmed flag forfeits nothing");
+        assertEq(_claimVault(alice), v, "alice's day F pays in full: an unconfirmed flag forfeits nothing");
         assertTrue(_entry(idA).processed);
         uint256 bucket0 = _bucket();
-        assertEq(_claimWallet(bob), 0, "bob's day F pays nothing");
+        assertEq(_claimVault(bob), 0, "bob's day F pays nothing");
         assertTrue(_entry(idB).processed, "it is settled all the same");
         assertEq(_bucket() - bucket0, v, "into the bucket, as forfeited reward");
-        assertEq(vpfi.balanceOf(bob), 0);
+        assertEq(_vaultFree(bob, address(vpfi)), 0);
     }
 
     /// @notice W2 - a chain that LAPSES (no observation for longer than G) is
@@ -1608,7 +1608,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         uint256 share = _minRpn(L + 3) - _minRpn(F - 1);
         assertGt(slice, share, "fixture LIVE: the slice reaches past the windows");
         uint256 bucket0 = _bucket();
-        assertEq(_claimWallet(alice), slice - share, "the slice less the windows' days, day L once");
+        assertEq(_claimVault(alice), slice - share, "the slice less the windows' days, day L once");
         assertEq(
             slice - share,
             (_minRpn(5) - _minRpn(4)) + (_minRpn(14) - _minRpn(12)),
@@ -1649,7 +1649,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(_forfeitedCredit(logs), vF, "day F credited as forfeited reward");
         assertEq(_bucket() - bucket0, vF, "into the recycle bucket");
         assertEq(_paidOut() - paid0, vPre + vF, "both leave the pool");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing reaches the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing reaches the wallet");
         assertEq(vpfi.balanceOf(address(diamond)), bal0, "and nothing leaves the Diamond");
         assertTrue(_entry(ids[0]).processed && _entry(ids[1]).processed, "days F - 1 and F settled");
         assertFalse(_entry(ids[2]).processed || _entry(ids[3]).processed, "days L and L + 1 still owed");
@@ -1672,7 +1672,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
 
         // Held-only: nothing finalized past the settlement, so no window walk.
         vm.recordLogs();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(paid, vPre, "only the held balance");
         _assertReleasedLog(logs, alice, vPre);
@@ -1686,7 +1686,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _finalize(L, L + 1);
         vm.warp(_dayStart(L + 2));
         vm.recordLogs();
-        _claimWallet(alice);
+        _claimVault(alice);
         logs = vm.getRecordedLogs();
         (from, to, ) = abi.decode(_nth(logs, T_CLAIMED, 0).data, (uint256, uint256, uint256));
         assertEq(from, L, "walked: from day L");
@@ -1724,7 +1724,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _finalize(L, L + 2);
         _mut().closeRewardEntryRaw(id, uint32(L + 3));
         uint256 bucket0 = _bucket();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         // Of this entry: days F..L forfeit, L + 1 and L + 2 pay; the scene's own
         // day F - 1 and L + 1 entries pay, its F and L entries forfeit.
         uint256 forfeitMine;
@@ -1735,7 +1735,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         }
         assertEq(paid, payMine + _value(F - 1) + _value(L + 1), "the earner is paid the unflagged days");
         assertEq(_bucket() - bucket0, forfeitMine + _value(F) + _value(L), "the flagged days forfeit");
-        assertEq(vpfi.balanceOf(bob), 0, "nothing reached the holder");
+        assertEq(_vaultFree(bob, address(vpfi)), 0, "nothing reached the holder");
     }
 
     /// @notice R7 - an OPEN entry consolidated to a new holder while the earner
@@ -1776,7 +1776,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
 
         _finalize(L, L + 2);
         uint256 bucket0 = _bucket();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         uint256 forfeitMine;
         uint256 payMine;
         for (uint256 d = F; d <= L + 1; ++d) {
@@ -1789,7 +1789,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _finalize(L + 3, L + 4);
         vm.warp(_dayStart(L + 5));
         _mut().closeRewardEntryRaw(bobIds[0], uint32(L + 5));
-        uint256 paidBob = _claimWallet(bob);
+        uint256 paidBob = _claimVault(bob);
         assertEq(paidBob, _value(L + 2) + _value(L + 3) + _value(L + 4), "the holder is paid only the days from the split");
     }
 
@@ -1814,7 +1814,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _finalize(L, L + 2);
         _mut().closeRewardEntryRaw(id, uint32(L + 3));
         uint256 bucket0 = _bucket();
-        uint256 paid = _claimWallet(bob);
+        uint256 paid = _claimVault(bob);
         uint256 all;
         for (uint256 d = F; d <= L + 2; ++d) all += _value(d);
         assertEq(paid, all, "every day of a clean earner's entry pays, days F..L included");
@@ -1848,10 +1848,10 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         uint256 vPost = _value(L + 1);
         uint256 bucket0 = _bucket();
         vm.recordLogs();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(paid, vPre + vPost, "the held balance and day L + 1");
-        assertEq(vpfi.balanceOf(alice), vPre + vPost, "delivered to the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), vPre + vPost, "delivered to the wallet");
         _assertReleasedLog(logs, alice, vPre);
         _assertClaimedLog(logs, alice, vPre + vPost);
         assertEq(_forfeitedCredit(logs), vL, "day L forfeited although it settles after the revocation");
@@ -1887,7 +1887,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(ev0, address(oracle), "fixture LIVE: the chain's evidence stands before the claim");
         assertTrue(marker0, "fixture LIVE: and so does the marker");
 
-        assertGt(_claimWallet(alice), 0, "the delisted wallet claims");
+        assertGt(_claimVault(alice), 0, "the delisted wallet claims");
         (, , , , , address ev1, bool marker1) = _status(alice);
         assertEq(ev1, address(0), "the claim's Clean read deleted the chain");
         assertFalse(marker1, "and cleared the marker");
@@ -1941,10 +1941,10 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(0), action: IDiamondCut.FacetCutAction.Remove, functionSelectors: sel});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
-        assertGt(_claimWallet(bob), 0, "nothing held: the claim never calls the release entry, and pays");
+        assertGt(_claimVault(bob), 0, "nothing held: the claim never calls the release entry, and pays");
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("FunctionDoesNotExist()"));
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
     }
 
     function test_sanc_R1b_theHeldBalanceIsClaimableAlone_whenTheClaimsOwnLegsRevert() public {
@@ -1953,7 +1953,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(heldApart, vPre, "fixture: day F - 1 set apart");
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice));
-        RewardClaimFacet(address(diamond)).claimHeldInteractionRewards(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimHeldInteractionRewards(LibVaipakam.RewardDelivery.Vault);
 
         vm.warp(_dayStart(L + 1) + 1);
         oracle.setFlagged(alice, false);
@@ -1962,14 +1962,14 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP);
         vm.prank(alice);
         vm.expectRevert(InteractionPoolExhausted.selector);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
         assertEq(_held(alice), vPre, "fixture LIVE: the claim's revert took its release with it");
 
         vm.prank(alice);
         uint256 paid =
-            RewardClaimFacet(address(diamond)).claimHeldInteractionRewards(LibVaipakam.RewardDelivery.Wallet);
+            RewardClaimFacet(address(diamond)).claimHeldInteractionRewards(LibVaipakam.RewardDelivery.Vault);
         assertEq(paid, vPre, "the held balance, alone");
-        assertEq(vpfi.balanceOf(alice), vPre, "to the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), vPre, "to the wallet");
         assertEq(_held(alice), 0, "released");
         assertEq(_heldTotal(), 0, "the total with it");
         assertFalse(_entry(ids[3]).processed, "nothing else was settled");
@@ -2021,7 +2021,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _assertEvidence(alice, DELIVER, 0, 0, address(0), false);
         assertFalse(_profile().isSanctionsConfirmedFlagged(alice), "the marker healed");
         assertFalse(_entry(id).processed, "nothing settled");
-        assertGt(_claimWallet(alice), 0, "her own claim pays the pre-flag entry");
+        assertGt(_claimVault(alice), 0, "her own claim pays the pre-flag entry");
     }
 
     /// @notice L5 - the LEGACY PER-DAY WINDOW (the pre-entry counters). A
@@ -2070,7 +2070,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         (uint256 previewed, , ) = _lens().previewInteractionRewards(alice);
         assertEq(previewed, pPost, "the static preview skips day L");
         uint256 bucket1 = _bucket();
-        assertEq(_claimWallet(alice), pPre + pPost, "the held balance and day L + 1");
+        assertEq(_claimVault(alice), pPre + pPost, "the held balance and day L + 1");
         (uint256 cL, , , ) = _lens().getInteractionDayEntry(L, alice);
         assertEq(cL, 0, "day L's counter is cleared, unpaid");
         assertEq(_bucket() - bucket1, pL, "day L forfeits to the bucket on the owner's own claim after revocation");
@@ -2109,12 +2109,12 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         uint256 room1 = _mut().freshBackingRoomRaw();
         uint256 paid0 = _paidOut();
         vm.recordLogs();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(paid, v, "a claim that only releases pays the held balance");
         _assertClaimedLog(logs, alice, v);
         _assertReleasedLog(logs, alice, v);
-        assertEq(vpfi.balanceOf(alice), v);
+        assertEq(_vaultFree(alice, address(vpfi)), v);
         assertEq(_heldTotal(), 0);
         assertEq(_paidOut(), paid0, "not charged to the pool a second time");
         assertEq(_mut().freshBackingRoomRaw(), room1, "tokens and earmark leave together: the room is unchanged");
@@ -2903,7 +2903,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         assertEq(_bucket() - bucket0, NEED, "into the bucket");
         assertEq(_held(alice), NEED, "lens: the held balance");
         assertEq(_heldTotal(), NEED, "lens: the ledger total");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing reaches the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing reaches the wallet");
         assertTrue(_entry(w.idPre).processed && _entry(w.idF).processed, "days SF - 1 and SF settled");
         assertFalse(_entry(w.idL).processed || _entry(w.idPost).processed, "days SL and SL + 1 still owed");
         _assertRowsMovedOnly(r0, NEED);
@@ -2954,10 +2954,10 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         _armedDay(SL + 1, NEED);
         uint256 bucket0 = _bucket();
         vm.recordLogs();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(paid, 2 * NEED, "the held balance and day SL + 1");
-        assertEq(vpfi.balanceOf(alice), 2 * NEED, "delivered to the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), 2 * NEED, "delivered to the wallet");
         _assertReleasedLog(logs, alice, NEED);
         _assertClaimedLog(logs, alice, 2 * NEED);
         assertEq(_sidePaid(LOAN_L), 0, "day SL forfeited after the revocation: no user share");
@@ -2988,12 +2988,12 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         uint256 paid0 = _paidOut();
         uint256 ledger0 = _mut().getArmedFreshPaidRaw();
         vm.recordLogs();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(paid, NEED, "the release alone");
         _assertClaimedLog(logs, alice, NEED);
         _assertReleasedLog(logs, alice, NEED);
-        assertEq(vpfi.balanceOf(alice), NEED);
+        assertEq(_vaultFree(alice, address(vpfi)), NEED);
         RowSnap memory r1 = _rowSnap();
         assertEq(r0.held - r1.held, NEED, "debited from the SanctionsHeld row");
         assertEq(r1.held, 0);
@@ -3037,7 +3037,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         _liveFresh(slice + 1e18); // the slice prices by the SCHEDULE: the live sources must bear it whole
         uint256 bucket0 = _bucket();
         vm.recordLogs();
-        uint256 paid = _claimWallet(alice);
+        uint256 paid = _claimVault(alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(paid, slice - share, "the slice less its window share");
         assertEq(slice - share, _minRpn(SF - 1) - _minRpn(SF - 2), "which is exactly day SF - 1's step");
@@ -3081,7 +3081,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         assertEq(_held(alice), share, "into the held balance");
         assertEq(_heldRow() - row0, share, "and the SanctionsHeld row");
         assertEq(_bucket(), bucket0, "nothing forfeited");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing reaches the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing reaches the wallet");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
         assertTrue(_entry(id).processed, "settled by the record");
     }
@@ -3104,9 +3104,9 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(_count(logs, T_CLAIMANT_FORFEITED), 0, "a delisted owner's pre-flag day is not forfeited");
-        _assertDelivered(logs, _key(), share, uint8(LibVaipakam.RewardDelivery.Wallet));
+        _assertDelivered(logs, _key(), share, uint8(LibVaipakam.RewardDelivery.Vault));
         _assertWindowLog(logs, alice, SF, SL);
-        assertEq(vpfi.balanceOf(alice), share, "in full, to the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), share, "in full, to the wallet");
         assertEq(_held(alice), 0, "nothing held");
         _assertEvidence(alice, DELIVER, 0, 0, address(0), false);
     }
@@ -3163,7 +3163,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         assertEq(r.resolveCursor, r.batchCount, "every batch resolved: only the payout waits");
         uint256 t0 = _now();
         _assertEvidence(alice, HOLD, t0, t0, address(oracle), true);
-        assertEq(vpfi.balanceOf(alice), 0);
+        assertEq(_vaultFree(alice, address(vpfi)), 0);
         assertEq(_held(alice), 0, "nothing set apart on a hold");
 
         uint256 t = t0;
@@ -3206,7 +3206,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(_count(logs, T_CLAIMANT_FORFEITED), 0, "nothing forfeited");
         assertEq(_count(logs, T_WINDOW), 0, "an unconfirmed chain records no window");
-        _assertDelivered(logs, _key(), share, uint8(LibVaipakam.RewardDelivery.Wallet));
+        _assertDelivered(logs, _key(), share, uint8(LibVaipakam.RewardDelivery.Vault));
         _assertEvidence(alice, DELIVER, 0, 0, address(0), false);
         _assertNoWindow(alice);
         assertEq(_held(alice), 0);
@@ -3281,7 +3281,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         assertEq(fr, r.reservedLiveUserRecycled + r.epochUserRecycled, "forfeited: its recycled");
         assertEq(_count(logs, T_DELIVERED), 0, "nothing delivered");
         assertEq(_bucket() - bucket0, userFresh, "absorbed into the bucket");
-        assertEq(vpfi.balanceOf(alice), 0);
+        assertEq(_vaultFree(alice, address(vpfi)), 0);
         assertEq(_held(alice), 0, "nothing held");
         assertEq(_recAt(key).phase, uint8(LibVaipakam.StagingPhase.None), "closed");
         assertTrue(_entry(id).processed);
@@ -3322,9 +3322,9 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         _assertDelivered(logs, _key(), share, VENUE_HELD);
         assertEq(_count(logs, T_CLAIMANT_FORFEITED), 0);
         assertEq(_held(alice), share, "set apart although the owner reads Deliver");
-        assertEq(vpfi.balanceOf(alice), 0, "not delivered by the record");
-        assertEq(_claimWallet(alice), share, "her next claim releases it");
-        assertEq(vpfi.balanceOf(alice), share);
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "not delivered by the record");
+        assertEq(_claimVault(alice), share, "her next claim releases it");
+        assertEq(_vaultFree(alice, address(vpfi)), share);
         assertEq(_held(alice), 0);
     }
 
@@ -3366,7 +3366,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         assertEq(venue, VENUE_HELD, "at the held-apart venue");
         assertEq(_held(alice), uint256(DAYS) * NEED, "the whole domain held for her");
         assertEq(_bucket(), bucket0, "nothing forfeited");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing delivered");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing delivered");
         assertEq(_domPhase(), uint8(LibVaipakam.DomainPhase.None), "cleared");
     }
 
@@ -3375,7 +3375,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
     /// @notice V1 - the held-apart venue is the settlement's alone: a claim to
     ///         it and a simulation of one both revert
     ///         `RewardDeliveryNotSelectable(3)` before anything runs. Straddle:
-    ///         the same entries, the wallet named, simulate and pay.
+    ///         the same entries, the vault named, simulate and pay.
     /// @dev   Mutation: empty `_requireSelectableVenue` -> the claim to
     ///        `SanctionsHeld` runs the settlement body for a CLEAN owner,
     ///        setting her reward apart instead of reverting.
@@ -3389,14 +3389,14 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         vm.expectRevert(abi.encodeWithSelector(RewardDeliveryNotSelectable.selector, VENUE_HELD));
         RewardClaimFacet(address(diamond)).simulateClaimInteractionRewards(alice, LibVaipakam.RewardDelivery.SanctionsHeld);
         assertEq(_held(alice), 0, "nothing set apart");
-        (bool completed, uint256 amount, , ) = previewByExecutionStatus(alice, LibVaipakam.RewardDelivery.Wallet);
+        (bool completed, uint256 amount, , ) = previewByExecutionStatus(alice, LibVaipakam.RewardDelivery.Vault);
         assertTrue(completed, "a selectable venue simulates");
         assertEq(amount, NEED);
-        assertEq(_claimWallet(alice), NEED, "and pays");
+        assertEq(_claimVault(alice), NEED, "and pays");
     }
 
     /// @notice V2 - a staging record's claimant cannot bind the held-apart
-    ///         venue; the same claimant binds the wallet on the same record.
+    ///         venue; the same claimant binds the vault on the same record.
     function test_sanc_V2_theHeldApartVenue_isRefusedByTheRecordVenueSetter() public {
         _stagedScene();
         vm.expectRevert(abi.encodeWithSelector(RewardDeliveryNotSelectable.selector, VENUE_HELD));
@@ -3404,13 +3404,13 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.SanctionsHeld);
         assertFalse(_rec().venueSet, "nothing bound");
         vm.prank(alice);
-        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
+        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Vault);
         assertTrue(_rec().venueSet, "a selectable venue binds");
-        assertEq(_rec().venue, uint8(LibVaipakam.RewardDelivery.Wallet));
+        assertEq(_rec().venue, uint8(LibVaipakam.RewardDelivery.Vault));
     }
 
     /// @notice V3 - a staging domain's claimant cannot bind the held-apart
-    ///         venue; the same claimant binds the wallet on the same domain.
+    ///         venue; the same claimant binds the vault on the same domain.
     function test_sanc_V3_theHeldApartVenue_isRefusedByTheDomainVenueSetter() public {
         _longScene(DAYS);
         _liveFresh(20e18);
@@ -3419,8 +3419,12 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         vm.expectRevert(abi.encodeWithSelector(RewardDeliveryNotSelectable.selector, VENUE_HELD));
         vm.prank(alice);
         _domain().setDomainVenue(_dk(), LibVaipakam.RewardDelivery.SanctionsHeld);
+        // The wallet venue is retired by the payout rule (2026-11-19).
+        vm.expectRevert(abi.encodeWithSelector(RewardDeliveryNotSelectable.selector, uint8(LibVaipakam.RewardDelivery.Wallet)));
         vm.prank(alice);
         _domain().setDomainVenue(_dk(), LibVaipakam.RewardDelivery.Wallet);
+        vm.prank(alice);
+        _domain().setDomainVenue(_dk(), LibVaipakam.RewardDelivery.Vault);
     }
 
     // ----------------------------- the headroom floor -----------------------------
@@ -3541,8 +3545,8 @@ contract RewardSanctionsHeldActivationTest is RewardSanctionsMirrorBase {
         vm.warp(t0 + 4 days + 1);
         oracle.setFlagged(alice, false);
         assertEq(_observe(alice), DELIVER, "revoked");
-        assertEq(_claimWallet(alice), NEED, "the claim releases the held balance");
-        assertEq(vpfi.balanceOf(alice), NEED);
+        assertEq(_claimVault(alice), NEED, "the claim releases the held balance");
+        assertEq(_vaultFree(alice, address(vpfi)), NEED);
         assertEq(_heldRow(), 0, "out of the SanctionsHeld row");
         assertEq(_heldTotal(), 0);
     }

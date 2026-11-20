@@ -47,10 +47,13 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
@@ -757,7 +760,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](10);
         selectors[0] = OfferCancelFacet.cancelOffer.selector;
         selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
         selectors[2] = OfferCancelFacet.getOffer.selector;
@@ -768,6 +771,10 @@ contract HelperTest {
         selectors[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
         // #3336 — the dead-vehicle read the keeper's teardown sweep uses.
         selectors[6] = OfferCancelFacet.isOfferRouteDead.selector;
+        // #3744 — the offer escrow refund host, the holder's collection, its read.
+        selectors[7] = OfferCancelFacet.refundOfferEscrow.selector;
+        selectors[8] = OfferCancelFacet.collectOfferRefund.selector;
+        selectors[9] = OfferCancelFacet.getOfferRefundHeld.selector;
         return selectors;
     }
 
@@ -1490,26 +1497,46 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](8);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
         selectors[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
         selectors[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3
         selectors[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3
-        selectors[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b
-        // #1503 PR-E — sale admission classification (live health floor +
-        // inherited-risk-terms compatibility), read by LibSaleSolvency.
-        selectors[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 4 — listing bounds quote (see DeployDiamond).
-        selectors[8] = RiskPreviewFacet.quoteSellerBounds.selector;
-        // #2672 — the figures a standing listing recorded.
-        selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        selectors[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        selectors[6] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call
         // (moved here from OfferPreviewFacet in #3328).
-        selectors[11] = RiskPreviewFacet.initRiskBounds.selector;
+        selectors[7] = RiskPreviewFacet.initRiskBounds.selector;
+        // #3843 — previewIntent moved to IntentPreviewFacet.
+    }
+
+    /// @dev #3843 — the standing-intent fill preview, split off
+    ///      `RiskPreviewFacet`. `view`.
+    function getIntentPreviewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = IntentPreviewFacet.previewIntent.selector; // #625 WI-2b
+    }
+
+    /// @dev #3843 — the sale reads, split off `RiskPreviewFacet`. All `view`.
+    function getSaleAdmissionFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        // #1503 PR-E — sale admission classification (live health floor +
+        // inherited-risk-terms compatibility), read by LibSaleSolvency.
+        selectors[0] = SaleAdmissionFacet.saleAdmission.selector;
+        // #1503 item 4 — listing bounds quote (see DeployDiamond).
+        selectors[1] = SaleAdmissionFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        selectors[2] = SaleAdmissionFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -1558,7 +1585,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](18);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -1575,17 +1602,26 @@ contract HelperTest {
         selectors[13] = BackstopFacet.setBackstopFillEnabled.selector;
         selectors[14] = BackstopFacet.setMinBackstopDelay.selector;
         selectors[15] = BackstopFacet.getBackstopVault.selector;
-        // #399 backstop v0 Role B — absorb governance.
-        selectors[16] = BackstopFacet.setBackstopAbsorbEnabled.selector;
-        selectors[17] = BackstopFacet.setBackstopAbsorbCap.selector;
-        selectors[18] = BackstopFacet.seedBackstopAbsorb.selector;
-        selectors[19] = BackstopFacet.sweepBackstopAbsorbCollateral.selector;
-        selectors[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
-        selectors[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
-        selectors[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
         // #638 — backstop-only min-secondary-oracle-coverage knob.
-        selectors[23] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
-        selectors[24] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+        selectors[16] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
+        selectors[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+    }
+
+    /// @dev #3843 — #399 backstop v0 Role B (absorb) governance, split off
+    ///      `BackstopFacet`.
+    function getBackstopAbsorbFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = BackstopAbsorbFacet.setBackstopAbsorbEnabled.selector;
+        selectors[1] = BackstopAbsorbFacet.setBackstopAbsorbCap.selector;
+        selectors[2] = BackstopAbsorbFacet.seedBackstopAbsorb.selector;
+        selectors[3] = BackstopAbsorbFacet.sweepBackstopAbsorbCollateral.selector;
+        selectors[4] = BackstopAbsorbFacet.releaseBackstopAbsorbExposure.selector;
+        selectors[5] = BackstopAbsorbFacet.getBackstopAbsorbInfo.selector;
+        selectors[6] = BackstopAbsorbFacet.withdrawBackstopAbsorbToTreasury.selector;
     }
 
     /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).
@@ -1749,11 +1785,12 @@ contract HelperTest {
 
     /// @dev Selectors for `OfferBookFacet` (#3242).
     function getOfferBookFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferBookFacet.openOfferOnBook.selector;
         selectors[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
         selectors[2] = OfferBookFacet.getOfferBookBounds.selector;
         selectors[3] = OfferBookFacet.getMinOfferAmount.selector;
+        selectors[4] = OfferBookFacet.requireOfferHolder.selector;
     }
 
     function getClaimFacetSelectors()
@@ -2769,7 +2806,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](39);
+        selectors = new bytes4[](38);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rewardCustodyHolder.selector;
@@ -2798,7 +2835,7 @@ contract HelperTest {
         selectors[23] = RewardCustodyFacet.custodyMove.selector;
         selectors[25] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         selectors[26] = RewardCustodyFacet.custodyReleaseFromRow.selector;
-        selectors[27] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        selectors[27] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         selectors[28] = RewardCustodyFacet.custodyDrawForTransport.selector;
         // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
         selectors[29] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
@@ -2813,7 +2850,6 @@ contract HelperTest {
         // Diamond-internal entry points (the quarantine one took slot 25).
         selectors[35] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
         selectors[36] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        selectors[38] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
         selectors[37] = RewardCustodyFacet.custodySetApartReward.selector;
         selectors[24] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;

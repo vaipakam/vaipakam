@@ -10,6 +10,8 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -19,6 +21,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -255,6 +258,56 @@ contract CollectionOfferTest is SetupTest {
         assertEq(uint8(_take(id, 5, _noProof())), uint8(CollectionOfferFacet.TakeFailure.Closed));
     }
 
+    /// #3744 — the loans a collection offer opens belong to whoever holds
+    /// the collection offer's token: each slice's token, and so each loan's
+    /// lender side, goes to that holder; the creator's vault still funds it.
+    function test_transferredParent_holderOwnsEachLoansLenderSide() public {
+        uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 2);
+        address holder = makeAddr("collectionOfferHolder");
+        LibTestPositionNFT.move(address(diamond), OfferCancelFacet(address(diamond)).getOffer(id).positionTokenId, holder);
+        uint256 loanA = _fill(id, 4, _noProof());
+        uint256 loanB = _fill(id, 9, _noProof());
+        LibVaipakam.Loan memory a = LoanFacet(address(diamond)).getLoanDetails(loanA);
+        LibVaipakam.Loan memory b = LoanFacet(address(diamond)).getLoanDetails(loanB);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(a.lenderTokenId), holder, "first loan");
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(b.lenderTokenId), holder, "second loan");
+        assertEq(a.lender, lender, "the creator's vault funded it");
+    }
+
+    /// #3744 (Codex round 1 on #3805) — a Full-tariff consent the parent's
+    /// HOLDER gave carries to each slice, recorded with that holder.
+    function test_transferredParent_holdersFullConsentCarriesToTheSlice() public {
+        uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 2);
+        address holder = makeAddr("collectionOfferHolder");
+        LibTestPositionNFT.move(address(diamond), OfferCancelFacet(address(diamond)).getOffer(id).positionTokenId, holder);
+        vm.prank(holder);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(id, true, type(uint128).max, true);
+        vm.recordLogs();
+        uint256 loanA = _fill(id, 4, _noProof());
+        uint256 slice = LoanFacet(address(diamond)).getLoanDetails(loanA).offerId;
+        assertTrue(OfferCancelFacet(address(diamond)).getOffer(slice).creatorFull, "the slice carries the consent");
+        bytes32 topic = keccak256("OfferFullTariffConsentBy(uint256,address)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == topic && logs[i].emitter == address(diamond)) {
+                (uint256 o, address by) = _consentLog(logs[i]);
+                if (o == slice) {
+                    assertEq(by, holder, "recorded with the holder");
+                    found = true;
+                }
+            }
+        }
+        assertTrue(found, "the slice's consent was recorded");
+    }
+
+    function _consentLog(Vm.Log memory l) internal pure returns (uint256 o, address by) {
+        o = l.topics.length > 1 ? uint256(l.topics[1]) : abi.decode(l.data, (uint256));
+        if (l.topics.length > 2) by = address(uint160(uint256(l.topics[2])));
+        else if (l.topics.length > 1) by = abi.decode(l.data, (address));
+        else (, by) = abi.decode(l.data, (uint256, address));
+    }
+
     function test_theNextFillAfterTheLastIsRefused() public {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 1);
         _fill(id, 4, _noProof());
@@ -302,10 +355,10 @@ contract CollectionOfferTest is SetupTest {
     function test_reduceReturnsExactlyTheReleasedLoans() public {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 4);
         _fill(id, 4, _noProof());
-        uint256 before = IERC20(mockERC20).balanceOf(lender);
+        uint256 before = _vaultFree(lender, mockERC20);
         vm.prank(lender);
         CollectionOfferFacet(address(diamond)).reduceCollectionLoans(id, 1);
-        assertEq(IERC20(mockERC20).balanceOf(lender) - before, 2 * PER, "two loans released");
+        assertEq(_vaultFree(lender, mockERC20) - before, 2 * PER, "two loans released");
         (, , uint16 loans, uint16 filled) = CollectionOfferFacet(address(diamond)).getCollectionOffer(id);
         assertEq(loans, 2);
         assertEq(filled, 1);
@@ -339,10 +392,10 @@ contract CollectionOfferTest is SetupTest {
     function test_cancelReturnsTheUnusedLoans() public {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 3);
         _fill(id, 4, _noProof());
-        uint256 before = IERC20(mockERC20).balanceOf(lender);
+        uint256 before = _vaultFree(lender, mockERC20);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
-        assertEq(IERC20(mockERC20).balanceOf(lender) - before, 2 * PER, "two unused loans back");
+        assertEq(_vaultFree(lender, mockERC20) - before, 2 * PER, "two unused loans back");
     }
 
     // ─── The parent fills only through its entry ──────────────────────────

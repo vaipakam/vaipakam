@@ -1195,10 +1195,13 @@ contract LoanFacetTest is Test {
         // (linked-loan Active + self-buy + compliance) exercised here.
 
         // Now initiate loan directly via prank as diamond (since this goes through
-        // cross-facet). Buy as a THIRD party (`lender`), not the linked loan's own
-        // borrower — the round-6 self-buy guard rejects `acceptor == borrower`.
+        // cross-facet). Buy as a THIRD party, neither the linked loan's own
+        // borrower (the round-6 self-buy guard rejects `acceptor == borrower`)
+        // nor the sale offer's creator (#3744: the offer's holder and the
+        // acceptor may not be one party).
         vm.prank(address(diamond));
-        uint256 saleLoanId = LoanFacet(address(diamond)).initiateLoan(saleOfferId, lender, false);
+        uint256 saleLoanId =
+            LoanFacet(address(diamond)).initiateLoan(saleOfferId, makeAddr("thirdPartySaleBuyer"), false);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(saleLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));

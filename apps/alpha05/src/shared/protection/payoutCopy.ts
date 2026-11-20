@@ -140,3 +140,25 @@ export function payoutLegs(
   legs[legs.length - 1] = { status: total === 0n ? 'not-done' : 'unknown', label: last.label, reason };
   return legs;
 }
+
+/** The finish-card leg for an amount the payout rule frees in a vault (an
+ *  offer's escrow returned to its holder's vault, Auto-lend capital released
+ *  in its own vault), measured from the protocol's own `VaultOutflow` record
+ *  (`freedInVault`): done when it records `expected`, not done when it
+ *  records nothing, unknown when it records another amount. `label` names
+ *  the line for the measured destination. */
+export function freedLeg(
+  p: {
+    freed: { amount: bigint; ownVault: boolean } | null;
+    expected: bigint;
+    what: (amount: bigint) => string;
+    exact: (amount: bigint) => string;
+    label: (what: string, ownVault: boolean) => string;
+  },
+  copy: Copy,
+): LegOutcome {
+  const got = p.freed?.amount ?? 0n;
+  const label = p.label(p.what(p.freed === null ? p.expected : got), p.freed?.ownVault ?? true);
+  if (got === p.expected && p.freed !== null) return { status: 'done', label };
+  return { status: got === 0n ? 'not-done' : 'unknown', label, reason: copy.format('payout.freedOther', { amount: p.exact(got), expected: p.exact(p.expected) }) };
+}

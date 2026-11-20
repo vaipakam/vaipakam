@@ -228,7 +228,8 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   expect(await allowance()).toBe(0n);
   await add.getByRole('button', { name: 'Close' }).click();
 
-  // Take back: more than waits is refused in the review; less goes back to the wallet.
+  // Take back: more than waits is refused in the review; less is freed in
+  // the vault as the lender's own funds, and the wallet is untouched.
   await expect(card).toContainText('Waiting to be lent: 0.7', { timeout: 60_000 });
   await card.getByTestId('autolend-takeBack').click();
   await card.getByTestId('autolend-manage-amount').fill('0.8');
@@ -240,15 +241,15 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   await card.getByTestId('autolend-manage-amount').fill('0.3');
   await card.getByTestId('autolend-manage-review').click();
   await expect(back.locator('.receipt')).toContainText('Take back money not lent', { timeout: 60_000 });
-  await expect(back.locator('.receipt')).toContainText('Your wallet, at once');
+  await expect(back.locator('.receipt')).toContainText('Your vault, as your own funds, free to withdraw');
   const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lender] });
   sent = flags.sentTransactions;
   await back.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(back.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
-  await expect(back.locator('[data-phase="measured"]')).toContainText('received in your wallet');
+  await expect(back.locator('[data-phase="measured"]')).toContainText('back in your vault, free to withdraw');
   expect(flags.sentTransactions).toBe(sent + 1);
   expect(await capital()).toBe(parseEther('0.4'));
-  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lender] })).toBe(before + parseEther('0.3'));
+  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lender] })).toBe(before);
   await back.getByRole('button', { name: 'Close' }).click();
 
   // Stop, taking back the rest in the same transaction.

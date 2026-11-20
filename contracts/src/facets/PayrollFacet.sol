@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
-import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -73,7 +73,9 @@ contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessC
         uint256 newRatePerSecond
     );
 
-    /// @notice Emitted when the beneficiary withdraws accrued salary.
+    /// @notice Emitted when the beneficiary collects accrued salary into its
+    ///         own vault (`amount` is what left the stream; the vault's
+    ///         `PaymentCreditedToVault` states what arrived).
     /// @custom:event-category state-change/treasury-mutation
     event SalaryWithdrawn(
         uint256 indexed streamId,
@@ -218,11 +220,12 @@ contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessC
     // ─── Beneficiary: withdraw ───────────────────────────────────────────
 
     /**
-     * @notice Withdraw accrued, funded salary.
+     * @notice Collect accrued, funded salary into the beneficiary's own
+     *         vault, as free balance (payout rule, 2026-11-19).
      * @dev Beneficiary-only. `withdrawable = min(accrued, funded) -
      *      withdrawn` — clamped to `funded`, so a stream the treasury
      *      has stopped topping up simply dries up. CEI + nonReentrant;
-     *      Tier-1 sanctions-gated (value flows out to `msg.sender`).
+     *      Tier-1 sanctions-gated (value flows to `msg.sender`'s vault).
      * @param streamId The stream to withdraw from.
      */
     function withdrawSalary(uint256 streamId)
@@ -240,10 +243,12 @@ contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessC
 
         // CEI — record the withdrawal before the transfer.
         st.withdrawn += amount;
-        // #2440 — a payout of a recorded entitlement books nobody by what
-        // arrives (LibDelivery outcome 3); refused only if it cost the Diamond
-        // more than it sent.
-        LibDelivery.pushOut(st.asset, st.beneficiary, amount);
+        // Payout rule (owner decision 2026-11-19): into the beneficiary's own
+        // vault as free balance, measured — the vault's tracked and free
+        // ledgers rise by what arrived, while the stream's funded balance in
+        // the Diamond falls by what left. The beneficiary's ordinary Withdraw
+        // takes it to a wallet.
+        LibFacet.creditOwnVault(st.asset, st.beneficiary, amount);
         emit SalaryWithdrawn(streamId, st.beneficiary, amount);
     }
 

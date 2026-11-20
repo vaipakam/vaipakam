@@ -10,7 +10,7 @@ import {LibOfferMatch} from "../../src/libraries/LibOfferMatch.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferMatchIntentFacet} from "../../src/facets/OfferMatchIntentFacet.sol";
 import {LenderIntentFacet} from "../../src/facets/LenderIntentFacet.sol";
-import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../../src/facets/IntentPreviewFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -272,7 +272,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         // has let both stand the minimum age.
         uint256 capitalBefore = _intentCapital();
         uint256 liveBefore = _livePrincipal();
-        LibOfferMatch.IntentPreviewResult memory preview = RiskPreviewFacet(diamond).previewIntent(
+        LibOfferMatch.IntentPreviewResult memory preview = IntentPreviewFacet(diamond).previewIntent(
             newLender, newLender, lender, address(usdc), address(weth), 0, requestId, amount
         );
         require(preview.ok, "PF-073: the fill should preview clear");

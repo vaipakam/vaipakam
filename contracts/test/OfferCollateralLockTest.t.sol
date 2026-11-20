@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -122,6 +123,11 @@ contract OfferCollateralLockTest is SetupTest {
 
     // ─── create — the lock latches the pre-vaulted ceiling ───────────
 
+    /// @dev #3744 — an offer's refund is its holder's free vault balance.
+    function _free(address who, address token) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
+    }
+
     function test_create_locksCollateralMax_singleValue() public {
         _createBorrowerOffer(5000 ether, 5000 ether);
         assertEq(_collateralLock(), 5000 ether, "single-value locks collateralAmount");
@@ -164,13 +170,13 @@ contract OfferCollateralLockTest is SetupTest {
         // double-count) and the loan lien re-encumbers the backing slice.
         uint256 id = _createBorrowerOffer(3000 ether, 5000 ether);
         assertEq(_collateralLock(), 5000 ether, "locked at ceiling pre-accept");
-        uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        uint256 freeBefore = _free(borrower, mockCollateralERC20);
 
         _signAndAcceptOffer(lender, lenderPk, id);
 
         assertEq(_collateralLock(), 3000 ether, "aggregate == loan lien after hand-off");
         assertEq(
-            ERC20Mock(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            _free(borrower, mockCollateralERC20) - freeBefore,
             2000 ether,
             "ceiling residual refunded (hand-off didn't block it)"
         );
@@ -180,7 +186,7 @@ contract OfferCollateralLockTest is SetupTest {
 
     function test_cancel_releasesLockAndRefunds() public {
         uint256 id = _createBorrowerOffer(5000 ether, 5000 ether);
-        uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        uint256 freeBefore = _free(borrower, mockCollateralERC20);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
@@ -189,7 +195,7 @@ contract OfferCollateralLockTest is SetupTest {
 
         assertEq(_collateralLock(), 0, "lock released on cancel");
         assertEq(
-            ERC20Mock(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            _free(borrower, mockCollateralERC20) - freeBefore,
             5000 ether,
             "full collateral refunded (refund not self-blocked)"
         );
@@ -199,7 +205,7 @@ contract OfferCollateralLockTest is SetupTest {
 
     function test_modifyShrink_decrementsLock_refundNotSelfBlocked() public {
         uint256 id = _createBorrowerOffer(5000 ether, 5000 ether);
-        uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        uint256 freeBefore = _free(borrower, mockCollateralERC20);
 
         // Shrink the collateral ceiling 5000 → 3000; the 2000 delta refunds
         // — only possible because the lock decrements BEFORE the refund.
@@ -208,7 +214,7 @@ contract OfferCollateralLockTest is SetupTest {
 
         assertEq(_collateralLock(), 3000 ether, "lock follows the new ceiling");
         assertEq(
-            ERC20Mock(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            _free(borrower, mockCollateralERC20) - freeBefore,
             2000 ether,
             "shrink delta refunded (no self-block)"
         );

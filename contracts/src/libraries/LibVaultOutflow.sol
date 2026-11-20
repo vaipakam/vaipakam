@@ -64,6 +64,66 @@ library LibVaultOutflow {
         );
     }
 
+    // ─── The account's own balance ───────────────────────────────────────
+
+    /// @notice Release `amount` already in `user`'s own vault, which the
+    ///         caller has JUST dropped from a lien or reservation by exactly
+    ///         that amount, into `user`'s free balance (the depository
+    ///         ledger). Nothing moves and no payee is named; the policy
+    ///         refuses an amount the vault does not hold unencumbered.
+    ///         `ref` is the loan, offer or zero, for the event only.
+    function releaseOwn(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 ref,
+        uint8 reason
+    ) internal returns (uint256) {
+        return _go(user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.OwnRelease, ref, 0, reason);
+    }
+
+    // ─── Offer holders (the payee is resolved from the offer's token) ────
+
+    /// @notice #3744 — offer `offerId`'s escrow, from its creator `user`'s
+    ///         vault into the vault of whoever holds `positionToken` (the
+    ///         offer's position token) now, as free balance. Nothing moves
+    ///         when the creator still holds it.
+    function toOfferHolder(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 offerId,
+        uint256 positionToken
+    ) internal returns (uint256) {
+        return _go(
+            user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.OfferHolder, offerId, positionToken, OutflowReason.OFFER_REFUND
+        );
+    }
+
+    /// @notice {toOfferHolder} that reports failure instead of bubbling it,
+    ///         for a step someone else triggered, which a holder who cannot
+    ///         be paid must never block.
+    function tryToOfferHolder(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 offerId,
+        uint256 positionToken
+    ) internal returns (bool ok) {
+        (ok,) = address(this).call(
+            abi.encodeCall(
+                IVaultOutflowHost.vaultOutflowArgs,
+                (user, kind, asset, tokenId, amount, address(0), uint8(VaultOutflowTypes.OutflowClass.OfferHolder), offerId, positionToken, OutflowReason.OFFER_REFUND)
+            )
+        );
+    }
+
     /// @notice To an address on `user`'s protected-mode allowlist (or its
     ///         controller), as a released payout.
     function toAllowlisted(

@@ -306,8 +306,9 @@ contract OfferParallelSaleFacet is
 
         // Codex round-9 P2 #2 + round-10 P2 — authorize EXACTLY ONE
         // party based on the offer's state:
-        //   - Pre-acceptance: only the offer's original creator. No
-        //     loan exists yet; creator is the only party with standing.
+        //   - Pre-acceptance: only the manager of the offer token's holder
+        //     (#3744: the offer's value follows its token). No loan exists
+        //     yet.
         //   - Post-acceptance: ONLY the CURRENT borrower-position NFT
         //     holder. The original creator no longer owns the economic
         //     position (transferable NFT); leaving them authorized
@@ -317,8 +318,8 @@ contract OfferParallelSaleFacet is
         // posture exactly (no dual-auth window).
         bool callerAuthorized;
         if (!offer.accepted) {
-            // #3526 — the creator's manager, as `OfferCancelFacet` allows.
-            callerAuthorized = offer.creator != address(0) && LibProtectedAccount.manager(offer.creator) == msg.sender;
+            // #3744 — the holder's manager, as `OfferCancelFacet` allows.
+            callerAuthorized = offer.creator != address(0) && LibAuth.managesOfferHolder(offer);
         } else {
             uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
             if (loanId != 0) {
@@ -332,7 +333,7 @@ contract OfferParallelSaleFacet is
                 }
             }
         }
-        if (!callerAuthorized) revert NotOfferCreator();
+        if (!callerAuthorized) revert NotOfferHolder();
 
         LibPrepayCleanup.clearOfferListing(offerId);
 
@@ -506,8 +507,8 @@ contract OfferParallelSaleFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
 
-        // ── Caller-gate (creator-only) ────────────────────────────
-        LibAuth.requireOfferCreator(offer);
+        // ── Caller-gate (the offer token's holder, #3744) ─────────
+        LibAuth.requireOfferHolder(offer);
 
         // ── Offer-shape preconditions (§19.5 opt-in) ──────────────
         if (!offer.allowsParallelSale) revert ParallelSaleNotEnabled(offerId);

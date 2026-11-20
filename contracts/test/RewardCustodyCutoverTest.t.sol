@@ -751,7 +751,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         (uint256 claimed, , ) = _claim().claimInteractionRewards();
         assertApproxEqAbs(claimed, expected, 1e6, "paid in full");
-        assertEq(vpfi.balanceOf(alice), claimed, "the claimant holds it");
+        assertEq(_vaultFree(alice, address(vpfi)), claimed, "the claimant's vault holds it");
         assertEq(vpfi.balanceOf(address(diamond)), 50e18, "the Diamond's balance never moved");
         // The fresh component moved out of the holder (the treasury share of
         // this fixture's forfeit absorbs in-holder, so the holder's balance
@@ -895,10 +895,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     // ─── 4. the payout's two rows and the vault leg ──────────────────────────
 
     /// The vault leg runs the row debits, the holder release, the record and
-    /// the rollup in ONE frame: a failure after the token movement rolls the
-    /// release back, the wallet is paid once from the holder, and the vault
-    /// and the rows show no residue of the failed leg.
-    function test_VaultDelivery_FailureAfterTheHolderRelease_PaysTheWalletOnce() public {
+    /// the rollup in ONE frame. A claim pays only into the claimant's vault
+    /// (the payout rule: never a wallet), so a failure after the token
+    /// movement reverts the whole claim: the reward stays claimable, and the
+    /// wallet, the vault, the holder and the rows show no residue of it.
+    function test_VaultDelivery_FailureAfterTheHolderRelease_RevertsTheClaim() public {
         _becomeCanonical();
         address vault = _vault().getOrCreateUserVault(alice);
         activateRewardCustodyForTest(address(vpfi), 0);
@@ -919,12 +920,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         uint256 holderBefore = _held();
         uint256 liveBefore = _live();
         vm.prank(alice);
-        (uint256 paid, , ) = _claim().claimInteractionRewards();
-        assertGt(paid, 0, "paid");
-        assertEq(vpfi.balanceOf(alice), paid, "wallet paid exactly once");
+        vm.expectRevert();
+        _claim().claimInteractionRewards();
+        assertEq(vpfi.balanceOf(alice), 0, "no wallet payment");
         assertEq(vpfi.balanceOf(vault), 0, "vault release rolled back");
-        assertEq(holderBefore - _held(), paid, "the holder was debited exactly once");
-        assertEq(liveBefore - _live(), paid, "the live row was debited exactly once");
+        assertEq(_held(), holderBefore, "the holder was not debited");
+        assertEq(_live(), liveBefore, "the live row was not debited");
     }
 
     /// The vault route itself pays from the holder into the vault, and the

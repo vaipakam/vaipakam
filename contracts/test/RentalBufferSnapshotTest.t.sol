@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
@@ -112,6 +113,8 @@ contract RentalBufferSnapshotTest is SetupTest {
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
+        // #3744 — the refund lands in the vault as free balance; withdraw it.
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
         assertEq(
             IERC20(mockERC20).balanceOf(borrower),
             borrowerBefore,

@@ -7,17 +7,18 @@ import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCollateralSet} from "../libraries/LibCollateralSet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
+import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
@@ -130,8 +131,6 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     /// @notice A reduction must leave at least one loan and fewer than are
     ///         left now (to withdraw the offer whole, cancel it).
     error CollectionReductionInvalid(uint16 loansLeft, uint16 requested);
-    /// @notice Only the offer's lender (its account manager) may do this.
-    error NotCollectionOfferLender();
 
     /// @notice #3328 — what a borrower presents to fill a signed collection
     ///         offer: the token, its Listed-set proof (empty otherwise), and
@@ -227,15 +226,19 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     }
 
     /// @notice Lower the loans a collection offer still funds to
-    ///         `loansLeft`; the released principal goes back to the lender's
-    ///         wallet in this call. At least one loan must stay; to withdraw
-    ///         the offer whole, cancel it.
+    ///         `loansLeft`; the released principal goes to the vault of the
+    ///         holder of the offer's position token as free balance (#3744,
+    ///         payout rule 2026-11-19). For that holder only.
+    ///         At least one loan must stay; to withdraw the offer whole,
+    ///         cancel it.
     function reduceCollectionLoans(uint256 offerId, uint16 loansLeft) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.CollectionOffer storage c = s.collectionOffer[offerId];
         LibVaipakam.Offer storage p = s.offers[offerId];
         if (c.set.kind == LibVaipakam.CollateralSetKind.None) revert NotCollectionOffer(offerId);
-        if (LibProtectedAccount.manager(p.creator) != msg.sender) revert NotCollectionOfferLender();
+        // #3744 — the offer's escrow follows its token: its holder lowers it,
+        // and the released principal pays that holder.
+        LibAuth.requireOfferHolder(p);
         TakeFailure open = _openFailure(s, offerId, p);
         if (open != TakeFailure.None) revert CollectionTakeRefused(offerId, 0, open);
         uint16 left = c.loans - c.filled;
@@ -246,7 +249,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         p.amount -= released;
         p.amountMax -= released;
         _decrementReserve(offerId, released);
-        LibVaultOutflow.toOwner(p.creator, LibVaultOutflow.ERC20, p.lendingAsset, 0, released, OutflowReason.OFFER_REFUND);
+        LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, p.lendingAsset, 0, released, true);
         emit CollectionOfferReduced(offerId, left, loansLeft, released);
     }
 
@@ -428,12 +431,23 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         c.filled += 1;
         p.amountFilled += perLoan;
         _decrementReserve(offerId, perLoan);
+        // #3744 — the loan this slice opens belongs to whoever holds the
+        // parent offer's token, so the slice's own token is minted to it.
+        address parentHolder = LibOfferRefund.holder(p);
+        LibOfferRefund.bindSliceTokenTo(parentHolder);
         bytes memory res = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
                 OfferMaterializeFacet.createCollectionSlice.selector,
                 p.creator,
                 _sliceParams(p, perLoan, tokenId),
-                LibSignedOffer.MakerFull(p.creatorFull, p.creatorMaxCStar, p.creatorAllowFullDowngrade)
+                // #3744 — the parent's consent carries to the slice only while
+                // the wallet that gave it holds the parent's token; the slice
+                // records that holder as its consenter.
+                LibSignedOffer.MakerFull(
+                    LibFeeEntitlement.offerFullConsented(offerId, parentHolder),
+                    p.creatorMaxCStar,
+                    p.creatorAllowFullDowngrade
+                )
             ),
             bytes4(0)
         );

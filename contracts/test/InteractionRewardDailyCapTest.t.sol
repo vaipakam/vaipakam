@@ -106,7 +106,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
         assertEq(d1, 1e18, "delta1");
         assertEq(d2, 0.25e18, "delta2");
 
-        uint256 balBefore = vpfi.balanceOf(rewardLender);
+        uint256 balBefore = _vaultFree(rewardLender, address(vpfi));
         vm.prank(rewardLender);
         (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
@@ -116,7 +116,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
         uint256 oldWindow = (P * ((d1 + d2) < (2 * T) ? (d1 + d2) : (2 * T))) / 1e18;
 
         assertEq(paid, expectedPerDay, "per-day capped total");
-        assertEq(vpfi.balanceOf(rewardLender) - balBefore, expectedPerDay, "paid out");
+        assertEq(_vaultFree(rewardLender, address(vpfi)) - balBefore, expectedPerDay, "paid out");
         assertLt(paid, oldWindow, "netting is closed: pays less than the window cap");
     }
 

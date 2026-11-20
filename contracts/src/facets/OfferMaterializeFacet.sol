@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -10,6 +11,7 @@ import {LibOfferCreate} from "../libraries/LibOfferCreate.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -283,6 +285,11 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
     ///         opt-in is applied at materialization, so indexers see one shape.
     event OfferCreatorFullTariffSet(uint256 indexed offerId, bool creatorFull, uint256 maxCStar, bool allowDowngrade);
 
+    /// @notice #3744 — the same event `ProfileFacet.setOfferCreatorFullTariff`
+    ///         emits: the wallet whose Full-tariff consent the offer carries.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferFullTariffConsentBy(uint256 indexed offerId, address indexed by);
+
     /// @dev #1949 — apply the maker's Full opt-in carried on the signed artifact.
     ///      A signed offer is materialized and accepted in ONE transaction, so
     ///      there is no post-create moment for the standing-offer setter; the
@@ -300,7 +307,14 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         o.creatorFull = true;
         o.creatorMaxCStar = full.maxCStar;
         o.creatorAllowFullDowngrade = full.allowDowngrade;
+        // #3744 — recorded with the wallet that gave it, so it counts only
+        // while that wallet holds the offer's token. For a signed offer that is
+        // its maker; for a collection slice it is the parent's holder, who gave
+        // the parent's consent and receives the slice's token.
+        address by = LibOfferRefund.sliceTokenTo(o.creator);
+        LibFeeEntitlement.recordFullConsent(offerId, by);
         emit OfferCreatorFullTariffSet(offerId, true, full.maxCStar, full.allowDowngrade);
+        emit OfferFullTariffConsentBy(offerId, by);
     }
 
     /// @dev #3328 — a collection slice is a Lender offer of an ERC-20

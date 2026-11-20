@@ -429,14 +429,14 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _scene(NEED);
         bytes32 h = _epochOf(10e18, 1, 1, keccak256("e1"));
         uint256 rowBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         assertEq(_preview(), NEED, "the preview prices the day from the epoch");
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit TransportDrawn(h, 1, NEED, 0);
         assertEq(_claim(), NEED, "paid in full");
 
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED, "delivered to the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, NEED, "delivered to the vault");
         (uint256 lf, uint256 lr) = _legs(h);
         assertEq(lf, NEED, "the fresh leg is recorded on the epoch");
         assertEq(lr, 0, "no recycled leg on a fresh-only day");
@@ -643,11 +643,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_preview(), 0, "the preview defers");
         // The window's attested epochs are STAGED for the day (3b-ii-A2)
         // rather than drawn: nothing is paid now, and the ledger is not pulled.
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         vm.prank(alice);
         (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         ok; // staging is persisted progress; a deferral with nothing staged reverts — either way nothing is paid
-        assertEq(vpfi.balanceOf(alice), before, "nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), before, "nothing paid");
         assertEq(_mut().getArmedFreshPaidRaw(), 0, "the ledger was not pulled");
         assertEq(_cursor(1), 0, "nothing exhausted, nothing pruned");
     }

@@ -13,9 +13,10 @@
  *   refused; cancelling is refused during a pause;
  * - what it releases is what the offer still locks in the creator's vault:
  *   a lending offer's unlent principal (or a rental's NFT), a request's
- *   unused collateral (or a rental request's prepay and buffer). It leaves
- *   the vault for the creator's wallet, which protected account mode routes
- *   like any other payout. The offer's position token is retired.
+ *   unused collateral (or a rental request's prepay and buffer). It is
+ *   freed in the vault of whoever holds the offer's position token, as free
+ *   balance (the payout rule: only the owner's own withdrawal reaches a
+ *   wallet). The offer's position token is retired.
  * - an offer tied to a running loan (a position sale, an offset or a
  *   refinance request that carries its collateral) releases what that loan
  *   allows; the review says it cannot size that, and the finish card states
@@ -30,14 +31,12 @@ import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { answerOrNull } from '../reads/answer';
-import { nftArrived } from '../claims/claimLog';
-import { payoutOutcomes, payoutRoute, readProtection, type PayoutOutcome, type PayoutRoute, type Protection } from '../protection/payout';
-import { payoutLegs, routeChanged, routedDestination, routedLeg, routeNotes } from '../protection/payoutCopy';
+import { freedInVault, OFFER_HOLDER, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { freedLeg, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
-import { formatSpan, formatUtc, shortAddress } from '../ui/format';
-import { moved } from './acceptOutcome';
+import { formatUtc, shortAddress } from '../ui/format';
 import { offerState } from './myOffers';
 import { OFFER_CANCEL, type OfferState } from './reads';
 
@@ -217,7 +216,9 @@ export async function readCancelReview(own: OwnStateClient, diamond: Hex, offerI
     offerId,
     facts,
     refund: facts.offer === null ? null : cancelRefund(facts.offer, facts.linkedLoanId),
-    route: facts.offer === null ? 'unknown' : payoutRoute(facts.protection, facts.offer.creator, facts.offer.creator),
+    // Freed in the holder's vault as free balance, whatever the account's
+    // protected mode (the payout rule, owner decision 2026-11-19).
+    route: facts.offer === null ? 'unknown' : 'credit',
     dryRun: null,
     readAt: Date.now(),
   };
@@ -290,7 +291,7 @@ export function cancelReceipt(r: CancelReview, viewer: Hex, w: CancelWords, copy
   if (refund !== null && refund.kind !== 'none' && o !== null) {
     rows.push({
       label: text('offerCancel.rowTo'),
-      value: r.route === 'unknown' ? unknown(text('payout.protectionUnread')) : { kind: 'text', text: destinationText(r, mine, o.creator, copy) },
+      value: r.route === 'unknown' ? unknown(text('payout.protectionUnread')) : { kind: 'text', text: destinationText(r, mine, copy) },
       binding: true,
     });
   }
@@ -301,59 +302,17 @@ export function cancelReceipt(r: CancelReview, viewer: Hex, w: CancelWords, copy
   // The payee's own route notes speak to the payee; a clean-up of someone
   // else's offer states only where it goes (the row above).
   if (refund !== null && refund.kind !== 'none')
-    consequences.push(...(o === null || mine || r.route === 'unknown' ? routeNotes(r.route, r.facts.protection, copy) : creatorRouteNotes(r, o.creator, copy)));
+    consequences.push(...(o === null || mine || r.route === 'unknown' ? routeNotes(r.route, r.facts.protection, copy) : []));
   if (r.dryRun === 'unread') consequences.push(text('offerCancel.dryRunUnread'));
   consequences.push(text('offerCancel.noApproval'));
   return { title: text(mine ? 'offerCancel.title' : 'offerCancel.titleCleanup'), rows, consequences, prompts: 1, readAt: r.readAt };
 }
 
-/** Where the return lands, in the reader's terms: the payee's own route
- *  wording for the creator, the creator's route named for anyone else. */
-function destinationText(r: CancelReview, mine: boolean, creator: Hex, copy: Copy): string {
-  const { text, format } = copy;
-  if (mine) return routedDestination(r.route, r.facts.protection, copy) ?? text('offerCancel.toYourWallet');
-  const address = shortAddress(creator);
-  if (r.route === 'queued')
-    return format(r.facts.protection?.requireCosign ? 'offerCancel.toCreatorQueuedCosign' : 'offerCancel.toCreatorQueued', {
-      wallet: creatorWallet(r.facts.protection, creator, copy),
-      delay: formatSpan(r.facts.protection?.delaySeconds ?? 0),
-    });
-  if (r.route === 'held') return format('offerCancel.toCreatorHeld', { address });
-  return format('offerCancel.toCreator', { address });
-}
-
-/** The consequences the creator's route adds when the reader is not the
- *  creator: the payee's own notes, in the creator's terms. */
-function creatorRouteNotes(r: CancelReview, creator: Hex, copy: Copy): string[] {
-  if (r.route === 'queued')
-    return [
-      copy.format(r.facts.protection?.requireCosign ? 'offerCancel.creatorQueuedCosignNote' : 'offerCancel.creatorQueuedNote', {
-        wallet: creatorWallet(r.facts.protection, creator, copy),
-      }),
-    ];
-  if (r.route === 'held') return [copy.text('offerCancel.creatorHeldNote')];
-  return [];
-}
-
-/** The wallet the creator's queued return is released to: theirs, or, once
- *  a replacement retired their account, the wallet that now manages it
- *  (`LibProtectedAccount.gate`). `to` is the measured recipient. */
-function creatorWallet(protection: Protection | null, creator: Hex, copy: Copy, to?: Hex): string {
-  if (protection?.retired === true) return copy.format('offerCancel.creatorControllerWallet', { address: shortAddress(to ?? protection.controller) });
-  return copy.format('offerCancel.creatorWallet', { address: shortAddress(to ?? creator) });
-}
-
-/** A routed return's finish-card line when the reader is not the creator. */
-function creatorRoutedLeg(o: PayoutOutcome, what: string, protection: Protection | null, creator: Hex, copy: Copy): string {
-  if (o.kind === 'queued')
-    return copy.format(protection?.requireCosign ? 'offerCancel.legCreatorQueuedCosign' : 'offerCancel.legCreatorQueued', {
-      what,
-      wallet: creatorWallet(protection, creator, copy, o.recipient),
-      time: formatUtc(Number(o.releaseAt)),
-    });
-  // Locked or a full queue (`LibProtectedAccount.gate`): the cause is named
-  // only when the creator's account read as locked.
-  return copy.format(protection?.locked === true ? 'offerCancel.legCreatorHeld' : 'offerCancel.legCreatorHeldEither', { what });
+/** Where the return lands, in the reader's terms: the reader's own vault
+ *  when the reader holds the offer's token, the holder's vault otherwise. */
+function destinationText(r: CancelReview, mine: boolean, copy: Copy): string {
+  if (mine) return routedDestination(r.route, r.facts.protection, copy) ?? copy.text('payout.toCredit');
+  return copy.text('offerCancel.toHolderVault');
 }
 
 type Args = Record<string, unknown>;
@@ -372,43 +331,15 @@ export function measureCancel(r: CancelReview, logs: readonly Log[], diamond: He
   if (o === null || refund === null || refund.kind === 'none') return legs;
   const creator = o.creator;
   const mine = creator.toLowerCase() === viewer.toLowerCase();
-  const routedLabel = (x: PayoutOutcome, what: string) => (mine ? routedLeg(x, what, r.facts.protection, copy) : creatorRoutedLeg(x, what, r.facts.protection, creator, copy));
-  const arrivedLabel = (what: string) => format(mine ? 'offerCancel.legArrived' : 'offerCancel.legArrivedCreator', { what });
+  const freedLabel = (what: string, ownVault: boolean) => format(mine && ownVault ? 'offerCancel.legFreed' : 'offerCancel.legFreedHolder', { what });
   const leg = refundLeg(o, refund);
-  if (leg.kind === 'nft') {
-    const routed = payoutOutcomes(logs, diamond, creator, leg.asset, leg.tokenId);
-    const arrived = nftArrived(logs, leg.asset, leg.assetType, leg.tokenId, creator);
-    // A measured return names what the logs show; a sized one, what it said.
-    const quantity = refund.kind === 'nft' ? refund.quantity : routed.reduce((t, x) => t + x.amount, arrived);
-    if (refund.kind === 'measured' && quantity === 0n) return [...legs, nothingLeg(mine, copy)];
-    const what = w.nft(leg.asset, leg.assetType, leg.tokenId, quantity);
-    if (routed.length > 0) legs.push(...routed.map((x) => ({ status: 'done' as const, label: routedLabel(x, what) })));
-    else if (arrived > 0n) legs.push({ status: 'done', label: arrivedLabel(what) });
-    else legs.push({ status: 'not-done', label: arrivedLabel(what), reason: text('offerCancel.notReturned') });
-    return legs;
-  }
-  // An ERC-20 refund, sized before signing or measured now.
-  const asset = leg.asset;
-  const outcomes = payoutOutcomes(logs, diamond, creator, asset);
-  const wallet = moved(logs, asset, null, creator);
-  if (refund.kind === 'measured' && outcomes.length === 0 && wallet === 0n) return [...legs, nothingLeg(mine, copy)];
-  const expected = refund.kind === 'erc20' ? refund.amount : outcomes.reduce((t, x) => t + x.amount, wallet);
-  legs.push(
-    ...payoutLegs(
-      {
-        outcomes,
-        wallet,
-        expected,
-        protection: r.facts.protection,
-        what: (v) => w.amount(asset, v, false),
-        exact: (v) => w.amount(asset, v, true),
-        walletLeg: arrivedLabel,
-        walletOther: (got, want) => format('loanClaim.arrivedOther', { amount: got, expected: want }),
-        routed: routedLabel,
-      },
-      copy,
-    ),
-  );
+  const freed = freedInVault(logs, diamond, creator, leg.asset, [OFFER_HOLDER], { ref: r.offerId, ...(leg.kind === 'nft' ? { tokenId: leg.tokenId } : {}) });
+  // A return measured after the fact names what the record shows.
+  if (refund.kind === 'measured' && (freed === null || freed.amount === 0n)) return [...legs, nothingLeg(mine, copy)];
+  const expected = refund.kind === 'erc20' ? refund.amount : refund.kind === 'nft' ? refund.quantity : (freed?.amount ?? 0n);
+  const what = (v: bigint) => (leg.kind === 'nft' ? w.nft(leg.asset, leg.assetType, leg.tokenId, v) : w.amount(leg.asset, v, false));
+  const exact = (v: bigint) => (leg.kind === 'nft' ? w.nft(leg.asset, leg.assetType, leg.tokenId, v) : w.amount(leg.asset, v, true));
+  legs.push(freedLeg({ freed, expected, what, exact, label: freedLabel }, copy));
   return legs;
 }
 

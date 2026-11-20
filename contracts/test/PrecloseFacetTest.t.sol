@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
@@ -50,6 +51,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -216,7 +218,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -288,6 +290,12 @@ contract PrecloseFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        // #3843 — the sale reads, split off RiskPreviewFacet.
+        cuts[37] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleAdmissionFacetSelectors()
         });
         // #1001 (S3, Codex #1070) — EarlyWithdrawalFacet + OfferMutateFacet so the
         // offset-vs-lender-sale and offset-offer-immutability guards are testable.
@@ -401,6 +409,7 @@ contract PrecloseFacetTest is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -2132,6 +2141,8 @@ contract PrecloseFacetTest is Test {
             VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
         uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
         uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 borrowerFreeBefore =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0);
 
         vm.prank(borrower);
         uint256 newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
@@ -2144,6 +2155,12 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+        // #3744 — the refund lands in the borrower's vault as free balance;
+        // the borrower withdraws exactly that refund.
+        uint256 refund =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0) - borrowerFreeBefore;
+        vm.prank(borrower);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(borrower, 0, mockERC20, 0, refund, borrower);
 
         assertEq(
             ERC20(mockERC20).balanceOf(lenderVault),

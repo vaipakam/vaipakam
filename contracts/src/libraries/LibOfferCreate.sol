@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibOfferRefund} from "./LibOfferRefund.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
@@ -466,7 +467,10 @@ library LibOfferCreate {
         (bool success, ) = address(VaipakamNFTFacet(address(this))).call(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.mintNFT.selector,
-                creator,
+                // #3744 — a collection slice's token goes to the holder of
+                // the parent offer's token (bound by the drawer); every
+                // other offer's token to its creator.
+                LibOfferRefund.takeSliceTokenTo(creator),
                 offer.positionTokenId,
                 offerId,
                 0,

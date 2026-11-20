@@ -38,6 +38,8 @@ import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -315,7 +317,9 @@ contract RedeployFacets is Script {
         VaultFactoryFacet vaultFactoryFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
         // #1649 — #1503 gave both `EarlyWithdrawalFacet` sale entry points
         // (`sellLoanViaBuyOffer`, `createLoanSaleOffer`) a cross-facet call to
-        // `RiskPreviewFacet.saleAdmission`. That selector is NEW, so refreshing
+        // `saleAdmission` (on `SaleAdmissionFacet` since #3843, which
+        // `_saleExitVerdictCuts` carries; RiskPreviewFacet is still cut here
+        // for the match core's `initRiskBounds`). That selector is NEW, so refreshing
         // EarlyWithdrawalFacet alone would install sale code that calls an
         // unrouted selector — every sale reverting `FunctionDoesNotExist`
         // through the fallback, with the new bytecode live. Deploy the
@@ -525,7 +529,8 @@ contract RedeployFacets is Script {
         (bytes4[] memory rpToAdd, bytes4[] memory rpToReplace) =
             _partitionByRouting(diamond, FacetSelectors.riskPreview());
         // #2459 r4 — `previewIntent` gained the route's outer initiator, so its
-        // selector CHANGED: the new one is in `riskPreview()` above, and the old
+        // selector CHANGED: the new one is in `intentPreview()` (on
+        // IntentPreviewFacet since #3843, `_intentPreviewCuts`), and the old
         // one is Removed wherever it is still routed (empty on a fresh or
         // migrated Diamond, so the step is idempotent).
         bytes4[] memory retiredPreview = new bytes4[](1);
@@ -581,7 +586,12 @@ contract RedeployFacets is Script {
             _forcedSaleEntryCuts(diamond, address(defaultedFacet));
         // #1841 - both lender-exit entries gate on SaleExitVerdictFacet by
         // self-call, so the host rides the same cut as the two entries above.
-        IDiamondCut.FacetCut[] memory verdictCuts = _saleExitVerdictCuts(diamond);
+        // #3843 - the standing-intent preview's host rides with it: it inlines
+        // the match core this refresh carries and was split off
+        // RiskPreviewFacet (cut above). Joined into one list so `runWith`
+        // gains no local.
+        IDiamondCut.FacetCut[] memory verdictCuts =
+            _concatCuts(_saleExitVerdictCuts(diamond), _intentPreviewCuts(diamond));
 
         uint256 nExtra = sellCuts.length + verdictCuts.length +
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -881,7 +891,7 @@ contract RedeployFacets is Script {
         console.log("  ForcedSale selectors added:      ", fsToAdd.length);
         console.log("  ForcedSale selectors repl.:      ", fsToReplace.length);
         console.log("  Sell-amount entry cuts (#2796):  ", sellCuts.length);
-        console.log("  Sale-exit verdict cuts (#1841):  ", verdictCuts.length);
+        console.log("  Read-host cuts (#1841, #3843):   ", verdictCuts.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback
@@ -1423,11 +1433,15 @@ contract RedeployFacets is Script {
     ///      Deploys the host and partitions its selectors by live routing (Add
     ///      on a pre-#1841 Diamond, Replace on a current one). Kept out of
     ///      `runWith` so its locals do not join that frame.
-    /// @dev The cuts of two read hosts this refresh carries beside the
+    /// @dev The cuts of three read hosts this refresh carries beside the
     ///      facets that read them: SaleExitVerdictFacet (#1841, both sale
-    ///      entries self-call it) and ForcedSalePreviewFacet (#3205 part 2, the
-    ///      forced-sale previews, sized by the same `LibForcedSalePlan` rule
-    ///      ForcedSaleFacet sells by, so the two are refreshed together).
+    ///      entries self-call it), SaleAdmissionFacet (#3843, split off
+    ///      RiskPreviewFacet: the verdict's `LibSaleSolvency` self-calls its
+    ///      `saleAdmission`, #1649) and ForcedSalePreviewFacet (#3205 part 2,
+    ///      the forced-sale previews, sized by the same `LibForcedSalePlan`
+    ///      rule ForcedSaleFacet sells by, so the two are refreshed together).
+    ///      On a Diamond cut before #3843 the three sale reads are routed to
+    ///      RiskPreviewFacet, so they partition to Replace, which moves them.
     function _saleExitVerdictCuts(address diamond)
         internal
         returns (IDiamondCut.FacetCut[] memory out)
@@ -1436,19 +1450,58 @@ contract RedeployFacets is Script {
         console.log("SaleExitVerdictFacet: ", host);
         address preview = ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name);
         console.log("ForcedSalePreviewFacet:", preview);
+        address admission = ArtifactDeploy.deploy(type(SaleAdmissionFacet).name);
+        console.log("SaleAdmissionFacet:   ", admission);
         (bytes4[] memory toAdd, bytes4[] memory toReplace) =
             _partitionByRouting(diamond, FacetSelectors.saleExitVerdict());
         (bytes4[] memory pvAdd, bytes4[] memory pvReplace) =
             _partitionByRouting(diamond, FacetSelectors.forcedSalePreview());
+        (bytes4[] memory saAdd, bytes4[] memory saReplace) =
+            _partitionByRouting(diamond, FacetSelectors.saleAdmission());
         out = new IDiamondCut.FacetCut[](
             (toAdd.length > 0 ? 1 : 0) + (toReplace.length > 0 ? 1 : 0) + (pvAdd.length > 0 ? 1 : 0)
-                + (pvReplace.length > 0 ? 1 : 0)
+                + (pvReplace.length > 0 ? 1 : 0) + (saAdd.length > 0 ? 1 : 0) + (saReplace.length > 0 ? 1 : 0)
         );
         uint256 i;
         if (toReplace.length > 0) out[i++] = _replace(host, toReplace);
         if (toAdd.length > 0) out[i++] = _add(host, toAdd);
         if (pvReplace.length > 0) out[i++] = _replace(preview, pvReplace);
         if (pvAdd.length > 0) out[i++] = _add(preview, pvAdd);
+        if (saReplace.length > 0) out[i++] = _replace(admission, saReplace);
+        if (saAdd.length > 0) out[i++] = _add(admission, saAdd);
+    }
+
+    /// @dev #3843 - the standing-intent fill preview's host. `previewIntent`
+    ///      inlines the shared match core (`LibOfferMatch`), so it is refreshed
+    ///      with the match hosts and with RiskPreviewFacet, whose
+    ///      `initRiskBounds` that core self-calls. On a Diamond cut before
+    ///      #3843 the selector is routed to RiskPreviewFacet, so it partitions
+    ///      to Replace, which moves it here; `riskPreview()` no longer carries
+    ///      it, so without this cut it would stay on the old RiskPreviewFacet
+    ///      bytecode. Kept out of `runWith` so its locals do not join that frame.
+    function _intentPreviewCuts(address diamond)
+        internal
+        returns (IDiamondCut.FacetCut[] memory out)
+    {
+        address host = ArtifactDeploy.deploy(type(IntentPreviewFacet).name);
+        console.log("IntentPreviewFacet:   ", host);
+        (bytes4[] memory toAdd, bytes4[] memory toReplace) =
+            _partitionByRouting(diamond, FacetSelectors.intentPreview());
+        out = new IDiamondCut.FacetCut[]((toAdd.length > 0 ? 1 : 0) + (toReplace.length > 0 ? 1 : 0));
+        uint256 i;
+        if (toReplace.length > 0) out[i++] = _replace(host, toReplace);
+        if (toAdd.length > 0) out[i++] = _add(host, toAdd);
+    }
+
+    /// @dev `a` followed by `b`, in order.
+    function _concatCuts(IDiamondCut.FacetCut[] memory a, IDiamondCut.FacetCut[] memory b)
+        internal
+        pure
+        returns (IDiamondCut.FacetCut[] memory out)
+    {
+        out = new IDiamondCut.FacetCut[](a.length + b.length);
+        for (uint256 i = 0; i < a.length; i++) out[i] = a[i];
+        for (uint256 i = 0; i < b.length; i++) out[a.length + i] = b[i];
     }
 
     function _loanSelectors() internal pure returns (bytes4[] memory s) {

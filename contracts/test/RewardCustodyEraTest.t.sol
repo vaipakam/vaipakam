@@ -631,14 +631,14 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         _scene(1, NEED);
         _retireIntoEraZero(7e18);
         (uint256 receivedBefore, uint256 paidBefore) = _ledger();
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         uint256 attributedBefore = _attributed();
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit CustodyEraDrawn(0, 1, NEED);
         assertEq(_claim(), NEED, "paid in full from the retired era");
 
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED, "delivered");
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, NEED, "delivered");
         assertEq(_era().getCustodyEra(0).holderRow, 7e18 - NEED, "era 0 fell by the draw");
         assertEq(_era().getCustodyEraRowsTotal(), 7e18 - NEED);
         assertEq(_live(), 0, "the live row only passed it through");

@@ -50,7 +50,7 @@ export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   '0x23654b56': 'Invalid asset type.',
   '0x2ee39802': 'Offer not found or no longer valid.',
   '0x93f1b0b3': 'Offer has already been accepted.',
-  '0xe8439f49': 'Only the creator of this offer can perform this action.',
+  '0xe256c187': 'Only whoever holds this offer\'s position token can perform this action.',
   // #195 — GTT / offer-expiry user-facing copy
   '0xd9e46813':
     'This offer has expired and can no longer be accepted or matched.',
@@ -604,7 +604,7 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x23654b56': 'InvalidAssetType()',
   '0x2ee39802': 'InvalidOffer()',
   '0x93f1b0b3': 'OfferAlreadyAccepted()',
-  '0xe8439f49': 'NotOfferCreator()',
+  '0xe256c187': 'NotOfferHolder()',
   // #195 — GTT / offer-expiry surface
   '0xd9e46813': 'OfferExpired(uint256,uint64)',
   '0x7900bcc7': 'OfferExpiryInPast()',

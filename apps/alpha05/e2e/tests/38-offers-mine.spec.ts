@@ -3,10 +3,12 @@
  * protocol's public entry points on the fixture chain. A wallet posts a
  * lending offer: the Offers page lists it as open, the cancel review is
  * held by the protocol's five-minute cool-down and lifts by itself once the
- * chain passes it, the review states the unlent amount returning to this
- * wallet at once, and the finish card measures it. After the cancel the
+ * chain passes it, the review states the unlent amount is freed in this
+ * wallet's vault as its own funds (only its own withdrawal reaches the
+ * wallet), and the finish card measures it from the protocol's record. After the cancel the
  * offer reads as cancelled, with the protocol's cleared terms said so. A
- * borrowing request that expired is cleaned up, returning its collateral.
+ * borrowing request that expired is cleaned up, freeing its collateral in
+ * the vault.
  * Runs on the desktop and the phone project, with wallets that have no
  * history; the chain is reverted after each test.
  */
@@ -25,7 +27,7 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('an open lending offer is cancelled after the cool-down, and its unlent amount returns to this wallet', async ({ launchWallet }) => {
+test('an open lending offer is cancelled after the cool-down, and its unlent amount is freed in this wallet’s vault', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
   const me = sc.address('lender');
@@ -55,7 +57,7 @@ test('an open lending offer is cancelled after the cool-down, and its unlent amo
   await expect(receipt).toContainText('Cancel this offer');
   await expect(receipt).toContainText(`Lending offer #${id}`);
   await expect(receipt).toContainText('0.05 WETH');
-  await expect(receipt).toContainText('This wallet, at once');
+  await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
   await expect(receipt).toContainText('position token is retired');
   await expect(receipt).toContainText('Wallet prompts: 1');
   await fitsWidth(page);
@@ -65,9 +67,9 @@ test('an open lending offer is cancelled after the cool-down, and its unlent amo
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText(`Offer #${id} cancelled`);
-  await expect(finish).toContainText('Returned to your wallet: 0.05 WETH');
+  await expect(finish).toContainText('Returned to your vault, free to withdraw: 0.05 WETH');
   expect(flags.sentTransactions).toBe(sent + 1);
-  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [me] })).toBe(before + parseEther('0.05'));
+  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [me] })).toBe(before);
 
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('offers-filter-cancelled')).toHaveText('Cancelled (1)', { timeout: 60_000 });
@@ -77,7 +79,7 @@ test('an open lending offer is cancelled after the cool-down, and its unlent amo
   await fitsWidth(page);
 });
 
-test('an expired borrowing request is cleaned up, and its collateral returns to this wallet', async ({ launchWallet }) => {
+test('an expired borrowing request is cleaned up, and its collateral is freed in this wallet’s vault', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ borrower: 'freshBorrower' });
   const me = sc.address('borrower');
@@ -149,8 +151,8 @@ test('an expired borrowing request is cleaned up, and its collateral returns to 
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
-  await expect(finish).toContainText('Returned to your wallet: 300 tLIQ');
-  expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'balanceOf', args: [me] })).toBe(before + collateral);
+  await expect(finish).toContainText('Returned to your vault, free to withdraw: 300 tLIQ');
+  expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'balanceOf', args: [me] })).toBe(before);
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('offers-filter-cancelled')).toHaveText('Cancelled (1)', { timeout: 60_000 });
 });

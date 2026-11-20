@@ -18,6 +18,23 @@ import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
 ///      post-deploy default; whatever governance has rotated to otherwise),
 ///      see Numeraire generalization (b1).
 library LibCompliance {
+    /// @notice #3744 — the KYC rule for opening a loan from an offer, one
+    ///         rule for the accept and every preview: the offer's creator
+    ///         (the funding vault), the holder of its position token (who
+    ///         owns the loan side it creates) and the counterparty all clear
+    ///         the tier at `valueNumeraire`. A holder equal to the creator is
+    ///         checked once. Calls the Diamond's own `meetsKYCRequirement`,
+    ///         which passes every address while enforcement is off.
+    function offerPartiesMeetKYC(address creator, address holder, address counterparty, uint256 valueNumeraire)
+        internal
+        view
+        returns (bool)
+    {
+        ProfileFacet p = ProfileFacet(address(this));
+        return p.meetsKYCRequirement(creator, valueNumeraire) && p.meetsKYCRequirement(counterparty, valueNumeraire)
+            && (holder == creator || p.meetsKYCRequirement(holder, valueNumeraire));
+    }
+
     function enforceCountryAndKyc(
         address diamond,
         address newParty,
