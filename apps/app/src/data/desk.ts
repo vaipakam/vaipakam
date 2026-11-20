@@ -147,8 +147,10 @@ export async function readLinkedOfferIds(
  *  they are probed. Kept apart from {@link readLinkedOfferIds} on purpose:
  *  the Open orders panel hides linked vehicles, and a takeover offer is
  *  its creator's own order to see and cancel. A read that fails (a Diamond
- *  without the view, or a dropped call) leaves its row in: the accept
- *  preview then states the refusal by name. */
+ *  without the view, or a dropped call) rejects the whole set: an unread
+ *  row cannot be told apart from ordinary demand, so the caller must not
+ *  quote it. The book then falls back to the indexer copy, which drops
+ *  takeover offers server-side. */
 export async function readTakeoverOfferIds(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
@@ -164,7 +166,7 @@ export async function readTakeoverOfferIds(
           functionName: 'getTakeoverOfferLoan',
           args: [BigInt(r.offerId)],
         }) as Promise<bigint>
-      ).catch(() => 0n),
+      ),
     ),
   );
   return new Set(
