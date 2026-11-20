@@ -396,7 +396,20 @@
       "paidAgreed": "已保存：你已同意在 {{chain}} 上每个贷款方最多支付 {{fee}} VPFI。",
       "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。",
       "signatureCheckUnavailable": "您的设置未保存：提醒服务暂时无法验证您的签名。请稍后再试。",
-      "requestAlreadyUsed": "您的设置未保存：该签名已被使用。请再次保存以签署新的请求。"
+      "requestAlreadyUsed": "您的设置未保存：该签名已被使用。请再次保存以签署新的请求。",
+      "requestUsedAgain": "未作任何更改：该已签名请求已被使用。请重新开始以签署新的请求。",
+      "requestSuperseded": "未作任何更改：此更改的一个更晚签署的请求已被应用。如仍需要此请求，请重新开始。",
+      "requestCheckUnavailable": "尚未作任何更改：提醒服务暂时无法检查签名。请稍后再次完成该请求。",
+      "serviceUpgrading": "未保存任何内容：提醒服务正在升级。请稍后再试。",
+      "multisigNote": "每个请求都写明一个只有此浏览器持有的密钥，因此只有此浏览器能完成它。需要多位所有者批准的钱包最多有 {{days}} 天；之后请求过期，需要重新开始。",
+      "pendingTitle": "有一个请求正在等待您的钱包",
+      "pendingBody": "{{action}}：于 {{started}} 在此浏览器中开始。只有此浏览器能完成它，截止 {{expires}}。完成时会再次请您的钱包给出同样的批准，然后发送。",
+      "pendingFinish": "完成",
+      "pendingDiscard": "放弃",
+      "pendingKindLink": "关联 Telegram",
+      "pendingKindUnlink": "取消关联 Telegram",
+      "pendingKindTest": "发送测试提醒",
+      "pendingKindSave": "保存提醒设置"
     },
     "notifications": {
       "bellLabel": "通知",

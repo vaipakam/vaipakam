@@ -43,17 +43,32 @@
  * it. The ledger is keyed on the message itself, so two different
  * requests in the same second are both accepted and a repeat of one
  * is refused.
+ *
+ * #3836 — a request only a smart account's contract approved (a Safe)
+ * may be up to seven days old, because the timestamp goes into the
+ * message before the owners approve it and they routinely take longer
+ * than ten minutes. A signature that recovers to the wallet's own key
+ * keeps the ten-minute window, and no request may be dated more than
+ * ten minutes ahead. Every request names a request key: the signed text
+ * carries the hash of a secret the requesting browser drew, and the
+ * body carries the secret, so an approval that is public (a contract's)
+ * cannot be presented by anyone else. And each handler applies its
+ * change only when the request is not older than the newest one already
+ * applied for that change, in the same atomic step as the change.
  */
 
 import type { Env } from './env';
 import type { SlotOutcome } from './rateLimit';
 import {
+  LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   type AlertSettingsChange,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
+  isRequestKey,
+  requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
 import { claimSignedRequest, SignedRequestLedgerUnavailableError } from './signedRequestUse';
 import {
@@ -74,6 +89,7 @@ import {
  * production with nothing catching it before deploy. Re-exported so
  * this module's existing surface (and its tests) are unchanged. */
 export {
+  LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
@@ -95,21 +111,32 @@ export type AlertAuthorisation =
 
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
-  (wallet: string, chainId: number, issuedAt: number) => string
+  (wallet: string, chainId: number, issuedAt: number, keyHash: string) => string
 > = {
   link: buildTelegramLinkMessage,
   unlink: buildTelegramUnlinkMessage,
   'test-alert': buildTelegramTestMessage,
 };
 
-/** The exact message the wallet must have signed for `auth`. */
+/** How old a request may be once its signature has verified (#3836):
+ *  a contract's approval gets the day a Safe's owners may need, an
+ *  ordinary wallet's key keeps ten minutes. */
+export function signatureMaxAgeSeconds(via: 'ecdsa' | 'chain'): number {
+  return via === 'chain' ? LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS : LINK_SIGNATURE_MAX_AGE_SECONDS;
+}
+
+/** The exact message the wallet must have signed for `auth`. It names
+ *  the hash of the request key the body carries (#3836), so a signature
+ *  verifies only when presented with the key the requesting browser
+ *  drew: the key check and the signature check are one check. */
 export function alertRequestMessage(
   req: SignedLinkRequest,
   auth: AlertAuthorisation,
 ): string {
+  const keyHash = requestKeyHash(req.requestKey);
   return typeof auth === 'string'
-    ? MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt)
-    : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt);
+    ? MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt, keyHash)
+    : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt, keyHash);
 }
 
 export interface SignedLinkRequest {
@@ -117,6 +144,8 @@ export interface SignedLinkRequest {
   chain_id: number;
   issuedAt: number;
   signature: string;
+  /** #3836 — the secret whose hash the signed text names. */
+  requestKey: `0x${string}`;
 }
 
 export type LinkParseResult =
@@ -148,6 +177,9 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
   if (!isValidSignatureShape(b.signature)) {
     return { ok: false, reason: 'signature must be 0x-prefixed hex' };
   }
+  if (!isRequestKey(b.requestKey)) {
+    return { ok: false, reason: 'requestKey must be 32 bytes of lower-case 0x-prefixed hex' };
+  }
   return {
     ok: true,
     req: {
@@ -155,6 +187,7 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
       chain_id: b.chain_id,
       issuedAt: Math.floor(b.issuedAt),
       signature: b.signature,
+      requestKey: b.requestKey,
     },
   };
 }
@@ -174,7 +207,10 @@ export type LinkVerifyResult =
 
 /**
  * Verify a parsed signed link request: the timestamp is inside the
- * replay window AND the wallet authorised the action-scoped message —
+ * replay window for how the signature verified (#3836: ten minutes for
+ * an ordinary wallet's key, a day for a contract's approval, and ten
+ * minutes into the future for either) AND the wallet authorised the
+ * action-scoped message —
  * plain ECDSA for an ordinary wallet, ERC-1271/6492 against the
  * signed `chain_id`'s configured RPC for a smart account (#2009).
  * The chain to verify on comes from INSIDE the signed message, so a
@@ -190,7 +226,10 @@ export async function verifySignedLinkRequest(
   // `chainVerifyGate(env, request)`.
   chainPathAllowed?: () => Promise<SlotOutcome>,
 ): Promise<LinkVerifyResult> {
-  if (Math.abs(nowSeconds - req.issuedAt) > LINK_SIGNATURE_MAX_AGE_SECONDS) {
+  const age = nowSeconds - req.issuedAt;
+  // The widest window first, so a request no wallet could still present
+  // never reaches verification; the window for how it verified after.
+  if (age < -LINK_SIGNATURE_MAX_AGE_SECONDS || age > LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
   }
   const message = alertRequestMessage(req, auth);
@@ -203,7 +242,12 @@ export async function verifySignedLinkRequest(
     checker,
     chainPathAllowed,
   );
-  if (verdict.ok) return { ok: true, via: verdict.via };
+  if (verdict.ok) {
+    if (age > signatureMaxAgeSeconds(verdict.via)) {
+      return { ok: false, status: 400, reason: 'request timestamp is stale' };
+    }
+    return { ok: true, via: verdict.via };
+  }
   if (verdict.reason === 'limited') {
     return { ok: false, ...limitedRefusal(verdict.slot) };
   }
@@ -253,7 +297,8 @@ export async function authoriseAlertRequest(
     claimed = await claimSignedRequest(
       env.DB,
       alertRequestMessage(req, auth),
-      req.issuedAt + LINK_SIGNATURE_MAX_AGE_SECONDS,
+      req.issuedAt + signatureMaxAgeSeconds(verified.via),
+      nowSeconds,
     );
   } catch (err) {
     if (err instanceof SignedRequestLedgerUnavailableError) {

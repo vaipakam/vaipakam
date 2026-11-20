@@ -347,6 +347,35 @@ function decodeStored(raw: string): unknown {
 }
 
 /** Read one storage safely, preserving WHY it came back empty. */
+/** #3836 — where the alert client keeps a signed request a wallet has not
+ *  answered yet (`data/alertRequest.ts`). */
+export const PENDING_ALERT_REQUEST_PREFIX = 'vaipakam.alerts.pendingRequest.';
+
+/** Said in the export in place of a pending alert request's key. */
+export const WITHHELD_REQUEST_KEY =
+  '(withheld from this file: the secret that lets this browser finish a pending alert request. ' +
+  'A copy of it outside this browser could let someone else finish that request. ' +
+  'Erasing this browser removes it.)';
+
+/**
+ * #3836 — what the export shows for a stored value. Everything is shown as
+ * stored, except a pending alert request's key: with the wallet's approval,
+ * which can be public for a multi-signature wallet, that key is what lets a
+ * request be presented, so a shared export must not carry it. The file says
+ * it was withheld and why, rather than leaving it out silently.
+ */
+export function exportedValue(key: string, value: unknown): unknown {
+  if (
+    key.startsWith(PENDING_ALERT_REQUEST_PREFIX) &&
+    value &&
+    typeof value === 'object' &&
+    'requestKey' in value
+  ) {
+    return { ...(value as Record<string, unknown>), requestKey: WITHHELD_REQUEST_KEY };
+  }
+  return value;
+}
+
 function collect(storage: Storage | null): StoreRead {
   const out: Record<string, unknown> = {};
   if (!storage) return { data: out, refused: true };
@@ -361,7 +390,7 @@ function collect(storage: Storage | null): StoreRead {
     for (const key of keys) {
       const raw = storage.getItem(key);
       if (raw === null) continue;
-      out[key] = decodeStored(raw);
+      out[key] = exportedValue(key, decodeStored(raw));
     }
   } catch {
     // Obtainable but unreadable — a real state under restrictive

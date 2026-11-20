@@ -819,6 +819,32 @@ const copySource = {
       'Your settings were not saved: the alert service could not check your signature just now. Please try again in a little while.',
     requestAlreadyUsed:
       'Your settings were not saved: that signature was already used. Save again to sign a new request.',
+    // #3836 — every alert request names a key only this browser holds, and a
+    // request a multi-signature wallet is still approving is kept here until
+    // it is finished.
+    requestUsedAgain:
+      'Nothing was changed: that signed request was already used. Start again to sign a new one.',
+    requestSuperseded:
+      'Nothing was changed: a request for this change signed later was already applied. Start again if you still want this one.',
+    requestCheckUnavailable:
+      'Nothing was changed yet: the alert service could not check the signature just now. Finish the request again in a little while.',
+    serviceUpgrading:
+      'Nothing was saved: the alert service is being upgraded. Please try again in a little while.',
+    multisigNote: tmpl(
+      'Each request names a key held only by this browser, so only this browser can finish it. A wallet that needs approval from several owners has up to {{days}} days; after that the request expires and you start again.',
+      ['days'],
+    ),
+    pendingTitle: 'A request is waiting for your wallet',
+    pendingBody: tmpl(
+      '{{action}}: started in this browser on {{started}}. Only this browser can finish it, until {{expires}}. Finishing asks your wallet for the same approval again, then sends it.',
+      ['action', 'started', 'expires'],
+    ),
+    pendingFinish: 'Finish it',
+    pendingDiscard: 'Discard it',
+    pendingKindLink: 'Link Telegram',
+    pendingKindUnlink: 'Unlink Telegram',
+    pendingKindTest: 'Send a test alert',
+    pendingKindSave: 'Save alert settings',
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',

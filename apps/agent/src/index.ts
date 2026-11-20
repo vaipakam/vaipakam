@@ -138,6 +138,7 @@ import {
 import {
   ensureThresholdsRow,
   OptOutStorageUnavailableError,
+  SettingsOrderUnavailableError,
   reserveTestAlert,
   hasStoredPushOptIn,
   upsertThresholds,
@@ -678,6 +679,20 @@ function refusal(
   );
 }
 
+/** #3836 — a signed request older than one already applied to the same
+ *  change. Nothing was changed; the wallet signs a new request. A 409
+ *  like a repeat, with its own name so the app can say why. */
+function superseded(corsOrigin: string): Response {
+  return json(
+    {
+      error: 'request-superseded',
+      reason: 'a newer signed request for this change was already applied; nothing was changed — sign again',
+    },
+    409,
+    corsOrigin,
+  );
+}
+
 /** What a parsed settings save changes, in the shape the signed message
  *  names (#2754). Built from the same parsed body that is written, so
  *  the signature and the stored row cannot describe different saves. */
@@ -755,9 +770,25 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
     );
   }
   const { write, push } = decision;
+  let outcome: Awaited<ReturnType<typeof upsertThresholds>>;
   try {
-    await upsertThresholds(env.DB, write);
+    // #3836 — the signed time rides the write, and the row takes the save
+    // only when no later-signed save was applied: the order check and the
+    // change are one statement.
+    outcome = await upsertThresholds(env.DB, { ...write, issued_at: signed.req.issuedAt });
   } catch (err) {
+    if (err instanceof SettingsOrderUnavailableError) {
+      // Not 'verification-unavailable': the request is already recorded as
+      // used, so the app must sign a new one rather than resend this one.
+      return json(
+        {
+          error: 'order-unavailable',
+          reason: 'alert settings storage migration pending; nothing was saved — try again shortly',
+        },
+        503,
+        corsOrigin,
+      );
+    }
     // Rollout window — an opt-out can't be stored until migration
     // 0027 lands. A distinct 503 lets the client say "try again
     // shortly" instead of a generic failure; every other error
@@ -774,6 +805,7 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
     }
     throw err;
   }
+  if (outcome === 'superseded') return superseded(corsOrigin);
   return json(
     {
       ok: true,
@@ -817,15 +849,21 @@ async function handleIssueTelegramLink(
   // `issueTelegramLinkCode`); if it or the code cannot be made, the request
   // is refused and the app says linking failed, rather than a handshake that
   // later reports alerts working while nothing would be sent.
+  // #3836 — the code is issued only when no later-signed link or unlink
+  // request for the wallet and chain was applied; the order check, its mark
+  // and the code are one step in the Telegram state.
   let code: string;
   try {
-    code = await issueTelegramLinkCode(
+    const issued = await issueTelegramLinkCode(
       stateStub(env),
       (wallet, chainId) => ensureThresholdsRow(env.DB, wallet, chainId),
       parsed.req.wallet,
       parsed.req.chain_id,
       Math.floor(Date.now() / 1000),
+      parsed.req.issuedAt,
     );
+    if (issued.kind === 'superseded') return superseded(corsOrigin);
+    code = issued.code;
   } catch (err) {
     console.error('[agent] no link code issued:', redactedError(err));
     return json({ error: 'link-unavailable' }, 503, corsOrigin);
@@ -922,7 +960,9 @@ async function handleUnlinkTelegram(
     channelDeps(env),
     wallet,
     verified.via === 'chain' ? parsed.req.chain_id : null,
+    parsed.req.issuedAt,
   );
+  if (outcome.kind === 'superseded') return superseded(corsOrigin);
   if (outcome.kind === 'unknown') {
     return json(
       {
@@ -957,7 +997,8 @@ async function handleUnlinkTelegram(
  *  handshake never completed), which is exactly the fumbled-handshake
  *  case this round-trip exists to catch. */
 /** Minimum seconds between test-alert sends for one wallet. A signed
- *  body is replay-valid for the full ±600s window, and each send is a
+ *  body is replay-valid for its whole window (#3836: up to seven days
+ *  for a contract's approval), and each send is a
  *  real Telegram message; this per-wallet cooldown bounds a copied body
  *  or a buggy retry loop to one message per minute (Codex #1175). One
  *  legitimate test proves the link, so a 60s floor never impedes the

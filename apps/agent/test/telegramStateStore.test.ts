@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CLOSED_RETENTION_SECONDS, LOCK_RETENTION_SECONDS, TelegramStateStore } from '../src/telegramState/store';
+import {
+  CLOSED_RETENTION_SECONDS,
+  LOCK_RETENTION_SECONDS,
+  ORDER_RETENTION_SECONDS,
+  TelegramStateStore,
+} from '../src/telegramState/store';
 import { sqliteDo } from './helpers/sqliteDo';
 
 const W = '0xAbC0000000000000000000000000000000000001';
@@ -20,19 +25,19 @@ describe('telegram state store (#1722)', () => {
     new TelegramStateStore(h.sql, h.tx);
     new TelegramStateStore(h.sql, h.tx);
     const v = h.db.prepare('SELECT version FROM schema_version').all();
-    expect(v).toEqual([{ version: 1 }]);
+    expect(v).toEqual([{ version: 2 }]);
   });
 
   it('a handshake code is good once and not after it expires', () => {
     const { store } = fresh();
-    expect(store.issueLinkCode('c1', W, 84532, 100)).toBe(true);
-    expect(store.issueLinkCode('c1', W, 84532, 100)).toBe(false);
+    expect(store.issueLinkCode('c1', W, 84532, 100, 1)).toBe('issued');
+    expect(store.issueLinkCode('c1', W, 84532, 100, 1)).toBe('taken');
     expect(store.consumeLinkCode('c1', 50)).toEqual({ wallet: w, chainId: 84532 });
     expect(store.consumeLinkCode('c1', 50)).toBeNull();
-    store.issueLinkCode('c2', W, 84532, 100);
+    store.issueLinkCode('c2', W, 84532, 100, 1);
     expect(store.consumeLinkCode('c2', 101)).toBeNull();
-    store.issueLinkCode('c3', W, 84532, 10);
-    store.issueLinkCode('c4', W, 84532, 1000);
+    store.issueLinkCode('c3', W, 84532, 10, 1);
+    store.issueLinkCode('c4', W, 84532, 1000, 1);
     expect(store.sweepExpiredCodes(500)).toBe(1);
   });
 
@@ -92,7 +97,7 @@ describe('telegram state store (#1722)', () => {
     );
     const [a, b] = r.ok ? r.ids : [];
     store.markNotified([a!, b!], 3);
-    store.issueLinkCode('cx', W, 1, 1000);
+    store.issueLinkCode('cx', W, 1, 1000, 1);
     expect(store.applyChange(a!, 8)?.applied).toBe(true);
     expect(store.consumeLinkCode('cx', 9)).toBeNull();
     // Chain 2's chat moved meanwhile: the old-chat guard leaves it alone.
@@ -174,5 +179,66 @@ describe('telegram state store (#1722)', () => {
     store.pruneClosed(300 + LOCK_RETENTION_SECONDS + 1);
     expect(store.keeperPoll(dep1, 400, 20)).toEqual([]);
     expect(CLOSED_RETENTION_SECONDS).toBeGreaterThan(LOCK_RETENTION_SECONDS);
+  });
+
+  describe('request order (#3836)', () => {
+    const clear = (chainId: number) => [{ op: 'clear', chainId } as const];
+
+    it('issues no code for a link request older than one already applied', () => {
+      const { store } = fresh();
+      expect(store.issueLinkCode('n', W, 1, 1000, 200)).toBe('issued');
+      // Older than the applied one: nothing stored, and the mark stays.
+      expect(store.issueLinkCode('o', W, 1, 1000, 199)).toBe('superseded');
+      expect(store.consumeLinkCode('o', 10)).toBeNull();
+      // The same second is not older; another chain has its own order.
+      expect(store.issueLinkCode('s', W, 1, 1000, 200)).toBe('issued');
+      expect(store.issueLinkCode('c', W, 2, 1000, 50)).toBe('issued');
+    });
+
+    it('orders link and unlink together, in the same step as the change', () => {
+      const { store } = fresh();
+      store.commit(W, 1, [], [{ op: 'link', chainId: 1, chatId: '7' }], 1);
+      // An unlink signed at 300 is applied and raises chain 1's mark…
+      expect(store.commit(W, 1, [{ chainId: 1, chatId: '7' }], clear(1), 2, { issuedAt: 300, scope: 1 }).ok).toBe(true);
+      // …so a link request signed before it no longer gets a code.
+      expect(store.issueLinkCode('late', W, 1, 1000, 299)).toBe('superseded');
+      // An older unlink writes nothing, even where the rows match.
+      store.commit(W, 1, [], [{ op: 'link', chainId: 1, chatId: '8' }], 3);
+      expect(store.commit(W, 1, [{ chainId: 1, chatId: '8' }], clear(1), 4, { issuedAt: 250, scope: 1 })).toEqual({
+        ok: false,
+        superseded: true,
+      });
+      expect(store.chatsOf([{ wallet: W, chainId: 1 }])).toEqual(['8']);
+    });
+
+    it('a stale read raises no mark', () => {
+      const { store } = fresh();
+      expect(store.commit(W, 1, [{ chainId: 1, chatId: '7' }], clear(1), 1, { issuedAt: 500, scope: 1 })).toEqual({ ok: false });
+      expect(store.issueLinkCode('x', W, 1, 1000, 400)).toBe('issued');
+    });
+
+    it("an unlink for every chain raises the mark on every chain, and is ordered against each chain's", () => {
+      const { store } = fresh();
+      expect(store.commit(W, null, [], [{ op: 'revokeCodes', chainId: null }], 1, { issuedAt: 300, scope: null }).ok).toBe(true);
+      for (const chainId of [1, 2, 97]) expect(store.issueLinkCode(`c${chainId}`, W, chainId, 1000, 299)).toBe('superseded');
+      expect(store.issueLinkCode('c', W, 2, 1000, 400)).toBe('issued');
+      // Chain 2 now holds 400: an every-chain unlink signed before it is older.
+      expect(store.commit(W, null, [], [{ op: 'revokeCodes', chainId: null }], 2, { issuedAt: 350, scope: null })).toEqual({
+        ok: false,
+        superseded: true,
+      });
+      expect(store.consumeLinkCode('c', 10)).toEqual({ wallet: w, chainId: 2 });
+    });
+
+    it('drops a mark once no request it could refuse can pass the age check', () => {
+      const { store, db } = fresh();
+      store.issueLinkCode('a', W, 1, 1000, 1_000);
+      store.commit(W, null, [], [], 1, { issuedAt: 1_000, scope: null });
+      store.pruneClosed(1_000 + ORDER_RETENTION_SECONDS);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM request_order_chain').all()).toEqual([{ n: 1 }]);
+      store.pruneClosed(1_001 + ORDER_RETENTION_SECONDS);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM request_order_chain').all()).toEqual([{ n: 0 }]);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM request_order_wallet').all()).toEqual([{ n: 0 }]);
+    });
   });
 });

@@ -396,7 +396,20 @@
       "paidAgreed": "Enregistré : vous avez accepté de payer jusqu’à {{fee}} VPFI par côté de prêt sur {{chain}}.",
       "paidWithdrawn": "Retiré : les frais d’alertes Push payantes ne peuvent plus vous être facturés sur {{chain}}.",
       "signatureCheckUnavailable": "Vos réglages n’ont pas été enregistrés : le service d’alertes n’a pas pu vérifier votre signature pour le moment. Veuillez réessayer dans un instant.",
-      "requestAlreadyUsed": "Vos réglages n’ont pas été enregistrés : cette signature a déjà été utilisée. Enregistrez à nouveau pour signer une nouvelle demande."
+      "requestAlreadyUsed": "Vos réglages n’ont pas été enregistrés : cette signature a déjà été utilisée. Enregistrez à nouveau pour signer une nouvelle demande.",
+      "requestUsedAgain": "Rien n’a été modifié : cette demande signée a déjà été utilisée. Recommencez pour en signer une nouvelle.",
+      "requestSuperseded": "Rien n’a été modifié : une demande pour ce changement signée plus tard a déjà été appliquée. Recommencez si vous la souhaitez toujours.",
+      "requestCheckUnavailable": "Rien n’a encore été modifié : le service d’alertes n’a pas pu vérifier la signature pour l’instant. Terminez la demande à nouveau dans un moment.",
+      "serviceUpgrading": "Rien n’a été enregistré : le service d’alertes est en cours de mise à jour. Réessayez dans un moment.",
+      "multisigNote": "Chaque demande indique une clé que seul ce navigateur détient, donc seul ce navigateur peut la terminer. Un portefeuille qui demande l’approbation de plusieurs propriétaires dispose de {{days}} jours au plus ; ensuite la demande expire et vous recommencez.",
+      "pendingTitle": "Une demande attend votre portefeuille",
+      "pendingBody": "{{action}} : commencée dans ce navigateur le {{started}}. Seul ce navigateur peut la terminer, jusqu’au {{expires}}. La terminer redemande la même approbation à votre portefeuille, puis l’envoie.",
+      "pendingFinish": "La terminer",
+      "pendingDiscard": "L’abandonner",
+      "pendingKindLink": "Lier Telegram",
+      "pendingKindUnlink": "Délier Telegram",
+      "pendingKindTest": "Envoyer une alerte de test",
+      "pendingKindSave": "Enregistrer les réglages d’alerte"
     },
     "notifications": {
       "bellLabel": "Notifications",

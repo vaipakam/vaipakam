@@ -1750,6 +1750,18 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Live-only reason.** The live Telegram round trip (sending the code to the bot) still needs the deployed agent with its webhook re-registered
 
+<a id="cov-alert-requests-name-a-browser-key"></a>
+
+## Alert requests name a key only this browser holds, and a multi-signature wallet's request can be finished later (#3836)
+
+**Journey.** Every signed alert request (link and unlink Telegram, save settings, send a test alert) draws a fresh random key in this browser; the text the wallet signs carries its keccak-256 hash and the request body carries the key, so the alert service accepts the request only from the browser that drew it. The request (text, body, key) is kept in this browser's storage from before the wallet is asked until the service answers, so a wallet whose owners take days to approve can be finished after the page closes: the card shows "A request is waiting for your wallet" with the action, when it started and when it expires, and offers Finish (asks the wallet for the same approval again and sends it) or Discard. The card also states, always, that only this browser can finish a request and that a multi-signature wallet has up to 7 days. A request newer than the one sent being already applied is named in plain words (409 `request-superseded`), as is a check the service could not run (503 `verification-unavailable`, the only answer that keeps the request for another try).
+
+**Tier.** unit + CI-Anvil
+
+**Where.** unit: `src/data/alertRequest.test.ts` (kept while the wallet is asked; key sent with the body; dropped on any answer but `verification-unavailable`, on an owner's rejection and past 7 days; kept when the wallet gave up waiting); `src/data/alerts.test.ts` (the save signs over the key's hash and sends the key). CI-Anvil: `tests/38-push-alerts.spec.ts` (the agent stub refuses a save without a well-shaped key, so every save there proves the key travels).
+
+**Live-only reason.** A real multi-signature approval and the finish-after-reload path need the deployed agent and a Safe on Base Sepolia; a live drive is owed on the next touch of the alerts surface.
+
 <a id="cov-paid-push-billing-consent-2723-the-alerts"></a>
 
 ## Paid Push billing consent (#2723) — the Alerts card states, per network, the paid-Push fee read from the chain (VPFI per loan side, paid from the vault's free VPFI to the protocol, at most once per loan, Telegram free), the wallet's stored cap and the contract's answer on whether it covers the fee; whether the fee is billed is the alert …

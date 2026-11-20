@@ -77,6 +77,7 @@ const BASE = {
   warn_hf: 1.5,
   alert_hf: 1.2,
   critical_hf: 1.05,
+  issued_at: 1,
 };
 
 describe('upsertThresholds rollout-window fallback (#1056 round 8)', () => {
