@@ -4071,9 +4071,6 @@
       "rateLender": "Niedrigster Zinssatz, den Sie akzeptieren (% pro Jahr)",
       "latestEnd": "Spätestes neues Enddatum",
       "latestEndHint": "Bis zum Ende dieses Tages gerechnet: {{at}}.",
-      "extensionFee": "Eine Verlängerung bis zu diesem Datum erhöht Ihre Abschlussgebühr für die hinzukommende Laufzeit um {{fee}}, entnommen aus Ihrer Vault. Das ist das Höchste, was Ihre Grenzen zulassen; steigt die Gebühr darüber, findet die Verlängerung erst statt, wenn Sie neue Grenzen speichern.",
-      "extensionFeeNone": "Eine Verlängerung bis zu diesem Datum fügt keine Abschlussgebühr hinzu: Die Laufzeit ist bereits bezahlt.",
-      "extensionFeeUnknown": "Die zusätzliche Abschlussgebühr für dieses Datum konnte nicht gelesen werden, daher können die Grenzen noch nicht gespeichert werden.",
       "extensionFee": "Eine Verlängerung bis zu diesem Datum erhöht Ihre Kreditbearbeitungsgebühr für die zusätzliche Laufzeit um {{fee}}, entnommen aus Ihrem Vault. Das ist das Höchste, was Ihre Limits zulassen; steigt die Gebühr darüber, findet die Verlängerung erst statt, wenn Sie neue Limits speichern.",
       "extensionFeeNone": "Eine Verlängerung bis zu diesem Datum fügt keine Bearbeitungsgebühr hinzu: Die Laufzeit ist bereits bezahlt.",
       "extensionFeeUnknown": "Die zusätzliche Bearbeitungsgebühr für dieses Datum konnte nicht gelesen werden, daher können die Limits noch nicht gespeichert werden.",
@@ -4350,6 +4347,8 @@
     "OfferTermsTooFresh": "Dieses Angebot wurde vor wenigen Sekunden erstellt oder geändert, und ein Angebot kann erst angenommen werden, wenn seine Bedingungen einige Sekunden bestanden haben. Versuchen Sie es gleich noch einmal. Es wurde nichts gesendet.",
     "IntentTermsTooFresh": "Dieses stehende Angebot wurde vor wenigen Sekunden festgelegt oder geändert, und es kann erst angenommen werden, wenn seine Bedingungen einige Sekunden bestanden haben. Versuchen Sie es gleich noch einmal. Es wurde nichts gesendet.",
     "SaleNetBelowReviewed": "Dieser Verkauf würde Ihnen jetzt weniger auszahlen als den geprüften Mindestbetrag (eventuell wurde ein Teil des Kredits zurückgezahlt). Es wurde nichts verkauft. Prüfen Sie den Verkauf erneut, um den aktuellen Betrag zu sehen.",
-    "SaleHeldAboveReviewed": "Seit Ihrer Prüfung des Verkaufs wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt. Es wurde nichts verkauft. Prüfen Sie den Verkauf erneut, um die aktuellen Werte zu sehen."
+    "SaleHeldAboveReviewed": "Seit Ihrer Prüfung des Verkaufs wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt. Es wurde nichts verkauft. Prüfen Sie den Verkauf erneut, um die aktuellen Werte zu sehen.",
+    "InstantSourceRepeated": "Diese Kreditaufnahme nennt dieselbe Quelle mehr als einmal. Jede Quelle kann nur einmal ausfüllen, daher wurde nichts gesendet. Prüfen Sie die Kreditaufnahme und senden Sie sie erneut.",
+    "IntentCapitalInsufficient": "Das Auto-lend, das diesen Kredit übernimmt, hält nicht genug unverliehene Mittel, um den Kapitalbetrag zu zahlen. Es wurde nichts gesendet."
   }
 }
