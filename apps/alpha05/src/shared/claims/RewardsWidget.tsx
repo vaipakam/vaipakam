@@ -4,6 +4,7 @@ import { getSupportedChain } from '../../chain/chains';
 import { RewardClaim, pendingText } from './RewardClaim';
 import { RewardWait } from './RewardWait';
 import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readsPartOfEntries, readVpfiToken } from './rewards';
+import { holdDiscountFrom } from '../consent/holdDiscount';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
 import { useChainRead } from '../reads/chainRead';
@@ -249,7 +250,7 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
       {heldReady && tokenGate}
       <RewardClaim kind="held" ready={heldReady} token={token} meta={meta} />
       <LifetimeClaimed chainId={chain.chainId} chainName={chain.name} account={account} amount={amount} />
-      <p className="tier-b">{vpfi.data !== null && token === null ? text('consent.fullRate') : tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
+      <p className="tier-b">{holdDiscountFrom(vpfi) === 'none' ? text('consent.fullRate') : tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
       <OwnStamp reads={shown} />
       {!onRewards && (
