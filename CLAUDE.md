@@ -438,8 +438,9 @@ runs half of it on old code:
   offers opened before the refresh are not counted.
 
 - **OfferPriceGuardFacet + LoanFacet + OfferBookFacet + OfferPreviewFacet +
-  OfferMatchFacet + RiskPreviewFacet + EarlyWithdrawalDirectFacet +
-  PrecloseFacet — the maker's price-move guard (#3358).** Every step that
+  OfferMatchFacet + IntentPreviewFacet (RiskPreviewFacet until #3843 moved
+  `previewIntent` off it) + EarlyWithdrawalDirectFacet + PrecloseFacet — the
+  maker's price-move guard (#3358).** Every step that
   fills an offer runs `LibOfferPriceGuard.requireClear`, which self-calls
   `requireOfferPriceGuardsClear` for a guarded offer: loan creation (both
   makers' offers in a match), the direct loan sale (the buyer's offer) and

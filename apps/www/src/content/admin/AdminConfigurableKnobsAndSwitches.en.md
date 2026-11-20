@@ -1210,7 +1210,7 @@ deploy scripts turn it on.
   and `matchIntent`, revert `FunctionDisabled(3)`, and an accepted offer
   is single-fill. The previews say so without reverting:
   `OfferMatchFacet.previewMatch` returns `MatchError.MatcherDisabled`,
-  and `RiskPreviewFacet.previewIntent` returns
+  and `IntentPreviewFacet.previewIntent` returns
   `IntentError.MatcherDisabled`. Before #2812, `previewMatch` did not
   check the switch and could return `Ok` for a match that would revert.
   An integration should read `getPartialFillEnabled` (or the preview's
