@@ -8,4 +8,6 @@ The app's order book leaves them out too. When it reads the book from the chain 
 
 The loan page's handover card ("Hand this loan to another borrower") now lists only requests posted for that loan, and checks again on the chain before anything is approved that the picked request names this loan. An ordinary borrow request can no longer take over a loan, so it is no longer offered there, and the card's wording says a request must be posted for the loan.
 
-Advances #3845. The screen for posting such a request is still to come; until it ships, the handover card finds a request only if one was posted some other way.
+Anyone who is not a party to an active loan can now post such a request from the loan's page ("Offer to take over this loan"). The form shows the debt, the current rate, the due date and the collateral, and takes a yearly rate, a term in whole days that ends by the due date, and at least the loan's collateral, which is locked in the requester's own vault. The request carries exactly the loan's principal, all or nothing, with the loan's assets, and expires at the last moment its term still fits, because after that the handover would refuse it. The receipt says the requester receives no money and takes on the debt only if the borrower uses the request. Loans secured by an NFT, rentals and loans with less than a day left are refused by name. The borrower's handover card now says to share the page link with the person taking over.
+
+Advances #3845.

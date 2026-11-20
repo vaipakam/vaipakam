@@ -2010,3 +2010,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## Request to take over a named loan (#3845)
+<a id="cov-takeover-request-3845"></a>
+
+**Journey.** A connected wallet that is not a party to an active loan sees "Offer to take over this loan" on the loan page. Opening it reads the live loan and the latest block. It lists the debt, the current rate, the due date and the collateral, and seeds a rate, a term and a collateral amount from the loan. The term is whole days ending no later than the due date, the collateral is at least the loan's, and the request's own expiry is set to the last moment its term still fits. Review shows the consent line and the receipt (nothing received; the collateral locked in the requester's own vault; the debt and rate owed only if the borrower uses it). Submit re-reads the loan and refuses changed terms, checks the kill switch, sanctions, Terms, balance and allowance, then sends `createTakeoverOffer` with a deadline from the chain's clock. NFT collateral and rentals are refused by name, and so is a loan with less than a day left.
+
+**Tier.** Unit: `src/data/takeoverRequest.test.ts` covers the scope refusals, the whole-day bound, the expiry rule, the refused terms and the payload (exact principal, all or nothing, the loan's assets).
+
+**Gap.** No Anvil spec yet. One needs the takeover entry on the fork, a non-party wallet posting a request, and the borrower's handover card listing and using it.
+
