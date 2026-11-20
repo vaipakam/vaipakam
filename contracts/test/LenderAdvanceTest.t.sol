@@ -712,6 +712,14 @@ contract LenderAdvanceTest is InstantMarketBase {
         assertEq(o.sourceKinds.length, 1, "one kind");
         assertEq(uint8(o.sourceKinds[0]), uint8(LenderCashOutFacet.SourceKind.TakeoverSlot), "the takeover slot");
 
+        // A flagged keeper is refused by the slot routes, so the read says so.
+        MockSanctionsList list = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(list));
+        list.setFlagged(keeper, true);
+        o = LenderCashOutFacet(address(diamond)).cashOptions(tokenId, keeper, 0);
+        assertFalse(o.sellNow.open, "a flagged keeper cannot sell");
+        list.setFlagged(keeper, false);
+
         // Something held for the position closes every takeover, and the
         // keeper's only source is a takeover slot: the read says so with the
         // takeover's own refusal (Codex r4).

@@ -195,6 +195,11 @@ contract LenderCashOutFacet is DiamondReentrancyGuard, DiamondPausable {
             && LibAuth.keeperMayActFor(caller, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, o.holder);
         if (keeperFor) {
             (direct,) = SaleExitVerdictFacet(address(this)).saleExitVerdict(loanId, o.holder);
+            // The slot routes screen the keeper itself before acting as the
+            // holder; so does the read.
+            if (LibVaipakam.isSanctionedAddress(caller)) {
+                direct = _append(direct, abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, caller));
+            }
             bytes memory takeover = InstantTakeoverFacet(address(this)).takeoverPositionRefusal(loanId);
             if (takeover.length != 0) {
                 direct = _append(direct, abi.encodeWithSelector(SourceNeedsHolder.selector, SourceKind.BuyOffer));
