@@ -59,6 +59,7 @@ import {
   pendingExpiresAt,
   type PendingAlertRequest,
 } from '../data/alertRequest';
+import { AlertPhraseSection } from './AlertPhraseSection';
 
 export function AlertsCard() {
   const { address } = useAccount();
@@ -84,12 +85,16 @@ export function AlertsCard() {
     address ? loadPendingAlertRequest(chainId, address) : null,
   );
   const refreshPending = () => setPending(address ? loadPendingAlertRequest(chainId, address) : null);
+  // #3346 — a kept phrase request the owner chose to finish; the phrase
+  // section finishes it (a set needs the phrase typed again).
+  const [phraseResume, setPhraseResume] = useState<PendingAlertRequest | null>(null);
   // Re-derive when the wallet/chain changes (state init runs once).
   const [scope, setScope] = useState(`${chainId}:${address ?? ''}`);
   if (scope !== `${chainId}:${address ?? ''}`) {
     setScope(`${chainId}:${address ?? ''}`);
     setPrefs(address ? loadAlertPrefs(chainId, address) : null);
     setPending(address ? loadPendingAlertRequest(chainId, address) : null);
+    setPhraseResume(null);
     setLink(null);
     setNotice(null);
     setError(null);
@@ -348,6 +353,7 @@ export function AlertsCard() {
     if (req.kind === 'link') void startLink(req);
     else if (req.kind === 'unlink') void doUnlink(req);
     else if (req.kind === 'test-alert') void sendTest(req);
+    else if (req.kind === 'set-phrase' || req.kind === 'clear-phrase') setPhraseResume(req);
     else {
       const ctx = req.context as
         | { prefs?: AlertPrefs; dueDateChanged?: boolean; bandsChanged?: boolean }
@@ -364,6 +370,7 @@ export function AlertsCard() {
   function discardPending() {
     if (!address) return;
     clearPendingAlertRequest(chainId, address);
+    setPhraseResume(null);
     refreshPending();
   }
 
@@ -519,6 +526,18 @@ export function AlertsCard() {
             </div>
           )}
 
+          <AlertPhraseSection
+            address={address}
+            chainId={chainId}
+            signMessage={(message) => signMessageAsync({ message })}
+            resume={phraseResume}
+            onSettled={() => {
+              setPhraseResume(null);
+              refreshPending();
+            }}
+            cardBusy={busy}
+          />
+
           <label className="cluster" style={{ alignItems: 'flex-start' }}>
             <input
               type="checkbox"
@@ -653,6 +672,10 @@ function pendingKindLabel(req: PendingAlertRequest): string {
       return copy.alerts.pendingKindUnlink;
     case 'test-alert':
       return copy.alerts.pendingKindTest;
+    case 'set-phrase':
+      return copy.alerts.pendingKindSetPhrase;
+    case 'clear-phrase':
+      return copy.alerts.pendingKindClearPhrase;
     default:
       return copy.alerts.pendingKindSave;
   }

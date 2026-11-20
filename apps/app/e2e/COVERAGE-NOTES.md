@@ -2020,3 +2020,11 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+<a id="cov-alert-phrase-3346"></a>
+
+## Alert phrase (#3346)
+
+The phrase section of the Alerts card talks to three agent routes: set and remove (both signed alert requests with their own texts) and a status read that never returns the phrase. Unit tests cover what the app signs and sends: the signed text names the fingerprint and not the phrase, the phrase rides the request body only, and the copy kept in this browser for a multi-signature approval holds the key but never the phrase, so finishing it requires the phrase again and is checked against the signed fingerprint.
+
+The rest is the agent's: the phrase rule, the order of phrase requests, the per-chat "last told" record, the notices and the marks on every message are covered by the agent's tests. Live-only because the observable result is a Telegram message from the deployed bot; there is no CI stub for Telegram. No CI-Anvil spec yet: the section reads no chain state, and the agent stub in `tests/38-push-alerts.spec.ts` would need the three routes added, which is a follow-up on the next touch.
+
