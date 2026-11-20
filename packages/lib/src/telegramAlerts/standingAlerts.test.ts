@@ -68,7 +68,9 @@ describe('standing-instruction alerts: parsing', () => {
     expect(standingSkipReason(3)).toBe('reserveShort');
     expect(standingSkipReason(8)).toBe('notConsolidated');
     expect(standingSkipReason(0)).toBeNull();
-    expect(standingSkipReason(9)).toBeNull();
+    expect(standingSkipReason(9)).toBe('paymentRefused');
+    expect(standingSkipReason(10)).toBe('ownerSanctioned');
+    expect(standingSkipReason(11)).toBeNull();
   });
 });
 
