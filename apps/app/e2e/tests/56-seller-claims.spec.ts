@@ -17,8 +17,11 @@
  *    after the click the card states the withdrawal for this loan (the
  *    row itself goes once nothing is owed);
  *  - the result, from the chain: one `SellerInterestWithdrawn` for this
- *    loan and seller with a positive amount, that exact amount reached the
- *    seller's wallet, and nothing is left waiting for them.
+ *    loan and seller with a positive amount, that exact amount joined the
+ *    seller's free vault balance (the depository holding) while the wallet
+ *    did not move (the payout rule: a party is paid into its own vault, and
+ *    only its own Withdraw reaches a wallet), and nothing is left waiting
+ *    for them.
  *
  *  The Claims page finds the loan through the indexer's seller-claim
  *  activity; the e2e stub serves those kinds from this chain's own logs,
@@ -120,12 +123,11 @@ test('the seller of a lender position withdraws the interest it earned before th
   expect(Number((await read<Loan>('getLoanDetails', [loanId])).status)).toBe(1); // Repaid
 
   const asset = loan.principalAsset;
-  const walletBefore = await pub.readContract({
-    address: asset,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [sellerAddr],
+  const balances = async () => ({
+    wallet: await pub.readContract({ address: asset, abi: erc20Abi, functionName: 'balanceOf', args: [sellerAddr] }),
+    free: await read<bigint>('getDepositoryHolding', [sellerAddr, asset, 0n]),
   });
+  const before = await balances();
   const fromBlock = await pub.getBlockNumber();
 
   const again = await launchWallet('lender');
@@ -154,13 +156,12 @@ test('the seller of a lender position withdraws the interest it earned before th
   const amount = logs[0].args.amount!;
   expect(amount > 0n, 'the withdrawal paid something').toBe(true);
   expect(logs[0].args.asset!.toLowerCase()).toBe(asset.toLowerCase());
-  const walletAfter = await pub.readContract({
-    address: asset,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [sellerAddr],
-  });
-  expect(walletAfter - walletBefore, 'that amount reached the seller’s wallet').toBe(amount);
+  // The payout rule: what the seller collects joins the free balance of
+  // their own vault (`getDepositoryHolding`), which only their own Withdraw
+  // takes to a wallet.
+  const after = await balances();
+  expect(after.free - before.free, 'that amount joined the seller’s free vault balance').toBe(amount);
+  expect(after.wallet, 'nothing reached the seller’s wallet').toBe(before.wallet);
   expect(
     await read<bigint>('getSellerInterestHeld', [loanId, sellerAddr, asset]),
     'nothing is left waiting for the seller',
