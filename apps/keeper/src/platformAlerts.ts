@@ -15,6 +15,16 @@
 //     address, and a request to unlock the position tokens or to shorten the
 //     wait before they unlock.
 //
+// THE RULE for the protection steps: every event that lowers protection, or
+// starts a wait that ends in less protection, alerts the wallet when it is
+// requested, not when it takes effect. A later event of that kind joins
+// `plan` under this rule without a new ruling (design thread, 2026-11-20).
+// Steps that tighten protection alert nobody.
+//
+// The messages reach the agent as data (`TelegramAlert`); on Telegram the
+// agent adds the owner's anti-phishing phrase (#3346). The keeper never holds
+// the phrase, and the Push text, which the keeper renders, never shows it.
+//
 // The events are read from the chain, not from the indexer: like the vault
 // security alerts (`protectedVaultEvents.ts`), these are safety alerts and do
 // not depend on the indexer (owner decision via the design thread,
