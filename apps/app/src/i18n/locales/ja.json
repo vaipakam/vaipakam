@@ -4217,7 +4217,7 @@
     "InvalidAssetType": "無効な資産タイプです。",
     "InvalidOffer": "オファーが見つからないか、すでに無効です。",
     "OfferAlreadyAccepted": "オファーはすでに承諾されています。",
-    "NotOfferCreator": "この操作はオファー作成者のみ実行できます。",
+    "NotOfferHolder": "この操作は、このオファーのポジショントークンの保有者のみ実行できます。",
     "OfferExpired": "このオファーは期限切れで、承諾またはマッチできません。",
     "OfferExpiryInPast": "オファー期限は未来のタイムスタンプである必要があります。現在から少なくとも 1 秒後の期限を選んでください。",
     "OfferExpiryAboveCap": "オファー期限が遠すぎます（1 年上限）。より早い期限を選択してください。",

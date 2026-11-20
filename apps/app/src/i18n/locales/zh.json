@@ -4216,7 +4216,7 @@
     "InvalidAssetType": "资产类型无效。",
     "InvalidOffer": "报价未找到或不再有效。",
     "OfferAlreadyAccepted": "报价已被接受。",
-    "NotOfferCreator": "只有此报价的创建者可以执行此操作。",
+    "NotOfferHolder": "只有持有此报价头寸代币的人才能执行此操作。",
     "OfferExpired": "此报价已过期，不能再接受或匹配。",
     "OfferExpiryInPast": "报价过期时间必须是未来时间戳。请选择至少比现在晚 1 秒的截止时间。",
     "OfferExpiryAboveCap": "报价过期时间太远（1 年期限上限）。请选择更早截止时间。",
