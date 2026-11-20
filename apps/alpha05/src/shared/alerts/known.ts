@@ -32,6 +32,9 @@ export interface KnownAlerts {
   held?: { at: number; pending: PendingRemoval[] };
   bands?: { warnHf: number; alertHf: number; criticalHf: number; at: number };
   dueDate?: { on: boolean; at: number };
+  /** #3434 — the vault outflow alert choice saved from here: `default` is on
+   *  while the wallet's protected mode is on and off otherwise. */
+  outflow?: { choice: 'on' | 'off' | 'default'; at: number };
   /** Push was switched on from here; `kept` when the service could not send
    *  push at that moment and kept an opt-in it already held. */
   push?: { at: number; outcome: 'stored' | 'kept' };
@@ -70,6 +73,8 @@ export function parseKnown(raw: unknown): KnownAlerts {
   if (b && isNum(b.warnHf) && isNum(b.alertHf) && isNum(b.criticalHf) && isNum(b.at)) out.bands = { warnHf: b.warnHf, alertHf: b.alertHf, criticalHf: b.criticalHf, at: b.at };
   const d = r.dueDate as Record<string, unknown> | undefined;
   if (d && typeof d.on === 'boolean' && isNum(d.at)) out.dueDate = { on: d.on, at: d.at };
+  const o = r.outflow as Record<string, unknown> | undefined;
+  if (o && (o.choice === 'on' || o.choice === 'off' || o.choice === 'default') && isNum(o.at)) out.outflow = { choice: o.choice, at: o.at };
   const p = r.push as Record<string, unknown> | undefined;
   if (p && isNum(p.at) && (p.outcome === 'stored' || p.outcome === 'kept')) out.push = { at: p.at, outcome: p.outcome };
   return out;
@@ -174,10 +179,11 @@ export function recordAnswer(chainId: number, wallet: Hex, action: AlertAction, 
       writeKnown(id, wallet, { telegram, held: { at, pending } });
     }
   } else if (typeof action !== 'string') {
-    const { bands, dueDateReminders, pushAlerts } = action.save;
+    const { bands, dueDateReminders, pushAlerts, vaultOutflowAlerts } = action.save;
     writeKnown(chainId, wallet, {
       ...(bands ? { bands: { ...bands, at } } : {}),
       ...(dueDateReminders !== undefined ? { dueDate: { on: dueDateReminders, at } } : {}),
+      ...(vaultOutflowAlerts !== undefined ? { outflow: { choice: vaultOutflowAlerts, at } } : {}),
       ...(pushAlerts && answer.push !== 'not-requested' ? { push: { at, outcome: answer.push } } : {}),
     });
   }

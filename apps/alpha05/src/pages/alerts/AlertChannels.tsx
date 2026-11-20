@@ -5,9 +5,11 @@ import { useOwnStateClient } from '../../chain/ownRail';
 import { AGENT } from '../../shared/alerts/agentClient';
 import { bandsProblem, DEFAULT_BANDS, parseBand, pushChannelUrl, type AlertAction, type Bands } from '../../shared/alerts/alerts';
 import { type KnownAlerts } from '../../shared/alerts/known';
+import { pendingExpiresAt, PENDING_MAX_AGE_S, type PendingAlert } from '../../shared/alerts/pendingRequest';
 import { useKnown } from '../../shared/alerts/useKnown';
 import { useAlertAction, type AlertRun } from '../../shared/alerts/useAlertAction';
 import { usePushStatus } from '../../shared/alerts/usePushStatus';
+import { useSettingsFields } from '../../shared/alerts/useSettingsFields';
 import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -71,6 +73,9 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
 
   const push = usePushStatus();
   const pushNow = push.current;
+  // #3434 — the outflow choice is offered only where the service keeps it.
+  const fields = useSettingsFields();
+  const outflowKept = fields.current?.includes('vault-outflow') === true;
 
   const run = async (a: AlertAction) => {
     await action.start(a);
@@ -127,6 +132,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
         />
       )}
       <RunLine run={action.run} chain={chain} copy={copy} />
+      {action.pending && !action.busy && <PendingRequest pending={action.pending} nowS={nowS} busy={action.busy} onFinish={() => void action.finish()} onDiscard={action.discard} copy={copy} />}
 
       <div className="card alert-channel" data-testid="alert-telegram">
         <h3>{text('alertChannels.telegramTitle')}</h3>
@@ -250,10 +256,58 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
           {text(known.dueDate?.on === false ? 'alertChannels.dueSwitchOn' : 'alertChannels.dueSwitchOff')}
         </button>
       </div>
+
+      <div className="card alert-channel" data-testid="alert-outflow">
+        <h3>{text('alertChannels.outflowTitle')}</h3>
+        <p className="tier-b">{text('alertChannels.outflowLead')}</p>
+        <p className="tier-b" data-testid="alert-outflow-state">
+          {known.outflow ? format(OUTFLOW_SAVED[known.outflow.choice], { time: formatUtc(known.outflow.at) }) : text('alertChannels.outflowUnknown')}
+        </p>
+        {fields.state === 'error' && (
+          <p className="tier-a" data-testid="alert-outflow-unread">
+            {format('alertChannels.outflowServiceUnread', { reason: fields.error ?? '' })}
+          </p>
+        )}
+        {fields.current !== null && !outflowKept && (
+          <p className="tier-a" data-testid="alert-outflow-not-kept">
+            {text('alertChannels.outflowNotKept')}
+          </p>
+        )}
+        {outflowKept && (
+        <div className="row-actions">
+          {OUTFLOW_CHOICES.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className="btn"
+              aria-pressed={known.outflow?.choice === c}
+              disabled={action.busy || known.outflow?.choice === c}
+              onClick={() => void run({ save: { vaultOutflowAlerts: c } })}
+              data-testid={`alert-outflow-${c}`}
+            >
+              {text(OUTFLOW_LABEL[c])}
+            </button>
+          ))}
+        </div>
+        )}
+      </div>
       <WhyLink summaryKey="alertChannels.whySummary" detailKey="alertChannels.why" />
     </section>
   );
 }
+
+/** #3434 — the vault outflow alert choices, in the order they are offered. */
+const OUTFLOW_CHOICES = ['default', 'on', 'off'] as const;
+const OUTFLOW_LABEL: Record<(typeof OUTFLOW_CHOICES)[number], CopyKey> = {
+  default: 'alertChannels.outflowDefault',
+  on: 'alertChannels.outflowAlways',
+  off: 'alertChannels.outflowNever',
+};
+const OUTFLOW_SAVED: Record<(typeof OUTFLOW_CHOICES)[number], CopyKey> = {
+  default: 'alertChannels.outflowDefaultHere',
+  on: 'alertChannels.outflowAlwaysHere',
+  off: 'alertChannels.outflowNeverHere',
+};
 
 /** The configuration problems the alert service names when push cannot be
  *  offered (the service's own reason codes); each is a setting of this
@@ -320,6 +374,52 @@ function BandsForm({ initial, busy, onSave, copy }: { initial: Bands; busy: bool
         {text('alertChannels.bandsSave')}
       </button>
     </form>
+  );
+}
+
+/** The name of a kept request's action, as the reader knows it. */
+function pendingActionKey(a: AlertAction): CopyKey {
+  if (a === 'link') return 'alertChannels.pendingLink';
+  if (a === 'unlink') return 'alertChannels.pendingUnlink';
+  if (a === 'test-alert') return 'alertChannels.pendingTest';
+  return 'alertChannels.pendingSave';
+}
+
+/** #3836 — a request this browser started and the alert service has not
+ *  answered: what it is, when it started, until when only this browser can
+ *  finish it, and Finish or Discard. One past its limit offers Discard
+ *  only. */
+function PendingRequest({ pending, nowS, busy, onFinish, onDiscard, copy }: { pending: PendingAlert; nowS: number; busy: boolean; onFinish: () => void; onDiscard: () => void; copy: CopyAccess }) {
+  const { text, format } = copy;
+  const expiresAt = pendingExpiresAt(pending);
+  const expired = expiresAt < nowS;
+  const days = String(PENDING_MAX_AGE_S / 86_400);
+  return (
+    <div className="card alert-channel" data-testid="alert-pending" data-expired={expired ? 'true' : 'false'}>
+      <h3>{text('alertChannels.pendingTitle')}</h3>
+      <p className="tier-a">
+        {format('alertChannels.pendingWhat', { action: text(pendingActionKey(pending.action)), started: formatUtc(pending.issuedAt) })}
+      </p>
+      {expired ? (
+        <p className="tier-a">{format('alertChannels.pendingExpired', { days })}</p>
+      ) : (
+        <>
+          <p className="tier-a">{format('alertChannels.pendingUntil', { time: formatUtc(expiresAt) })}</p>
+          <p className="tier-b">{text('alertChannels.pendingKey')}</p>
+          <p className="tier-b">{format('alertChannels.pendingHow', { days })}</p>
+        </>
+      )}
+      <div className="form-actions">
+        {!expired && (
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={onFinish} data-testid="alert-pending-finish">
+            {text('alertChannels.pendingFinish')}
+          </button>
+        )}
+        <button type="button" className="btn" disabled={busy} onClick={onDiscard} data-testid="alert-pending-discard">
+          {text('alertChannels.pendingDiscard')}
+        </button>
+      </div>
+    </div>
   );
 }
 

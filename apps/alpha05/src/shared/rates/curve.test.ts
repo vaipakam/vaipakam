@@ -60,6 +60,20 @@ describe('parseRateCurve', () => {
   });
 });
 
+describe('unconfirmed loans left out', () => {
+  it('reads the count, keeps a missing one missing and refuses one that is not a number', () => {
+    const c = parseRateCurve(curveAnswer(84532, ASSET, NOW), { chainId: 84532, asset: ASSET });
+    expect(c.ownLoans.terms.map((t) => t.unconfirmedLeftOut)).toEqual([0, 2, 0, 0, 0]);
+    const a = curveAnswer(84532, ASSET, NOW);
+    delete (a.ownLoans.terms[1] as Record<string, unknown>).unconfirmedLeftOut;
+    expect(parseRateCurve(a, { chainId: 84532, asset: ASSET }).ownLoans.terms[1].unconfirmedLeftOut).toBeNull();
+    (a.ownLoans.terms[1] as Record<string, unknown>).unconfirmedLeftOut = '3';
+    expect(() => parseRateCurve(a, { chainId: 84532, asset: ASSET })).toThrow(IndexerUnavailable);
+    const h = parseRateHistory(historyAnswer(84532, ASSET, 30, 20_000), { chainId: 84532, asset: ASSET, days: 30 });
+    expect(h.rows.every((r) => typeof r.ownLoans.unconfirmedLeftOut === 'number')).toBe(true);
+  });
+});
+
 describe('parseRateHistory', () => {
   it('lists only the filled days, newest first, in seconds', () => {
     const today = Math.floor(NOW / 86_400);

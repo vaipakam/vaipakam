@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { erc20Abi, type Log } from "viem";
 import { useConfig } from "wagmi";
-import { signTypedData } from "wagmi/actions";
+import { signTypedDataFor } from '../tx/walletGuard';
 import { sendWrite } from "../tx/send";
 import { useMode } from "../../app/ModeContext";
 import type { OwnStateClient } from "../../chain/ownRail";
@@ -615,7 +615,7 @@ function DepositFlow({
       deadline: now.block.timestamp + BigInt(PERMIT_DEADLINE_SECONDS),
     };
     say(format("vpfiPermit.stepSign", { amount: exact(d.asset, d.amount) }));
-    const signature = await signTypedData(config, {
+    const signature = await signTypedDataFor(config, chain.chainId, {
       account,
       domain: permitDomain(chain.chainId),
       types: PERMIT_TRANSFER_TYPES,

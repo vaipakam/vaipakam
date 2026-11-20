@@ -114,7 +114,7 @@
       },
       "vpfi": {
         "title": "VPFI 手续费折扣 — Vaipakam",
-        "description": "可选：在 vault 中持有 VPFI 以降低协议手续费。出借、借入或租赁都不要求持有 VPFI。"
+        "description": "持有 VPFI 的费用折扣将随奖励阶段开始。在平台代币安装之前，所有费用均按全额收取。出借、借款或租赁均无需 VPFI。"
       },
       "nftVerifier": {
         "title": "持仓 NFT 验证器 — Vaipakam",
@@ -606,7 +606,7 @@
         },
         "vpfi": {
           "q": "我需要 VPFI 吗？",
-          "a": "不需要。VPFI 是可选的 — 在 vault 中持有它可以降低符合条件贷款的协议费用。它永远不会降低网络 gas，借款、出借或租赁也永远不需要它。"
+          "a": "不需要。借款、出借或租赁永远不需要 VPFI。平台代币将随奖励阶段推出。在某个网络安装之前，该网络上不适用任何费用折扣，所有费用均按全额收取。安装之后，在 vault 中持有它可以降低符合条件贷款的协议费用。它永远不会降低网络 gas。"
         },
         "modes": {
           "q": "基础模式和高级模式有什么区别？",
@@ -2402,7 +2402,7 @@
       "withdrawWarning": "提取 VPFI 可能降低未来手续费折扣。",
       "belowMinNote": "持有少于 {{floor}} VPFI 不会获得费用折扣。",
       "tierTableUnknown": "目前无法从此网络读取折扣等级，因此这里不显示任何等级。",
-      "notOnThisChain": "{{chain}} 上尚不能存入 VPFI。Vaipakam 的其他功能无需 VPFI 也可使用。",
+      "notInstalled": "平台代币尚未在 {{chain}} 上安装。它将随奖励阶段在所有网络上同时推出。在此之前，任何人都不享受费用折扣，所有费用均按全额收取。Vaipakam 的所有功能无需该代币即可使用。",
       "tokenChanged": "VPFI token 配置在您审核后发生变化。没有批准任何内容 — 请检查更新后的数字并重试。",
       "tokenCheckRetry": "刚才无法确认 VPFI token — 没有批准任何内容。请稍后重试。",
       "addToWallet": "将 VPFI 添加到 MetaMask",
@@ -3152,7 +3152,7 @@
         "claimsSub": "领取还款、抵押品和 rewards",
         "offersSub": "浏览此网络上的所有开放 offer",
         "vaultSub": "您的资产所在位置 — 总额、锁定和可用",
-        "vpfiSub": "可选 — 持有 VPFI 以降低协议费用",
+        "vpfiSub": "可选的费用折扣，从奖励阶段开始",
         "activitySub": "您的钱包在 Vaipakam 上做过的一切",
         "riskAccessSub": "选择你的交易中资产可以承受多大风险",
         "helpSub": "简单语言回答和 build 信息",
@@ -3340,6 +3340,8 @@
       "flagsHeading": "功能开关",
       "partialFill": "订单撮合（部分成交）",
       "tiersHeading": "VPFI 折扣等级",
+      "tiersNotInstalled": "该网络尚未安装平台代币，因此这些等级均不适用：所有费用均按全额收取。",
+      "tiersInstallUnknown": "我们无法确认该网络是否已安装平台代币，因此无法判断这些等级是否适用。",
       "tiers": "等级",
       "tierThreshold": "等级 {{n}} 门槛",
       "tierValue": "{{amount}} VPFI → 折扣 {{discount}}",
@@ -4116,8 +4118,6 @@
       "rateLender": "您接受的最低利率（年化 %）",
       "latestEnd": "最晚的新到期日",
       "latestEndHint": "计算到当天结束：{{at}}。",
-      "extensionFee": "展期至该日期会为新增的期限在您的贷款发起费上增加 {{fee}}，从您的金库中扣除。这是您的限额允许的最高金额；如果费用超过此额，在您保存新的限额之前不会展期。",
-      "extensionFeeNone": "展期至该日期不会增加发起费：该期限已经付过。",
       "extensionFee": "延期到该日期会为新增期限在您的贷款发起费上增加 {{fee}}，从您的 vault 中扣除。这是您的限额允许的最高金额；如果费用超过此金额，在您保存新的限额之前不会延期。",
       "extensionFeeNone": "延期到该日期不会增加发起费：该期限已付费。",
       "extensionFeeUnknown": "无法读取该日期的新增发起费，因此暂时无法保存限额。",
@@ -4394,6 +4394,8 @@
     "OfferTermsTooFresh": "此报价刚在几秒前发布或修改，报价的条款需保持几秒后才能被成交。请稍后再试。未发送任何内容。",
     "IntentTermsTooFresh": "此常设报价刚在几秒前设置或修改，其条款需保持几秒后才能被成交。请稍后再试。未发送任何内容。",
     "SaleNetBelowReviewed": "此次出售现在支付给您的金额将低于您审核过的最低金额（贷款可能已部分还款）。未出售任何内容。请重新审核此次出售以查看当前金额。",
-    "SaleHeldAboveReviewed": "自您审核此次出售以来，此笔贷款上为出借人预留的金额已增加。未出售任何内容。请重新审核此次出售以查看当前金额。"
+    "SaleHeldAboveReviewed": "自您审核此次出售以来，此笔贷款上为出借人预留的金额已增加。未出售任何内容。请重新审核此次出售以查看当前金额。",
+    "InstantSourceRepeated": "此借款多次指定了同一来源。每个来源只能成交一次，因此未发送任何内容。请检查借款后重新发送。",
+    "IntentCapitalInsufficient": "接管此贷款的 Auto-lend 没有足够的未借出资金来支付其本金。未发送任何内容。"
   }
 }

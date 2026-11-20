@@ -83,7 +83,7 @@ test('a borrower’s review states what happens to their collateral if things go
     .getByTestId('receipt-section')
     .filter({ hasText: 'What happens if (an illustration, not a forecast)' });
   await expect(whatIf).toContainText('If the collateral price falls 30%, the loan-to-value goes from');
-  await expect(whatIf).toContainText('If you repay after the due date, a late fee is added.');
+  await expect(whatIf).toContainText(/If you repay after the due date, a late fee is added: [0-9.]+% of the principal on the first day/);
   await expect(whatIf).toContainText('The initiation fee is not returned.');
   expect(flags.sentTransactions).toBe(sent);
   await fitsWidth(page);

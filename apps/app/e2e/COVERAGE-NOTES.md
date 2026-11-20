@@ -738,6 +738,8 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Protected vault port (depository vault).** The contract no longer pays recovered tokens to the wallet. `recoverStuckERC20` became `adoptUntracked`, which credits the declared amount to the vault's tracked balance; the tokens then leave by an ordinary withdrawal, so a protected account's payout delay applies to them like any other balance. The page signs the new `AdoptionAcknowledgment` typed data (domain "Vault Adoption", with the asset kind and token id) and reads `getTrackedHolding` before and after. `tests/27-recover.spec.ts` now asserts the tracked balance rose rather than the wallet balance, and looks for the "Sign & add to vault" button and the "Tokens added to your vault" result. The sanctions branch reads `VaultBannedFromAdoption`. The declaration text changed, so every locale's reading aid was retranslated against the new hash.
 
+**Token label rule.** The symbol the token reports is cleaned by the shared `@vaipakam/lib/tokenLabel` rule (controls and format characters removed, one line, 20 code points), the same rule the statements and feed exports use. Its hostile-name cases are unit tests in `packages/lib/src/tokenLabel.test.ts`; no spec drives a hostile token through this page.
+
 <a id="cov-recovery-declaration-reading-aid-1563-the-eip"></a>
 
 ## Recovery declaration reading aid (#1563) — the EIP-712 declaration the user signs on `/recover` is contract-fixed English (its keccak256 must equal the vault facet's `RECOVERY_ACK_TEXT_HASH`), so the signed bytes cannot be translated.
@@ -2027,4 +2029,13 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 The phrase section of the Alerts card talks to three agent routes: set and remove (both signed alert requests with their own texts) and a status read that never returns the phrase. Unit tests cover what the app signs and sends: the signed text names the fingerprint and not the phrase, the phrase rides the request body only, and the copy kept in this browser for a multi-signature approval holds the key but never the phrase, so finishing it requires the phrase again and is checked against the signed fingerprint. The status read is per network, and the card confirms the scope the agent reports: every network for a key's signature, this network only for a contract wallet's approval, with a switch offered to each other network where this browser has Telegram linked (the section is keyed per network and wallet, so the phrase is typed again after a switch).
 
 The rest is the agent's: the phrase rule, the order of phrase requests, the per-chat "last told" record, the notices and the marks on every message are covered by the agent's tests. Live-only because the observable result is a Telegram message from the deployed bot; there is no CI stub for Telegram. No CI-Anvil spec yet: the section reads no chain state, and the agent stub in `tests/38-push-alerts.spec.ts` would need the three routes added, which is a follow-up on the next touch.
+
+## No platform token, no discount (owner decision 2026-11-20)
+<a id="cov-no-platform-token-no-discount"></a>
+
+**Journey.** The platform token arrives with the rewards phase, installed on every network together, so no network has it at launch and the fee path gives no hold discount to anyone. When the Diamond reports no token (`getVPFIToken` is the zero address), `/vpfi` shows one banner saying so and that every fee is charged at its full rate. It no longer shows the discount explainer, the tier table or a button to switch to another network, since no other network has a discount to offer either. A failed read still shows the couldn't-check state. The protocol console keeps the configured tier settings (they are real settings) and adds a line under them saying none applies while the token is not installed. The Help answer, the More menu line and the page's search description now say discounts start with the rewards phase.
+
+**Tier.** Live (gap row). The change is copy plus a branch on the snapshot's existing `registered` field; the fork tier deploys a token, so a spec would need a token-less Diamond.
+
+**Gap.** Add a fork drive with no token registered when the VPFI surface next gets a spec: assert the banner, and that no tier row or explainer renders.
 

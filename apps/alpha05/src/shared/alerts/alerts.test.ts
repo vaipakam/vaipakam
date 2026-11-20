@@ -5,14 +5,16 @@ import { parseKnown, readKnown, writeKnown } from './known';
 
 const W = '0xAbCdEf0000000000000000000000000000000001' as const;
 const SIG = '0x1234' as const;
+const KEY = `0x${'ab'.repeat(32)}` as const;
+const KH = `0x${'cd'.repeat(32)}`;
 
 describe('alert messages and bodies', () => {
   it('signs the shared messages, byte for byte', () => {
-    expect(alertMessage('link', W, 84532, 100)).toBe(buildTelegramLinkMessage(W, 84532, 100));
-    expect(alertMessage('unlink', W, 84532, 100)).toBe(buildTelegramUnlinkMessage(W, 84532, 100));
-    expect(alertMessage('test-alert', W, 84532, 100)).toBe(buildTelegramTestMessage(W, 84532, 100));
+    expect(alertMessage('link', W, 84532, 100, KH)).toBe(buildTelegramLinkMessage(W, 84532, 100, KH));
+    expect(alertMessage('unlink', W, 84532, 100, KH)).toBe(buildTelegramUnlinkMessage(W, 84532, 100, KH));
+    expect(alertMessage('test-alert', W, 84532, 100, KH)).toBe(buildTelegramTestMessage(W, 84532, 100, KH));
     const save = { dueDateReminders: false } as const;
-    expect(alertMessage({ save }, W, 84532, 100)).toBe(buildAlertSettingsMessage(W, 84532, save, 100));
+    expect(alertMessage({ save }, W, 84532, 100, KH)).toBe(buildAlertSettingsMessage(W, 84532, save, 100, KH));
   });
 
   it('routes each action', () => {
@@ -23,14 +25,20 @@ describe('alert messages and bodies', () => {
   });
 
   it('sends only what a save changes', () => {
-    expect(alertBody('link', W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG });
-    expect(alertBody({ save: { dueDateReminders: false } }, W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, notify_maturity_approaching: false });
-    expect(alertBody({ save: { pushAlerts: true } }, W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, push_channel: 'subscribed' });
-    expect(alertBody({ save: { bands: { warnHf: 1.6, alertHf: 1.3, criticalHf: 1.1 } } }, W, 1, 2, SIG)).toEqual({
+    expect(alertBody('link', W, 1, 2, SIG, KEY)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, requestKey: KEY });
+    expect(alertBody({ save: { dueDateReminders: false } }, W, 1, 2, SIG, KEY)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, requestKey: KEY, notify_maturity_approaching: false });
+    // #3434 — the outflow choice: the default goes as null, the others as booleans.
+    expect(alertBody({ save: { vaultOutflowAlerts: 'default' } }, W, 1, 2, SIG, KEY)).toMatchObject({ notify_vault_outflow: null });
+    expect(alertBody({ save: { vaultOutflowAlerts: 'on' } }, W, 1, 2, SIG, KEY)).toMatchObject({ notify_vault_outflow: true });
+    expect(alertBody({ save: { vaultOutflowAlerts: 'off' } }, W, 1, 2, SIG, KEY)).toMatchObject({ notify_vault_outflow: false });
+    expect(alertBody({ save: { dueDateReminders: true } }, W, 1, 2, SIG, KEY)).not.toHaveProperty('notify_vault_outflow');
+    expect(alertBody({ save: { pushAlerts: true } }, W, 1, 2, SIG, KEY)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, requestKey: KEY, push_channel: 'subscribed' });
+    expect(alertBody({ save: { bands: { warnHf: 1.6, alertHf: 1.3, criticalHf: 1.1 } } }, W, 1, 2, SIG, KEY)).toEqual({
       wallet: W,
       chain_id: 1,
       issuedAt: 2,
       signature: SIG,
+      requestKey: KEY,
       warn_hf: 1.6,
       alert_hf: 1.3,
       critical_hf: 1.1,
@@ -114,6 +122,8 @@ describe('answers', () => {
   it('names each refusal', () => {
     const cases: [Parameters<typeof readAlertAnswer>[0], number, Record<string, unknown> | null, string][] = [
       ['link', 409, { error: 'request-already-used' }, 'used'],
+      ['unlink', 409, { error: 'request-superseded' }, 'superseded'],
+      [{ save: {} }, 503, { error: 'order-unavailable' }, 'storage-pending'],
       [{ save: { pushAlerts: true } }, 409, { error: 'push-unavailable' }, 'push-unavailable'],
       ['link', 503, { error: 'verification-unavailable' }, 'verify-down'],
       [{ save: {} }, 503, { error: 'optout-unavailable' }, 'storage-pending'],

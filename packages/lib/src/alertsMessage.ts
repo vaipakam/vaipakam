@@ -156,11 +156,15 @@ export function buildTelegramUnlinkMessage(
  * - `pushAlerts`: `true` when the save switches Push alerts on. There
  *   is no way to switch Push off through this save, so there is no
  *   `false`.
+ * - `vaultOutflowAlerts` (#3434): an alert for every movement out of the
+ *   owner's vault — `on`, `off`, or `default` (on while the owner's
+ *   protected mode is on, off otherwise).
  */
 export interface AlertSettingsChange {
   bands?: { warnHf: number; alertHf: number; criticalHf: number };
   dueDateReminders?: boolean;
   pushAlerts?: true;
+  vaultOutflowAlerts?: 'on' | 'off' | 'default';
 }
 
 /**
@@ -184,7 +188,7 @@ export function buildAlertSettingsMessage(
   issuedAt: number,
   keyHash: string,
 ): string {
-  const { bands, dueDateReminders, pushAlerts } = change;
+  const { bands, dueDateReminders, pushAlerts, vaultOutflowAlerts } = change;
   return [
     'Vaipakam — Save alert settings',
     '',
@@ -202,6 +206,15 @@ export function buildAlertSettingsMessage(
       dueDateReminders === undefined ? 'unchanged' : dueDateReminders ? 'on' : 'off'
     }`,
     `Push alerts: ${pushAlerts ? 'switch on' : 'unchanged'}`,
+    // #3434 — written ONLY when the save sets it, so a message signed by an
+    // app that predates the setting is the same text the agent rebuilds.
+    ...(vaultOutflowAlerts === undefined
+      ? []
+      : [
+          `Vault outflow alerts: ${
+            vaultOutflowAlerts === 'default' ? 'on while protected mode is on (default)' : vaultOutflowAlerts
+          }`,
+        ]),
     '',
     ...trailer(wallet, chainId, issuedAt, keyHash),
   ].join('\n');

@@ -28,6 +28,7 @@ import { getDefaultConfig } from 'connectkit';
 import { RPC_PROXY_MAX_BATCH } from '@vaipakam/lib/rpcProxyPolicy';
 import { SUPPORTED_CHAINS } from './chains';
 import type { RpcEndpoint } from './endpoints';
+import { safeOriginPatterns } from './safeOrigins';
 
 const WC_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID?.trim() || '';
 
@@ -110,7 +111,7 @@ export const wagmiConfig = createConfig({
         ]
       : []),
     safe({
-      allowedDomains: [/app\.safe\.global$/, /safe\.global$/],
+      allowedDomains: safeOriginPatterns(),
       debug: false,
       shimDisconnect: true,
     }),

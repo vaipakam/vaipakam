@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { changedBetween, promptCount, reviewBlockers, type RepayReview, putBackPromptCount } from './repayReview';
+import { changedBetween, payerHolderBlocker, promptCount, reviewBlockers, type RepayReview, putBackPromptCount } from './repayReview';
 
 const copy = { text: (k: string) => k } as never;
 const A = '0x00000000000000000000000000000000000000aa' as const;
@@ -63,5 +63,26 @@ describe('reviewBlockers and promptCount', () => {
     expect(putBackPromptCount({ ...review, approvalSteps: 0 })).toBe(0);
     expect(putBackPromptCount(review)).toBe(1);
     expect(putBackPromptCount({ ...review, approvalSteps: 2 })).toBe(2);
+  });
+});
+
+describe('payerHolderBlocker (#3769)', () => {
+  const C = '0x00000000000000000000000000000000000000cc' as const;
+  const D = '0x00000000000000000000000000000000000000dd' as const;
+  it('asks nothing of a reader the page named no holder to', () => {
+    expect(payerHolderBlocker(review, C, undefined)).toBeNull();
+  });
+  it('asks nothing of the holder themself', () => {
+    expect(payerHolderBlocker(review, A, null)).toBeNull();
+  });
+  it('waits for the payer to confirm', () => {
+    expect(payerHolderBlocker(review, C, null)).toBe('unconfirmed');
+  });
+  it('stops when the holder read now is not the one named', () => {
+    expect(payerHolderBlocker(review, C, D)).toBe('changed');
+    expect(payerHolderBlocker({ ...review, borrowerHolder: null }, C, A)).toBe('changed');
+  });
+  it('passes when the named holder still holds it', () => {
+    expect(payerHolderBlocker(review, C, A)).toBeNull();
   });
 });

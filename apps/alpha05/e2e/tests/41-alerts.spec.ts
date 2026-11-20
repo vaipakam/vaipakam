@@ -106,6 +106,27 @@ test('the inbox lists the wallet’s alerts, counts the new ones on the bell, an
   await expect(bell).toHaveAccessibleName('Alerts could not be read');
 });
 
+test('#3721: a position token approval is said with the token and the whole address, and opens the positions', async ({ launchWallet }) => {
+  const sc = scenario();
+  const to = '0x00000000000000000000000000000000000000bb';
+  await addNotifications(sc.address('lender'), [
+    { kind: 'position_approved', loanId: null, data: { tokenId: '41', approved: to } },
+    { kind: 'position_approved_all', loanId: null, data: { operator: to } },
+  ]);
+  const { page } = await launchWallet('lender');
+  await page.goto('/alerts');
+  await connectWallet(page);
+  const list = page.getByTestId('alerts-rows');
+  const one = list.locator('[data-alert="position_approved"]');
+  await expect(one).toContainText('One of your position tokens was approved for transfer to another address.', { timeout: 30_000 });
+  await expect(one).toContainText(`Position token #41 · opened to ${to}`);
+  const all = list.locator('[data-alert="position_approved_all"]');
+  await expect(all).toContainText('All of your position tokens were opened to another address.');
+  await expect(all).toContainText(`Every position token · opened to ${to}`);
+  await expect(one.getByRole('link', { name: 'Open your positions' })).toHaveAttribute('href', '/positions');
+  await fitsWidth(page);
+});
+
 test('Alerts asks for a wallet before it reads anything', async ({ page }) => {
   await page.goto('/alerts');
   await expect(page.getByRole('heading', { name: 'Alerts', level: 1 })).toBeVisible();
