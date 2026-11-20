@@ -6385,6 +6385,28 @@ export async function processLoanLogs(
           `[chainIndexer] OffsetOfferCreated: offset offer ${offsetOfferId} row missing — is_offset_vehicle not set (chain ${chainId})`,
         );
       }
+    } else if (log.eventName === 'TakeoverOfferPosted') {
+      // #3845 — a borrower offer posted for ONE named Active loan (#3844).
+      // Only that loan's obligation handover consumes it; accept and match
+      // refuse it, so it is never quotable borrow demand and the book routes
+      // leave it out. Same ordering guarantee as OffsetOfferCreated above:
+      // createTakeoverOffer emits OfferCreated (through the offer book)
+      // BEFORE TakeoverOfferPosted in the same tx, and processOfferLogs runs
+      // before processLoanLogs, so the offers row exists here. A zero-change
+      // UPDATE means ingest raced ahead: logged loudly, and the row stays an
+      // ordinary offer until a re-scan marks it.
+      const takeoverOfferId = Number(a.offerId as bigint);
+      const marked = await env.DB.prepare(
+        `UPDATE offers SET takeover_loan_id = ?, updated_at = ?
+          WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(Number(a.loanId as bigint), Math.floor(Date.now() / 1000), chainId, takeoverOfferId)
+        .run();
+      if ((marked.meta?.changes ?? 0) === 0) {
+        console.error(
+          `[chainIndexer] TakeoverOfferPosted: offer ${takeoverOfferId} row missing — takeover_loan_id not set (chain ${chainId})`,
+        );
+      }
     } else if (log.eventName === 'LoanSold') {
       // EarlyWithdrawal — the lender position is sold to a new lender; the loan
       // stays Active. #749: like the obligation transfer, this BURNS the old

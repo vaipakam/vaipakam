@@ -131,6 +131,11 @@ export interface IndexedOffer {
    *  bookkeeping-not-liquidity rationale as `isSaleVehicle` on the
    *  other side of the book. Optional: older workers omit it. */
   isOffsetVehicle?: boolean;
+  /** #3845 (migration 0117) — the loan this offer was posted to take over;
+   *  only that loan's obligation handover can consume it, so it is never
+   *  book liquidity. null = an ordinary offer. Optional: older workers omit
+   *  it. */
+  takeoverLoanId?: number | null;
   /** #2528 (migration 0068) — the running loan this borrow request asks to
    *  refinance; 0 = not a refinance request. `null` / absent = UNKNOWN (a row
    *  the indexer has not read, or an older worker), never "not a refinance". */
@@ -194,8 +199,8 @@ function applyMarketScope(params: URLSearchParams, scope: MarketScope): void {
   }
 }
 
-/** `excludeExpired` / `excludeSaleVehicles` / `excludeOffsetVehicles`
- *  are opt-in server-side drops (Codex #1134 round-3 + round-5):
+/** `excludeExpired` / `excludeSaleVehicles` / `excludeOffsetVehicles` /
+ *  `excludeTakeoverOffers` (#3845) are opt-in server-side drops (Codex #1134 round-3 + round-5):
  *  lazily-expired GTT rows and sale/offset bookkeeping offers are not
  *  book liquidity, and letting them through wastes the desk fallback's
  *  bounded page-walk budget. Older workers ignore the params — callers
@@ -208,6 +213,7 @@ export function fetchActiveOffers(
     excludeExpired?: boolean;
     excludeSaleVehicles?: boolean;
     excludeOffsetVehicles?: boolean;
+    excludeTakeoverOffers?: boolean;
   } & MarketScope = {},
 ): Promise<ActiveOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
@@ -216,6 +222,7 @@ export function fetchActiveOffers(
   if (opts.excludeExpired) params.set('excludeExpired', '1');
   if (opts.excludeSaleVehicles) params.set('excludeSaleVehicles', '1');
   if (opts.excludeOffsetVehicles) params.set('excludeOffsetVehicles', '1');
+  if (opts.excludeTakeoverOffers) params.set('excludeTakeoverOffers', '1');
   applyMarketScope(params, opts);
   return getJson<ActiveOffersPage>(`/offers/active?${params}`);
 }

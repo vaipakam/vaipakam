@@ -53,7 +53,7 @@ export async function nearestOpposite(env: Env, q: NearestQuery): Promise<{ rows
         WHERE chain_id = ? AND status = 'active' AND offer_type = ?
           AND lending_asset = ? AND collateral_asset = ?
           AND asset_type = 0 AND collateral_asset_type = 0
-          AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+          AND is_sale_vehicle = 0 AND is_offset_vehicle = 0 AND takeover_loan_id = 0
           AND lower(creator) <> lower(?)
           AND (expires_at = 0 OR expires_at > ?)
         ORDER BY rate_gap ASC,
@@ -68,7 +68,7 @@ export async function nearestOpposite(env: Env, q: NearestQuery): Promise<{ rows
         WHERE chain_id = ? AND status = 'active' AND offer_type = ?
           AND lending_asset = ? AND collateral_asset = ?
           AND asset_type = 0 AND collateral_asset_type = 0
-          AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+          AND is_sale_vehicle = 0 AND is_offset_vehicle = 0 AND takeover_loan_id = 0
           AND lower(creator) <> lower(?)
           AND (expires_at = 0 OR expires_at > ?)`,
     )

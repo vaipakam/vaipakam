@@ -88,6 +88,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['LoanSaleCompleted', ['originalLender', 'newLender']],
   ['LoanSold', ['originalLender', 'newLender']],
   ['OffsetOfferCreated', ['borrower']],
+  ['TakeoverOfferPosted', ['creator']],
   ['OffsetCompleted', ['borrower']],
   ['LoanFallbackPending', ['lender']],
   ['LoanCuredFromFallback', ['borrower']],

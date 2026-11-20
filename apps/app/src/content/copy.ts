@@ -1970,8 +1970,8 @@ const copySource = {
   transferOb: {
     title: 'Hand this loan to another borrower',
     blurb:
-      'Another borrower with a matching standing borrow request can take over this debt. They pledge their own collateral (at least as much as yours), your collateral is released, and the lender keeps the same protection. You pay the interest built up so far, plus a top-up if their rate would earn your lender less than promised.',
-    pickLabel: 'Matching borrow requests',
+      'Another borrower can take over this debt by posting a borrow request for this loan. They pledge their own collateral (at least as much as yours), your collateral is released, and the lender keeps the same protection. You pay the interest built up so far, plus a top-up if their rate would earn your lender less than promised.',
+    pickLabel: 'Borrow requests posted for this loan',
     candidateLine: tmpl(
       'Request #{{offerId}} — {{rate}} yearly for {{duration}}, pledging {{collateral}}',
       ['offerId', 'rate', 'duration', 'collateral'],
@@ -1987,8 +1987,8 @@ const copySource = {
     selected: tmpl('Handing over to request #{{offerId}}.', ['offerId']),
     changePick: 'Pick a different request',
     noneFound:
-      'No standing borrow request currently matches this loan (same assets, enough collateral, and a term that ends before your due date). Check back later — or use another path above.',
-    checking: 'Looking for matching borrow requests…',
+      'No borrow request posted for this loan fits it right now (same assets, enough collateral, and a term that ends before your due date). Only a request posted for this loan can take it over. Check back later — or use another path above.',
+    checking: 'Looking for borrow requests posted for this loan…',
     bookUnavailable:
       'We couldn’t load the request book right now — retrying. The other paths above stay available.',
     action: 'Review handover',
@@ -6351,6 +6351,8 @@ const copySource = {
         'This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.',
       rateRangeEmpty:
         'This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.',
+      takeoverOffer:
+        'This request is reserved for taking over a named loan, so it can’t be accepted or matched. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6791,6 +6793,7 @@ const copySource = {
       BorrowerFundsClaimed: 'Collateral claimed',
       OffsetCompleted: 'Loan offset',
       OffsetOfferCreated: 'Offset offer created',
+      TakeoverOfferPosted: 'Takeover offer posted',
       LoanSold: 'Loan sold',
       LoanSaleCompleted: 'Loan sale completed',
       LoanSaleOfferLinked: 'Loan listed for sale',

@@ -1,0 +1,16 @@
+-- #3845 — the loan a takeover offer names.
+--
+-- WHY. #3844 adds a borrower offer posted for ONE named Active loan
+-- (`OfferCreateFacet.createTakeoverOffer`, announced by
+-- `TakeoverOfferPosted(loanId, offerId, creator)`). Only the obligation
+-- handover of that loan can consume it: accept, match and their previews
+-- refuse it, and its maker receives no principal. So it is never quotable
+-- borrow demand, and the book, the market list and the nearest-opposite read
+-- leave it out, as they already leave out sale and offset vehicles.
+--
+--   takeover_loan_id  the loan the offer names; 0 = an ordinary offer.
+--
+-- Written by the indexer from the event, after the OfferCreated of the same
+-- transaction has inserted the row. Additive: the old build never reads it,
+-- and the default keeps every existing row an ordinary offer.
+ALTER TABLE offers ADD COLUMN takeover_loan_id INTEGER NOT NULL DEFAULT 0;

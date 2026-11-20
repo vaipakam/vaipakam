@@ -161,7 +161,14 @@ export async function seedDeskOffer(opts: {
    *  the ceiling). Default: single-value collateral. */
   collateralMaxTliq?: string;
   terms?: DeskOfferTerms;
+  /** Borrow side only (#3844): post the request for this ONE Active loan
+   *  through `createTakeoverOffer`, the only kind of offer that loan's
+   *  obligation handover consumes. */
+  takeoverLoanId?: bigint;
 }): Promise<bigint> {
+  if (opts.takeoverLoanId !== undefined && opts.side !== 'borrow') {
+    throw new Error('seedDeskOffer: takeoverLoanId is for a borrow request');
+  }
   const account = accountFor(opts.role);
   const wallet = walletFor(account);
   const collateralAsset = opts.collateralAsset ?? TLIQ;
@@ -232,15 +239,25 @@ export async function seedDeskOffer(opts: {
   // The transaction deadline (#3412): the chain's latest block time plus
   // the shared window, never the host clock (the e2e chain's clock is warped).
   const { timestamp: chainNow } = await pub.getBlock({ blockTag: 'latest' });
-  const hash = await wallet.writeContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'createOffer',
-    args: [params, txValidUntil(chainNow)],
-    account,
-    chain: forkChain,
-  });
-  await confirm(hash, 'createOffer');
+  const hash =
+    opts.takeoverLoanId !== undefined
+      ? await wallet.writeContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createTakeoverOffer',
+          args: [opts.takeoverLoanId, params, txValidUntil(chainNow)],
+          account,
+          chain: forkChain,
+        })
+      : await wallet.writeContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createOffer',
+          args: [params, txValidUntil(chainNow)],
+          account,
+          chain: forkChain,
+        });
+  await confirm(hash, opts.takeoverLoanId !== undefined ? 'createTakeoverOffer' : 'createOffer');
   return newestOfferIdFor(account.address);
 }
 
