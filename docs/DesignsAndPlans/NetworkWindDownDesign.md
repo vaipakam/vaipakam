@@ -116,13 +116,13 @@ another wallet set before the network began closing (a standing buy offer, an
 Auto-lend slot's capital and consent), and a listing needs a buyer to accept
 an offer, which is an opening step like any other. On a network closed for an
 incident, a sale into standing capital would make that capital the way out
-for whoever acts first. Keeping one
-predicate (a step that commits money or standing consent to a new position is
-refused) is worth more than the exception. The cost is stated to lenders: on a
-closing network the platform's sale routes are closed. The sale-exit verdict
-reports the closing state for both routes, so a listing is refused with its
-reason up front instead of being posted where it can never fill (posting a
-sale listing is exempt from the Terms rule today).
+for whoever acts first. Keeping one predicate (a step that commits money or
+standing consent to a new position is refused) is worth more than the
+exception. The cost is stated to lenders: on a closing network the platform's
+sale routes are closed. The sale-exit verdict reports the closing state for
+both routes, so a listing is refused with its reason up front instead of
+being posted where it can never fill (posting a sale listing is exempt from
+the Terms rule today).
 
 **A position token can still be transferred.** A plain transfer of a position
 token passes no Terms site and is not refused in Closing or in Closed. The
@@ -259,14 +259,22 @@ After that:
 
 ## 8. Other networks
 
-- **The platform token.** Transfers into the closing network stop at the
-  switch. Transfers out stay open for as long as the lane exists. If the
-  lane's operator retires it, tokens left on the network cannot move, and that
-  date is announced as soon as it is known.
+- **The platform token.** The app stops offering a transfer of the platform
+  token into the closing network at the switch. The lane itself stays open in
+  both directions, because the platform's own reward budget travels on it
+  from the canonical network for every day the closing network still earns
+  (`RewardRemittanceFacet.remitRewardBudget`, credited there by
+  `RewardRemittanceReceiver`). The lane closes inbound only after the last
+  reward budget has been delivered. A holder who sends tokens in by another
+  route during Closing can send them out again while the lane exists.
+  Transfers out stay open for as long as the lane exists. If the lane's
+  operator retires it, tokens left on the network cannot move, and that date
+  is announced as soon as it is known.
 - **Rewards.** Fees keep arriving during Closing, so the network stays a
-  reward source until Closed. It is then removed from the expected sources at
-  a day boundary, after the last day with activity has been delivered and
-  could be claimed. The removal already has its own release steps (#2963).
+  reward source until Closed, and its reward budget keeps being sent to it.
+  It is then removed from the expected sources at a day boundary, after the
+  budget for the last day with activity has been delivered and could be
+  claimed. The removal already has its own release steps (#2963).
   The reward builder confirms the order.
 - **Messages in flight** in either direction are delivered or re-executed
   before the lanes' own contracts are paused.
@@ -327,13 +335,13 @@ other network or product.
 
 1. The owner's decision, recorded, with the announcement and its dates.
 2. The switch, by governance on the announced day (or by the Pauser in an
-   incident). Opening keeper passes are disarmed for the network. Inbound
-   token transfers stop.
+   incident). Opening keeper passes are disarmed for the network. The app
+   stops offering transfers of the platform token into it.
 3. Closing runs. The daily check reports open loans, open offers and the
    earliest Closed day.
 4. The Closed test passes on the chain.
-5. Rewards: the last day is delivered, then the network leaves the expected
-   sources.
+5. Rewards: the budget for the last day is delivered, then the network
+   leaves the expected sources and the token lane closes inbound.
 6. The platform's own balances are returned to the treasury wallet.
 7. The deployment record is set to closed in a reviewed commit. The indexer
    and the remaining keeper passes stop for the network, and the app serves
