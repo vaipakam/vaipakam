@@ -15,10 +15,11 @@
  * The registry's answer for it is read from the chain and stated, never
  * assumed: registered and active, suspended, or not registered.
  */
-import type { Abi } from 'viem';
+import { formatUnits, type Abi } from 'viem';
 import { IntegratorFacetABI } from '@vaipakam/contracts/abis';
 import { KitLinkError, parseKitParams, SHARE_RULE, type KitRequest, type ShareRule } from '@vaipakam/lend-kit';
 import { DEFAULT_INPUT, type PostInput } from '../post/postModel';
+import { DEFAULT_AUTOLEND_INPUT, type AutoLendInput } from '../autolend/autoLend';
 
 type Hex = `0x${string}`;
 
@@ -36,6 +37,17 @@ export function kitRequestInput(r: KitRequest): PostInput | null {
     tokenId: r.tokenId !== undefined ? r.tokenId.toString() : '',
     collateral: r.quantity !== undefined ? r.quantity.toString() : '',
   };
+}
+
+/** #3773 — the two lending forms a "lend this" link opens on (a lender's
+ *  offer and an Auto-lend slot), each started fresh with the link's amount,
+ *  so nothing typed for an earlier link stays. The amount is written in the
+ *  token's own units, which needs its decimals: while they are unread the
+ *  amount is left blank and the page says so. Null for any other action. */
+export function kitLendInputs(r: KitRequest, decimals: number | null): { offer: PostInput; autoLend: AutoLendInput; amountFilled: boolean } | null {
+  if (r.action !== 'lend') return null;
+  const amount = decimals === null ? '' : formatUnits(r.amount, decimals);
+  return { offer: { ...DEFAULT_INPUT, amount }, autoLend: { ...DEFAULT_AUTOLEND_INPUT, amount }, amountFilled: decimals !== null };
 }
 
 /** Where the hand-off is kept while the user moves to the filled-in page. */

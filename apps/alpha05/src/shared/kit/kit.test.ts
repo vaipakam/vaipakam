@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { kitLink } from '@vaipakam/lend-kit';
 import { buildAcceptTerms } from '../offers/acceptTerms';
-import { kitRequestInput, kitRoute, readIntegratorEntry, readIntegratorShare, readKitLink, shareApplies } from './kit';
+import { kitLendInputs, kitRequestInput, kitRoute, readIntegratorEntry, readIntegratorShare, readKitLink, shareApplies } from './kit';
 
 const A = '0x1111111111111111111111111111111111111111' as const;
 const I = '0x2222222222222222222222222222222222222222' as const;
@@ -103,5 +103,22 @@ describe('kitRequestInput (#3773)', () => {
   });
   it('leaves other actions’ forms alone', () => {
     expect(kitRequestInput({ action: 'rent', chainId: 1, asset: A, tokenId: 1n })).toBeNull();
+  });
+});
+
+describe('kitLendInputs (#3773)', () => {
+  it('types a lend link’s amount into both lending forms in the token’s own units', () => {
+    const r = kitLendInputs({ action: 'lend', chainId: 1, asset: A, amount: 5_250_000n }, 6);
+    expect(r?.amountFilled).toBe(true);
+    expect(r?.offer.amount).toBe('5.25');
+    expect(r?.autoLend.amount).toBe('5.25');
+  });
+  it('leaves the amount blank, and says so, while the decimals are unread', () => {
+    const r = kitLendInputs({ action: 'lend', chainId: 1, asset: A, amount: 1n }, null);
+    expect(r?.amountFilled).toBe(false);
+    expect(r?.offer.amount).toBe('');
+  });
+  it('opens no lending form for any other action', () => {
+    expect(kitLendInputs({ action: 'borrow', chainId: 1, asset: A }, 6)).toBeNull();
   });
 });

@@ -3,8 +3,10 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
-import { KIT_HANDOFF_KEY, kitRequestInput, kitRoute, readKitLink, type KitHandoff } from '../../shared/kit/kit';
-import { REQUEST_KEY } from '../../shared/post/OfferForm';
+import { KIT_HANDOFF_KEY, kitLendInputs, kitRequestInput, kitRoute, readKitLink, type KitHandoff } from '../../shared/kit/kit';
+import { LEND_OFFER_KEY, REQUEST_KEY } from '../../shared/post/OfferForm';
+import { AUTOLEND_KEY } from '../../shared/autolend/AutoLendForm';
+import type { AutoLendInput } from '../../shared/autolend/autoLend';
 import type { PostInput } from '../../shared/post/postModel';
 import { entryLine, kitWhat, kitWho, ruleLine, useIntegratorEntry, useKitMeta } from '../../shared/kit/kitStatements';
 import { assetName } from '../../shared/reads/tokens';
@@ -39,6 +41,8 @@ export function KitPage() {
   const entry = useIntegratorEntry(integrator !== null ? linkChain : null, integrator);
   const [, setHandoff] = useStoredValue<KitHandoff>(KIT_HANDOFF_KEY);
   const [, setRequestInput] = useStoredValue<PostInput>(`${REQUEST_KEY}:input`);
+  const [, setLendOfferInput] = useStoredValue<PostInput>(`${LEND_OFFER_KEY}:input`);
+  const [, setAutoLendInput] = useStoredValue<AutoLendInput>(`${AUTOLEND_KEY}:input`);
 
   if (!read.ok) {
     return (
@@ -66,10 +70,16 @@ export function KitPage() {
   const connected = status === 'connected';
   const otherNetwork = connected && chainId !== r.chainId;
   const entryText = integrator !== null ? entryLine(entry, format) : null;
+  const decimals = r.action === 'lend' ? (meta.data?.[r.asset.toLowerCase()]?.decimals ?? null) : null;
+  const lendInputs = kitLendInputs(r, decimals);
   const go = () => {
     setHandoff({ request: r, integrator: keep ? integrator : null });
     const seeded = kitRequestInput(r);
     if (seeded !== null) setRequestInput(seeded);
+    if (lendInputs !== null) {
+      setLendOfferInput(lendInputs.offer);
+      setAutoLendInput(lendInputs.autoLend);
+    }
     navigate(kitRoute(r));
   };
   return (
@@ -79,7 +89,11 @@ export function KitPage() {
         {format('kit.pageLead', { what: kitWhat(r, meta.data, format), chain: linkChain.name })}
       </p>
       {r.action === 'borrow' && r.lendingAsset !== undefined && <p className="tier-a">{format('kit.suggestsLending', { asset: assetName(r.lendingAsset, meta.data) })}</p>}
-      {r.action === 'lend' && <p className="tier-a">{text('kit.amountNotFilled')}</p>}
+      {lendInputs !== null && (
+        <p className="tier-a" data-testid="kit-amount" data-filled={String(lendInputs.amountFilled)}>
+          {text(lendInputs.amountFilled ? 'kit.amountFilled' : 'kit.amountNotFilled')}
+        </p>
+      )}
       <p className="tier-a">{text('kit.nothingSigned')}</p>
       {otherNetwork && (
         <div data-testid="kit-other-network">
