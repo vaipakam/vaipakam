@@ -5,6 +5,7 @@ import { useOwnStateClient } from '../../chain/ownRail';
 import { AGENT } from '../../shared/alerts/agentClient';
 import { bandsProblem, DEFAULT_BANDS, parseBand, pushChannelUrl, type AlertAction, type Bands } from '../../shared/alerts/alerts';
 import { type KnownAlerts } from '../../shared/alerts/known';
+import { pendingExpiresAt, PENDING_MAX_AGE_S, type PendingAlert } from '../../shared/alerts/pendingRequest';
 import { useKnown } from '../../shared/alerts/useKnown';
 import { useAlertAction, type AlertRun } from '../../shared/alerts/useAlertAction';
 import { usePushStatus } from '../../shared/alerts/usePushStatus';
@@ -131,6 +132,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
         />
       )}
       <RunLine run={action.run} chain={chain} copy={copy} />
+      {action.pending && !action.busy && <PendingRequest pending={action.pending} nowS={nowS} busy={action.busy} onFinish={() => void action.finish()} onDiscard={action.discard} copy={copy} />}
 
       <div className="card alert-channel" data-testid="alert-telegram">
         <h3>{text('alertChannels.telegramTitle')}</h3>
@@ -372,6 +374,52 @@ function BandsForm({ initial, busy, onSave, copy }: { initial: Bands; busy: bool
         {text('alertChannels.bandsSave')}
       </button>
     </form>
+  );
+}
+
+/** The name of a kept request's action, as the reader knows it. */
+function pendingActionKey(a: AlertAction): CopyKey {
+  if (a === 'link') return 'alertChannels.pendingLink';
+  if (a === 'unlink') return 'alertChannels.pendingUnlink';
+  if (a === 'test-alert') return 'alertChannels.pendingTest';
+  return 'alertChannels.pendingSave';
+}
+
+/** #3836 — a request this browser started and the alert service has not
+ *  answered: what it is, when it started, until when only this browser can
+ *  finish it, and Finish or Discard. One past its limit offers Discard
+ *  only. */
+function PendingRequest({ pending, nowS, busy, onFinish, onDiscard, copy }: { pending: PendingAlert; nowS: number; busy: boolean; onFinish: () => void; onDiscard: () => void; copy: CopyAccess }) {
+  const { text, format } = copy;
+  const expiresAt = pendingExpiresAt(pending);
+  const expired = expiresAt < nowS;
+  const days = String(PENDING_MAX_AGE_S / 86_400);
+  return (
+    <div className="card alert-channel" data-testid="alert-pending" data-expired={expired ? 'true' : 'false'}>
+      <h3>{text('alertChannels.pendingTitle')}</h3>
+      <p className="tier-a">
+        {format('alertChannels.pendingWhat', { action: text(pendingActionKey(pending.action)), started: formatUtc(pending.issuedAt) })}
+      </p>
+      {expired ? (
+        <p className="tier-a">{format('alertChannels.pendingExpired', { days })}</p>
+      ) : (
+        <>
+          <p className="tier-a">{format('alertChannels.pendingUntil', { time: formatUtc(expiresAt) })}</p>
+          <p className="tier-b">{text('alertChannels.pendingKey')}</p>
+          <p className="tier-b">{format('alertChannels.pendingHow', { days })}</p>
+        </>
+      )}
+      <div className="form-actions">
+        {!expired && (
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={onFinish} data-testid="alert-pending-finish">
+            {text('alertChannels.pendingFinish')}
+          </button>
+        )}
+        <button type="button" className="btn" disabled={busy} onClick={onDiscard} data-testid="alert-pending-discard">
+          {text('alertChannels.pendingDiscard')}
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -1,9 +1,11 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { useConfig } from 'wagmi';
+import { newRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import { signMessageFor } from '../tx/walletGuard';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
 import { alertBody, alertMessage, alertRoute, readAlertAnswer, type AlertAction, type AlertAnswer } from './alerts';
 import { CODE_LIFETIME_S, recordAnswer } from './known';
+import { clearPending, keepPending, loadPending, pendingExpiresAt, type PendingAlert } from './pendingRequest';
 
 type Hex = `0x${string}`;
 
@@ -85,9 +87,13 @@ export interface LinkCode {
 interface RunEntry {
   run: AlertRun;
   code: LinkCode | null;
+  /** The request this browser started and the service has not answered
+   *  (#3836), as kept in storage; read from storage the first time the
+   *  wallet and network are shown. */
+  pending: PendingAlert | null;
 }
 
-const IDLE: RunEntry = { run: { phase: 'idle' }, code: null };
+const IDLE: RunEntry = { run: { phase: 'idle' }, code: null, pending: null };
 /** Each wallet and network's action, outside any page: a card mounted while
  *  an action is out shows it (and offers no second one), and the outcome of
  *  an action that finishes while no card is mounted is what the next card
@@ -98,6 +104,16 @@ const runListeners = new Set<() => void>();
 function setRun(identity: string, patch: Partial<RunEntry>): void {
   runs.set(identity, { ...(runs.get(identity) ?? IDLE), ...patch });
   for (const l of runListeners) l();
+}
+
+/** The entry for a wallet and network, reading its kept request from
+ *  storage the first time. The same object is returned until it changes. */
+function entryFor(identity: string, chainId: number, wallet: Hex): RunEntry {
+  const known = runs.get(identity);
+  if (known) return known;
+  const entry = { ...IDLE, pending: loadPending(chainId, wallet) };
+  runs.set(identity, entry);
+  return entry;
 }
 
 /** A wallet-wide unlink revokes every code the wallet holds, on every
@@ -123,29 +139,42 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
   const identity = `${chainId}:${wallet.toLowerCase()}`;
   const entry = useSyncExternalStore(
     subscribeRuns,
-    () => runs.get(identity) ?? IDLE,
+    () => entryFor(identity, chainId, wallet),
     () => IDLE,
   );
   const busy = entry.run.phase === 'signing' || entry.run.phase === 'sending';
 
-  const start = useCallback(
-    async (action: AlertAction): Promise<AlertAnswer | null> => {
-      const now = runs.get(identity)?.run.phase;
-      if (now === 'signing' || now === 'sending') return null;
-      setRun(identity, { run: { phase: 'signing', action } });
-      const issuedAt = nextIssuedAt();
+  /** Ask the wallet to sign `p` and send it. `p` is kept before the wallet
+   *  is asked and dropped once the service answers, except when it could
+   *  not check the signature yet (nothing recorded the request, so the same
+   *  one may be sent again). A declined signature drops it; any other
+   *  failure (a wallet that stopped waiting, a network error) keeps it, to
+   *  be finished later. */
+  const send = useCallback(
+    async (p: PendingAlert): Promise<AlertAnswer | null> => {
+      const { action } = p;
+      keepPending(chainId, wallet, p);
+      setRun(identity, { run: { phase: 'signing', action }, pending: p });
+      const drop = () => {
+        clearPending(chainId, wallet);
+        // A newer request started meanwhile in this tab is not dropped.
+        if (runs.get(identity)?.pending === p) setRun(identity, { pending: null });
+      };
       let signature: Hex;
       try {
-        signature = await signMessageFor(config, chainId, { account: wallet, message: alertMessage(action, wallet, chainId, issuedAt) });
+        signature = await signMessageFor(config, chainId, { account: wallet, message: alertMessage(action, wallet, chainId, p.issuedAt, requestKeyHash(p.requestKey)) });
       } catch (e) {
-        setRun(identity, { run: isUserRejection(e) ? { phase: 'declined', action } : { phase: 'unreachable', action, message: (e as Error).message } });
+        const declined = isUserRejection(e);
+        if (declined) drop();
+        setRun(identity, { run: declined ? { phase: 'declined', action } : { phase: 'unreachable', action, message: (e as Error).message } });
         return null;
       }
       setRun(identity, { run: { phase: 'sending', action } });
       const route = alertRoute(action);
       try {
-        const res = await client.request(route.method, route.path, alertBody(action, wallet, chainId, issuedAt, signature));
+        const res = await client.request(route.method, route.path, alertBody(action, wallet, chainId, p.issuedAt, signature, p.requestKey));
         const answer = readAlertAnswer(action, res.status, res.data);
+        if (answer.ok || answer.problem !== 'verify-down') drop();
         const at = Math.floor(Date.now() / 1000);
         recordAnswer(chainId, wallet, action, answer, at);
         if (answer.ok && answer.action === 'unlink' && answer.scope === 'wallet') dropWalletCodes(wallet);
@@ -165,6 +194,39 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
     [config, client, wallet, chainId, identity],
   );
 
+  /** Start `action` as a new request, with a fresh key. It replaces any
+   *  request kept for this wallet and network. */
+  const start = useCallback(
+    async (action: AlertAction): Promise<AlertAnswer | null> => {
+      const now = runs.get(identity)?.run.phase;
+      if (now === 'signing' || now === 'sending') return null;
+      return send({ action, issuedAt: nextIssuedAt(), requestKey: newRequestKey() });
+    },
+    [send, identity],
+  );
+
+  /** Finish the kept request: the same text, the same key. One past its
+   *  limit is dropped instead, and nothing is asked. */
+  const finish = useCallback(async (): Promise<AlertAnswer | null> => {
+    const cur = runs.get(identity);
+    if (!cur?.pending || cur.run.phase === 'signing' || cur.run.phase === 'sending') return null;
+    if (pendingExpiresAt(cur.pending) < Math.floor(Date.now() / 1000)) {
+      clearPending(chainId, wallet);
+      setRun(identity, { pending: null });
+      return null;
+    }
+    return send(cur.pending);
+  }, [send, identity, chainId, wallet]);
+
+  /** Forget the kept request. The wallet may still hold its approval; with
+   *  the key gone, nothing can present it. */
+  const discard = useCallback(() => {
+    const cur = runs.get(identity);
+    if (cur?.run.phase === 'signing' || cur?.run.phase === 'sending') return;
+    clearPending(chainId, wallet);
+    setRun(identity, { pending: null, run: { phase: 'idle' } });
+  }, [identity, chainId, wallet]);
+
   const reset = useCallback(() => setRun(identity, { run: { phase: 'idle' } }), [identity]);
-  return { run: entry.run, code: entry.code, busy, start, reset };
+  return { run: entry.run, code: entry.code, pending: entry.pending, busy, start, finish, discard, reset };
 }

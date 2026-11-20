@@ -8,7 +8,7 @@ Every alert request now names a request key held by the requesting browser: the 
 
 With requests that can wait days, two different requests could arrive out of order. Each change is now applied only when no request signed later has already been applied to it, in the same step as the change: link and unlink requests are ordered together per wallet and network (an unlink signed with the wallet's own key, which clears every network, raises the order on every network), and settings saves are ordered on the wallet's settings row (new shared database migration `0116`, a nullable column). An older request changes nothing and the app says a newer one was already applied. The test alert changes nothing and is not ordered. An unlink, applied at once or after a protected-mode wait, still voids any unfinished link code for its wallet and network.
 
-The four signed alert texts changed while the platform is prelive; the other connected app (alpha05) needs the same request key before it can send alert requests to this service.
+The four signed alert texts changed while the platform is prelive. The other connected app (alpha05) does the same: each alert request names its own key, a request not yet answered is kept in the browser with Finish and Discard on the Alerts page and the seven-day limit stated, and its data download withholds the key and says so.
 
 Closes #3836
 
