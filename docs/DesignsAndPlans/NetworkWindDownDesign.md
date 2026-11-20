@@ -232,12 +232,13 @@ available with no end date, the closed view lists them from chain reads, and
 the builder confirms that neither path reads a price, a swap or the indexer.
 
 **A loan in the fallback state does block Closed, and it has no dated end.**
-It ends when its lender claims, when its borrower cures it, or when the
-backstop takes it at the lender's request, and a cure returns it to an open
-loan, so everything in section 6 keeps running for it. No step on `main`
-ends an unclaimed fallback by a date. One lender who never claims can
-therefore hold a network in Closing. This document does not settle that: it
-is a question for the fallback's own design, carded from section 13.
+It ends when its lender claims, when its borrower cures it, when the
+backstop takes it at the lender's request, or when an internal match closes
+it against an opposite loan, and a cure returns it to an open loan, so
+everything in section 6 keeps running for it. No step on `main` ends an
+unclaimed fallback by a date. One lender who never claims can therefore hold
+a network in Closing. This document does not settle that: it is a question
+for the fallback's own design (#3865).
 
 After that:
 
@@ -363,11 +364,11 @@ Signers, proposal text and readbacks for each step are the runbook's.
 
 | Piece | Owner |
 |---|---|
-| The closing switch, its view and event, asked through the Terms host | A contract builder, one card |
+| The closing switch, its view and event, asked through the Terms host | A contract builder (#3864) |
 | The rate auction and the flash loan ask the same question | Their builders |
 | Runbook section, the launch check's rule, the `.active-chains` header | Governance thread (#3858, part 2) |
 | Network state in the deployment record and the bundle (the export script, the `Deployment` type) | Governance thread with the app-fixes thread |
 | Closing and closed views, and the notices | App threads |
 | Pass sets for a closing network | Keeper thread |
 | The order for leaving the reward sources | Reward builder |
-| Whether an unclaimed fallback gets a dated end | Design thread, its own card |
+| Whether an unclaimed fallback gets a dated end | Design thread (#3865) |
