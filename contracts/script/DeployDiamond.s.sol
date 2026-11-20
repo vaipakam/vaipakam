@@ -82,6 +82,7 @@ import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -637,7 +638,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
         // #3635 A / #3713 — the one host of the rate link and the warning band.
         RateLinkFacet rateLinkFacet = RateLinkFacet(ArtifactDeploy.deploy(type(RateLinkFacet).name));
-        // Role B (absorb) governance, split off BackstopFacet for EIP-170.
+        // #3843 — the sale reads, split off RiskPreviewFacet (EIP-170).
+        SaleAdmissionFacet saleAdmissionFacet =
+            SaleAdmissionFacet(ArtifactDeploy.deploy(type(SaleAdmissionFacet).name));
+        // #3843 — backstop Role B (absorb) governance, split off BackstopFacet.
         BackstopAbsorbFacet backstopAbsorbFacet =
             BackstopAbsorbFacet(ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
@@ -686,7 +690,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -831,7 +835,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
         cuts[136] = _buildCut(address(rateLinkFacet), _getRateLinkSelectors());
-        cuts[137] = _buildCut(address(backstopAbsorbFacet), _getBackstopAbsorbFacetSelectors());
+        // #3843 — the sale reads and the backstop absorb governance, each
+        // split off its parent facet (EIP-170).
+        cuts[137] = _buildCut(address(saleAdmissionFacet), _getSaleAdmissionSelectors());
+        cuts[138] = _buildCut(address(backstopAbsorbFacet), _getBackstopAbsorbSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1616,6 +1623,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("referralFacet", address(referralFacet));
         Deployments.writeFacet("rateLinkFacet", address(rateLinkFacet));
+        Deployments.writeFacet("saleAdmissionFacet", address(saleAdmissionFacet));
         Deployments.writeFacet("backstopAbsorbFacet", address(backstopAbsorbFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
@@ -2858,7 +2866,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](9);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2866,21 +2874,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
         s[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
+        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
+        s[7] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        // #3326 — the initiation risk bounds the match core reads by self-call
+        // (moved here from OfferPreviewFacet in #3328).
+        s[8] = RiskPreviewFacet.initRiskBounds.selector;
+        // #3843 — saleAdmission, quoteSellerBounds and getSaleListingBounds
+        // moved to SaleAdmissionFacet; see `_getSaleAdmissionSelectors`.
+    }
+
+    /// @dev #3843 — the sale reads, split off `RiskPreviewFacet`. All `view`.
+    function _getSaleAdmissionSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
-        s[7] = RiskPreviewFacet.saleAdmission.selector;
+        s[0] = SaleAdmissionFacet.saleAdmission.selector;
         // #1503 item 4 — the two bounds a listing records, quoted from the same
         // library the sale path enforces them with. On-chain rather than
         // mirrored client-side on purpose: a client copy of the rule drifts from
         // it the moment the rule changes, and this one has changed twice.
-        s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
+        s[1] = SaleAdmissionFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
-        s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
-        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        s[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
-        // #3326 — the initiation risk bounds the match core reads by self-call
-        // (moved here from OfferPreviewFacet in #3328).
-        s[11] = RiskPreviewFacet.initRiskBounds.selector;
+        s[2] = SaleAdmissionFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -2945,15 +2960,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #638 — backstop-only min-secondary-oracle-coverage knob.
         s[16] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
         s[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+        // #3843 — the Role B (absorb) governance moved to BackstopAbsorbFacet;
+        // see `_getBackstopAbsorbSelectors`.
     }
 
-    /// @dev Selectors for `BackstopAbsorbFacet` — the backstop's Role B
-    ///      (absorb) governance, split off BackstopFacet for EIP-170.
-    function _getBackstopAbsorbFacetSelectors()
-        internal
-        pure
-        returns (bytes4[] memory s)
-    {
+    /// @dev #3843 — #399 backstop v0 Role B (absorb) governance, split off
+    ///      `BackstopFacet`.
+    function _getBackstopAbsorbSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](7);
         s[0] = BackstopAbsorbFacet.setBackstopAbsorbEnabled.selector;
         s[1] = BackstopAbsorbFacet.setBackstopAbsorbCap.selector;

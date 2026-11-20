@@ -52,7 +52,7 @@ library LibPriceRead {
     /// @notice A Diamond self-call (static) to a facet function that reads a
     ///         price on its way to an answer (`RiskFacet.calculateHealthFactor`,
     ///         `calculateLTV`, `OracleFacet.checkLiquidity`,
-    ///         `getEffectiveLiquidityTier`, `RiskPreviewFacet.saleAdmission`),
+    ///         `getEffectiveLiquidityTier`, `SaleAdmissionFacet.saleAdmission`),
     ///         for a caller that carries on when the call fails: an event
     ///         figure left at zero, a conservative tier, a refused sale.
     ///         `ok = false` with the revert data when the call refused for a

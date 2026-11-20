@@ -68,7 +68,6 @@
     "IntegratorFacet",
     "StandingOfferCheckFacet",
     "ReferralFacet",
-    "BackstopAbsorbFacet",
     "ClaimFacet",
     "ClaimViewFacet",
     "LenderIntentViewFacet",
@@ -139,7 +138,9 @@
     "ServiceCapacityFacet",
     "OfferMatchIntentFacet",
     "DiamondCutFacet",
-    "RateLinkFacet"
+    "RateLinkFacet",
+    "SaleAdmissionFacet",
+    "BackstopAbsorbFacet"
   ],
   "proxy": [
     "VaipakamDiamond"

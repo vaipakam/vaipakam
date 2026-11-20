@@ -51,6 +51,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -217,7 +218,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -289,6 +290,12 @@ contract PrecloseFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        // #3843 — the sale reads, split off RiskPreviewFacet.
+        cuts[37] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleAdmissionFacetSelectors()
         });
         // #1001 (S3, Codex #1070) — EarlyWithdrawalFacet + OfferMutateFacet so the
         // offset-vs-lender-sale and offset-offer-immutability guards are testable.

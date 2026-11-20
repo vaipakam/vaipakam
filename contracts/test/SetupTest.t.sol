@@ -61,12 +61,13 @@ import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
-import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -701,7 +702,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](140);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1324,8 +1325,14 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRateLinkFacetSelectors()
         });
-        // The backstop's Role B (absorb) governance, split off BackstopFacet.
+        // #3843 — the sale reads, split off RiskPreviewFacet (EIP-170).
         cuts[138] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleAdmissionFacetSelectors()
+        });
+        // #3843 — backstop Role B governance, split off BackstopFacet.
+        cuts[139] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getBackstopAbsorbFacetSelectors()

@@ -61,6 +61,7 @@ import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {LibSaleListing} from "../src/libraries/LibSaleListing.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -289,7 +290,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](44);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -309,6 +310,12 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: address(riskPreviewFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        // #3843 — the sale reads, split off RiskPreviewFacet.
+        cuts[43] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleAdmissionFacetSelectors()
         });
         // #980 — OfferPreviewFacet (previewAccept split out of OfferAcceptFacet).
         cuts[23] = IDiamondCut.FacetCut({
@@ -1501,12 +1508,12 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(truncLoanId, l);
 
         uint256 listedAt = block.timestamp;
-        (uint256 floorAtListing, ) = RiskPreviewFacet(address(diamond))
+        (uint256 floorAtListing, ) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(truncLoanId, 3, listedAt + 280_800);
 
         // The interior second whose truncated cost exceeds BOTH endpoints.
         vm.warp(listedAt + 46);
-        (uint256 floorAtThatSecond, ) = RiskPreviewFacet(address(diamond))
+        (uint256 floorAtThatSecond, ) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(truncLoanId, 3, block.timestamp);
         uint256 trueNetAtThatSecond =
             floorAtThatSecond + LibSaleListing.TRUNCATION_SLACK;
@@ -1631,7 +1638,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      recorded bounds equal the reviewed ones exactly — equality must
     ///      PASS (only adverse drift is refused).
     function test_1810_boundListingAcceptsTheReviewedQuote() public {
-        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+        (uint256 quotedFloor, uint256 quotedHeld) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
@@ -1654,7 +1661,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      seller's net, the listing would record a floor BELOW the one the
     ///      seller reviewed, and the bound entry refuses it.
     function test_1810_boundListingRefusesAdverseFloorDrift() public {
-        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+        (uint256 quotedFloor, uint256 quotedHeld) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         l.principal = l.principal - 1 ether;
@@ -1674,7 +1681,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev The converse: a day passing at the loan's own rate leaves the
     ///      floor where the seller reviewed it, so the bound listing passes.
     function test_1810_boundListingAcceptsTimeAtTheLoansOwnRate() public {
-        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+        (uint256 quotedFloor, uint256 quotedHeld) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
         vm.warp(block.timestamp + 1 days);
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
@@ -1691,7 +1698,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      listing would record exceeds the reviewed one, and the bound
     ///      entry refuses with both figures named.
     function test_1810_boundListingRefusesNewParkAboveReviewedCeiling() public {
-        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+        (uint256 quotedFloor, uint256 quotedHeld) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
         assertEq(quotedHeld, 0, "fixture starts with nothing held");
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
@@ -1715,7 +1722,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      and a HIGHER ceiling than the listing records is strictly better
     ///      off, and refusing that would block ordinary favorable drift.
     function test_1810_boundListingPassesOnFavorableDrift() public {
-        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+        (uint256 quotedFloor, uint256 quotedHeld) = SaleAdmissionFacet(address(diamond))
             .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
         assertGt(quotedFloor, 0, "fixture floor is nonzero, so a weaker review exists");
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
@@ -1901,18 +1908,18 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      listing's terms.
     function testSaleListingBoundsReadBackTheRecordedFigures() public {
         (bool before_, , , , ) =
-            RiskPreviewFacet(address(diamond)).getSaleListingBounds(activeLoanId);
+            SaleAdmissionFacet(address(diamond)).getSaleListingBounds(activeLoanId);
         assertFalse(before_, "nothing recorded before listing");
 
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
 
         (bool recorded, uint256 floorNet, uint256 maxHeld, uint256 expiry, uint256 heldNow) =
-            RiskPreviewFacet(address(diamond)).getSaleListingBounds(activeLoanId);
+            SaleAdmissionFacet(address(diamond)).getSaleListingBounds(activeLoanId);
         assertTrue(recorded, "bounds recorded at listing");
         assertGt(expiry, block.timestamp, "finite expiry recorded");
         (uint256 qFloor, uint256 qHeld) =
-            RiskPreviewFacet(address(diamond)).quoteSellerBounds(activeLoanId, 500, expiry);
+            SaleAdmissionFacet(address(diamond)).quoteSellerBounds(activeLoanId, 500, expiry);
         assertEq(floorNet, qFloor, "recorded floor = quoted floor");
         assertEq(maxHeld, qHeld, "recorded ceiling = quoted ceiling");
         assertLe(heldNow, maxHeld, "held now within the recorded ceiling");
@@ -7533,12 +7540,12 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_saleAdmission_unpriceableRefusedRegardlessOfTheRiskGate() public {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
 
-        (uint8 codeGateOff, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        (uint8 codeGateOff, , ) = SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(codeGateOff, 6, "gate off: unmeasurable, so refused");
 
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         (uint8 codeGateOn, uint256 a, uint256 b) =
-            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+            SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(codeGateOn, 6, "gate on: still refused - the ladder cannot consent to this");
         assertEq(a, 0, "collateral leg named");
         assertEq(b, 0, "no figure to report: nothing was measured");
@@ -7562,7 +7569,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // the whole mechanism: `_isBlueChip` short-circuits on
         // `asset == weth` (the price guard's, #3272) without reading liquidity.
         LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, mockCollateralERC20);
-        (uint8 before, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        (uint8 before, , ) = SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(
             before,
             0,
@@ -7576,7 +7583,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // while its blue-chip standing is unchanged.
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
 
-        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        (uint8 code, , ) = SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(
             code,
             6,
@@ -7649,7 +7656,7 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
         TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
 
-        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        (uint8 code, , ) = SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertTrue(
             code != 2,
             "a tiered-originated loan must not be flagged on the admission-floor branch"
@@ -7684,7 +7691,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLiveTreasuryFeeBps(lowered);
 
         (uint8 code, uint256 a, uint256 b) =
-            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+            SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(code, 7, "a higher inherited fee must be classified on its own code");
         assertEq(a, inherited, "must report the inherited rate");
         assertEq(b, lowered, "must report the rate a fresh loan would carry");
@@ -7714,7 +7721,7 @@ contract EarlyWithdrawalFacetTest is Test {
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).treasuryFeeBpsAtInit;
         _setLiveTreasuryFeeBps(uint16(inherited + 100));
 
-        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        (uint8 code, , ) = SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(code, 0, "a cheaper inherited fee must stay admissible");
 
         MockVaultWithdraw.deliversAll(address(diamond));
@@ -7748,7 +7755,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLiveTreasuryFeeBps(belowLegacy);
 
         (uint8 code, uint256 a, uint256 b) =
-            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+            SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(code, 7, "an unstamped loan must be judged at the legacy fallback");
         assertEq(
             a,
@@ -7806,7 +7813,7 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
 
         (uint8 code, uint256 liveLtv, uint256 cap) =
-            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+            SaleAdmissionFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(code, 5, "live LTV over the admission cap must be classified");
         assertGt(liveLtv, cap, "reported figures must show the breach");
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
@@ -7895,7 +7902,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 saleOfferId = _listSaleOffer();
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            abi.encodeWithSelector(SaleAdmissionFacet.saleAdmission.selector),
             "oracle down"
         );
 
@@ -7931,7 +7938,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            abi.encodeWithSelector(SaleAdmissionFacet.saleAdmission.selector),
             "oracle down"
         );
 
@@ -8349,7 +8356,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_SaleExitVerdict_AdmissionThatCannotRunIsNotClear() public {
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, activeLoanId),
+            abi.encodeWithSelector(SaleAdmissionFacet.saleAdmission.selector, activeLoanId),
             ""
         );
         (SaleExitVerdictFacet.SaleRefusal[] memory direct,) = _verdict(activeLoanId, lender);

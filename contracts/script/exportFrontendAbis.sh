@@ -341,7 +341,10 @@ FACETS=(
   # #3635 A / #3713 — the rate link and the warning band (bound, band check,
   # link admission); the app previews the band and the linked bound with it.
   "RateLinkFacet"
-  # The backstop's Role B (absorb) governance, split off BackstopFacet (EIP-170).
+  # #3843 — the sale reads (saleAdmission, quoteSellerBounds,
+  # getSaleListingBounds), split off RiskPreviewFacet (EIP-170).
+  "SaleAdmissionFacet"
+  # #3843 — backstop Role B (absorb) governance, split off BackstopFacet.
   "BackstopAbsorbFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

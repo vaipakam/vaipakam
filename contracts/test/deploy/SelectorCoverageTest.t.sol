@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[138] memory facets = cutFacetNames();
+        string[139] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[138] memory facets = cutFacetNames();
+        string[139] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -236,7 +236,6 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getLenderIntentFacetSelectors());
         _addAll(_getAggregatorAdapterFactorySelectors());
         _addAll(_getBackstopFacetSelectors());
-        _addAll(_getBackstopAbsorbFacetSelectors());
         // #594 — consolidation primitive: Diamond NFT receiver hooks +
         // standalone holder-only entry points.
         _addAll(_getReceiverFacetSelectors());
@@ -340,6 +339,9 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getStandingOfferCheckSelectors());
         _addAll(_getReferralSelectors());
         _addAll(_getRateLinkSelectors());
+        // #3843 — the sale reads and backstop Role B, split off their parents.
+        _addAll(_getSaleAdmissionSelectors());
+        _addAll(_getBackstopAbsorbSelectors());
         // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
         // boundary for Seaport prepay collateral sales). Selector
         // helper lives on `DeployDiamond.s.sol` like every other facet.

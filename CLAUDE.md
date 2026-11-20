@@ -126,6 +126,8 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ClaimViewFacet** | The claim reads: `getClaimable`, `getClaimableAmount`, `getBorrowerSurplusClaim`, `getFallbackSnapshot`, `getOwedAtDefault` and `getOwedAtInternalMatch`. Split off `ClaimFacet` along its read / write seam when ClaimFacet went over EIP-170. **These reads are NOT on ClaimFacet any more**, so an app or keeper that reads them through `ClaimFacetABI` must use `ClaimViewFacetABI` or the combined Diamond ABI. Selectors and return shapes are unchanged. **Refreshed together with ClaimFacet**; `RedeployFacets` repoints the six selectors. Hand-built test Diamonds add it with `LibTestClaimViewCut.withClaimView` |
 | **BackstopAbsorbFacet** | The backstop's Role B (absorb) governance: `setBackstopAbsorbEnabled`, `setBackstopAbsorbCap`, `seedBackstopAbsorb`, `withdrawBackstopAbsorbToTreasury`, `sweepBackstopAbsorbCollateral`, `releaseBackstopAbsorbExposure` and `getBackstopAbsorbInfo`. Split off `BackstopFacet` (Role A, the origination fills) when BackstopFacet went over EIP-170. **These entries are NOT on BackstopFacet any more**: an app or script calling them through `BackstopFacetABI` must use `BackstopAbsorbFacetABI` or the combined Diamond ABI. Selectors and events are unchanged. The absorb itself still runs where it did |
 | **LenderIntentViewFacet** | The standing-intent reads: `getLenderIntent`, `getLenderIntentLivePrincipal`, `getLenderIntentCapital`, `getLenderIntentPriority` and the three paginated feeds `getActiveLenderIntents`, `getRollableIntentLoans` and `getLenderIntentsByOwner`. Split off `LenderIntentFacet` along its read / write seam when LenderIntentFacet went over EIP-170. **These reads are NOT on LenderIntentFacet any more**: an app or keeper reading them through `LenderIntentFacetABI` must use `LenderIntentViewFacetABI` or the combined Diamond ABI. The kill-switch and fill-floor getters stay with their setters on LenderIntentFacet. Selectors and return shapes are unchanged. **Refreshed together with LenderIntentFacet** |
+| **SaleAdmissionFacet** | The sale reads: `saleAdmission` (whether a loan may admit a new lender by sale, as a code plus the two figures), `quoteSellerBounds` (the seller bounds a listing made now would record) and `getSaleListingBounds` (the bounds a standing listing did record). Split off `RiskPreviewFacet` in #3843 when that facet reached the EIP-170 ceiling; a pure move, selectors and return shapes unchanged. **These reads are NOT on RiskPreviewFacet any more**: an app or keeper reading them through `RiskPreviewFacetABI` must use `SaleAdmissionFacetABI` or the combined Diamond ABI. `LibSaleSolvency` self-calls `saleAdmission` from every facet that inlines it (`SaleExitVerdictFacet`, which both early-withdrawal entries self-call, `OfferAcceptFacet` and `OfferPreviewFacet`). **Refreshed together with RiskPreviewFacet and those sale hosts**; `RedeployFacets` and `ReplaceStaleFacets` cut it, partitioned by live routing, so on an older Diamond its three selectors move off RiskPreviewFacet by Replace |
+| **BackstopAbsorbFacet** | Backstop Role B (liquidator-of-last-resort) governance: `setBackstopAbsorbEnabled`, `setBackstopAbsorbCap`, `seedBackstopAbsorb`, `withdrawBackstopAbsorbToTreasury`, `sweepBackstopAbsorbCollateral`, `releaseBackstopAbsorbExposure` and `getBackstopAbsorbInfo`, with their events and `BackstopAbsorbCollateralInsufficient`. Split off `BackstopFacet` in #3843 (EIP-170 room); a pure move, selectors, events, errors and modifiers unchanged. The errors both facets raise are re-declared byte-identical, and the Diamond-as-treasury check is `LibTreasury.requireDiamond` (same `TreasuryNotDiamond()` selector). **These functions are NOT on BackstopFacet any more.** The absorb itself runs from ClaimFacet, not here. **Refreshed together with BackstopFacet** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
 below carries one behaviour across a self-call or a fill, so refreshing a subset
@@ -261,6 +263,25 @@ runs half of it on old code:
   `FunctionDoesNotExist` on every signed match (a hard revert, never an
   unchecked slice). Reaches a chain by fresh deploy or
   `RefreshAllFacetsInPlace`.
+
+- **SaleAdmissionFacet + RiskPreviewFacet + the sale hosts (#1649, #3843).**
+  `saleAdmission` moved off RiskPreviewFacet with the two listing reads.
+  `LibSaleSolvency`, inlined in SaleExitVerdictFacet (so both
+  early-withdrawal entries, EarlyWithdrawalFacet and
+  EarlyWithdrawalDirectFacet, reach it), OfferAcceptFacet and
+  OfferPreviewFacet, self-calls it. A sale host refreshed onto a Diamond that
+  does not route it reverts `FunctionDoesNotExist` on every sale (a hard
+  revert, never an unchecked sale). `RefreshAllFacetsInPlace`,
+  `RedeployFacets` and `ReplaceStaleFacets` carry it beside RiskPreviewFacet;
+  find the callers again with a grep for `LibSaleSolvency.`, not from this
+  list. `rehearse-partial-refresh.sh` checks its selectors in
+  `SALE_ADMISSION_SELECTORS`, beside `RISK_PREVIEW_SELECTORS`.
+
+- **BackstopAbsorbFacet + BackstopFacet (#3843).** Role B's governance moved
+  off BackstopFacet. Both govern the one backstop vault BackstopFacet
+  provisions and write the backstop kill-switches the backstop paths read,
+  so refresh them in one cut. `RefreshAllFacetsInPlace` carries both; no
+  curated script carries either.
 
 - **SaleExitVerdictFacet + EarlyWithdrawalFacet + EarlyWithdrawalDirectFacet
   (#1841).** Both lender-exit entries run their opening checks through one
@@ -631,7 +652,7 @@ true on a settlement path, and it cost real time in #1503.
 | **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoanFromAccept` and `refinanceLoanFromMatch`, both `address(this)`-gated: the refinance completes INSIDE the accept or match of the borrower's refinance-tagged offer, and since #3042 there is no standalone `refinanceLoan` (and no `KEEPER_ACTION_REFINANCE`). The new lender's net principal pays the old lender vault-to-vault (`LibRefinanceNetting` carries it from `OfferAcceptFeeFacet`, so the two are one behaviour across a self-call); the holder's wallet pays only the rest of the due plus the treasury cut, in one pull through the request's payoff permit (`RefinancePayoffFacet`, #1558), stated by `RefinancePayoffSettled`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created by the same accept, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
 | **RefinancePayoffFacet**   | The refinance payoff permit (#1558): `setRefinancePayoffPermit` / `clearRefinancePayoffPermit` (the request's creator attaches or removes an exact-amount, single-use Permit2 witness permit bound to `RefinancePayoff(loanId, offerId)`) and the sizing view `getRefinancePayoff(loanId, offerId, by)`. The PULL is not here: `RefinanceFacet`'s settlement spends the permit through `LibRefinancePayoff.pull`, once, for the wallet's share of the payoff (since #3042 the new lender's net principal pays the rest vault-to-vault), and the view reports that share as `walletShareNow` / `walletShareBy`. Split out because `RefinanceFacet` sits close to EIP-170. **The two must be refreshed together** (see "Refresh-together families"). There is no standing payoff allowance to the Diamond any more; the wallet approves Permit2, which moves nothing without the signature. Design: `docs/DesignsAndPlans/RefinancePayoffPermitDesign.md` |
 | **EarlyWithdrawalFacet**   | Lender exit, LISTED route only: `createLoanSaleOffer` (carries a MANDATORY finite expiry) → completion. Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer. **`sellLoanViaBuyOffer` is NOT here** — #1780 moved it to `EarlyWithdrawalDirectFacet` below, so a grep of this facet for the direct sale comes back empty |
-| **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `RiskPreviewFacet.saleAdmission` through `LibSaleSolvency`, so a curated refresh script touching either must also route that selector (#1649) |
+| **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `SaleAdmissionFacet.saleAdmission` (on RiskPreviewFacet until #3843) through `LibSaleSolvency`, by way of `SaleExitVerdictFacet`, so a curated refresh script touching either must also route that selector (#1649) |
 | **SaleExitVerdictFacet** | The ONE rule for whether a lender may exit by sale now (#1841): `saleExitVerdict(loanId, caller)` returns, per route (direct sale, listing), every refusal as the ABI-encoded custom error the entry raises plus the earliest time it can lift (`reopensAt`, 0 = needs a decision or never). Both entries open with a self-call to `requireSaleExitOpen`, which reverts with the first refusal, so the app's exit chooser and the entries cannot drift. It covers the loan- and caller-level checks only, not the buy offer a direct sale consumes, the listing's inputs or a keeper's capacity. **Refreshed together with both early-withdrawal facets** (see the family below) |
 | **SwapToRepayFacet** / **SwapToRepayPartialFacet** | Borrower swap-to-repay: collateral swapped into the principal asset and applied to the loan in one transaction. `SwapToRepayFacet` hosts the FULL close-out (`swapToRepayFull`) and its sizing preview (`previewSwapToRepayFull`). `swapToRepayPartial` is **NOT here** — #2416 moved it to `SwapToRepayPartialFacet`, so a grep of the first facet for the partial route comes back empty. Split because `SwapToRepayFacet` had reached 73 bytes under EIP-170, less than any guard costs, so every queued change to either route was undeployable (the #1780 / #1835 condition again). Same storage, same Diamond, same selector and call surface; only the runtime bytecode is separate. **The two must be refreshed together** — `RefreshAllFacetsInPlace` carries both, and refreshing one alone leaves the other route on pre-split code |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
@@ -950,8 +971,9 @@ so they keep their explicit legs.
 
 **`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
 array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
-`RISK_PREVIEW_SELECTORS`, and `assert_risk_preview_routed` iterates only that
-array. Its own comment claims it is "the same set the refresh scripts cut",
+`RISK_PREVIEW_SELECTORS` (and, since #3843, `SALE_ADMISSION_SELECTORS` for
+the sale reads split off it), and `assert_risk_preview_routed` iterates only
+those arrays. Its own comment claims it is "the same set the refresh scripts cut",
 which is true only for as long as somebody keeps it so. Add the new selector
 there too, or the rehearsal reports that *all* selectors share one host while
 never having looked at the one you just added — a passing check that has stopped
@@ -981,13 +1003,14 @@ the new-function case is a hard revert, not a silent divergence.
 green parity test.** `RedeployFacets.s.sol` reads most of them;
 `UpgradeOracleFacet.s.sol` reads `oracle`. But `offerPreview` has **no script
 consumer at all** — it is read only by tests — and `ReplaceStaleFacets.s.sol`
-does not import this library at all. Its Oracle, VaultFactory, RiskPreview and
-OfferPreview cuts use `_getOracleSelectors()`, `_getVaultFactorySelectors()`,
-`_getRiskPreviewFacetSelectors()` and `_getOfferPreviewSelectors()` inherited
+does not import this library at all. Its Oracle, VaultFactory, RiskPreview,
+SaleAdmission and OfferPreview cuts use `_getOracleSelectors()`,
+`_getVaultFactorySelectors()`, `_getRiskPreviewFacetSelectors()`,
+`_getSaleAdmissionSelectors()` and `_getOfferPreviewSelectors()` inherited
 from `DeployDiamond`, while their parity cases check the separate
 `FacetSelectors` getters.
 
-So for those four facets, updating `FacetSelectors` satisfies the parity test
+So for those five facets, updating `FacetSelectors` satisfies the parity test
 while the `ReplaceStaleFacets` cut is still driven by `DeployDiamond`'s own
 lists. **Update both, and do not read a green parity test as proof that a
 `ReplaceStaleFacets` cut is complete.** `grep` for the getter to see who

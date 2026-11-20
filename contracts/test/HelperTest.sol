@@ -47,10 +47,12 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
@@ -140,7 +142,6 @@ import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
-import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1495,7 +1496,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](9);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1503,18 +1504,27 @@ contract HelperTest {
         selectors[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3
         selectors[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3
         selectors[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b
-        // #1503 PR-E — sale admission classification (live health floor +
-        // inherited-risk-terms compatibility), read by LibSaleSolvency.
-        selectors[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 4 — listing bounds quote (see DeployDiamond).
-        selectors[8] = RiskPreviewFacet.quoteSellerBounds.selector;
-        // #2672 — the figures a standing listing recorded.
-        selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        selectors[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        selectors[7] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call
         // (moved here from OfferPreviewFacet in #3328).
-        selectors[11] = RiskPreviewFacet.initRiskBounds.selector;
+        selectors[8] = RiskPreviewFacet.initRiskBounds.selector;
+    }
+
+    /// @dev #3843 — the sale reads, split off `RiskPreviewFacet`. All `view`.
+    function getSaleAdmissionFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        // #1503 PR-E — sale admission classification (live health floor +
+        // inherited-risk-terms compatibility), read by LibSaleSolvency.
+        selectors[0] = SaleAdmissionFacet.saleAdmission.selector;
+        // #1503 item 4 — listing bounds quote (see DeployDiamond).
+        selectors[1] = SaleAdmissionFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        selectors[2] = SaleAdmissionFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -1585,7 +1595,8 @@ contract HelperTest {
         selectors[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
     }
 
-    /// @dev The backstop's Role B (absorb) governance, split off BackstopFacet.
+    /// @dev #3843 — #399 backstop v0 Role B (absorb) governance, split off
+    ///      `BackstopFacet`.
     function getBackstopAbsorbFacetSelectors()
         public
         pure

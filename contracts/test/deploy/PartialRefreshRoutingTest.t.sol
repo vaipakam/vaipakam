@@ -9,7 +9,7 @@ import {RedeployFacets} from "../../script/RedeployFacets.s.sol";
 import {ReplaceStaleFacets} from "../../script/ReplaceStaleFacets.s.sol";
 import {FacetSelectors} from "../../script/lib/FacetSelectors.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
-import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../../src/facets/SaleAdmissionFacet.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
@@ -21,7 +21,8 @@ import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
  * @title  PartialRefreshRoutingTest
  * @notice #1649 guardrail. The two CURATED partial-refresh scripts each
  *         reinstall facets whose sale paths, since #1503, cross-call
- *         `RiskPreviewFacet.saleAdmission`:
+ *         `saleAdmission` (on `RiskPreviewFacet` until #3843 moved it, with
+ *         the two listing reads, to `SaleAdmissionFacet`):
  *
  *           - `RedeployFacets`      → `EarlyWithdrawalFacet`
  *             (`createLoanSaleOffer`, `completeLoanSale`)
@@ -100,7 +101,7 @@ contract PartialRefreshRoutingTest is Test {
     ///      EXCEPT `saleAdmission`, which is not routed at all.
     function _unrouteSaleAdmission() internal {
         bytes4[] memory sels = new bytes4[](1);
-        sels[0] = RiskPreviewFacet.saleAdmission.selector;
+        sels[0] = SaleAdmissionFacet.saleAdmission.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
@@ -123,7 +124,7 @@ contract PartialRefreshRoutingTest is Test {
         returns (bool ok, bytes memory ret)
     {
         (ok, ret) = diamond.staticcall(
-            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, loanId)
+            abi.encodeWithSelector(SaleAdmissionFacet.saleAdmission.selector, loanId)
         );
     }
 
@@ -185,7 +186,7 @@ contract PartialRefreshRoutingTest is Test {
 
         assertEq(
             IDiamondLoupe(diamond).facetAddress(
-                RiskPreviewFacet.saleAdmission.selector
+                SaleAdmissionFacet.saleAdmission.selector
             ),
             address(0),
             "fixture should leave saleAdmission unrouted"
@@ -332,6 +333,7 @@ contract PartialRefreshRoutingTest is Test {
         _assertSingleHost(surface.vaultFactorySelectors(), "VaultFactoryFacet");
         _assertSingleHost(surface.numeraireConfigSelectors(), "NumeraireConfigFacet");
         _assertSingleHost(surface.riskPreviewSelectors(), "RiskPreviewFacet");
+        _assertSingleHost(surface.saleAdmissionSelectors(), "SaleAdmissionFacet");
         _assertSingleHost(surface.offerPreviewSelectors(), "OfferPreviewFacet");
     }
 
@@ -774,16 +776,22 @@ contract PartialRefreshRoutingTest is Test {
     ///      no `FunctionDoesNotExist`, but running two different builds of the
     ///      same facet. Checking the common host catches that; checking only
     ///      `saleAdmission != address(0)` would not.
+    ///      Since #3843 the sale reads are their own facet, so both lists
+    ///      are checked, each against its own single host.
     function _assertRiskPreviewFullyRouted() internal view {
-        bytes4[] memory sels = FacetSelectors.riskPreview();
+        _assertFullyRouted(FacetSelectors.riskPreview(), "RiskPreviewFacet");
+        _assertFullyRouted(FacetSelectors.saleAdmission(), "SaleAdmissionFacet");
+    }
+
+    function _assertFullyRouted(bytes4[] memory sels, string memory facet) internal view {
         address host = IDiamondLoupe(diamond).facetAddress(sels[0]);
-        assertTrue(host != address(0), "RiskPreviewFacet selector 0 unrouted");
+        assertTrue(host != address(0), string.concat(facet, " selector 0 unrouted"));
 
         for (uint256 i; i < sels.length; ++i) {
             assertEq(
                 IDiamondLoupe(diamond).facetAddress(sels[i]),
                 host,
-                "every RiskPreviewFacet selector must route to one host facet"
+                string.concat("every ", facet, " selector must route to one host facet")
             );
         }
     }
@@ -851,6 +859,10 @@ contract SelectorSurfaceHarness is ReplaceStaleFacets {
 
     function riskPreviewSelectors() external pure returns (bytes4[] memory) {
         return _getRiskPreviewFacetSelectors();
+    }
+
+    function saleAdmissionSelectors() external pure returns (bytes4[] memory) {
+        return _getSaleAdmissionSelectors();
     }
 
     function offerPreviewSelectors() external pure returns (bytes4[] memory) {

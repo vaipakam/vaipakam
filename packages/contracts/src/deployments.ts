@@ -274,7 +274,9 @@ export interface DeploymentFacets {
   referralFacet?: HexAddress;
   /** #3635 A / #3713 — the rate link and the warning band. */
   rateLinkFacet?: HexAddress;
-  /** The backstop's Role B (absorb) governance, split off backstopFacet. */
+  /** #3843 — the sale reads, split off riskPreviewFacet (EIP-170). */
+  saleAdmissionFacet?: HexAddress;
+  /** #3843 — backstop Role B (absorb) governance, split off backstopFacet. */
   backstopAbsorbFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;

@@ -64,6 +64,20 @@ library LibTreasury {
         return currentOrZero() == address(this);
     }
 
+    /// @notice A Diamond-as-treasury operation was called while the current
+    ///         vault code names some other address as the treasury.
+    /// @dev Same signature, and so the same selector, as the
+    ///      `TreasuryNotDiamond()` the backstop facets declared before #3843.
+    error TreasuryNotDiamond();
+
+    /// @dev Reverts {TreasuryNotDiamond} unless the current vault code names
+    ///      the Diamond as the treasury. The Diamond-as-treasury operations
+    ///      act on treasury funds the Diamond holds, so they need it (#3569).
+    ///      Shared by `BackstopFacet` and `BackstopAbsorbFacet` (#3843).
+    function requireDiamond() internal view {
+        if (!isDiamond()) revert TreasuryNotDiamond();
+    }
+
     /// @dev The treasury `vault`'s own code pays fees to. Reverts
     ///      {TreasuryUnset} for a missing vault or a zero endpoint.
     function ofVault(address vault) internal view returns (address t) {

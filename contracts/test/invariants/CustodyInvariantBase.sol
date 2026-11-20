@@ -173,6 +173,7 @@ abstract contract CustodyInvariantBase is SetupTest {
         // #3431 — the vault code fixes the backstop (test convenience).
         LibTestVaultBeacon.sync(address(diamond));
         b.setBackstopEnabled(true);
+        // #3843 — the Role B (absorb) governance is on BackstopAbsorbFacet.
         BackstopAbsorbFacet a = BackstopAbsorbFacet(address(diamond));
         a.setBackstopAbsorbEnabled(true);
         a.setBackstopAbsorbCap(usdc, weth, ABSORB_CAP_PER_PAIR);

@@ -156,9 +156,10 @@ abstract contract DiamondFacetNames {
     ///      133 → 136 with `IntegratorFacet` (#3682), `StandingOfferCheckFacet`
     ///      (#3720) and `ReferralFacet` (#3722).
     ///      136 → 137 with `RateLinkFacet` (#3635 A, #3713).
-    ///      137 → 138 with `BackstopAbsorbFacet` (the backstop's Role B
-    ///      governance, split off BackstopFacet for EIP-170).
-    function cutFacetNames() internal pure returns (string[138] memory) {
+    ///      137 → 139 with `SaleAdmissionFacet` (the sale reads, split off
+    ///      RiskPreviewFacet) and `BackstopAbsorbFacet` (backstop Role B
+    ///      governance, split off BackstopFacet), #3843, both for EIP-170.
+    function cutFacetNames() internal pure returns (string[139] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -358,7 +359,6 @@ abstract contract DiamondFacetNames {
             // The referral share: binding, settings, quote, payment (#3722).
             "ReferralFacet",
             // The backstop's Role B (absorb) governance, split off BackstopFacet.
-            "BackstopAbsorbFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",
@@ -467,7 +467,11 @@ abstract contract DiamondFacetNames {
             // to keep the Full-tariff bytecode off the large OfferAcceptFacet.
             "FeeEntitlementFacet",
             // #3635 A / #3713 — the rate link and the warning band.
-            "RateLinkFacet"
+            "RateLinkFacet",
+            // #3843 — the sale reads, split off RiskPreviewFacet (EIP-170).
+            "SaleAdmissionFacet",
+            // #3843 — backstop Role B governance, split off BackstopFacet.
+            "BackstopAbsorbFacet"
         ];
     }
 }

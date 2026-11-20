@@ -101,6 +101,9 @@ import IntegratorFacetABI from './IntegratorFacet.json';
 import StandingOfferCheckFacetABI from './StandingOfferCheckFacet.json';
 import ReferralFacetABI from './ReferralFacet.json';
 import RateLinkFacetABI from './RateLinkFacet.json';
+// #3843 — the sale reads, split off RiskPreviewFacet (EIP-170).
+import SaleAdmissionFacetABI from './SaleAdmissionFacet.json';
+// #3843 — backstop Role B (absorb) governance, split off BackstopFacet.
 import BackstopAbsorbFacetABI from './BackstopAbsorbFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import ClaimViewFacetABI from './ClaimViewFacet.json';
@@ -318,6 +321,7 @@ export {
   StandingOfferCheckFacetABI,
   ReferralFacetABI,
   RateLinkFacetABI,
+  SaleAdmissionFacetABI,
   BackstopAbsorbFacetABI,
   ClaimFacetABI,
   ClaimViewFacetABI,
