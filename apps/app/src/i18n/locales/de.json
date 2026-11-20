@@ -2789,6 +2789,7 @@
         "OfferSaleProceedsCredited": "Verkaufserlös im Tresor gutgeschrieben",
         "OfferEscrowReturned": "Angebotshinterlegung in den Tresor zurückgegeben",
         "OfferRefundCollected": "Zurückgehaltene Angebotserstattung abgeholt",
+        "OfferRefundHeld": "Angebotserstattung für den Token-Inhaber zurückgehalten",
         "OfferFullTariffConsentBy": "Zustimmung zum vollen Tarif für ein Angebot erteilt",
         "CollateralSaleProceedsSplit": "Verkaufserlös aufgeteilt",
         "ParallelSaleLockReleased": "Verkaufsangebot der Sicherheiten freigegeben",

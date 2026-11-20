@@ -2789,6 +2789,7 @@
         "OfferSaleProceedsCredited": "매각 대금이 금고에 입금됨",
         "OfferEscrowReturned": "오퍼 예치금이 금고로 반환됨",
         "OfferRefundCollected": "보류된 오퍼 환불금을 수령함",
+        "OfferRefundHeld": "토큰 보유자를 위해 오퍼 환불금이 보류됨",
         "OfferFullTariffConsentBy": "오퍼에 전체 요율 동의를 제공함",
         "CollateralSaleProceedsSplit": "매각 대금 분배됨",
         "ParallelSaleLockReleased": "담보 매각 등록 해제됨",

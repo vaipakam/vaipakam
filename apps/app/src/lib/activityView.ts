@@ -287,6 +287,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   OfferSaleProceedsCredited: { label: 'Sale proceeds credited to the vault', category: 'offer', priority: 60 },
   OfferEscrowReturned: { label: 'Offer escrow returned to the vault', category: 'offer', priority: 60 },
   OfferRefundCollected: { label: 'Held offer refund collected', category: 'offer', priority: 60 },
+  OfferRefundHeld: { label: 'Offer refund held for the token holder', category: 'offer', priority: 60 },
   OfferFullTariffConsentBy: { label: 'Full-tariff consent given on an offer', category: 'offer', priority: 12 },
   CollateralSaleProceedsSplit: { label: 'Sale proceeds split', category: 'loan-close', priority: 75 },
   ParallelSaleLockReleased: { label: 'Collateral sale listing released', category: 'offer', priority: 45 },

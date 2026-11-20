@@ -2789,6 +2789,7 @@
         "OfferSaleProceedsCredited": "बिक्री आय वॉल्ट में जमा",
         "OfferEscrowReturned": "ऑफ़र की जमा राशि वॉल्ट में लौटाई गई",
         "OfferRefundCollected": "रोकी गई ऑफ़र वापसी प्राप्त की गई",
+        "OfferRefundHeld": "ऑफ़र वापसी टोकन धारक के लिए रोकी गई",
         "OfferFullTariffConsentBy": "ऑफ़र पर पूर्ण शुल्क की सहमति दी गई",
         "CollateralSaleProceedsSplit": "बिक्री आय विभाजित",
         "ParallelSaleLockReleased": "संपार्श्विक बिक्री लिस्टिंग मुक्त",
