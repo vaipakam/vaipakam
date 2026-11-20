@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHAT_NOTICE_TTL_SECONDS,
   CLOSED_RETENTION_SECONDS,
   LOCK_RETENTION_SECONDS,
   ORDER_RETENTION_SECONDS,
@@ -251,6 +252,20 @@ describe('telegram state store (#1722)', () => {
     const accept = (store: TelegramStateStore, at: number) => {
       for (const n of store.duePhraseNotices(at, 50)) store.phraseNoticeSent(W, n.chatId, n.chainId, n.id, true, at);
     };
+
+    it('keeps a chat type only while something still names the chat', () => {
+      const { store, db } = fresh();
+      const types = () => (db.prepare('SELECT chat_id FROM chat_types ORDER BY chat_id').all() as { chat_id: string }[]).map((r) => r.chat_id);
+      store.recordChatType('7', true, 1);
+      store.recordChatType('8', true, 1);
+      link(store, 1, '7');
+      // Within the hour a handshake that has not linked yet keeps its type.
+      store.pruneClosed(1 + CHAT_NOTICE_TTL_SECONDS);
+      expect(types()).toEqual(['7', '8']);
+      // After it, a chat nothing names is forgotten; the linked one is kept.
+      store.pruneClosed(2 + CHAT_NOTICE_TTL_SECONDS);
+      expect(types()).toEqual(['7']);
+    });
 
     it('is set only while a private chat is linked, and a group is reported', () => {
       const { store } = fresh();

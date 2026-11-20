@@ -570,6 +570,23 @@ describe('the alert phrase in channel messages (#3346)', () => {
     expect(store.phraseMarksOf([{ wallet: W, chatId: '77', chainId: 84532 }])).toEqual([null]);
   });
 
+  it('a notice retried after the phrase changed leads with the phrase the chat knows now', async () => {
+    const { store, state, open } = await told('blue heron');
+    store.recordChatType('77', true, 0);
+    // The notice to the linked chat is refused, so it waits for a retry.
+    const refused = deps(state, open, NOW, 'refused');
+    expect(await requestRelink(refused.d, W, 421614, '77', 'en')).toBe('linked');
+    // Meanwhile the phrase changes and the linked chat is told the new one.
+    store.setPhrase(W, null, 'red kite', 2, 2);
+    await sendPhraseNotices(deps(state, open).d);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['red kite']);
+    const retry = deps(state, open, NOW + NOTICE_RETRY_SECONDS + 1);
+    await applyDueChannelChanges(retry.d);
+    const toOld = retry.sent.filter((m) => m.chat === '42' && m.text.includes('Another Telegram chat'));
+    expect(toOld).toHaveLength(1);
+    expect(toOld[0]!.text.startsWith('Your alert phrase: «red kite»')).toBe(true);
+  });
+
   it('a protected move to a chat already told on another network leads its notice with that phrase', async () => {
     const { store, state } = harness();
     store.recordChatType('42', true, 0);

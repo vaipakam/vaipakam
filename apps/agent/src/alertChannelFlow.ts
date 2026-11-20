@@ -497,8 +497,12 @@ async function retryChatNotices(deps: ChannelDeps): Promise<void> {
   const due = await deps.state.dueChatNotices(deps.now - SHORT_NOTICE_RETRY_SECONDS, deps.now, APPLY_BATCH);
   if (!deps.send || due.length === 0) return;
   const locales = await deps.locales(due.map((n) => ({ wallet: n.wallet, chainId: n.chainId })));
+  // A recipient still linked for the wallet leads with the phrase it knows
+  // now, which may have changed since the notice was queued; a chat no
+  // longer linked keeps the phrase captured when it was.
+  const current = await deps.state.phraseMarksOf(due.map((n) => ({ wallet: n.wallet, chatId: n.chatId, chainId: n.chainId })));
   const groups = groupBy(
-    due.map((n, i) => ({ ...n, locale: locales[i] ?? 'en' })),
+    due.map((n, i) => ({ ...n, phrase: current[i] ?? n.phrase, locale: locales[i] ?? 'en' })),
     (n) => `${n.chatId}|${n.wallet}|${n.kind}|${n.phrase ?? ''}|${n.locale}`,
   );
   for (const list of groups.values()) {

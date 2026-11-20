@@ -1040,12 +1040,28 @@ export class TelegramStateStore {
   }
 
   /** Drop closed changes, handled LOCK requests and request-order marks
-   *  past their retention. */
+   *  past their retention, and chat types nothing names any more. */
   pruneClosed(now: number): void {
     this.sql.exec(`DELETE FROM channel_changes WHERE state <> 'pending' AND closed_at < ?`, now - CLOSED_RETENTION_SECONDS);
     this.sql.exec(`DELETE FROM lock_requests WHERE handled_at IS NOT NULL AND handled_at < ?`, now - LOCK_RETENTION_SECONDS);
     this.sql.exec(`DELETE FROM request_order_chain WHERE last_issued_at < ?`, now - ORDER_RETENTION_SECONDS);
     this.sql.exec(`DELETE FROM request_order_wallet WHERE last_issued_at < ?`, now - ORDER_RETENTION_SECONDS);
+    // #3346 — a chat's type is kept only while something still names the
+    // chat: a link, a pending change to or from it, a notice owed to it, or
+    // what it was told. A handshake that never linked, and an old chat whose
+    // last notice was sent or expired, leave nothing behind. The hour's grace
+    // covers a handshake that recorded the type and has not linked yet.
+    this.sql.exec(
+      `DELETE FROM chat_types
+        WHERE seen_at < ?
+          AND chat_id NOT IN (SELECT chat_id FROM links)
+          AND chat_id NOT IN (SELECT chat_id FROM chat_notices)
+          AND chat_id NOT IN (SELECT chat_id FROM phrase_notices)
+          AND chat_id NOT IN (SELECT chat_id FROM phrase_told)
+          AND chat_id NOT IN (SELECT old_chat_id FROM channel_changes WHERE state = 'pending')
+          AND chat_id NOT IN (SELECT new_chat_id FROM channel_changes WHERE state = 'pending' AND new_chat_id IS NOT NULL)`,
+      now - CHAT_NOTICE_TTL_SECONDS,
+    );
   }
 
   // ─── Telegram LOCK (#3088) ────────────────────────────────────────────
