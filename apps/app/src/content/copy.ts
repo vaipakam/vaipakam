@@ -6258,6 +6258,8 @@ const copySource = {
         'Your wallet is compliance-flagged, so new positions are blocked. Existing loans can still be repaid or closed.',
       flaggedCreator:
         'The wallet that created this offer is compliance-flagged, so it can’t be taken. Nothing was sent.',
+      flaggedHolder:
+        'The wallet that holds this offer’s position token is compliance-flagged, so it can’t be taken. Nothing was sent.',
       assetPaused:
         'One of this offer’s assets is paused by the protocol right now, so the transaction would be rejected. Nothing was sent.',
       // Shown only on deploys with country-pair trading rules enabled

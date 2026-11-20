@@ -2401,6 +2401,7 @@
         "alreadyAccepted": "Quelqu’un a déjà accepté cette offre. Rien n’a été envoyé — actualisez pour voir ce qui reste ouvert.",
         "flaggedAcceptor": "Votre wallet est signalé pour conformité, les nouvelles positions sont donc bloquées. Les prêts existants peuvent toujours être remboursés ou clôturés.",
         "flaggedCreator": "Le wallet qui a créé cette offre est signalé pour conformité, elle ne peut donc pas être acceptée. Rien n’a été envoyé.",
+        "flaggedHolder": "Le wallet qui détient le jeton de position de cette offre est signalé pour conformité, elle ne peut donc pas être acceptée. Rien n’a été envoyé.",
         "assetPaused": "L’un des actifs de cette offre est actuellement suspendu par le protocole, la transaction serait donc rejetée. Rien n’a été envoyé.",
         "countryBlocked": "Les règles de négociation de ce déploiement n’autorisent pas ces deux wallets à traiter entre eux. Rien n’a été envoyé.",
         "consentRequired": "Le wallet qui a créé cette offre n’a pas enregistré l’accord sur les risques et conditions exigé par le protocole ; elle ne peut donc pas être acceptée. Rien n’a été envoyé.",

@@ -3003,6 +3003,7 @@
         "alreadyAccepted": "Someone has already taken this offer. Nothing was sent — refresh to see what’s still open.",
         "flaggedAcceptor": "Your wallet is compliance-flagged, so new positions are blocked. Existing loans can still be repaid or closed.",
         "flaggedCreator": "The wallet that created this offer is compliance-flagged, so it can’t be taken. Nothing was sent.",
+        "flaggedHolder": "The wallet that holds this offer’s position token is compliance-flagged, so it can’t be taken. Nothing was sent.",
         "assetPaused": "One of this offer’s assets is paused by the protocol right now, so the transaction would be rejected. Nothing was sent.",
         "countryBlocked": "This deployment’s trading rules don’t allow these two wallets to trade with each other. Nothing was sent.",
         "consentRequired": "The wallet that created this offer hasn’t recorded the risk-and-terms agreement the protocol requires, so it can’t be taken. Nothing was sent.",
