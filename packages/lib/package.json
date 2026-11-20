@@ -138,6 +138,10 @@
       "types": "./src/routeBuilder.ts",
       "default": "./src/routeBuilder.ts"
     },
+    "./tokenLabel": {
+      "types": "./src/tokenLabel.ts",
+      "default": "./src/tokenLabel.ts"
+    },
     "./saleHold": {
       "types": "./src/saleHold.ts",
       "default": "./src/saleHold.ts"

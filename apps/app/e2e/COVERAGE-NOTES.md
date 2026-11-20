@@ -738,6 +738,8 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Protected vault port (depository vault).** The contract no longer pays recovered tokens to the wallet. `recoverStuckERC20` became `adoptUntracked`, which credits the declared amount to the vault's tracked balance; the tokens then leave by an ordinary withdrawal, so a protected account's payout delay applies to them like any other balance. The page signs the new `AdoptionAcknowledgment` typed data (domain "Vault Adoption", with the asset kind and token id) and reads `getTrackedHolding` before and after. `tests/27-recover.spec.ts` now asserts the tracked balance rose rather than the wallet balance, and looks for the "Sign & add to vault" button and the "Tokens added to your vault" result. The sanctions branch reads `VaultBannedFromAdoption`. The declaration text changed, so every locale's reading aid was retranslated against the new hash.
 
+**Token label rule.** The symbol the token reports is cleaned by the shared `@vaipakam/lib/tokenLabel` rule (controls and format characters removed, one line, 20 code points), the same rule the statements and feed exports use. Its hostile-name cases are unit tests in `packages/lib/src/tokenLabel.test.ts`; no spec drives a hostile token through this page.
+
 <a id="cov-recovery-declaration-reading-aid-1563-the-eip"></a>
 
 ## Recovery declaration reading aid (#1563) — the EIP-712 declaration the user signs on `/recover` is contract-fixed English (its keccak256 must equal the vault facet's `RECOVERY_ACK_TEXT_HASH`), so the signed bytes cannot be translated.
