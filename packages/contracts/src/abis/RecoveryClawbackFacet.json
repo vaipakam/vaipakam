@@ -257,6 +257,22 @@
   },
   {
     "type": "error",
+    "name": "ClaimOutageUnreadable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimRunAfterOutage",
+    "inputs": [
+      {
+        "name": "until",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DepositoryHoldingExceeded",
     "inputs": [
       {
@@ -313,6 +329,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriceReadOutOfGas",
+    "inputs": []
   },
   {
     "type": "error",
