@@ -253,34 +253,50 @@ hold every bound at or outside the Diamond's at every step of a loan's life.
 
 The rule is the one protected mode already uses (Stage B2, `VaultProtectionBase._authorize`): an authorization is a
 direct call from the owner's wallet to the vault, or the owner's EIP-712 signature (ERC-1271 for a contract wallet) over
-the commitment, in the vault's own domain, spending a nonce. B3 adds no second rule. Three routes meet it, and the app
-picks by where the money is and what the wallet can do:
+the commitment, in the vault's own domain, spending a nonce. B3 adds one form, for NFTs only: the owner's own send of
+the token to its vault (below). It adds no other rule. Four routes meet it, and the app picks by what funds the action
+and what the wallet can do:
 
 | The action is funded from | Route | Prompts on a plain wallet |
 | --- | --- | --- |
-| The wallet | The Permit2 witness carries the commitment, and **the owner's own vault is the Permit2 spender**. The vault makes the pull itself, so a successful pull proves the owner signed that commitment. The tokens go from the wallet to the vault and never rest in the Diamond. | Sign, then send |
+| Tokens (ERC-20) in the wallet | The Permit2 witness carries the commitment, and **the owner's own vault is the Permit2 spender**. The vault makes the pull itself, so a successful pull proves the owner signed that commitment. The tokens go from the wallet to the vault and never rest in the Diamond. | Sign, then send |
 | The vault's free balance | The owner signs the commitment, and the signature travels with the action to the vault. | Sign, then send |
-| Either, from a wallet that sends several calls as one | The owner's batch calls the vault's own `authorize` entry with the commitment first. The vault holds it for that transaction only and spends it when the Diamond records the commitment. | One |
+| An NFT in the wallet (ERC-721 or ERC-1155) | The owner sends the token to its own vault itself, with the commitment named in the transfer's data. Nothing is approved and nothing is pulled. | Send, then send |
+| Any of these, from a wallet that sends several calls as one | The owner's batch calls the vault's own `authorize` entry with the commitment first. The vault holds it for that transaction only and spends it when the Diamond records the commitment. | One |
 
-Every funded action then reads the same way to a user: sign what you commit, then send. The typed-data prompt shows the
-asset, the amount, the pair and the terms, and that is exactly what the vault enforces.
+Every action funded with tokens then reads the same way to a user: sign what you commit, then send. The typed-data
+prompt shows the asset, the amount, the pair and the terms, and that is exactly what the vault enforces.
 
 **A wallet never approves the Diamond.** Today most wallet-funded entries pull on a standing allowance the wallet gave
 the Diamond (`LibDelivery.pullExact` behind the vault factory's deposit routes), with Permit2 as an option on a few. A
 standing allowance is a commitment to nothing in particular: a faulty Diamond could draw on it for anything. After B3 a
-wallet approves two things only: Permit2, for its tokens, which moves nothing without a signature that names the
-spender and the purpose, and its own vault, for one NFT it is about to lock. Every pull from a wallet is made by the
-payer's own vault under a permit signed for that purpose. This holds for a payment that opens no commitment too (a
-repayment from a wallet, a top-up, a deposit, a liquidator's or a buyer's payment). The platform can then state, as a
-fact a reader can check on chain, that no change to the Diamond can move tokens out of a wallet at all without a
-permit signed for that purpose, or out of a vault beyond the bounds its owner signed. The same statement has to carry
-what those bounds leave open, which §3.7.8 lists.
+wallet approves one thing only: Permit2, for its ERC-20 tokens, which moves nothing without a signature that names the
+spender and the purpose. Every pull from a wallet is made by the payer's own vault under a permit signed for that
+purpose. This holds for a payment that opens no commitment too (a repayment from a wallet, a top-up, a deposit, a
+liquidator's or a buyer's payment). Where such a payer is to receive something in return, its permit names the least
+it is to receive, and its vault checks that it arrived before the call returns.
+
+**An NFT is sent, never pulled.** Permit2 carries ERC-20 tokens only, and an ERC-1155 collection has no approval for
+one token id, so a pull would need the wallet to make someone an operator over the whole collection. Today's NFT
+deposit routes (`vaultDepositERC721`, `vaultDepositERC1155`) pull that way, with the Diamond as the operator. After B3
+the owner sends the token to its own vault itself, by the token contract's own safe transfer, with the commitment's
+hash in the transfer's data. The vault's receive hook holds that commitment as authorized only when the token contract
+reports the owner as both the sender and the operator of the transfer, and only for the token and amount that arrived.
+The action that follows spends it, once, as a signature's nonce is spent. It lapses at the commitment's own deadline,
+or when the owner takes the token back. A send with no data adds the token to the owner's free balance. A transfer
+made by anyone else authorizes nothing, whatever its data says. The token contract is the witness here, so one that
+misreported a sender could commit only its own token, never anything else the vault holds.
+
+The platform can then state, as a fact a reader can check on chain, that no change to the Diamond can move an NFT out
+of a wallet at all, or tokens out of a wallet without a permit signed for that purpose, or anything out of a vault
+beyond the bounds its owner signed. The same statement has to carry what those bounds leave open, which §3.7.8 lists.
 
 #### 3.7.2 The records the vault keeps
 
-1. **The balance record.** For each asset: the owner's free balance, and what is held under liens. Free balance rises
-   only by a step the vault takes itself: its own pull from the owner's wallet, a receipt for a payment owed to its
-   owner, the release of one of its own liens, or the owner adopting tokens that were sent to the vault directly. It
+1. **The balance record.** For each asset: the owner's free balance, what is held under liens, and what is held for a
+   position (item 5). Free balance rises only by a step the vault takes itself: its own pull from the owner's wallet,
+   the owner's own send of an NFT (§3.7.1), the release to its owner of an amount held for a position its owner
+   holds, the release of one of its own liens, or the owner adopting tokens that were sent to the vault directly. It
    falls by a withdrawal or a new commitment. A withdrawal is bounded by the lower of the free figure and the token
    balance less everything held, which is today's rule (`withdrawableNow`) with the figures moved into the vault.
    Tokens that arrive unannounced are in neither figure until the owner adopts them.
@@ -312,16 +328,53 @@ what those bounds leave open, which §3.7.8 lists.
    terms its owner signed: the principal still owed, the loan-to-value limit it opened under, **the most the loan can
    ever owe** (the principal plus the most interest and fees those terms allow, called the ceiling below), and **the
    earliest time the collateral may be taken for a missed due date**. The principal still owed falls only by the
-   principal part of a receipt (item 4), read in the transaction that made it and counted once. A lien opens in exactly
+   principal part of a repayment (items 4 and 5), read in the transaction that made it and counted once. No other
+   payment lowers it: not an opening, and not the purchase of the lender's side. A lien opens in exactly
    two ways: under the owner's own authorization in that transaction (a post, an accept), or as a draw on a mandate, a
    plan or a request. Either way the vault names its own side's token and checks who holds it (§3.7.3). A lien never
    opens on the Diamond's word alone.
-4. **Receipts.** A vault is paid by another vault through a call that names the `ref` and says how much of the payment
-   is principal. The receiving vault checks that the caller is a genuine vault (§3.4), measures what arrived, and
-   records "received X of this asset for `ref` from this vault, of which this much principal", under a number, so that
-   a receipt can be counted once. The principal part can never exceed what arrived. A receipt is the only proof of
-   payment another vault accepts. Because a receipt is counted when it is made, a lender side that changes hands
-   later changes nothing in what the borrower's lien has already counted.
+4. **Receipts.** A vault is paid by another vault through a call that names the `ref`, the position the payment is
+   for, its purpose, and how much of it is principal. The receiving vault checks that the caller is a genuine vault
+   (§3.4), measures what arrived, and records "received X of this asset for `ref` from this vault, for this position
+   and this purpose, of which this much principal", under a number, so that a receipt can be counted once. The
+   principal part can never exceed what arrived. What arrives is held for the position (item 5) until it is released
+   to whoever holds that position's token: in the same call where the payout rule pays a party to the transaction at
+   once (a borrower at an opening, a seller at a purchase), and on the holder's own collection otherwise. Because a
+   receipt is counted when it is made, a lender side that changes hands later changes nothing in what the borrower's
+   lien has already counted.
+
+   **The purpose is set by the paying vault, from the record its payment draws on.** The Diamond cannot choose it, and
+   the receiving vault records it as given:
+   - *an opening*: a new loan's principal, drawn on an offer lien or on the amount a mandate sets aside. It binds that
+     loan's collateral lien (§3.7.3) and lowers nothing;
+   - *a repayment*: paid for the borrower's side. It is drawn on that side's own lien, reserve or free balance or on
+     the proceeds of its collateral, or it comes from another payer's own money under that payer's authorization (a
+     liquidator that pays the debt). Only a repayment lowers a lien's principal still owed;
+   - *a purchase*: paid by an incoming lender for the lender's side, drawn on its offer lien, on its mandate under the
+     takeover consent, or on its free balance under its owner's authorization for that purchase. It moves the lender's
+     side (§3.7.5) and lowers nothing.
+
+   So the principal a lien records as owed is always what was lent against it less what was repaid for the borrower's
+   side. A purchase changes who is owed and never how much. The payoff of §3.7.3 is the one payment with two purposes,
+   because the borrower's own commitment asks for it: the paying vault records it as a repayment of the old loan and
+   as the opening of the new one, and the carried lien then records the new principal as owed to the new lender's
+   side. A mandate or an offer lien pays a repayment in that one case and in no other.
+5. **Amounts held for a position.** An amount paid for a position is held for it until its holder has it. Under the
+   payout rule a payment that someone else's action makes on a live loan (a repayment, a liquidation, a default, a
+   periodic sale) waits for the holder to collect it, and no step creates a vault for a holder who did not ask for
+   one. The amount is held under a record that names the `ref`, the position's token, the purpose and the principal
+   part, in the genuine vault that received it (item 4). Where a token refuses the delivery, as one that can freeze an
+   address may, it is held in the paying vault itself: that vault moves the amount out of free balance, or out of the
+   lien it was drawn from, into the held record. A held amount leaves in one way only: to whoever holds that
+   position's token at that moment, as free balance in this vault if its owner is that holder, and otherwise in that
+   holder's vault. Neither the holding vault's owner nor the Diamond can withdraw it, spend it or send it anywhere
+   else. So a record of an amount held in the paying vault is proof of payment exactly as a receipt is, read from
+   that vault: a debt whose repayment is held in full for the lender's side is repaid, and the collateral returns
+   without waiting for the lender to collect. A treasury share that cannot be delivered is held the same way, for the
+   treasury address fixed in the vault code. Only a payment that must not fail is held in the paying vault. An
+   opening or a purchase that cannot be delivered reverts.
+
+   A receipt, or a record of an amount held in the paying vault, is the only proof of payment another vault accepts.
 
 **One record, not two.** These records live in the vault and nowhere else, as protected mode's record does since B2.
 `LibEncumbrance` stays the one writer, and becomes the one caller of the vault's lien entries. The Diamond keeps the
@@ -352,13 +405,15 @@ learns the other side's token only from the other vault's own record.**
   other side the token the paying vault's own record names. Until then it binds nothing, and its owner can release it.
 - **A loan that pays off another** (a refinance request, or a continuation with another lender under a due-date
   plan). The borrower's commitment names the old loan. The paying vault reads that commitment and the old loan's
-  collateral lien in the borrower's vault, and pays the new principal to the vault of the old loan's lender-side
-  holder, as that lien names it. The receipt is recorded there for the old loan's `ref` and names the new loan. That
-  receipt is the opening proof: the old lien is carried to the new loan and bound to the new lender side once the old
-  loan's principal still owed is nil (§3.7.7). The new loan's borrower-side token must be held by whoever holds the old
-  loan's, so a payoff can never hand the collateral to another party. The borrower's own vault pays any rest of what
-  the old loan is owed, and any part of the new principal beyond it goes to the borrower side's holder as above.
-  Nothing is paid to the borrower for the part that pays the old loan.
+  collateral lien in the borrower's vault, and pays the new principal for the old loan's lender side, as that lien
+  names it. The payment is recorded as a repayment of the old loan and as the opening of the new one (§3.7.2), and
+  that record is the opening proof. Once the old loan's principal still owed is nil, the old lien is carried to the
+  new loan and bound to the new lender side, with the new principal as its principal still owed (§3.7.7). The paying
+  vault checks that binding before its own call returns, so it never pays off a loan without holding the lien. The new
+  loan's borrower-side token must be held by whoever holds the old loan's, so a payoff can never hand the collateral
+  to another party. The borrower's own vault pays any rest of what the old loan is owed, and any part of the new
+  principal beyond it goes to the borrower side's holder as above. Nothing is paid to the borrower for the part that
+  pays the old loan.
 - **An NFT rental.** Nothing is paid at opening. The lender's vault itself records the renter's right on the token,
   for the holder of the borrower side's token as the renter's prepayment lien names it, and that lien is bound on the
   lender vault's record of the right, in place of a receipt.
@@ -376,15 +431,15 @@ This table restates layer 2 of §3.3 for Stage B3. Where the two differ, this on
 | --- | --- |
 | The owner's withdrawal | The balance record (§3.7.2). Own wallet, or an allowlisted address after its delay (B2). On a protected account the withdrawal is a row the vault queues itself (§3.7.9). |
 | Principal to a borrower | §3.7.3. |
-| A lien released into free balance | A collateral lien, in full: only when the lien's own figure for the principal still owed is nil, which only the principal part of receipts brings down (§3.7.2). In part: only as far as what stays still covers the principal owed at the lien's own loan-to-value limit, by the vault's own price read. An asset with no price returns only in full. An offer lien, a mandate or a reserve: the owner's own call, for what is not drawn. |
-| A payment to the other side's holder (repayment, interest, the proceeds of a forced sale, collateral on a default) | Against the lien for that `ref`, to the vault of whoever holds the other side's position token now (§3.7.5), and no more than the lien. What leaves a collateral lien to the lender side without its owner's own authorization never passes the ceiling: sale proceeds are counted as measured, and priced collateral handed over in kind is valued by the vault's own price read. Collateral with no price is handed over only whole, and only at or after the lien's own date. |
+| A lien released into free balance | A collateral lien, in full: only when the lien's own figure for the principal still owed is nil, which only the principal part of repayments brings down (§3.7.2). In part: only as far as what stays still covers the principal owed at the lien's own loan-to-value limit, by the vault's own price read. An asset with no price returns only in full. An offer lien, a mandate or a reserve: the owner's own call, for what is not drawn. |
+| A payment to the other side (repayment, interest, the proceeds of a forced sale, collateral on a default) | Against the lien for that `ref`, and no more than the lien. It is paid for the other side's position (§3.7.5): into a genuine vault, which holds it for that position, or held for that position in this vault (§3.7.2). Either way it can reach only that position's holder. What leaves a collateral lien to the lender side without its owner's own authorization never passes the ceiling: sale proceeds are counted as measured, and priced collateral handed over in kind is valued by the vault's own price read. Collateral with no price is handed over only whole, and only at or after the lien's own date. |
 | What is left of a lien, to this side's holder | To the vault of whoever holds this side's position token now, under the release rule above. An open offer's escrow goes the same way to the holder of the offer's token (#3744). |
-| A swap or a forced sale | Only through `swapOut` (B1): the vault makes the swap, takes no more than the lien from itself, and measures what arrived at this vault or at the other side's holder vault. B3 adds the vault's own outer floor: the price guard's value of what was sold, less the widest slippage the settings allow, fixed in the vault code. The Diamond's tighter floor (#3359) stays layer 1. |
-| An internal-match leg | Judged as a forced sale whose proceeds are what this loan's own lender side receives: the same outer floor, measured against the receipt at that holder's vault in the same transaction. |
+| A swap or a forced sale | Only through `swapOut` (B1): the vault makes the swap, takes no more than the lien from itself, and measures what arrived at this vault or at the vault that receives it for the other side. B3 adds the vault's own outer floor: the price guard's value of what was sold, less the widest slippage the settings allow, fixed in the vault code. The Diamond's tighter floor (#3359) stays layer 1. |
+| An internal-match leg | Judged as a forced sale whose proceeds are what this loan's own lender side is paid: the same outer floor, measured against the proof of that payment in the same transaction. |
 | An order the vault signs | The vault registers an order's hash (B1) only under the commitment for it, and only for an order whose price leg pays this vault itself, at or above the committed lowest price and never below the principal the lien records, with fee legs inside the lien's budgets. This is the payment-leg check Stage B1 left open. What a buyer pays is held for that `ref` and leaves by the rows above, to the lender side's holder first. |
 | The treasury's fee, and the reserve's part (#3641) | The lien's fee budget, or a fee authorization. Both addresses are fixed in the vault code. |
 | The backstop | The lien's backstop budget, to the backstop address fixed in the vault code. |
-| A non-party paid at a wallet: liquidator, matcher, keeper, inviter | The lien's budget for that class. A liquidator that pays the debt is paid only against the receipt for that payment. |
+| A non-party paid at a wallet: liquidator, matcher, keeper, inviter | The lien's budget for that class. A liquidator that pays the debt is paid collateral only against the proof of that repayment, and no more collateral than the repayment is worth by the vault's own price read at the widest discount the settings allow, fixed in the vault code. |
 | An integrator's or a referred user's share | The budget set from the opening fee when the lien was recorded, to a genuine vault. |
 | A seller's claim (#1209) | Only the seller the signed sale terms record, up to that claim. |
 | Lending for one transaction (#3748) | The mandate's consent, the part not lent, and the balance check at the end of the call. |
@@ -401,9 +456,10 @@ know which vault paid.
 #### 3.7.5 Who the other side is, and how that changes
 
 The payee of a lien is the current holder of the other side's position token, read from the position-NFT contract,
-which no facet can write (§3.9). A holder with no vault yet gets one deployed in the same transaction. When this vault's
-own side changes hands, the lien answers to the new holder: its actions need the new holder's authorization, and what
-is released goes to the new holder's vault. A plain transfer therefore changes nothing in any vault.
+which no facet can write (§3.9). What is paid for a position is held for it and released only to that holder
+(§3.7.2), so no payment needs the holder's vault to exist first. When this vault's own side changes hands, the lien
+answers to the new holder: its actions need the new holder's authorization, and what is released goes to the new
+holder's vault. A plain transfer therefore changes nothing in any vault.
 
 A protocol route is different. A sale, a takeover or a handover retires the leaving side's token and mints a new one
 (`LibLoan.migrateLenderPosition`), and both the retirement and the loan's pointer to the new token are Diamond storage.
@@ -412,32 +468,48 @@ become the payee of every lien. So:
 
 - **A lien's other side is replaced only by a record the leaving side made.** The position-NFT contract gains one
   entry and one read: "this token is replaced by that one", accepted only from the replaced token's holder or that
-  holder's genuine vault. A lien follows that record and nothing else.
-- **A vault declares a replacement only in two cases.** Under its owner's authorization for that sale. Or, with no
-  owner present, under a standing consent in its mandate (a takeover, a continuation), once it holds a receipt for at
-  least the principal it lent on that loan and has not yet received back. A lender's vault never gives up a position
-  for less than its principal unless its owner signs.
+  holder's genuine vault. A lien follows that record and nothing else, and so does an amount held for the replaced
+  token (§3.7.2).
+- **The lender's side changes hands by a purchase, in one call.** The incoming vault pays the leaving holder's vault
+  a purchase (§3.7.2) that names the incoming side's token, which it has checked as its own side's token (§3.7.3). In
+  that same call the leaving vault checks its own condition, records the receipt and declares the replacement to
+  exactly that token, or the call reverts. The incoming vault checks the replacement record before its own call
+  returns. So no purchase is paid without the position moving, and no position moves without the purchase.
+- **The leaving vault's condition.** Its owner's authorization for that sale, which names the least price. Or, with
+  no owner present, a standing consent to be taken out at face value, and a purchase of at least the principal the
+  collateral lien for that `ref` still records as owed. A lender's vault never gives up a position for less than the
+  principal still out unless its owner signs.
+- **The incoming vault buys only a side it can see.** It reads the collateral lien for that `ref` in a genuine vault.
+  The lien must be bound, and must name the leaving token as its other side. With no owner present (a mandate under
+  its takeover consent) the vault pays no more than the principal that lien still records as owed, and only when the
+  collateral covers that principal at the slot's own loan-to-value limit by the vault's own price read, as for a fill
+  (§3.7.7).
+- **Nothing else moves.** The borrower's lien follows the replacement record, and its principal still owed is the
+  same before and after. A sale or a takeover never makes collateral releasable.
 - A seller's claim exists only from sale terms the seller authorized: signed for that sale, or the standing consent
   the replacement was declared under. Its amount is interest the Diamond computes (§3.7.8).
 
 #### 3.7.6 Release
 
-Under the payout rule a lender is paid vault to vault on every route, so the release check of §8 Q5 is the general case
-and its list of exceptions shrinks to two:
+Under the payout rule every payment to a lender's side is made vault to vault, or held for that side's position. So
+the release check of §8 Q5 is the general case, and no case is left that releases on trust:
 
 - **A forced sale** (liquidation, a default on a priced asset, swap-to-repay): the vault makes the sale itself and pays
-  the proceeds to the lender side's holder first, so there is nothing to release on trust.
-- **A holder who cannot be paid now** (sanctioned or parked): the amount stays in the paying vault under a lien whose
-  payee is that position, and leaves only to that holder's vault later.
+  the proceeds for the lender's side first, delivered or held.
+- **A payment that waits for its holder** (the payout rule's own case, a sanctioned holder, a delivery the token
+  refuses): the amount is held for that position, in the vault that received it or in the paying vault (§3.7.2 item
+  5), and that record is the proof. The collateral returns once the debt is paid or held in full, whether or not the
+  lender has collected.
 
 #### 3.7.7 What a fill may do with no owner present
 
 A fill under the lending mandate can: move principal within the amount set aside and the slot's exposure cap, in the
 mandate's asset, for a loan whose collateral is locked in a genuine vault, in the slot's collateral asset, worth enough
 at the slot's loan-to-value limit, before the slot's end date. It cannot: touch free balance outside the amount set
-aside, pay any other destination, or lend against collateral the vault itself does not price as sufficient. On the
+aside, pay any other destination, or lend against collateral the vault itself does not price as sufficient. Under its
+takeover consent a mandate can also buy a lender's side, within the same bounds (§3.7.5). On the
 borrower's side a continuation or a refinance can carry the collateral lien, whole, to the continued or the new loan.
-It does so only once the old loan's principal still owed is nil by receipts at the old lender side's holder vault, and
+It does so only once the old loan's principal still owed is nil by repayments made for the old lender's side, and
 only to a loan whose borrower-side token is held by whoever holds the old loan's (§3.7.3).
 
 #### 3.7.8 What the vault does not check (stated)
@@ -454,6 +526,9 @@ only to a loan whose borrower-side token is held by whoever holds the old loan's
   taken before the lien's own date at all.
 - **Who a budgeted non-party is.** A keeper's or a matcher's wallet is not something a vault can establish. The budget
   bounds it.
+- **When a payment is delivered and when it is held.** A faulty Diamond could hold a payment that could have been
+  delivered, or leave an amount held. It cannot send the amount anywhere but to the position's holder, so the loss is
+  delay.
 - A bad price through a legitimate route stays covered by the price guard's own rules (§7).
 
 #### 3.7.9 The owner record and protected mode
@@ -490,6 +565,13 @@ lock cancels every waiting row in the same step, with no separate run to apply i
 7. **`tx.origin`, or trusting the Diamond.** Rejected by the owner on 2026-11-06 (§8 Q1).
 8. **Leave the residual classes bounded by the Diamond.** Rejected: the statement that the vault bounds amounts would
    be untrue for exactly the classes paid at wallets.
+9. **Pull an NFT under an approval**, to the vault or to the Diamond. Rejected: ERC-1155 has no approval narrower than
+   the whole collection, and a standing operator is the commitment to nothing in particular that the wallet rule
+   removes.
+10. **One kind of receipt, and each route that pays a lender keeps the debt right itself** (a takeover rebinding the
+    lien in the same step, a parked repayment as a listed exception). Not chosen: the rule would live in every route.
+    With the purpose set by the paying vault from what its payment draws on, a payment that is not a repayment cannot
+    lower a debt on any route, and an amount held for a position is proof on every route.
 
 #### Recommendation
 
@@ -517,21 +599,35 @@ reaches a chain by fresh deploy, as every stage has.
 - Interest paid over a loan's life, however much, never brings the lien's principal still owed down, and a receipt is
   never counted twice. A lender side that changes hands between two repayments does not hold up the release.
 - A lien's other side changes only by the position-NFT contract's replacement record. A minted token that no holder
-  declared is never paid. A vault declares a replacement without its owner only against a receipt for the principal
-  still out.
-- Collateral returns in full only after receipts cover the principal, and in part only while the rest still covers it.
+  declared is never paid. A vault declares a replacement without its owner only against a purchase of at least the
+  principal still owed.
+- With the Diamond's checks stubbed out, a sale or a takeover of the lender's side never lowers a lien's principal
+  still owed and never raises what can be released from it. A purchase with no replacement declared in the same call
+  reverts, and so does a replacement with no purchase. A mandate cannot pay a repayment, except as the payoff of a
+  loan that the borrower's own commitment names.
+- A repayment the token refuses to deliver is held in the paying vault, and the collateral returns in full without
+  the lender collecting. The held amount cannot be withdrawn by that vault's owner or sent anywhere by the Diamond,
+  and it reaches only the holder of the position's token. An opening or a purchase that cannot be delivered reverts.
+- An amount a vault receives for a position is never its owner's free balance unless its owner holds that position's
+  token when it is released.
+- An ERC-721 token and an ERC-1155 amount reach a commitment from a wallet with no approval given to anyone. A
+  transfer whose operator is not the owner authorizes nothing, a held authorization covers no other token, and it
+  lapses when the token is taken back.
+- Collateral returns in full only after repayments cover the principal, and in part only while the rest still covers
+  it.
 - A forced sale below the vault's outer floor is refused, and its proceeds can leave only to the lender side's holder.
   An internal-match leg is held to the same floor on both loans.
 - With the Diamond's checks stubbed out, the lender side of a loan never receives more than the ceiling from its
   collateral, and collateral with no price cannot be taken before the lien's date. Across the lifecycle suites the
   ceiling is never below what the loan owes, and the date is never after the time the Diamond allows a default.
-- A non-party is paid no more than its class budget, and a liquidator only against the receipt for the debt it paid.
+- A non-party is paid no more than its class budget. A liquidator is paid only against the proof of the repayment it
+  made, and no more collateral than that repayment is worth at the widest discount.
 - An order whose price leg pays anyone but this vault, or whose price is below the committed lowest price or the
   principal the lien records, is not registered. A listing at the floor inside the grace period is registered only on
   a loan whose signed terms allow a listing.
 - A protected account's queued withdrawal is released by the vault only after the vault's own delay, with the
   co-signature its record requires, and a lock cancels it in the same call.
-- The three routes of §3.7.1 open the same lien, a replayed signature is refused, and an `authorize` does not outlive
+- The routes of §3.7.1 open the same lien, a replayed signature is refused, and an `authorize` does not outlive
   its transaction.
 - No entry pulls from a wallet on an allowance to the Diamond: a guard in the pre-deploy check refuses one.
 - The vault's free figure plus what it holds under liens never exceeds its token balance after every step of the
@@ -540,8 +636,8 @@ reaches a chain by fresh deploy, as every stage has.
 #### Open items for the builder to raise, not decide silently
 
 - The mapping of each held-amount family in `LibEncumbrance` (lender proceeds, seller interest, held for lender,
-  borrower proceeds, the parked refinance leg, the fallback custody row) to a lien kind, or to nothing under the payout
-  rule. The claim-custody class of §3.3 is one of them.
+  borrower proceeds, the parked refinance leg, the fallback custody row) to a lien kind, to an amount held for a
+  position (§3.7.2 item 5), or to nothing under the payout rule. The claim-custody class of §3.3 is one of them.
 - The Diamond's own balance figures (the tracked ledger, the depository holding): which retire and which become reads
   of the vault. The fee-discount record keeps its day history and reads the live figure.
 - Each payment that passes through the Diamond today, with the direct form that replaces it. Any that cannot be made
@@ -561,6 +657,10 @@ reaches a chain by fresh deploy, as every stage has.
   loan.
 - The NFT rental mapped onto these records: the renter's right, the prepayment and its buffer, the daily deduction and
   the close-out. A rental's prepayment carries no lien today.
+- Which NFT deliveries the vault's receive hooks still accept once the Diamond no longer moves an NFT as a wallet's
+  operator.
+- The backstop's buyout mapped onto a purchase: the backstop vault as a payer a receipt accepts, at the address fixed
+  in the vault code.
 - How a buyer's payment for a registered order is recorded as held for the loan when it arrives. A marketplace pays
   the price leg by a plain transfer, so the fill callback is where the vault can measure and record it. Today the
   price leg pays the Diamond, which splits it.
@@ -569,7 +669,8 @@ reaches a chain by fresh deploy, as every stage has.
 
 One user-facing change. On a plain wallet a funded action becomes sign, then send. Today an action funded from the
 wallet is a first approval of the token and then one send, and an action funded from the vault is one send. A wallet
-that sends several calls as one keeps one prompt, and no wallet gives the Diamond a standing approval any more.
+that sends several calls as one keeps one prompt, and no wallet gives the Diamond a standing approval any more. An NFT
+is sent to the vault by its owner where today it is approved to the platform: two prompts before and after.
 Alternative 4 would keep one prompt on every wallet, at the cost named there. Alternative 5 would keep one prompt for
 payments only, at the cost named there. Recommended: accept sign, then send.
 
@@ -833,7 +934,7 @@ opens by itself.
      and the pause bound how much can then leave.
 
    **End state:** every release is vault-checked, once every payout goes
-   vault to vault. Designed in §3.7 as refreshed on 2026-11-19, and built in
+   vault to vault or is held for its position. Designed in §3.7 as refreshed on 2026-11-19, and built in
    Stage B3.
 
 6. **How position NFTs change hands.** **Decided (owner, 2026-11-07):
