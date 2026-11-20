@@ -173,6 +173,9 @@ const ENUM_FIELDS: Record<string, number> = {
   // #3621 — the lender's "either" marks: bit 0 partial repay, bit 1 prepay
   // listing, nothing else (`LifecycleFlexUnknownBits`).
   lifecycleFlex: 3,
+  // #3635 A — the maker's market link: 0 none, 1 the averaged reference,
+  // 2 the term average (`IRateReference.LinkKind`).
+  linkKind: 2,
 };
 
 const ADDRESS_FIELDS = [
@@ -194,6 +197,9 @@ const ADDRESS_FIELDS = [
  *  rule the fill re-checks them (a cap below today's fee refuses today's
  *  fill and the app's preview says so). */
 const U16_FIELDS = ['maxTreasuryFeeBps', 'maxLoanInitiationFeeBps'] as const;
+/** #3635 A — `LibVaipakam.MAX_INTEREST_BPS`: the furthest a link's margin
+ *  may sit from the linked rate, either way. */
+const MAX_LINK_MARGIN_BPS = 10_000;
 const U16_MAX = 0xffffn;
 
 const BOOL_FIELDS = [
@@ -203,6 +209,7 @@ const BOOL_FIELDS = [
   'useFullTermInterest',
   'creatorFull', // #1949
   'creatorAllowFullDowngrade', // #1949
+  'rateFarFromAverageAcknowledged', // #3713
 ] as const;
 
 /**
@@ -246,7 +253,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 46 struct fields — unknown keys are rejected so order_json
+  // Exactly the 49 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -310,6 +317,19 @@ function validateOrder(
       return { error: `invalid-${f}` };
     }
     out[f] = v;
+  }
+
+  // #3635 A — the link margin, in basis points, may be negative; the contract
+  // refuses a margin beyond plus or minus the protocol's maximum rate
+  // (`RateLinkInvalid`), and a margin with no link.
+  {
+    const v = raw.linkMarginBps;
+    if (typeof v !== 'string' || !/^(0|-?[1-9][0-9]*)$/.test(v)) return { error: 'invalid-linkMarginBps' };
+    const m = Number(v);
+    if (Math.abs(m) > MAX_LINK_MARGIN_BPS || (out.linkKind === '0' && m !== 0)) {
+      return { error: 'invalid-linkMarginBps' };
+    }
+    out.linkMarginBps = v;
   }
 
   // #3328 — a signed COLLECTION offer (setKind != 0) is filled only through
@@ -546,7 +566,7 @@ function validateOrder(
 /**
  * POST /signed-offers
  *
- * Body: `{ chainId: number, order: <46-field SignedOffer wire object>,
+ * Body: `{ chainId: number, order: <49-field SignedOffer wire object>,
  *          signature: 0x-hex, set?: { others: 0x-hash[], index: number } }` —
  * every uint as a decimal string, addresses 0x-40-hex, bools as booleans (the
  * same shape GET returns and takers replay on-chain). `set` is present only

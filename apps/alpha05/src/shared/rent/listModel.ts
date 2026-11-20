@@ -65,6 +65,10 @@ export function listParams(d: ListDraft) {
     lifecycleFlex: 0,
     // #3682 — this app names no integrator on its own offers.
     integrator: ZERO,
+    // #3635 A — a rental carries no market link and no band.
+    linkKind: 0,
+    linkMarginBps: 0,
+    rateFarFromAverageAcknowledged: false,
   } as const;
 }
 

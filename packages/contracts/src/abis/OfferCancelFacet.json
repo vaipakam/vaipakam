@@ -286,6 +286,16 @@
             "name": "integrator",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "linkKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "linkMarginBps",
+            "type": "int16",
+            "internalType": "int16"
           }
         ]
       }
@@ -532,6 +542,16 @@
             "name": "integrator",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "linkKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "linkMarginBps",
+            "type": "int16",
+            "internalType": "int16"
           }
         ]
       }

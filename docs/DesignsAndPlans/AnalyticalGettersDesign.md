@@ -138,7 +138,7 @@ new structs in
 [`contracts/src/libraries/LibVaipakam.sol`](../../contracts/src/libraries/LibVaipakam.sol);
 new hook `frontend/src/hooks/useDashboardSnapshot.ts` replacing
 the per-section hooks; refactor of
-[`Dashboard.tsx`](../../frontend/src/pages/Dashboard.tsx).
+`Dashboard.tsx`.
 
 ---
 

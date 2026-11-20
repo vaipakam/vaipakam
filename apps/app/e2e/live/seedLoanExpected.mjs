@@ -153,6 +153,9 @@ export function requestParams(intent) {
     useFullTermInterest: true,
     lifecycleFlex: 0, // #3621
     integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
+    linkKind: 0, // #3635 A — no market link
+    linkMarginBps: 0,
+    rateFarFromAverageAcknowledged: false, // #3713
   };
 }
 
@@ -291,6 +294,7 @@ export function expectedRequestAcceptTerms({ requestId, stored, lender, riskTerm
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
     integrator: '0x0000000000000000000000000000000000000000', // #3682
+    rateFarFromAverageAcknowledged: false, // #3713
   };
 }
 

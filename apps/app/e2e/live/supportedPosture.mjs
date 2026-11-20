@@ -129,6 +129,9 @@ export const NOT_AFFECTING = Object.freeze({
   // reads it; a refinance opens a new loan, which pays its own fee.
   lifTermOrigin: 'the start the initiation fee\u2019s paid term counts from (#3649); read only by an extension, not by a refinance',
   lifPaidDays: 'the term the initiation fee has been paid for (#3649); read only by an extension, not by a refinance',
+  // #3635 A — whether a market link set the loan's rate. A record of how the
+  // rate was set; the rate itself is the field the drive reads.
+  rateFromLink: 'a record that a market link set the rate (#3635 A); the drive reads the rate, not how it was set',
 });
 
 /**

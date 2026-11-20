@@ -53,8 +53,10 @@ library LibIntegrator {
     }
 
     /// @notice Record that loan `loanId` was brought by `integrator` (a
-    ///         registered entry, paid or not): its public count rises once.
-    function recordLoan(uint256 loanId, address integrator) internal {
+    ///         registered entry, paid or not): its public count rises once,
+    ///         and its count of warned loans too when `warned` (the loan
+    ///         opened with a non-empty warnings mask, #3719).
+    function recordLoan(uint256 loanId, address integrator, bool warned) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.IntegratorEntry storage e = s.integrators[integrator];
         if (e.status == LibVaipakam.IntegratorStatus.None) return;
@@ -63,6 +65,9 @@ library LibIntegrator {
             openedAt: uint64(block.timestamp)
         });
         e.loansBrought += 1;
+        // #3719 / #3713 — a loan that opened with any warning (a rate far
+        // from the term average) counts on the public record.
+        if (warned) e.loansWarned += 1;
     }
 
     /// @notice A loan reached default or liquidation: if an integrator

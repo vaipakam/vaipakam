@@ -110,16 +110,18 @@ function signedTerms(over = {}) {
 }
 
 describe('refinanceExpected — complete payloads, closed in both directions', () => {
-  it('reads the AcceptTerms field list from the ABI, Full-tariff trio then integrator last', () => {
+  it('reads the AcceptTerms field list from the ABI, Full-tariff trio, integrator, then the band acknowledgement last', () => {
     const types = acceptTermsTypes(ABI);
-    expect(types).toHaveLength(35);
+    expect(types).toHaveLength(36);
     const names = types.map((t) => t.name);
-    // The Full-tariff trio, then the integrator the acceptor names (#3682).
-    expect([names.at(-4), names.at(-3), names.at(-2), names.at(-1)]).toEqual([
+    // The Full-tariff trio, the integrator the acceptor names (#3682), then
+    // the acceptor's far-from-average acknowledgement (#3713).
+    expect([names.at(-5), names.at(-4), names.at(-3), names.at(-2), names.at(-1)]).toEqual([
       'acceptorFull',
       'acceptorMaxCStar',
       'acceptorAllowFullDowngrade',
       'integrator',
+      'rateFarFromAverageAcknowledged',
     ]);
     // Every expected-terms field is a typed field and vice versa.
     expect(Object.keys(expectedAcceptTerms(TERMS_ARGS)).sort()).toEqual(types.map((t) => t.name).sort());
@@ -244,6 +246,9 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       useFullTermInterest: true,
       lifecycleFlex: 0,
       integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
+      linkKind: 0, // #3635 A — no market link
+      linkMarginBps: 0,
+      rateFarFromAverageAcknowledged: false, // #3713
     };
     const createReq = decodeTxForComparison(
       {
@@ -477,6 +482,9 @@ describe('refinanceExpected — the payoff-permit route (#3295)', () => {
         useFullTermInterest: true,
         lifecycleFlex: 0,
         integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
+        linkKind: 0, // #3635 A — no market link
+        linkMarginBps: 0,
+        rateFarFromAverageAcknowledged: false, // #3713
       },
       // The app's chain read at the send, 2 s after the anchor (#3412).
       ANCHOR + 2n + TX_DEADLINE_SEC,

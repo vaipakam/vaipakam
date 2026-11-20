@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: the declarations `load_env_file`
+# compares each `.env` name against (see lib/load-env.sh and deploy-chain.sh).
+__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 # redeploy-testnet-inplace.sh — one-command in-place testnet redeploy orchestrator
 # ==============================================================================
@@ -54,7 +57,8 @@
 #   -h | --help            Show usage.
 #
 # ENV
-#   Sources ./.env (or ../.env) if present, then requires — per chain — the
+#   Reads ./.env (or ../.env) if present AS DATA, never executing it, through
+#   lib/load-env.sh (#1939); a value already exported wins. Then requires — per chain — the
 #   matching <PREFIX>_RPC_URL, plus DEPLOYER_PRIVATE_KEY and ADMIN_PRIVATE_KEY
 #   (the forge scripts read these via vm.envUint). Chain->RPC-var mapping mirrors
 #   Deployments.sol's envPrefix(): base-sepolia -> BASE_SEPOLIA_RPC_URL, etc.
@@ -162,7 +166,7 @@ RUN_EXPORT=0
 CHAINS="base-sepolia arb-sepolia"
 NICE=(ionice -c 2 -n 0)
 
-usage() { sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '5,64p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -293,23 +297,16 @@ fail()   { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ── Load .env (RPC URLs + keys) WITHOUT clobbering already-exported vars ──────
 # Explicit environment WINS (Codex #1182): a var the caller already exported is
-# kept; .env only fills the gaps. Split on the FIRST '=' so RPC URLs with query
-# params (…?key=…) survive; tolerate `export FOO=…`; strip surrounding quotes.
+# kept; .env only fills the gaps. The file is read AS DATA by the one shared
+# loader (#1939). This script used to carry its own loop, which exported every
+# syntactically valid name — `BASH_ENV`, `NODE_OPTIONS` and the rest of the
+# startup hooks the loader refuses — into a shell that holds the deploy keys.
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 for envf in ./.env ../.env; do
   [ -f "$envf" ] || continue
   info "loading $envf (only vars not already set)"
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|\#*) continue ;; esac
-    line="${line#export }"
-    key="${line%%=*}"
-    val="${line#*=}"
-    key="${key#"${key%%[![:space:]]*}"}"   # ltrim
-    key="${key%"${key##*[![:space:]]}"}"   # rtrim
-    case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac  # valid var name only
-    [ -n "${!key:-}" ] && continue                        # already set -> keep
-    val="${val%\"}"; val="${val#\"}"; val="${val%\'}"; val="${val#\'}"
-    export "$key=$val"
-  done < "$envf"
+  load_env_file "$envf" --fill-gaps || fail "$envf could not be loaded — see the error above"
   break
 done
 

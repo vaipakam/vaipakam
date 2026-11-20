@@ -52,6 +52,8 @@ It is a convenience, not a promise. Section 8 says what it cannot do.
 
 ### 4.1 Settings
 
+**Amended 2026-11-19 (#3808).** The settings are held once for the loan's borrowing and cover every loan of it, and the executor takes a borrowing and sells loan by loan, lowest health factor first (`BorrowingDesign.md` sections 5 and 6). Where this section says "per loan" or "the loan's instruction", read the borrowing's. One sale for several loans waits for the review in section 9 of that design.
+
 Written by the current borrower-position holder, or that holder's account manager, through the existing instruction setter, and cleared by the same wallet at any time:
 
 | Setting | Meaning | Bounds (governed) |

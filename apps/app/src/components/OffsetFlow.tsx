@@ -475,6 +475,9 @@ export function OffsetFlow({
         collateralWei,
         consent.given,
         liveLoan.prepayAsset,
+        // #3713 6.4 — the band acknowledgement; the app asks no band
+        // question yet, as on every other offer write.
+        false,
         validUntil,
       ]);
       const created = parseEventLogs({

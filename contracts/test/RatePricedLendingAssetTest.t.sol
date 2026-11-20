@@ -64,7 +64,7 @@ contract RatePricedLendingAssetTest is OfferBookBoundsTest {
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(LibPriceGuard.RatePricedLendingAsset.selector, mockERC20));
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 0, 1_000e18, 500, 5000, 30, 100e18, false, 0, false, true, uint64(vm.getBlockTimestamp() + 1 days)
+            mockERC20, mockCollateralERC20, 0, 1_000e18, 500, 5000, 30, 100e18, false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), uint64(vm.getBlockTimestamp() + 1 days)
         );
     }
 }

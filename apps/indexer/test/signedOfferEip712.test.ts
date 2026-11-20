@@ -29,7 +29,7 @@ import {
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, NO_RATE_LINK } from '@vaipakam/lib/signedOfferWire';
 import {
   SIGNED_OFFER_TYPES,
   SIGNED_OFFER_FIELD_NAMES,
@@ -132,6 +132,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     nonce: '7',
     deadline: DEADLINE_7D,
     ...NO_COLLECTION,
+    ...NO_RATE_LINK,
     ...overrides,
   };
 }
@@ -146,7 +147,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(46);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(49);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {
@@ -337,7 +338,7 @@ describe('validateOrder — the POST shape gate', () => {
     expect(orderHashOf(makeOrder({ startTime: '1' }))).not.toBe(base);
   });
 
-  it('rejects a missing / extra field (exact 46-key contract)', () => {
+  it('rejects a missing / extra field (exact 49-key contract)', () => {
     const missing = makeOrder() as unknown as Record<string, unknown>;
     delete missing.nonce;
     expectError(missing, 'order-field-count');

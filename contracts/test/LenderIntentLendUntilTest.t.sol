@@ -85,7 +85,7 @@ contract LenderIntentLendUntilTest is SetupTest {
             false, // requiresKeeperAuth
             lendUntil,
             acceptsProRata,
-            true, // riskAndTermsConsent
+            true, LibVaipakam.IntentRateTerms(0, 0, false), // riskAndTermsConsent
             type(uint64).max
         );
         LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20);
@@ -147,7 +147,10 @@ contract LenderIntentLendUntilTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: fullTerm
+                useFullTermInterest: fullTerm,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -337,7 +340,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days - 1), false, true, type(uint64).max
+            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days - 1), false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         // The window is measured from when the new terms may be filled: one
         // day from now is too short while the terms-age wait runs, one day
@@ -348,12 +351,12 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 59), false, true, type(uint64).max
+            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 59), false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 60), false, true, type(uint64).max
+            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 60), false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         (, uint256 cp) = _post("b-age", PRINCIPAL, 1);
         _setIntent(uint64(vm.getBlockTimestamp() + 1 days + SLACK), false);
@@ -363,7 +366,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 2 days), false, true, type(uint64).max
+            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 2 days), false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         LibOfferMatch.IntentPreviewResult memory r = _preview(cp, PRINCIPAL);
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.TermsTooFresh), "a new date restarts the wait");

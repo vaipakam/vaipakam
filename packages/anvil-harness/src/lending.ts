@@ -61,6 +61,7 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'acceptorAllowFullDowngrade', type: 'bool' },
     // #3682 — the integrator a borrower acceptor names, last in the typehash.
     { name: 'integrator', type: 'address' },
+    { name: 'rateFarFromAverageAcknowledged', type: 'bool' },
   ],
 } as const;
 
@@ -141,6 +142,9 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       useFullTermInterest: t.fullTermInterest ?? false,
       lifecycleFlex: 0, // #3621
       integrator: ZERO, // #3682 — none named
+      linkKind: 0, // #3635 A — no market link
+      linkMarginBps: 0,
+      rateFarFromAverageAcknowledged: false, // #3713
     },
     validUntil,
   ]);
@@ -205,6 +209,9 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
       useFullTermInterest: false,
       lifecycleFlex: 0, // #3621
       integrator: ZERO, // #3682 — none named
+      linkKind: 0, // #3635 A — no market link
+      linkMarginBps: 0,
+      rateFarFromAverageAcknowledged: false, // #3713
     },
     validUntil,
   ]);
@@ -299,6 +306,7 @@ export async function acceptPostedOffer(sc: ScenarioChain, who: Party, offerId: 
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
     integrator: ZERO, // #3682 — none named
+    rateFarFromAverageAcknowledged: false, // #3713
   };
   const signature = await sc.wallet(who).signTypedData({
     account: sc.wallet(who).account!,

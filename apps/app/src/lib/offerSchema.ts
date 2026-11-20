@@ -279,6 +279,13 @@ export interface CreateOfferPayload {
   /** #3682 — the integrator the offer names (zero = none). This app names
    *  none, so it is always the zero address. */
   integrator: string;
+  /** #3635 A — the market link on the rate limit (0 = none) and its margin
+   *  in basis points. This form posts a typed rate only. */
+  linkKind: number;
+  linkMarginBps: number;
+  /** #3713 — the maker confirmed a rate far from the term average. This form
+   *  does not ask yet, so such a rate is refused by name on posting. */
+  rateFarFromAverageAcknowledged: boolean;
 }
 
 /**
@@ -672,6 +679,10 @@ export function toCreateOfferPayload(
     lifecycleFlex: 0,
     // #3682 — this app names no integrator.
     integrator: ZERO_ADDRESS,
+    // #3635 A, #3713 — no market link, no band acknowledgement.
+    linkKind: 0,
+    linkMarginBps: 0,
+    rateFarFromAverageAcknowledged: false,
   };
 }
 
@@ -755,6 +766,10 @@ export function toRefinanceOfferPayload(
     lifecycleFlex: 0,
     // #3682 — this app names no integrator.
     integrator: ZERO_ADDRESS,
+    // #3635 A, #3713 — no market link, no band acknowledgement.
+    linkKind: 0,
+    linkMarginBps: 0,
+    rateFarFromAverageAcknowledged: false,
   };
 }
 

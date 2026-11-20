@@ -104,6 +104,10 @@
 # ruleset. The unconditional job stays as the belt: it needs no install and
 # cannot be skipped by a path nobody predicted.
 #
+# ⚠ OPERATOR ACTION OWED (#3548): `workflow lint (unconditional)` belongs in
+# the required list as well; it runs on every PR but blocks a merge only once
+# the ruleset names it.
+#
 # The operator action once owed here for `keeper deploy guard (--keep-vars,
 # tree-wide)` is DISCHARGED BY DELETION, not by a ruleset edit: that job and
 # the scanner behind it are gone (see the retirement note on
@@ -226,12 +230,17 @@ jobs:
       - name: Checkout (shallow — diff range only)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           # fetch-depth: 0 so git diff can resolve the PR base sha. The
           # rest of the workflow doesn't depend on full history.
           fetch-depth: 0
 
       - name: Determine changed paths
         id: diff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -eu
           # `schedule` (weekly cron) and `workflow_dispatch` (manual)
@@ -241,25 +250,27 @@ jobs:
           # safety-net behaviour (catches submodule drift, dep-bump-
           # triggered failures, new CodeQL-pack rules); manual dispatch
           # is the operator saying "run the full thing now anyway".
-          if [ "${{ github.event_name }}" = "schedule" ] \
-              || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] \
+              || [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             echo "Schedule/manual trigger — treating everything as changed"
-            echo "contracts=true" >> "$GITHUB_OUTPUT"
-            echo "workspaces=true" >> "$GITHUB_OUTPUT"
             # Every output the jobs below gate on must be set here, or the
             # weekly safety net silently skips that job while reporting
             # green (Codex #1443 r3).
-            echo "mesh_watcher=true" >> "$GITHUB_OUTPUT"
-            echo "offchain_archive=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "contracts=true"
+              echo "workspaces=true"
+              echo "mesh_watcher=true"
+              echo "offchain_archive=true"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-            HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${PR_BASE_SHA}"
+            HEAD="${PR_HEAD_SHA}"
           else
             # `push` event — diff the pushed commit against its parent.
-            BASE="${{ github.event.before }}"
-            HEAD="${{ github.sha }}"
+            BASE="${PUSH_BEFORE_SHA}"
+            HEAD="${GITHUB_SHA}"
             # On the very first commit to a branch `before` is all-zeros.
             # Fall back to comparing against HEAD~1.
             if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
@@ -440,6 +451,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3
@@ -604,6 +617,7 @@ jobs:
       - name: Checkout (with submodules — chainlink-evm, OZ, diamond-3, etc.)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry
@@ -832,6 +846,7 @@ jobs:
       - name: Checkout (with submodules)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           submodules: recursive
           fetch-depth: 0
 
@@ -959,6 +974,7 @@ jobs:
       - name: Checkout (with submodules)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry
@@ -1049,6 +1065,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           # The release-notes-drift check reads git history; submodules not
           # needed for the TS side, so skip them to save ~30 s clone time.
           fetch-depth: 1
@@ -1207,11 +1224,14 @@ jobs:
       # direct pushes, this comparison inherits an untrusted base and
       # needs a persistent known-good ceiling instead.
       - name: Baselines may only shrink — apps/app
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${PR_BASE_SHA}"
           else
-            BASE="${{ github.event.before }}"
+            BASE="${PUSH_BEFORE_SHA}"
             # All-zeros on the first push to a branch: there is no prior
             # state, so there is nothing this check can say.
             if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
@@ -1262,6 +1282,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Setup Node.js
@@ -1329,6 +1350,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Setup Node.js
@@ -1372,6 +1394,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Setup Node.js
@@ -1381,6 +1404,79 @@ jobs:
 
       - name: Every var-carrying Worker preserves its dashboard vars
         run: node apps/keeper/scripts/check-keep-vars.mjs
+
+  # -------------------------------------------------------------------
+  # workflow-lint — the workflows themselves (#3548). Un-path-gated: a
+  # workflow change is exactly what it checks, and it is fast.
+  #
+  #   - actionlint: syntax, expression types and shellcheck over every
+  #     `run:` script.
+  #   - zizmor (offline): the security audits at medium severity and above,
+  #     e.g. credentials persisted by checkout, over-broad permissions, cache
+  #     poisoning of a release, dangerous triggers. A finding is fixed, or
+  #     ignored inline with its reason (`# zizmor: ignore[...]`).
+  #   - zizmor template-injection at EVERY severity: no `${{ ... }}`
+  #     expression inside a `run:` script, trusted or not. Values reach a
+  #     script through `env:` instead, so a new expression cannot hide among
+  #     safe ones and nothing needs an allowlist.
+  #
+  # Both tools are pinned by version and checksum, never `latest`.
+  workflow-lint:
+    name: workflow lint (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install actionlint (pinned, checksum-verified)
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Install zizmor (pinned, hash-checked)
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'zizmor==1.32.0 --hash=sha256:84a6acb975accc13408786a2bd274b572537ca19c933ebbc13e78f3988562071 --hash=sha256:f0b664d394576e08605fe8094e8e992056d74b808f30c0c9ca9ed227001dcf67' \
+            > "$RUNNER_TEMP/zizmor-requirements.txt"
+          # A venv: the runner's system Python refuses user installs (PEP 668).
+          python3 -m venv "$RUNNER_TEMP/zizmor-venv"
+          "$RUNNER_TEMP/zizmor-venv/bin/pip" install --quiet --no-deps --require-hashes \
+            -r "$RUNNER_TEMP/zizmor-requirements.txt"
+          echo "$RUNNER_TEMP/zizmor-venv/bin" >> "$GITHUB_PATH"
+
+      - name: actionlint
+        run: actionlint
+
+      - name: zizmor (security audits, medium and above)
+        run: zizmor --offline --min-severity medium .github/workflows
+
+      - name: zizmor (no expression inside any run script)
+        run: |
+          set -euo pipefail
+          zizmor --offline --persona pedantic --format json .github/workflows > "$RUNNER_TEMP/zizmor.json" || true
+          found=$(jq '[.[] | select(.ident == "template-injection")] | length' "$RUNNER_TEMP/zizmor.json")
+          if [ "$found" != "0" ]; then
+            jq -r '.[] | select(.ident == "template-injection") | .locations[0] | "\(.symbolic.key.Local.verbatim_path):\(.concrete.location.start_point.row + 1)"' "$RUNNER_TEMP/zizmor.json" || true
+            echo "::error::$found expression(s) inside a run script; pass each through env: instead (#3548)"
+            exit 1
+          fi
 
   # -------------------------------------------------------------------
   # regression-shards — run-regression.sh's plan, sharding and shard
@@ -1400,6 +1496,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Shards partition the regression and the verifier refuses gaps
@@ -1423,6 +1520,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Function drift is never classified as decode-only
@@ -1440,10 +1538,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: A launched, unfunded canonical chain fails verify
         run: bash contracts/script/lib/reward-funding.test.sh
+
+  # The shared `.env` reader (#1938 / #1939): both modes, the refusals that
+  # hold in either, and the runbooks' in-shell form. Every deploy wrapper and
+  # the in-place redeploy read `.env` through it, and the deploy jobs that would
+  # exercise them never run in CI. Bash only.
+  load-env:
+    name: .env data loader (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: .env is read as data, in both modes
+        run: bash contracts/script/lib/load-env.test.sh
 
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
@@ -1460,6 +1578,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Setup Node.js

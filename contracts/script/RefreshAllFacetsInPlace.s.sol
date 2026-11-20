@@ -107,6 +107,7 @@ import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {ExitInstructionFacet} from "../src/facets/ExitInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
@@ -378,11 +379,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // selectors move hosts, so the Replace cut repoints them.
     // 133 -> 136: IntegratorFacet (#3682), StandingOfferCheckFacet (#3720)
     // and ReferralFacet (#3722). Their selectors are new (Adds).
-    // 136 -> 137: ExitInstructionFacet (#3752) - sell and repay before
+    // 136 -> 137: RateLinkFacet (#3635 A, #3713). Its selectors are new.
+    // 137 -> 138: ExitInstructionFacet (#3752) - sell and repay before
     // liquidation. Its selectors are new (Adds), and it self-calls the two
     // swap-to-repay facets' new instruction entries, so it is refreshed with
     // them (both are in this set).
-    uint256 public constant EXPECTED_FACETS = 137;
+    uint256 public constant EXPECTED_FACETS = 138;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1528,7 +1530,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getStandingOfferCheckSelectors()
         );
         items[135] = Item("referralFacet", ArtifactDeploy.deploy(type(ReferralFacet).name), _getReferralSelectors());
-        items[136] = Item(
+        items[136] = Item("rateLinkFacet", ArtifactDeploy.deploy(type(RateLinkFacet).name), _getRateLinkSelectors());
+        items[137] = Item(
             "exitInstructionFacet", ArtifactDeploy.deploy(type(ExitInstructionFacet).name), _getExitInstructionSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());

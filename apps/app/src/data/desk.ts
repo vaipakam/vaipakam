@@ -1066,6 +1066,10 @@ export interface AmendSource {
   /** Borrower collateral already committed to live partial fills —
    *  `collateralAmountMax` cannot drop below it (ModifyBelowFilledFloor). */
   collateralAmountFilled: bigint;
+  /** #3635 A — the offer's market link on its rate limit (0 = none) and its
+   *  margin; an amend carries them unchanged (this app sets no link). */
+  linkKind: number;
+  linkMarginBps: number;
 }
 
 export function useAmendSource(offerId: number | undefined) {
@@ -1095,6 +1099,8 @@ export function useAmendSource(offerId: number | undefined) {
         collateralAmount: BigInt(o.collateralAmount as bigint),
         collateralAmountMax: BigInt(o.collateralAmountMax as bigint),
         collateralAmountFilled: BigInt(o.collateralAmountFilled as bigint),
+        linkKind: Number(o.linkKind ?? 0),
+        linkMarginBps: Number(o.linkMarginBps ?? 0),
       };
     },
   });

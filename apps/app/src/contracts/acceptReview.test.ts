@@ -59,6 +59,7 @@ function signedTerms(): AcceptTerms {
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
     integrator: ZERO,
+    rateFarFromAverageAcknowledged: false, // #3713
   };
 }
 

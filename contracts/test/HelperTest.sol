@@ -138,6 +138,8 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
 import {ExitInstructionFacet} from "../src/facets/ExitInstructionFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -1127,6 +1129,10 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
         selectors[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    function getRateLinkFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = LibTestRateLinkCut.rateLinkSelectors();
     }
 
     /// @notice #3752 — the exit instruction (sell and repay before liquidation).

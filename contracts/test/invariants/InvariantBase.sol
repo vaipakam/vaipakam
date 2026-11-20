@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestRateLinkCut} from "../helpers/LibTestRateLinkCut.sol";
 import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
@@ -465,7 +466,7 @@ contract InvariantBase is Test {
             functionSelectors: helperTest.getStandingInstructionFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(
-            LibTestClaimViewCut.withClaimView(LibTestTermsCut.withTermsHost(LibTestProtectedCut.withProtected(cuts))), address(0), ""
+            LibTestClaimViewCut.withClaimView(LibTestRateLinkCut.withRateLinkHost(LibTestTermsCut.withTermsHost(LibTestProtectedCut.withProtected(cuts)))), address(0), ""
         ); // #3734
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));

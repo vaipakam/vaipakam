@@ -198,7 +198,7 @@ The withdraw side
 already calls `vaultWithdrawERC20` — symmetric.
 
 Staking rewards distribution
-([StakingRewardsFacet.sol:80](../../contracts/src/facets/StakingRewardsFacet.sol#L80))
+(StakingRewardsFacet.sol:80)
 sends VPFI directly to user's EOA via `safeTransfer(msg.sender, paid)`
 — never touches vault, doesn't pollute the counter. **No change.**
 
@@ -651,7 +651,7 @@ operations are invisible to them since the math is correct.
   — post-launch labeling sequence.
 - [`VPFIDiscountFacet.sol`](../../contracts/src/facets/VPFIDiscountFacet.sol)
   — staking deposit / withdraw flow.
-- [`LibStakingRewards.sol`](../../contracts/src/libraries/LibStakingRewards.sol)
+- `LibStakingRewards.sol`
   — accrual checkpoint to be `min`-clamped.
 - Tornado Cash dust attack precedent (August 2022) — public-record
   precedent for taint-poisoning griefing.

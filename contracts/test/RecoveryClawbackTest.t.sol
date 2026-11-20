@@ -388,25 +388,55 @@ contract RecoveryClawbackTest is SetupTest {
     }
 
     /// The selectors VaultRecovery adds to the shared base are exactly the
-    /// five the fallback forwards, and none of them is carried by
+    /// twelve the fallback forwards (#3756 adds the recovery claim's five),
+    /// and none of them is carried by
     /// VaultProtection or by the vault itself.
-    function test_recoverysOwnSelectorsAreTheForwardedSeven_andCollideWithNothing() public view {
+    function test_recoverysOwnSelectorsAreTheForwardedTwelve_andCollideWithNothing() public view {
         bytes4[] memory rec_ = _ids("VaultRecovery");
         bytes4[] memory base = _ids("VaultProtectionBase");
         bytes4[] memory prot = _ids("VaultProtection");
         bytes4[] memory vlt = _ids("VaipakamVaultImplementation");
-        bytes4[7] memory forwarded = [
+        bytes4[12] memory forwarded = [
             VaultRecovery.requestRecoveryAddress.selector,
             VaultRecovery.cancelRecoveryAddress.selector,
             VaultRecovery.clearRecoveryAddress.selector,
             VaultRecovery.settleRecoveryAddress.selector,
             VaultRecovery.clawback.selector,
             VaultRecovery.requestPositionMove.selector,
-            VaultRecovery.cancelPositionMove.selector
+            VaultRecovery.cancelPositionMove.selector,
+            VaultRecovery.setRecoveryClaim.selector,
+            VaultRecovery.cancelRecoveryClaimSetting.selector,
+            VaultRecovery.requestRecoveryClaim.selector,
+            VaultRecovery.cancelRecoveryClaim.selector,
+            VaultRecovery.runRecoveryClaim.selector
+        ];
+        // #3756 — the recovery claim's constants are read on the recovery
+        // code itself (kept out of the shared base so VaultProtection carries
+        // none of their getters); they are not vault endpoints.
+        bytes4[11] memory constants = [
+            bytes4(keccak256("PURPOSE_RECOVERY_CLAIM_SETTING()")),
+            bytes4(keccak256("PURPOSE_RECOVERY_CLAIM()")),
+            bytes4(keccak256("CLAIM_MIN_WAIT()")),
+            bytes4(keccak256("CLAIM_MAX_WAIT()")),
+            bytes4(keccak256("CLAIM_RUN_WINDOW()")),
+            bytes4(keccak256("TRIGGER_RECOVERY_CLAIM()")),
+            bytes4(keccak256("RECOVERY_CLAIM_SETTING_TYPEHASH()")),
+            bytes4(keccak256("RECOVERY_CLAIM_SETTING_CANCEL_TYPEHASH()")),
+            bytes4(keccak256("RECOVERY_CLAIM_REQUEST_TYPEHASH()")),
+            bytes4(keccak256("RECOVERY_CLAIM_CANCEL_TYPEHASH()")),
+            bytes4(keccak256("RECOVERY_CLAIM_RUN_TYPEHASH()"))
         ];
         uint256 own;
         for (uint256 i; i < rec_.length; ++i) {
             if (_has(base, rec_[i])) continue; // shared code, the same in both
+            bool isConstant;
+            for (uint256 j; j < constants.length; ++j) {
+                if (constants[j] == rec_[i]) isConstant = true;
+            }
+            if (isConstant) {
+                assertFalse(_has(prot, rec_[i]), "a claim constant collides with VaultProtection");
+                continue;
+            }
             ++own;
             bool listed;
             for (uint256 j; j < forwarded.length; ++j) {
@@ -416,7 +446,7 @@ contract RecoveryClawbackTest is SetupTest {
             assertFalse(_has(prot, rec_[i]), "collides with VaultProtection");
             assertFalse(_has(vlt, rec_[i]), "collides with the vault");
         }
-        assertEq(own, forwarded.length, "VaultRecovery's own endpoints are the forwarded seven");
+        assertEq(own, forwarded.length, "VaultRecovery's own endpoints are the forwarded twelve");
     }
 
     /// Any other selector reaching the fallback is refused by name.

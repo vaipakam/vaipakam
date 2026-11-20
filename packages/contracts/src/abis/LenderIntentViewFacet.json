@@ -180,6 +180,16 @@
             "name": "acceptsProRata",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "linkKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "linkMarginBps",
+            "type": "int16",
+            "internalType": "int16"
           }
         ]
       }

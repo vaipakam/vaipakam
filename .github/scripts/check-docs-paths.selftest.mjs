@@ -32,7 +32,7 @@ const GATE = join(dirname(fileURLToPath(import.meta.url)), 'check-docs-paths.mjs
 const TREE = {
   'contracts/src/Live.sol': '',
   'contracts/.gitignore': '.env\ncache/\n',
-  '.gitignore': '*.log\n!keep.log\n',
+  '.gitignore': '*.log\n!keep.log\ndocs/internal/\n',
   'apps/keeper/wrangler.jsonc': '{}',
   'docs/ops/a b.md': '',
   'docs/ops/a#b.md': '',
@@ -97,6 +97,13 @@ const CASES = [
   { name: 'a path only .git/info/exclude covers', md: '`contracts/info-only.txt`', finds: ['contracts/info-only.txt'] },
   // The closed-world rule still reads the words inside command text.
   { name: 'a removed directory inside a code block', md: '```bash\ncd frontend && npm run build\n```', finds: ['frontend'] },
+  // #3548: outside docs/ops/ only LINKS are gated, across every living doc.
+  { name: 'a design doc linking a missing file', at: 'docs/DesignsAndPlans/plan.md', md: '[x](../../contracts/src/Gone.sol)', finds: ['../../contracts/src/Gone.sol'] },
+  { name: 'a design doc linking a live file', at: 'docs/DesignsAndPlans/plan.md', md: '[x](../../contracts/src/Live.sol)', finds: [] },
+  { name: 'a design doc naming a removed path as code', at: 'docs/DesignsAndPlans/plan.md', md: 'built in `contracts/src/Gone.sol`', finds: [] },
+  { name: 'a shipped release note linking a missing file', at: 'docs/ReleaseNotes/ReleaseNotes-2026-01-01.md', md: '[x](../../contracts/src/Gone.sol)', finds: [] },
+  { name: 'an unreleased fragment linking a missing file', at: 'docs/ReleaseNotes/unreleased/1-x.md', md: '[x](../../../contracts/src/Gone.sol)', finds: ['../../../contracts/src/Gone.sol'] },
+  { name: 'a link into the private docs/internal/', at: 'docs/DesignsAndPlans/plan.md', md: '[x](../internal/Notes.md)', finds: [] },
 ];
 
 const git = (cwd, args, env) => execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -112,7 +119,8 @@ function run(c) {
     // The developer's own Git configuration, which the gate must not honour.
     const env = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: join(home, '.gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
     git(repo, ['init', '-q'], env);
-    for (const [p, body] of Object.entries({ ...TREE, 'docs/ops/runbook.md': `${c.md}\n` })) {
+    const at = c.at ?? 'docs/ops/runbook.md';
+    for (const [p, body] of Object.entries({ ...TREE, [at]: `${c.md}\n` })) {
       mkdirSync(join(repo, dirname(p)), { recursive: true });
       writeFileSync(join(repo, p), body);
     }
@@ -123,7 +131,7 @@ function run(c) {
     writeFileSync(join(repo, 'contracts/src/Untracked.sol'), '');
     const res = spawnSync(process.execPath, [GATE], { cwd: repo, env, encoding: 'utf8' });
     if (res.status !== 0 && res.status !== 1) throw new Error(`gate crashed:\n${res.stderr}`);
-    const found = [...res.stderr.matchAll(/^docs\/ops\/runbook\.md:\d+ {2}(.*)$/gm)].map((m) => m[1]);
+    const found = [...res.stderr.matchAll(/^(\S+):\d+ {2}(.*)$/gm)].filter((m) => m[1] === at).map((m) => m[2]);
     return { found, ok: res.status === (c.finds.length ? 1 : 0) };
   } finally {
     rmSync(repo, { recursive: true, force: true });

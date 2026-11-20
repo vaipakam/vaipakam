@@ -398,6 +398,9 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     // no integrator on its own offers.
     lifecycleFlex: 0,
     integrator: ZERO,
+    linkKind: 0, // #3635 A — no market link
+    linkMarginBps: 0,
+    rateFarFromAverageAcknowledged: false, // #3713
   } as const;
 }
 

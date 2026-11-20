@@ -251,6 +251,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   InterestPaymentAttemptFailed: { label: 'Interest payment from reserve did not go through', category: 'loan-repay', priority: 20 },
   IntentCalmCheckSet: { label: 'Auto-lend price check changed', category: 'loan-modify', priority: 40 },
   LenderIntentIntegratorNamed: { label: 'Auto-lend integrator named', category: 'loan-modify', priority: 40 },
+  LenderIntentRateTermsSet: { label: 'Auto-lend rate link set', category: 'loan-modify', priority: 40 },
   IntegratorShareSettled: { label: 'Integrator fee share settled', category: 'loan-open', priority: 15 },
   ReferralShareSettled: { label: 'Referral fee share settled', category: 'loan-open', priority: 15 },
   InviterBound: { label: 'Invitation accepted', category: 'other', priority: 40 },

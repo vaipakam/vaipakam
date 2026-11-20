@@ -164,7 +164,10 @@ contract Handler is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
 
         vm.prank(lender);
@@ -220,7 +223,10 @@ contract Handler is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
 
         vm.prank(borrower);
@@ -363,6 +369,7 @@ contract Handler is Test {
         vm.prank(L.borrower);
         try PrecloseOffsetFacet(diamond).offsetWithNewOffer(
             loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset,
+            false,
             type(uint64).max
         ) returns (uint256 offerId) {
             lenderOfferIds.push(offerId);
@@ -415,7 +422,10 @@ contract Handler is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Aon, // a refinance request is all-or-nothing
             refinanceTargetLoanId: loanId,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
 
         vm.startPrank(L.borrower);
@@ -475,7 +485,10 @@ contract Handler is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
         vm.prank(lender);
         try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {

@@ -187,6 +187,11 @@
             "name": "integrator",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -417,6 +422,11 @@
             "name": "integrator",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -691,6 +701,11 @@
             "name": "integrator",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },

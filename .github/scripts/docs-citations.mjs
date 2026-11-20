@@ -60,6 +60,9 @@ import { markdownCitations } from '../../packages/lib/src/markdownCitations.mjs'
 const SKIP = [
   'docs/FindingsAndFixes/',
   'docs/OlderDocs/',
+  // The owner's own list: closed items record what was true when they
+  // closed, and agents only tick boxes in it (CLAUDE.md, "Task tracking").
+  'docs/ToDo.md',
 ];
 const isShippedReleaseNote = (f) =>
   f.startsWith('docs/ReleaseNotes/') && !f.startsWith('docs/ReleaseNotes/unreleased/');
