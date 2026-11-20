@@ -8,7 +8,7 @@
  * never depends on the first.
  */
 import { erc20Abi, keccak256, toHex, type Hex } from 'viem';
-import { scenario } from '../lib/chain';
+import { installPlatformToken, scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 import type { Page } from '@playwright/test';
@@ -86,13 +86,6 @@ test('the faucet mints a test token, a test NFT and a multi-token, measures each
   await faucet.getByRole('button', { name: 'Close' }).click();
   await expect(faucet.locator('[data-asset="liquidToken"]')).toBeVisible();
 });
-
-/** The fee-discount setting exists only where a platform token is installed
- *  (otherwise the section says no holding discount applies), so the toggle
- *  tests install one: a mintable test token stands in for it. */
-async function installPlatformToken(sc: ReturnType<typeof scenario>): Promise<void> {
-  await sc.diamondWrite('admin', 'setVPFIToken', [(sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!]);
-}
 
 test('the fee discount turns on and off with a measured outcome; with no Terms in force nothing else is asked', async ({ launchWallet }) => {
   const sc = scenario();
