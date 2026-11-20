@@ -343,6 +343,11 @@ interface BaseEnv {
    *  that have not accepted an announced material change. Off-chain only,
    *  sends no transaction. */
   TERMS_NOTICE_ENABLED?: string;
+  /** #3719 — arms the platform alert (`platformAlerts.ts`): the true terms
+   *  of every loan opened and every offer or Auto-lend slot set, and every
+   *  step that lowers protection, read from the chain and sent to the
+   *  wallets concerned. Off-chain only, sends no transaction. */
+  PLATFORM_ALERTS_ENABLED?: string;
 
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
@@ -672,6 +677,7 @@ export const PLAIN_VAR_KEYS = [
   'PRICE_CHECKPOINT_ENABLED',
   'ASSET_RANKINGS_ENABLED',
   'TERMS_NOTICE_ENABLED',
+  'PLATFORM_ALERTS_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -889,6 +895,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PRICE_CHECKPOINT_ENABLED: raw.PRICE_CHECKPOINT_ENABLED,
     ASSET_RANKINGS_ENABLED: raw.ASSET_RANKINGS_ENABLED,
     TERMS_NOTICE_ENABLED: raw.TERMS_NOTICE_ENABLED,
+    PLATFORM_ALERTS_ENABLED: raw.PLATFORM_ALERTS_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

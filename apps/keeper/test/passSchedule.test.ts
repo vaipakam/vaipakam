@@ -125,6 +125,7 @@ describe('the stagger reduces real dispatched work', () => {
         'prepayAutoList', // a one-hour grace window, every minute of it unlisted is lost
         'protectedAccount', // due the second a delay ends; no staggered minute is free
         'standingInstructions', // a top-up answers a falling health factor; no staggered minute is free
+        'platformAlerts', // the platform record and protection warnings; no staggered minute is free (#3719)
         'termsNotice', // no staggered minute is free; one read a tick, its scan throttled on its own cursor (#3734)
         'remitAck', // first-receipt discovery is unbounded by the re-send backoff
         'watcher', // protocol safety

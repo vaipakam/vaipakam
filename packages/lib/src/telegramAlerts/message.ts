@@ -30,6 +30,15 @@ import {
 } from './standingCopy';
 import { TERMS_HOLDS, termsAnnouncedText, type TermsHold } from './termsCopy';
 import { SECURITY_CHANGES, securityChangeText, type SecurityChange } from './securityCopy';
+import {
+  PROTECTION_STEPS,
+  loanOpenedText,
+  offerPostedText,
+  protectionLoweredText,
+  slotTermsText,
+  type ProtectionStep,
+  type TermsFields,
+} from './platformCopy';
 import { CLAIM_ENDS, CLAIM_STAGES, recoveryClaimEndedText, recoveryClaimOpenText, type ClaimEnd, type ClaimStage } from './recoveryClaimCopy';
 
 /** The LOCK outcomes the keeper reports (`protectedTelegram.ts`). */
@@ -88,6 +97,31 @@ export type TelegramAlert =
       seconds: number | null;
       at: number | null;
       by: string | null;
+    }
+  /** #3719 — the platform's own record of a loan the reader is a party to
+   *  (`lender` says which side), built from the chain event. */
+  | { kind: 'loanOpened'; loanId: string; lender: boolean; terms: TermsFields }
+  /** #3719 — the reader's offer was posted or edited (`edit`); `lend` says
+   *  whether it lends. */
+  | { kind: 'offerPosted'; offerId: string; edit: boolean; lend: boolean; terms: TermsFields }
+  /** #3719 — the rate terms of the reader's Auto-lend slot were set. */
+  | { kind: 'slotTermsSet'; slot: number; terms: TermsFields }
+  /** #3719 — a step that lowers the reader's protection. `subject` the
+   *  address it names (a keeper, an approved operator), `ref` a loan, offer
+   *  or token id, `lend` / `collateral` a pair's assets, `level` / `previous`
+   *  an access level, `seconds` a waiting time, `at` when it takes effect; each null where the step has
+   *  none or the chain did not say. */
+  | {
+      kind: 'protectionLowered';
+      step: ProtectionStep;
+      subject: string | null;
+      ref: string | null;
+      lend: string | null;
+      collateral: string | null;
+      level: number | null;
+      previous: number | null;
+      seconds: number | null;
+      at: number | null;
     };
 
 /** A message with where it goes. */
@@ -101,8 +135,9 @@ export interface AddressedAlert {
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 /** Free text filled into a message: letters, digits, spaces and the few marks
- *  an amount or token label needs. No `/` or `:`, so no link can be formed. */
-const PLAIN = /^[\p{L}\p{N} .,#×()_\-…?]{1,96}$/u;
+ *  an amount or token label needs (`–` joins the two ends of a range). No `/`
+ *  or `:`, so no link can be formed. */
+const PLAIN = /^[\p{L}\p{N} .,#×()_\-…?–]{1,96}$/u;
 /** A dot before a letter, as in a bare domain (`evil.example`). Telegram makes
  *  a bare domain a link, so such a dot is shown as a one-dot leader (`․`),
  *  which keeps a token label such as `USDC.e` readable and never links. */
@@ -243,9 +278,80 @@ function parseAlert(raw: unknown): TelegramAlert | null {
       if (a.at !== null && !isInt(a.at, 1, 2 ** 40)) return null;
       return { kind: 'securityChange', change: a.change as SecurityChange, subject, what, seconds: a.seconds as number | null, at: a.at as number | null, by };
     }
+    case 'loanOpened': {
+      const terms = parseTerms(a.terms);
+      if (!terms || !isId(a.loanId) || typeof a.lender !== 'boolean') return null;
+      return { kind: 'loanOpened', loanId: a.loanId, lender: a.lender, terms };
+    }
+    case 'offerPosted': {
+      const terms = parseTerms(a.terms);
+      if (!terms || !isId(a.offerId) || typeof a.edit !== 'boolean' || typeof a.lend !== 'boolean') return null;
+      return { kind: 'offerPosted', offerId: a.offerId, edit: a.edit, lend: a.lend, terms };
+    }
+    case 'slotTermsSet': {
+      const terms = parseTerms(a.terms);
+      if (!terms || !isInt(a.slot, 0, 255)) return null;
+      return { kind: 'slotTermsSet', slot: a.slot, terms };
+    }
+    case 'protectionLowered': {
+      if (!(PROTECTION_STEPS as readonly unknown[]).includes(a.step)) return null;
+      const subject = addrOrNull(a.subject);
+      const lend = plainOrNull(a.lend);
+      const collateral = plainOrNull(a.collateral);
+      if (subject === undefined || lend === undefined || collateral === undefined) return null;
+      if (a.ref !== null && !isId(a.ref)) return null;
+      if (a.level !== null && !isInt(a.level, 0, 255)) return null;
+      if (a.previous !== null && !isInt(a.previous, 0, 255)) return null;
+      if (a.seconds !== null && !isInt(a.seconds, 0, 2 ** 40)) return null;
+      if (a.at !== null && !isInt(a.at, 1, 2 ** 40)) return null;
+      return {
+        kind: 'protectionLowered',
+        step: a.step as ProtectionStep,
+        subject,
+        ref: a.ref as string | null,
+        lend,
+        collateral,
+        level: a.level as number | null,
+        previous: a.previous as number | null,
+        seconds: a.seconds as number | null,
+        at: a.at as number | null,
+      };
+    }
     default:
       return null;
   }
+}
+
+/** A loan, offer or token id: a decimal uint256. */
+const isId = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(v);
+const addrOrNull = (v: unknown): string | null | undefined => (v === null ? null : typeof v === 'string' && ADDRESS.test(v) ? v.toLowerCase() : undefined);
+const isBps = (v: unknown): v is number => isInt(v, 0, 1_000_000);
+
+/** #3719 — the terms of a loan, offer or slot. A rate, term or asset the
+ *  event did not carry is null and renders as "unknown"; never left out. */
+function parseTerms(raw: unknown): TermsFields | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const t = raw as Record<string, unknown>;
+  const lend = plainOrNull(t.lend);
+  const collateral = plainOrNull(t.collateral);
+  if (lend === undefined || collateral === undefined) return null;
+  if (t.rateBps !== null && !isBps(t.rateBps)) return null;
+  if (t.rateMaxBps !== null && !isBps(t.rateMaxBps)) return null;
+  if (t.days !== null && !isInt(t.days, 0, 100_000)) return null;
+  if (t.marginBps !== null && !isInt(t.marginBps, -1_000_000, 1_000_000)) return null;
+  const integrator = t.integrator === 'none' ? 'none' : addrOrNull(t.integrator);
+  if (integrator === undefined) return null;
+  if (!isInt(t.warnings, 0, 7)) return null;
+  return {
+    lend,
+    collateral,
+    rateBps: t.rateBps as number | null,
+    rateMaxBps: t.rateMaxBps as number | null,
+    days: t.days as number | null,
+    marginBps: t.marginBps as number | null,
+    integrator,
+    warnings: t.warnings,
+  };
 }
 
 const isInstruction = (v: unknown): v is StandingInstruction => (STANDING_INSTRUCTIONS as readonly unknown[]).includes(v);
@@ -360,6 +466,21 @@ export function renderTelegramAlert(m: AddressedAlert, ctx: RenderContext): { te
       return recoveryClaimOpenText(ctx.locale, a.stage, w, c, a.recovery, utcMinute(a.requestedAt), utcMinute(a.runnableAt), utcMinute(a.lapsesAt), `${ctx.appOrigin}/`);
     case 'recoveryClaimEnded':
       return recoveryClaimEndedText(ctx.locale, a.end, a.by, w, c, a.pauseUntil === null ? null : utcMinute(a.pauseUntil), `${ctx.appOrigin}/`);
+    case 'loanOpened':
+      return loanOpenedText(ctx.locale, c, a.loanId, a.lender, a.terms, `${ctx.appOrigin}/positions/${a.loanId}`);
+    case 'offerPosted':
+      return offerPostedText(ctx.locale, c, a.offerId, a.edit, a.lend, a.terms, `${ctx.appOrigin}/offers`);
+    case 'slotTermsSet':
+      return slotTermsText(ctx.locale, c, a.slot, a.terms, `${ctx.appOrigin}/lend`);
+    case 'protectionLowered':
+      return protectionLoweredText(
+        ctx.locale,
+        c,
+        a.step,
+        { subject: a.subject, ref: a.ref, lend: a.lend, collateral: a.collateral, level: a.level, previous: a.previous, seconds: a.seconds },
+        a.at === null ? null : utcMinute(a.at),
+        `${ctx.appOrigin}/`,
+      );
     case 'termsAnnounced':
       return termsAnnouncedText(ctx.locale, ctx.chainName, a.version, utcMinute(a.effectiveAt), a.holds, `${ctx.appOrigin}/`);
   }

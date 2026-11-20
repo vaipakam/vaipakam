@@ -60,6 +60,7 @@ import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } 
 import { PASS_CADENCE_SEC as VAULT_BEACON_UPKEEP_CADENCE_SEC, runVaultBeaconUpkeep } from './vaultBeaconUpkeep';
 import { runKeeperFeeBalance } from './keeperFeeBalance';
 import { runTermsNotice } from './termsNotice';
+import { runPlatformAlerts } from './platformAlerts';
 import { PASS_CADENCE_SEC as PRICE_CHECKPOINT_CADENCE_SEC, runPriceCheckpoint } from './priceCheckpoint';
 import { PASS_CADENCE_SEC as ASSET_RANKINGS_CADENCE_SEC, runAssetRankings } from './assetRankings';
 
@@ -139,6 +140,14 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: 1,
     why: 'alerts committed wallets to an announced Terms change; one read a tick, a throttled scan while one is pending (#3734)',
     run: runTermsNotice,
+  },
+  {
+    name: 'platformAlerts',
+    // EVERY TICK because every staggered minute is taken; a run is one head
+    // read and one log read per contract when nothing happened (#3719).
+    cadenceMinutes: 1,
+    why: 'the platform record of every loan, offer and slot, and every step that lowers protection, from the chain (#3719)',
+    run: runPlatformAlerts,
   },
   {
     name: 'matcher',

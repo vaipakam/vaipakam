@@ -254,6 +254,10 @@
       "types": "./src/telegramAlerts/termsCopy.ts",
       "default": "./src/telegramAlerts/termsCopy.ts"
     },
+    "./telegramAlerts/platformCopy": {
+      "types": "./src/telegramAlerts/platformCopy.ts",
+      "default": "./src/telegramAlerts/platformCopy.ts"
+    },
     "./telegramAlerts/recoveryClaimCopy": {
       "types": "./src/telegramAlerts/recoveryClaimCopy.ts",
       "default": "./src/telegramAlerts/recoveryClaimCopy.ts"

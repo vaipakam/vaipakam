@@ -491,6 +491,12 @@
   //     will not be current when it comes into force are alerted once each,
   //     through the agent and Push. Off-chain only; sends no transaction.
   //     Ships unset.
+  //   - PLATFORM_ALERTS_ENABLED — 'true' arms the #3719 platform alert:
+  //     the true terms of every loan opened (to both parties) and every
+  //     offer or Auto-lend slot set (to its owner), and every step that
+  //     lowers protection, read from the Diamond's and PositionNFT's events
+  //     on the chain, through the agent and Push. Off-chain only; sends no
+  //     transaction. Ships unset.
   //   - ASSET_RANKINGS_ENABLED — 'true' arms the #3446 asset rankings pass,
   //     hourly at :56: once a UTC day per source and mainnet chain, the top
   //     500 tokens by market-cap rank from two public market-data sources,
