@@ -85,6 +85,7 @@ describe('refusal words', () => {
     const at = (name: (typeof INTENT_ERRORS)[number]) => intentRefusalText(INTENT_ERRORS.indexOf(name), copy);
     expect(at('CapitalInsufficient')).toBe('whyIntent.intentCapital');
     expect(at('PairNotCalm')).toBe('whyIntent.intentNotCalm');
+    expect(at('TakeoverOffer')).toBe('whyIntent.intentTakeover');
     expect(at('RetiredVpfiLending')).toBe(`whyIntent.intentOther#${INTENT_ERRORS.indexOf('RetiredVpfiLending')}`);
   });
 });

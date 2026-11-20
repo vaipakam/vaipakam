@@ -62,6 +62,7 @@ export const INTENT_ERRORS = [
   'PairNoCheckpoint',
   'PairNotCalm',
   'PairUnpriced',
+  'TakeoverOffer',
 ] as const;
 export type IntentErrorName = (typeof INTENT_ERRORS)[number];
 
@@ -286,6 +287,7 @@ const INTENT_REFUSAL: Record<IntentErrorName, CopyKey | null> = {
   PairNoCheckpoint: 'whyIntent.intentNoCheckpoint',
   PairNotCalm: 'whyIntent.intentNotCalm',
   PairUnpriced: 'whyIntent.intentUnpriced',
+  TakeoverOffer: 'whyIntent.intentTakeover',
 };
 
 /** A slot-level refusal in words; an ordinal this build cannot name is

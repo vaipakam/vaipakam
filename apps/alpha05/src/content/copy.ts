@@ -3869,6 +3869,7 @@ export const copy = {
     intentNoCheckpoint: B('The pair does not have its last two hourly price checks yet; fills start after two.'),
     intentNotCalm: B('The collateral price is moving fast, so this Auto-lend is paused until it steadies.'),
     intentUnpriced: B('A price for this pair cannot be read now, so this Auto-lend is paused.'),
+    intentTakeover: B('The request is reserved for taking over a named loan, so only that handover can take it.'),
     intentOther: B('Refusal number {{code}}.'),
     riskTier: B('One side’s risk level does not reach this pair’s.'),
     riskConsent: B('One side has not consented to this pair yet.'),
