@@ -230,7 +230,10 @@ contract BackstopVaultTest is SetupTest {
                 expiresAt: expiresAt,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -667,7 +670,10 @@ contract BackstopVaultTest is SetupTest {
                 expiresAt: base + 7 days,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -730,7 +736,10 @@ contract BackstopVaultTest is SetupTest {
                 expiresAt: base + 7 days,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -890,7 +899,7 @@ contract BackstopVaultTest is SetupTest {
         vm.expectEmit(true, false, false, true, address(diamond));
         emit OfferBackstopEligibilitySet(offerId, 0);
         vm.prank(borrower);
-        OfferMutateFacet(address(diamond)).setOfferRate(offerId, MIN_RATE, MIN_RATE + 50, type(uint64).max);
+        OfferMutateFacet(address(diamond)).setOfferRate(offerId, MIN_RATE, MIN_RATE + 50, 0, 0, false, type(uint64).max);
 
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(o.backstopEligibleAfter, 0, "edit cleared the opt-in");
@@ -927,7 +936,10 @@ contract BackstopVaultTest is SetupTest {
                         interestRateBps: MIN_RATE + 10,
                         interestRateBpsMax: MIN_RATE + 100,
                         collateralAmount: 2 * PRINCIPAL,
-                        collateralAmountMax: 2 * PRINCIPAL
+                        collateralAmountMax: 2 * PRINCIPAL,
+                        linkKind: 0,
+                        linkMarginBps: 0,
+                        rateFarFromAverageAcknowledged: false
                     }),
                     type(uint64).max
                 );
@@ -943,7 +955,7 @@ contract BackstopVaultTest is SetupTest {
     function test_reOptInAfterEdit_waitsTheDelayAgain() public {
         (uint256 offerId, address borrower) = _eligibleOffer();
         vm.prank(borrower);
-        OfferMutateFacet(address(diamond)).setOfferRate(offerId, MIN_RATE, MIN_RATE + 50, type(uint64).max);
+        OfferMutateFacet(address(diamond)).setOfferRate(offerId, MIN_RATE, MIN_RATE + 50, 0, 0, false, type(uint64).max);
         uint64 now_ = uint64(block.timestamp);
         vm.prank(borrower);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId, now_ + 2 days);

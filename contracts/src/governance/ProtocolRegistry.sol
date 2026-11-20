@@ -86,7 +86,10 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
     ///         as changing one of the guard's sources. Held here as a constant
     ///         rather than read from the outgoing guard, so the registry never
     ///         trusts the contract being replaced for the wait of its
-    ///         replacement. A test keeps the two figures equal.
+    ///         replacement. A test keeps the two figures equal. The
+    ///         {RegistryKeys.RATE_REFERENCE} pointer waits the same (#3337
+    ///         part 1): the rate reference holds its sources behind
+    ///         `RateReference.MIN_DELAY`, also 7 days.
     uint256 public constant PRICE_GUARD_MIN_DELAY = 7 days;
 
     // ─── Types ───────────────────────────────────────────────────────────
@@ -246,7 +249,7 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
     ///         every other entry. A change of `key` waits the longer of this
     ///         and the current {delay} ({waitFor}).
     function minDelayFor(bytes32 key) public pure returns (uint256) {
-        if (key == RegistryKeys.PRICE_GUARD) return PRICE_GUARD_MIN_DELAY;
+        if (key == RegistryKeys.PRICE_GUARD || key == RegistryKeys.RATE_REFERENCE) return PRICE_GUARD_MIN_DELAY;
         return MIN_DELAY;
     }
 

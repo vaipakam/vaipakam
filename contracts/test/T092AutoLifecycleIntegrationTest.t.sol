@@ -336,7 +336,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -379,7 +382,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             // T-092 Phase 2b — refinance-tagged offers MUST be Aon.
             fillMode: LibVaipakam.FillMode.Aon,
             refinanceTargetLoanId: targetLoanId,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -879,7 +885,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1183,7 +1192,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 interestRateBps: 400,
                 interestRateBpsMax: 400,
                 collateralAmount: LOAN_COLLATERAL + 1 ether,
-                collateralAmountMax: LOAN_COLLATERAL + 1 ether
+                collateralAmountMax: LOAN_COLLATERAL + 1 ether,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1259,7 +1271,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1356,7 +1371,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 interestRateBps: 400,
                 interestRateBpsMax: 400,
                 collateralAmount: LOAN_COLLATERAL,
-                collateralAmountMax: LOAN_COLLATERAL
+                collateralAmountMax: LOAN_COLLATERAL,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

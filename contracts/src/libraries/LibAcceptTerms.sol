@@ -76,6 +76,7 @@ library LibAcceptTerms {
         uint256 acceptorMaxCStar; // #1347 — MANDATORY ceiling (VPFI 1e18) on the acceptor's Full tariff (rev-15 §3): a quoted `C* > acceptorMaxCStar` reverts unless `acceptorAllowFullDowngrade`. Only read when `acceptorFull`.
         bool acceptorAllowFullDowngrade; // #1347 — if the acceptor's Full opt-in cannot complete (kill-switch off, over-max, vault-short), true silently downgrades to HoldOnly/None instead of reverting the accept (rev-15 §4/§6). Only read when `acceptorFull`.
         address integrator; // #3682 — the integrator a BORROWER acceptor names (address(0) = none). Read only when the acceptor is the borrower (a lender's offer); a lender acceptor's value is ignored.
+        bool rateFarFromAverageAcknowledged; // #3713 §6.4 — the acceptor confirmed taking a rate outside the warning band around the term average. Needed only when the loan's actual rate is outside it; a rate inside when signed and outside when the transaction lands is refused.
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -118,7 +119,8 @@ library LibAcceptTerms {
         "bool acceptorFull,"
         "uint256 acceptorMaxCStar,"
         "bool acceptorAllowFullDowngrade,"
-        "address integrator"
+        "address integrator,"
+        "bool rateFarFromAverageAcknowledged"
         ")"
     );
 
@@ -203,7 +205,8 @@ library LibAcceptTerms {
                     a.acceptorFull,
                     a.acceptorMaxCStar,
                     a.acceptorAllowFullDowngrade,
-                    a.integrator
+                    a.integrator,
+                    a.rateFarFromAverageAcknowledged
                 )
             )
         );

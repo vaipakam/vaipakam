@@ -118,6 +118,14 @@ library LibSignedOffer {
         bytes32 exclusionsHash;
         uint16 loans;
         uint64 startTime;
+        // #3635 A / #3713 — the market link on the offer's rate limit
+        // (`IRateReference.LinkKind`, 0 none; signed margin in basis points)
+        // and the maker's acknowledgement of a checked rate (a lender's floor,
+        // a borrower's ceiling) outside the warning band. The band is checked
+        // where the signed offer becomes an on-chain offer, at its fill.
+        uint8 linkKind;
+        int16 linkMarginBps;
+        bool rateFarFromAverageAcknowledged;
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -171,7 +179,10 @@ library LibSignedOffer {
         "bytes32 setListHash,"
         "bytes32 exclusionsHash,"
         "uint16 loans,"
-        "uint64 startTime"
+        "uint64 startTime,"
+        "uint8 linkKind,"
+        "int16 linkMarginBps,"
+        "bool rateFarFromAverageAcknowledged"
         ")"
     );
 
@@ -214,6 +225,7 @@ library LibSignedOffer {
         "uint256 refinanceTargetLoanId,"
         "bool useFullTermInterest,"
         "uint8 lifecycleFlex,"
+        "address integrator,"
         "bool creatorFull,"
         "uint256 creatorMaxCStar,"
         "bool creatorAllowFullDowngrade,"
@@ -232,7 +244,10 @@ library LibSignedOffer {
         "bytes32 setListHash,"
         "bytes32 exclusionsHash,"
         "uint16 loans,"
-        "uint64 startTime"
+        "uint64 startTime,"
+        "uint8 linkKind,"
+        "int16 linkMarginBps,"
+        "bool rateFarFromAverageAcknowledged"
         ")"
     );
 
@@ -276,7 +291,8 @@ library LibSignedOffer {
         "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,"
         "uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,"
         "bytes32 setRoot,uint32 setListCount,bytes32 setListHash,bytes32 exclusionsHash,"
-        "uint16 loans,uint64 startTime)"
+        "uint16 loans,uint64 startTime,uint8 linkKind,int16 linkMarginBps,"
+        "bool rateFarFromAverageAcknowledged)"
         "TokenPermissions(address token,uint256 amount)";
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -657,7 +673,8 @@ library LibSignedOffer {
                     o.exclusionsHash,
                     o.loans,
                     o.startTime
-                )
+                ),
+                abi.encode(o.linkKind, o.linkMarginBps, o.rateFarFromAverageAcknowledged)
             )
         );
     }
@@ -779,6 +796,9 @@ library LibSignedOffer {
         p.useFullTermInterest = o.useFullTermInterest;
         p.lifecycleFlex = o.lifecycleFlex;
         p.integrator = o.integrator;
+        p.linkKind = o.linkKind;
+        p.linkMarginBps = o.linkMarginBps;
+        p.rateFarFromAverageAcknowledged = o.rateFarFromAverageAcknowledged;
     }
 
     /// @notice Map a `SignedOffer` to a SLICE of it sized `fillAmount` — used

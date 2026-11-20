@@ -24,7 +24,7 @@ this exact path in mind.
 
 ### 1.1 `ProtocolConfig` storage struct
 
-[`contracts/src/libraries/LibVaipakam.sol:276-295`](../contracts/src/libraries/LibVaipakam.sol#L276-L295)
+[`contracts/src/libraries/LibVaipakam.sol:276-295`](../../contracts/src/libraries/LibVaipakam.sol#L276-L295)
 — packed overrides for 12 BPS values and 4 tier thresholds:
 
 | Field | Default (constant) | Stored override |
@@ -47,7 +47,7 @@ etc.).
 
 ### 1.2 `ConfigFacet` setters
 
-[`contracts/src/facets/ConfigFacet.sol`](../contracts/src/facets/ConfigFacet.sol)
+[`contracts/src/facets/ConfigFacet.sol`](../../contracts/src/facets/ConfigFacet.sol)
 exposes:
 
 - `setFeesConfig(treasuryFeeBps, loanInitiationFeeBps)`
@@ -72,7 +72,7 @@ Every setter is:
 
 ### 1.3 Timelock + multisig infrastructure
 
-[`contracts/script/DeployTimelock.s.sol`](../contracts/script/DeployTimelock.s.sol):
+[`contracts/script/DeployTimelock.s.sol`](../../contracts/script/DeployTimelock.s.sol):
 
 - Deploys OpenZeppelin `TimelockController`.
 - Default 48h min delay (`TIMELOCK_MIN_DELAY` env override, min 1h).
@@ -101,7 +101,7 @@ setup is wrong pre-handover.
 
 ## 2. What's NOT configurable today — and why
 
-[`ConfigFacet`](../contracts/src/facets/ConfigFacet.sol) explicitly calls out
+[`ConfigFacet`](../../contracts/src/facets/ConfigFacet.sol) explicitly calls out
 three categories as **out of scope for tuning**:
 
 ### 2.1 Tokenomics supply caps — stay hardcoded
@@ -374,14 +374,14 @@ if (!LibVaipakam.isKycRequired()) {
 
 ### 5.2 VPFI staking APR — reuse existing accumulator, fix the gov-change gap
 
-**What's already in place.** `LibStakingRewards` ([`contracts/src/libraries/LibStakingRewards.sol`](../contracts/src/libraries/LibStakingRewards.sol))
+**What's already in place.** `LibStakingRewards` (`contracts/src/libraries/LibStakingRewards.sol`)
 already implements reward-per-token time-weighted accrual. Every vault-
 VPFI balance-mutation site calls `LibStakingRewards.updateUser(user,
 newBalance)` **before** the mutation — the ordering invariant is
-enforced at [`VPFIDiscountFacet.depositVPFIToVault` line 368](../contracts/src/facets/VPFIDiscountFacet.sol#L368),
-[`VPFIDiscountFacet.withdrawVPFIFromVault` line 414](../contracts/src/facets/VPFIDiscountFacet.sol#L414),
-[`LibVPFIDiscount.tryApply` line 220](../contracts/src/libraries/LibVPFIDiscount.sol#L220),
-and [`LibVPFIDiscount.tryApplyYieldFee` line 273](../contracts/src/libraries/LibVPFIDiscount.sol#L273).
+enforced at [`VPFIDiscountFacet.depositVPFIToVault` line 368](../../contracts/src/facets/VPFIDiscountFacet.sol#L368),
+[`VPFIDiscountFacet.withdrawVPFIFromVault` line 414](../../contracts/src/facets/VPFIDiscountFacet.sol#L414),
+[`LibVPFIDiscount.tryApply` line 220](../../contracts/src/libraries/LibVPFIDiscount.sol#L220),
+and [`LibVPFIDiscount.tryApplyYieldFee` line 273](../../contracts/src/libraries/LibVPFIDiscount.sol#L273).
 Spec reference: [TokenomicsTechSpec.md §7](../FunctionalSpecs/TokenomicsTechSpec.md) — flat
 5% APR, single `rewardPerToken` counter. No per-year schedule.
 
@@ -456,7 +456,7 @@ non-retroactive.
 
 **Why this needs to change.** The existing discount resolver reads the
 lender's **live** vault VPFI balance at repay and applies the tier
-table at that moment ([`LibVPFIDiscount.quoteYieldFee` line 157](../contracts/src/libraries/LibVPFIDiscount.sol#L157),
+table at that moment ([`LibVPFIDiscount.quoteYieldFee` line 157](../../contracts/src/libraries/LibVPFIDiscount.sol#L157),
 called from `RepayFacet`, `RefinanceFacet`, `PrecloseFacet`). A lender
 who deposits 20 000 VPFI one block before repay jumps to Tier 4 / 24%
 discount on the entire loan's yield fee with no time-held commitment.
@@ -850,17 +850,17 @@ Nothing here is architecturally risky; it's all variations on the existing
 5. **Wire the discount rollup into every vault-VPFI mutation path** —
    four sites, each already calls `LibStakingRewards.updateUser` before
    the mutation:
-   - [`VPFIDiscountFacet.depositVPFIToVault` line 368](../contracts/src/facets/VPFIDiscountFacet.sol#L368)
-   - [`VPFIDiscountFacet.withdrawVPFIFromVault` line 414](../contracts/src/facets/VPFIDiscountFacet.sol#L414)
-   - [`LibVPFIDiscount.tryApply` line 220](../contracts/src/libraries/LibVPFIDiscount.sol#L220)
-   - [`LibVPFIDiscount.tryApplyYieldFee` line 273](../contracts/src/libraries/LibVPFIDiscount.sol#L273)
+   - [`VPFIDiscountFacet.depositVPFIToVault` line 368](../../contracts/src/facets/VPFIDiscountFacet.sol#L368)
+   - [`VPFIDiscountFacet.withdrawVPFIFromVault` line 414](../../contracts/src/facets/VPFIDiscountFacet.sol#L414)
+   - [`LibVPFIDiscount.tryApply` line 220](../../contracts/src/libraries/LibVPFIDiscount.sol#L220)
+   - [`LibVPFIDiscount.tryApplyYieldFee` line 273](../../contracts/src/libraries/LibVPFIDiscount.sol#L273)
 
    Add `LibVPFIDiscount.rollupUserDiscount(user, newBal)` next to each
    existing `updateUser` call. Pass the **new** (post-mutation) balance
    — the rollup first closes the open period against the stamped tier,
    then stamps the new tier from `newBal`.
 6. **Lender snapshot at offer acceptance** — in
-   [`OfferFacet.acceptOffer`](../contracts/src/facets/OfferFacet.sol):
+   `OfferFacet.acceptOffer`:
    force a rollup against the lender's live vault balance, then
    snapshot `cumulativeDiscountBpsSeconds` onto the new
    `loan.lenderDiscountAccAtInit`.
@@ -972,25 +972,25 @@ step 12 (frontend); the others are mechanical.
 
 ## 8. Critical files
 
-- [`contracts/src/libraries/LibVaipakam.sol`](../contracts/src/libraries/LibVaipakam.sol) — extend `ProtocolConfig` (KYC + fallback-split fields); extend `Loan` with `lenderDiscountAccAtInit uint256`; add `userVpfiDiscountState` mapping to `Storage`; add getters for KYC policy + fallback split.
-- [`contracts/src/libraries/LibStakingRewards.sol`](../contracts/src/libraries/LibStakingRewards.sol) — expose `checkpointGlobal()` as `internal` (currently `private`). No other logic change.
-- [`contracts/src/libraries/LibVPFIDiscount.sol`](../contracts/src/libraries/LibVPFIDiscount.sol) — add `rollupUserDiscount(user, balAtPeriodEnd)` reward-per-token helper. Add time-weighted path to `quoteYieldFee` / `tryApplyYieldFee` that reads `loan.lenderDiscountAccAtInit` and computes `avgBps` over the loan window.
-- [`contracts/src/facets/ConfigFacet.sol`](../contracts/src/facets/ConfigFacet.sol) — add `LibStakingRewards.checkpointGlobal()` call at the top of `setStakingApr`. Add `setKycPolicy`, `setFallbackSplit`, `getVpfiTierSchedule`.
-- [`contracts/src/facets/OfferFacet.sol`](../contracts/src/facets/OfferFacet.sol) — in `acceptOffer`: force a lender-side `rollupUserDiscount` against live vault balance, snapshot `cumulativeDiscountBpsSeconds` onto `loan.lenderDiscountAccAtInit`.
-- [`contracts/src/facets/VPFIDiscountFacet.sol`](../contracts/src/facets/VPFIDiscountFacet.sol) — add `LibVPFIDiscount.rollupUserDiscount(user, newBal)` next to the existing `LibStakingRewards.updateUser` call in `depositVPFIToVault` and `withdrawVPFIFromVault` (lines 368 and 414). Also in `tryApply` (line 220, borrower init-fee deduction) and `tryApplyYieldFee` (line 273, lender yield-fee deduction).
-- [`contracts/src/facets/RepayFacet.sol`](../contracts/src/facets/RepayFacet.sol) + [`contracts/src/facets/RefinanceFacet.sol`](../contracts/src/facets/RefinanceFacet.sol) + [`contracts/src/facets/PrecloseFacet.sol`](../contracts/src/facets/PrecloseFacet.sol) — at every `tryApplyYieldFee` call site: force final lender rollup, compute time-weighted `avgBps`, use in place of live-tier lookup. Also read fallback split from loan snapshot.
-- [`contracts/src/facets/DefaultedFacet.sol`](../contracts/src/facets/DefaultedFacet.sol) — read fallback split from loan snapshot instead of constants.
-- [`contracts/src/facets/ProfileFacet.sol`](../contracts/src/facets/ProfileFacet.sol) — short-circuit on `!kycRequired`, read thresholds via getters.
-- [`contracts/script/UpgradeGovernanceConfig.s.sol`](../contracts/script/) (new) — Diamond cut that replaces the affected facets + records the upgrade timestamp for pre-upgrade-loan handling (§7.1).
-- [`frontend/src/hooks/useVPFIDiscount.ts`](../frontend/src/hooks/useVPFIDiscount.ts) — replace `VPFI_TIER_TABLE` with `useVpfiTierSchedule()` chain-fetched hook.
-- [`frontend/src/hooks/useProtocolConfig.ts`](../frontend/src/hooks/) (extend) — expose fee BPS, fallback splits, KYC policy, staking APR.
-- [`frontend/src/hooks/useLenderEffectiveDiscount.ts`](../frontend/src/hooks/) (new) — reads `userVpfiDiscountState[lender]` + `loan.lenderDiscountAccAtInit`, computes the live time-weighted `avgBps` for a given open loan (includes the currently-open period so the UI matches what the next rollup will persist).
-- [`frontend/src/hooks/useStakingPending.ts`](../frontend/src/hooks/) (new or extend existing staking hook) — reads `getStakingPending(user)` for Dashboard + per-loan UI.
-- [`contracts/test/GovernanceConfigTest.t.sol`](../contracts/test/) (new) — bounds + access control + monotonicity + timelock integration.
-- [`contracts/test/VpfiDiscountRollupTest.t.sol`](../contracts/test/) (new) — self-seed, deposit/withdraw triggers rollup, gaming-defeated (Day-29 top-up = 1/30 boost), governance-change-applies-next-period, same-block-no-double-accrual, zero-duration-loan guard, ordering-violation fails.
-- [`contracts/test/StakingAprCheckpointTest.t.sol`](../contracts/test/) (new) — 3-era APR trace, active + dormant user both correct, regression guard against the missing-checkpoint bug.
-- [`contracts/RUNBOOK.md`](../contracts/RUNBOOK.md) — add §12 parameter-change procedure; add "mainnet must ship staking-APR checkpoint fix before any gov APR change" to the go/no-go gate; update §1's timelock-delay row to 72h.
-- [`CLAUDE.md`](../CLAUDE.md) — add Parameter Governance subsection + the rollup ordering invariant (every vault-VPFI mutation must call both `LibStakingRewards.updateUser` and `LibVPFIDiscount.rollupUserDiscount` before mutating).
+- [`contracts/src/libraries/LibVaipakam.sol`](../../contracts/src/libraries/LibVaipakam.sol) — extend `ProtocolConfig` (KYC + fallback-split fields); extend `Loan` with `lenderDiscountAccAtInit uint256`; add `userVpfiDiscountState` mapping to `Storage`; add getters for KYC policy + fallback split.
+- `contracts/src/libraries/LibStakingRewards.sol` — expose `checkpointGlobal()` as `internal` (currently `private`). No other logic change.
+- [`contracts/src/libraries/LibVPFIDiscount.sol`](../../contracts/src/libraries/LibVPFIDiscount.sol) — add `rollupUserDiscount(user, balAtPeriodEnd)` reward-per-token helper. Add time-weighted path to `quoteYieldFee` / `tryApplyYieldFee` that reads `loan.lenderDiscountAccAtInit` and computes `avgBps` over the loan window.
+- [`contracts/src/facets/ConfigFacet.sol`](../../contracts/src/facets/ConfigFacet.sol) — add `LibStakingRewards.checkpointGlobal()` call at the top of `setStakingApr`. Add `setKycPolicy`, `setFallbackSplit`, `getVpfiTierSchedule`.
+- `contracts/src/facets/OfferFacet.sol` — in `acceptOffer`: force a lender-side `rollupUserDiscount` against live vault balance, snapshot `cumulativeDiscountBpsSeconds` onto `loan.lenderDiscountAccAtInit`.
+- [`contracts/src/facets/VPFIDiscountFacet.sol`](../../contracts/src/facets/VPFIDiscountFacet.sol) — add `LibVPFIDiscount.rollupUserDiscount(user, newBal)` next to the existing `LibStakingRewards.updateUser` call in `depositVPFIToVault` and `withdrawVPFIFromVault` (lines 368 and 414). Also in `tryApply` (line 220, borrower init-fee deduction) and `tryApplyYieldFee` (line 273, lender yield-fee deduction).
+- [`contracts/src/facets/RepayFacet.sol`](../../contracts/src/facets/RepayFacet.sol) + [`contracts/src/facets/RefinanceFacet.sol`](../../contracts/src/facets/RefinanceFacet.sol) + [`contracts/src/facets/PrecloseFacet.sol`](../../contracts/src/facets/PrecloseFacet.sol) — at every `tryApplyYieldFee` call site: force final lender rollup, compute time-weighted `avgBps`, use in place of live-tier lookup. Also read fallback split from loan snapshot.
+- [`contracts/src/facets/DefaultedFacet.sol`](../../contracts/src/facets/DefaultedFacet.sol) — read fallback split from loan snapshot instead of constants.
+- [`contracts/src/facets/ProfileFacet.sol`](../../contracts/src/facets/ProfileFacet.sol) — short-circuit on `!kycRequired`, read thresholds via getters.
+- [`contracts/script/UpgradeGovernanceConfig.s.sol`](../../contracts/script/) (new) — Diamond cut that replaces the affected facets + records the upgrade timestamp for pre-upgrade-loan handling (§7.1).
+- `frontend/src/hooks/useVPFIDiscount.ts` — replace `VPFI_TIER_TABLE` with `useVpfiTierSchedule()` chain-fetched hook.
+- [`frontend/src/hooks/useProtocolConfig.ts`](../../apps/app/src/hooks/) (extend) — expose fee BPS, fallback splits, KYC policy, staking APR.
+- [`frontend/src/hooks/useLenderEffectiveDiscount.ts`](../../apps/app/src/hooks/) (new) — reads `userVpfiDiscountState[lender]` + `loan.lenderDiscountAccAtInit`, computes the live time-weighted `avgBps` for a given open loan (includes the currently-open period so the UI matches what the next rollup will persist).
+- [`frontend/src/hooks/useStakingPending.ts`](../../apps/app/src/hooks/) (new or extend existing staking hook) — reads `getStakingPending(user)` for Dashboard + per-loan UI.
+- [`contracts/test/GovernanceConfigTest.t.sol`](../../contracts/test/) (new) — bounds + access control + monotonicity + timelock integration.
+- [`contracts/test/VpfiDiscountRollupTest.t.sol`](../../contracts/test/) (new) — self-seed, deposit/withdraw triggers rollup, gaming-defeated (Day-29 top-up = 1/30 boost), governance-change-applies-next-period, same-block-no-double-accrual, zero-duration-loan guard, ordering-violation fails.
+- [`contracts/test/StakingAprCheckpointTest.t.sol`](../../contracts/test/) (new) — 3-era APR trace, active + dormant user both correct, regression guard against the missing-checkpoint bug.
+- [`contracts/RUNBOOK.md`](../../contracts/RUNBOOK.md) — add §12 parameter-change procedure; add "mainnet must ship staking-APR checkpoint fix before any gov APR change" to the go/no-go gate; update §1's timelock-delay row to 72h.
+- [`CLAUDE.md`](../../CLAUDE.md) — add Parameter Governance subsection + the rollup ordering invariant (every vault-VPFI mutation must call both `LibStakingRewards.updateUser` and `LibVPFIDiscount.rollupUserDiscount` before mutating).
 - [`docs/TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) — §7 gets the "era-wise non-retroactive APR" clarification; a new §7a (or equivalent) captures the time-weighted lender yield-fee discount (functional spec already drafted separately).
 - [`docs/TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) — keep the borrower init-fee VPFI path, fee-custody behavior, and time-weighted rebate rules in the canonical tokenomics spec (§6 / §6b).
 

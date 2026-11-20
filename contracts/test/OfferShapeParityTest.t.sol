@@ -66,7 +66,10 @@ contract OfferShapeParityTest is SetupTest {
             expiresAt: 0,
             fillMode: fillMode,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -131,7 +134,10 @@ contract OfferShapeParityTest is SetupTest {
                 interestRateBps: 500,
                 interestRateBpsMax: 500,
                 collateralAmount: 5000 ether,
-                collateralAmountMax: 5000 ether
+                collateralAmountMax: 5000 ether,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

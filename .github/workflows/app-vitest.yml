@@ -72,20 +72,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           # Full history so git diff can resolve the PR base sha.
           fetch-depth: 0
 
       - name: Determine changed paths
         id: diff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -eu
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-            HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${PR_BASE_SHA}"
+            HEAD="${PR_HEAD_SHA}"
           else
             # `push` event — diff the pushed commit against its parent.
-            BASE="${{ github.event.before }}"
-            HEAD="${{ github.sha }}"
+            BASE="${PUSH_BEFORE_SHA}"
+            HEAD="${GITHUB_SHA}"
             # First commit on a branch → `before` is all-zeros; fall back.
             if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
               BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
@@ -162,6 +167,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 

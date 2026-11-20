@@ -57,7 +57,7 @@ storage migration + audit cycle later.
 
 ### 2.1 `Offer` struct changes
 
-Today's [`LibVaipakam.Offer`](../contracts/src/libraries/LibVaipakam.sol):
+Today's [`LibVaipakam.Offer`](../../contracts/src/libraries/LibVaipakam.sol):
 
 ```text
 amount: uint256

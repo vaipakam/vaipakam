@@ -34,7 +34,7 @@ type MessageValue<T extends string> = T extends 'bool'
   ? boolean
   : T extends 'address' | 'bytes32'
     ? Hex
-    : T extends 'uint8' | 'uint16' | 'uint32'
+    : T extends 'uint8' | 'uint16' | 'uint32' | 'int16'
       ? number
       : bigint;
 
@@ -54,7 +54,7 @@ export function signedOfferMessage(order: SignedOrderWire): SignedOfferMessage {
     const v = (order as Record<string, unknown>)[name];
     if (type === 'bool') out[name] = v;
     else if (type === 'address' || type === 'bytes32') out[name] = v as Hex;
-    else if (type === 'uint8' || type === 'uint16' || type === 'uint32') out[name] = Number(v);
+    else if (type === 'uint8' || type === 'uint16' || type === 'uint32' || type === 'int16') out[name] = Number(v);
     else out[name] = BigInt(v as string);
   }
   return out as SignedOfferMessage;

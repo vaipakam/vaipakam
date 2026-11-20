@@ -281,6 +281,13 @@ export function setupSteps(
         draft.lendUntil,
         p.acceptsProRata,
         consent,
+        // #3635 A / #3713 — this app sets no NEW market link, but a change
+        // keeps the one recorded (set by an integrator or on-chain): sending
+        // zeros would silently drop the slot's market-relative floor while its
+        // funded capital stays. It does not ask for the far-from-average
+        // confirmation yet: a floor outside the band is refused by name, a
+        // re-set of the same floor needs none.
+        { linkKind: base?.linkKind ?? 0, linkMarginBps: base?.linkMarginBps ?? 0, rateFarFromAverageAcknowledged: false },
         validUntil,
       ],
     },
@@ -314,6 +321,9 @@ export interface IntentRecord {
   termsSetAt: bigint;
   lendUntil: bigint;
   acceptsProRata: boolean;
+  /** #3635 A — the slot's market link (0 = none) and its margin in bps. */
+  linkKind: number;
+  linkMarginBps: number;
 }
 
 export async function readIntent(c: PublicClient, diamond: Hex, owner: Hex, lending: Hex, collateral: Hex, slot: number, blockNumber?: bigint): Promise<IntentRecord> {
@@ -335,6 +345,8 @@ export async function readIntent(c: PublicClient, diamond: Hex, owner: Hex, lend
     termsSetAt: raw.termsSetAt,
     lendUntil: raw.lendUntil,
     acceptsProRata: raw.acceptsProRata,
+    linkKind: Number(raw.linkKind ?? 0),
+    linkMarginBps: Number(raw.linkMarginBps ?? 0),
   };
 }
 

@@ -133,6 +133,9 @@ contract PrecloseOffsetFacet is
      * @param collateralAmount The collateral amount required from the new borrower.
      * @param creatorRiskAndTermsConsent Consent for illiquid assets in new offer.
      * @param prepayAsset Prepay asset for NFT loans (address(0) for ERC20).
+     * @param rateFarFromAverageAcknowledged The borrower's acknowledgement
+     *        that the new offer's rate is outside the term-average warning
+     *        band (#3713 section 6.4); needed only when it is.
      * @param validUntil The caller's MANDATORY transaction deadline (#3412):
      *        an offset posts a new offer and pays the shortfall at the moment
      *        it lands, so it is price-exposed and one landing after this
@@ -147,6 +150,7 @@ contract PrecloseOffsetFacet is
         uint256 collateralAmount,
         bool creatorRiskAndTermsConsent,
         address prepayAsset,
+        bool rateFarFromAverageAcknowledged,
         uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 newOfferId) {
         LibTiming.requireDeadline(validUntil);
@@ -213,7 +217,8 @@ contract PrecloseOffsetFacet is
             collateralAsset,
             collateralAmount,
             creatorRiskAndTermsConsent,
-            prepayAsset
+            prepayAsset,
+            rateFarFromAverageAcknowledged
         );
 
         // ── 3+4. Link, lock, emit ─ all moved to a helper so the outer frame
@@ -520,7 +525,8 @@ contract PrecloseOffsetFacet is
         address collateralAsset,
         uint256 collateralAmount,
         bool creatorRiskAndTermsConsent,
-        address prepayAsset
+        address prepayAsset,
+        bool rateFarFromAverageAcknowledged
     ) private returns (uint256 newOfferId) {
         LibVaipakam.CreateOfferParams memory params = _buildOffsetParams(
             loan,
@@ -531,6 +537,9 @@ contract PrecloseOffsetFacet is
             creatorRiskAndTermsConsent,
             prepayAsset
         );
+        // #3713 6.4 — the band asks the maker's own acknowledgement; the
+        // borrower posting the offset is that maker.
+        params.rateFarFromAverageAcknowledged = rateFarFromAverageAcknowledged;
         // Use `createOfferInternal` not `createOffer`: the outer
         // `offsetWithNewOffer` already holds the diamond's
         // `nonReentrant` lock, so a second `nonReentrant` entry via

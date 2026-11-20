@@ -75,7 +75,10 @@ contract OfferFillModeTest is SetupTest {
             expiresAt: expiresAt,
             fillMode: fillMode,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -117,7 +120,10 @@ contract OfferFillModeTest is SetupTest {
             expiresAt: 0,
             fillMode: fillMode,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
         vm.prank(borrower);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);

@@ -224,6 +224,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         LenderIntentFacet(diamond).setLenderIntent(
             address(usdc), address(weth), 0, MAX_EXPOSURE, INTEREST_BPS, MAX_INIT_LTV_BPS,
             uint32(DURATION_DAYS), MIN_FILL, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         );
         vm.stopBroadcast();

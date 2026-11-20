@@ -949,7 +949,10 @@ contract CustodyHandler is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
         vm.prank(lender_);
         try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {

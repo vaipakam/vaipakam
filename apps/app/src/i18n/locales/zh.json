@@ -2422,6 +2422,9 @@
         "termsTooFresh": "此报价在几秒前刚发布或修改，报价的条款需保持几秒后才能被接受。请稍后再试。未发送任何内容。",
         "collectionParent": "这是一个集合报价。每笔贷款以集合中的一个代币为抵押出借，只能通过协议的集合报价成交来接受，本应用尚未提供该功能，不能直接接受。未发送任何内容。",
         "termsNotAccepted": "此报价目前无法接受：一方尚未接受此网络上现行的服务条款。如果是您，请接受条款后重试。如果是报价的创建者，对方接受后即可接受此报价。未发送任何内容。",
+        "rateReferenceUnavailable": "此报价的利率跟随市场参考利率，目前无法读取该贷款期限的参考利率，因此无法接受此报价。稍后可能恢复。未发送任何内容。",
+        "rateReferenceUnusual": "此报价的利率跟随市场参考利率，目前市场处于异常状态，因此期限超过 30 天的报价无法接受。稍后可能恢复。未发送任何内容。",
+        "rateRangeEmpty": "此报价的利率跟随市场参考利率，参考利率已越过报价自身的利率限制，因此目前没有可接受的利率。稍后可能恢复。未发送任何内容。",
         "unknown": "协议目前不接受这笔报价。未发送任何内容 — 请刷新重试，或稍后再来查看。"
       },
       "termsNotAccepted": "执行此操作前，你需要先接受 Vaipakam 的条款。打开首页，系统会询问你一次；还款、领取和提取在任何情况下都可继续使用。",
@@ -2752,6 +2755,7 @@
         "InterestPaymentAttemptFailed": "从储备金支付利息未能完成",
         "IntentCalmCheckSet": "Auto-lend 价格检查已更改",
         "LenderIntentIntegratorNamed": "已指定 Auto-lend 集成方",
+        "LenderIntentRateTermsSet": "已设置 Auto-lend 利率挂钩",
         "IntegratorShareSettled": "集成方手续费分成已结算",
         "ReferralShareSettled": "推荐手续费分成已结算",
         "InviterBound": "已接受邀请",

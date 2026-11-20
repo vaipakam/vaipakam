@@ -28,7 +28,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 ///
 /// @dev    The wire-side copy in `OfferCreateFacet.createOffer` and
 ///         `LoanFacet.initiateLoan` is verified by the existing 222-
-///         site sweep across `CreateOfferParams({...})` construction
+///         site sweep across `CreateOfferParams({..., linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false})` construction
 ///         sites: every legacy offer in the test corpus now constructs
 ///         with `allowsPrepayListing: false`, and the next time a test
 ///         flips the flag to `true` (in step 6's listing-facet

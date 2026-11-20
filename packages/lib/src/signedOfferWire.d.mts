@@ -50,13 +50,16 @@ export type SignedOfferFields = readonly [
   { readonly name: 'exclusionsHash'; readonly type: 'bytes32' },
   { readonly name: 'loans'; readonly type: 'uint16' },
   { readonly name: 'startTime'; readonly type: 'uint64' },
+  { readonly name: 'linkKind'; readonly type: 'uint8' },
+  { readonly name: 'linkMarginBps'; readonly type: 'int16' },
+  { readonly name: 'rateFarFromAverageAcknowledged'; readonly type: 'bool' },
 ];
 
 export const SIGNED_OFFER_FIELDS: SignedOfferFields;
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[];
 
 /** The order in wire form, keyed by field name: addresses lowercased, bools
- *  as booleans, uints as canonical decimal strings. */
+ *  as booleans, uints as canonical decimal strings (ints may carry a leading minus). */
 export type SignedOrderWire = {
   [F in SignedOfferFields[number] as F['name']]: F['type'] extends 'bool' ? boolean : string;
 };
@@ -73,6 +76,14 @@ export const NO_COLLECTION: Readonly<{
   exclusionsHash: `0x${string}`;
   loans: '0';
   startTime: '0';
+}>;
+
+/** #3635 A, #3713 — the rate-link fields of an order with no market link and
+ *  no far-from-average acknowledgement. */
+export const NO_RATE_LINK: Readonly<{
+  linkKind: '0';
+  linkMarginBps: '0';
+  rateFarFromAverageAcknowledged: false;
 }>;
 
 export interface SignedOfferColumns {

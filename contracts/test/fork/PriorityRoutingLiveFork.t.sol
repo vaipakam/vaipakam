@@ -45,7 +45,7 @@ interface IDiamondForProof {
     function getPerkEntitlement(address, uint256) external view returns (bool, uint64, uint256);
     // LenderIntentFacet
     function setLenderIntentEnabled(bool) external;
-    function setLenderIntent(address, address, uint8, uint256, uint256, uint16, uint32, uint256, bool, uint64, bool, bool, uint64) external;
+    function setLenderIntent(address, address, uint8, uint256, uint256, uint16, uint32, uint256, bool, uint64, bool, bool, LibVaipakam.IntentRateTerms calldata, uint64) external;
     function fundLenderIntent(address, address, uint8, uint256) external;
     function setLenderIntentPriority(address, address, uint8, bool) external;
     function getLenderIntentPriority(address, address, address, uint8, address, address)
@@ -277,7 +277,7 @@ contract PriorityRoutingLiveFork is Test {
         _kyc(who);
         ERC20Mock(lendAsset).mint(who, 10 * PRINCIPAL);
         vm.startPrank(who);
-        d.setLenderIntent(lendAsset, collAsset, 0, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, 0, false, true, type(uint64).max);
+        d.setLenderIntent(lendAsset, collAsset, 0, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max);
         ERC20Mock(lendAsset).approve(address(d), 5 * PRINCIPAL);
         d.fundLenderIntent(lendAsset, collAsset, 0, 5 * PRINCIPAL);
         vm.stopPrank();
@@ -318,7 +318,10 @@ contract PriorityRoutingLiveFork is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

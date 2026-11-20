@@ -42,6 +42,21 @@
             "name": "collateralAmountMax",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "linkKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "linkMarginBps",
+            "type": "int16",
+            "internalType": "int16"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -130,6 +145,21 @@
         "internalType": "uint256"
       },
       {
+        "name": "linkKind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "linkMarginBps",
+        "type": "int16",
+        "internalType": "int16"
+      },
+      {
+        "name": "rateFarFromAverageAcknowledged",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "validUntil",
         "type": "uint64",
         "internalType": "uint64"
@@ -214,6 +244,24 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "linkKind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "linkMarginBps",
+        "type": "int16",
+        "indexed": false,
+        "internalType": "int16"
+      },
+      {
+        "name": "warnings",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false

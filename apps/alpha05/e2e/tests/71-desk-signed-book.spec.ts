@@ -18,7 +18,7 @@ import { parseEther, type Hex } from 'viem';
 import { postLenderOffer, WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
-import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, NO_RATE_LINK } from '@vaipakam/lib/signedOfferWire';
 import { orderHashOf, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from '../../src/shared/desk/signedOrder';
 import { scenario } from '../lib/chain';
 import { postSignedOrder, setSignedBookLag, setSignedBookReplay } from '../lib/stub';
@@ -89,6 +89,7 @@ test('a market’s signed orders are listed with the chain’s standing and each
     nonce: '2001',
     deadline: until,
     ...NO_COLLECTION,
+    ...NO_RATE_LINK,
     ...patch,
   });
   const post = async (role: Role, o: SignedOrderWire) => {
