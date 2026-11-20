@@ -54,7 +54,7 @@ The request gains three optional inputs: the rate offered for the rest, the time
 - **Collateral.** The collateral not yet used is locked for the request in the borrower's vault, from free balance first and then from the wallet, as for the fills. The request states collateral in proportion (3.2), with the proportion of the whole borrow.
 - **Term and shape.** The same base term, interest by time and the same repayment shape as the fills. Fixed rate only, as the instant borrow is today. A floating request arrives with the floating loan.
 - **Borrowing.** The request names the borrowing the call opened or added to (3.1).
-- **How long.** The time is required and bounded: at least 10 minutes, at most 30 days, a governed range. At that time the request can no longer be filled. Its collateral is released by the borrower's cancel or by the existing teardown step that anyone may run, which the keeper already backs.
+- **How long.** The time is required and bounded: at least 10 minutes, at most 30 days, a governed range. At that time the request can no longer be filled. Its collateral is released by a cancel: the borrower's own, or anyone's once the time has passed, which the book already allows for an expired offer. The keeper does not sweep expired ordinary offers today (its teardown pass covers sale listings and offers whose route is dead), so that pass gains one case: an expired request that names a borrowing. The borrower's collateral is then released without the borrower returning.
 - **Smallest fill.** At least the book's value floor, and large enough that the most loans the request can open fit the room left on the borrowing's list.
 - **When no request is posted.** If what is left is below the smallest fill or the book's value floor, if the wallet is at its limit of open offers, or if a rule of 3.1 refuses it, the borrow completes without a request. The collateral for that part is not taken, and the summary event and the preview state the reason. The least total the borrower stated still applies to what this transaction received, unchanged, and a call that receives nothing still reverts.
 - **Gas.** Posting the request is part of the call's measured cost. The fill bound for a call that posts the rest is the largest number of fills for which the whole call, with the posting, stays inside 80% of the network's limit, so it may be one lower than for a call that posts nothing. The gas tests cover a borrow at that bound with a request posted.
@@ -62,7 +62,7 @@ The request gains three optional inputs: the rate offered for the rest, the time
 
 ### 3.4 Who fills the rest, and at what price
 
-- Any lender, by the routes the book has today: a slot through a solver's fill, a lender offer through a match, or a lender directly where the request is not yet part filled. The platform's keeper fills requests from Auto-lend slots already, one loan per transaction. No new keeper pass is needed.
+- Any lender, by the routes the book has today: a slot through a solver's fill, a lender offer through a match, or a lender directly where the request is not yet part filled. The platform's keeper fills requests from Auto-lend slots already, one loan per transaction. No new keeper pass is needed for the fills.
 - Nobody chooses a price for the borrower. The rate is the one the borrower stated. Whoever pairs the request chooses which lender fills it, and that choice changes nothing for the borrower: the rate, the proportion of collateral, the term and the shape are the request's.
 - A loan filled from the rest is an ordinary loan of the book. It is an instant-market loan only under the conditions of `InstantMarketDesign.md` 6.1.
 
@@ -83,14 +83,14 @@ Afterwards the borrowing shows "borrowed X of Y" (an app figure, as today), the 
 - **The rest may fill short, or not at all.** Nothing is promised but the rate if it fills. What is left below the smallest fill is never filled: the request closes and that part's collateral is released.
 - **The rest costs the stated rate.** A lender whose own price is lower still lends at the borrower's stated rate. A borrower who wants lenders' own prices borrows again now, in further transactions.
 - **Different start times.** Loans opened from the rest start later than the first ones and fall due later. The borrowing's actions and its due-date plan already work across loans with different dates.
-- **Collateral stays locked for the request** until it fills, is cancelled or is torn down after its time.
+- **Collateral stays locked for the request** until it fills or is cancelled: by the borrower, or by anyone once its time has passed.
 - **A request can be cancelled only after the book's short wait** from posting, as any offer.
 - **A fill can be refused** by the borrowing's rules (3.1). The request then waits for the borrower.
 
 ## 6. What it needs
 
 - **Contracts.** The borrowing on a request, with its checks at posting and at each fill, and the confirm step (3.1). Collateral in proportion on a request (3.2). The rest inputs on `borrowInstant`, the posting inside the call, the preview and the event (3.3). The fill-bound rule and its gas tests with a request posted. Every new external step gets its row in the permissionless-steps ledger where one is owed.
-- **Keeper.** No new pass. The matcher's preview reading gains the new refusals so a refused fill is not retried each tick.
+- **Keeper.** No new pass. The matcher's preview reading gains the new refusals so a refused fill is not retried each tick. The teardown pass gains the discovery and cancel of an expired request that names a borrowing, and the ledger row for cancelling an offer says so.
 - **Indexer.** The request's link to the borrowing and to the instant borrow that posted it, and each later loan's link to both.
 - **Apps.** The review of section 4, the borrowing's view of an open request, cancel, and the confirm step after a settings change.
 - **Spec.** The owner's list gains the lines this changes.
@@ -117,9 +117,9 @@ Fill what fits, request the rest, as above: one stated rate for the rest, collat
 4. No request is posted, the borrow completes and the reason is stated: below the smallest fill, below the value floor, at the open-offer limit, refused by a rule of 3.1. The collateral for that part is not taken.
 5. Every fill of the rest is at the stated rate, whatever the lender's floor, and no fill is possible from a lender whose floor is above it.
 6. The least total applies to what the transaction received; a call that receives nothing reverts, with or without the rest inputs.
-7. After its time the request cannot be filled, and the teardown step releases its collateral to the borrower's vault as free balance.
+7. After its time the request cannot be filled. A cancel by anyone releases its collateral to the borrower's vault as free balance, and the keeper's teardown pass finds an expired request that names a borrowing and cancels it without the borrower acting.
 8. A borrow at the fill bound that also posts the rest is inside 80% of each network's limit, measured on the CI toolchain.
-9. A flagged borrower's request is not filled, and its teardown still runs.
+9. A flagged borrower's request is not filled, and its cancel after expiry still runs.
 10. The preview of `borrowInstant` reports the request it would post, or the reason for none, exactly as the call then does.
 
 ## 10. Open items for the builder to raise, not decide silently

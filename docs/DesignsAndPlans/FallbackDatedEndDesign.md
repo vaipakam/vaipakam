@@ -13,7 +13,7 @@ From there the loan ends in one of four ways:
 - **The lender position's holder claims.** With a fresh sale attempt if they bring a route, and otherwise by taking the recorded split in kind. The loan becomes final.
 - **The borrower cures it,** by repaying in full or by adding enough collateral. A cure returns it to an open loan.
 - **The backstop buys the lender's part,** only at the lender's request, and only where that feature is switched on.
-- **An internal match** closes it against an opposite loan, when one exists.
+- **An internal match** closes it against an opposite loan, when one exists. A match may close only part of it. The recorded split is then scaled down to the collateral that is left, and what the match paid toward the lender is kept for the lender position's holder, to be paid with the eventual claim.
 
 None of these has a date, and three of the four need the lender position's holder or an outside condition. The borrower's own claim opens only once the loan is final. So while the holder does nothing:
 
@@ -27,13 +27,13 @@ None of these has a date, and three of the four need the lender position's holde
 
 The finishing step does exactly what the lender's claim without a route does today, up to the point where that claim pays the holder:
 
-1. The recorded split is applied. The lender's part moves from the borrower's vault to the lender side's vault, held for the lender position's holder to claim. The treasury's part goes to the treasury. The borrower's part, and any collateral the borrower added without curing, stays in the borrower's vault and becomes the borrower position's claim.
+1. The recorded split is applied, as it stands when the step runs: the split made at entry, scaled down by any internal match that has closed part of the loan since. The lender's part moves from the borrower's vault to the lender side's vault, held for the lender position's holder to claim. The treasury's part goes to the treasury. The borrower's part, and any collateral the borrower added without curing, stays in the borrower's vault and becomes the borrower position's claim. What an earlier part match already holds for the lender is not touched by the step: it stays held and is paid by the lender's claim, exactly as it would be after a lender's own claim.
 2. The loan becomes final (defaulted), with the same position-token status and the same closing of its reward records as a lender's claim gives it.
 3. A request the lender made to the backstop lapses, as it does on a cure.
 
 Then each side collects with its ordinary claim, whenever it likes. The step itself pays no wallet and pays its caller nothing.
 
-**What the step does not do.** It does not try a sale, so it needs no price and no route. It does not run the internal match, so no caller earns a matcher's share by finishing someone else's loan. It does not change the split: the amounts are those recorded at entry.
+**What the step does not do.** It does not try a sale, so it needs no price and no route. It does not run the internal match, so no caller earns a matcher's share by finishing someone else's loan. It does not change the split: the amounts are the record's as it stands, and the step reads them and never works them out again from a price.
 
 **Until the wait has passed, nothing changes.** The lender keeps every choice it has today, and so does the borrower.
 
@@ -41,6 +41,7 @@ Then each side collects with its ordinary claim, whenever it likes. The step its
 
 - **Length.** A bounded setting, 30 days (the owner's figure, 2026-11-20), bounds 14 to 90 days. It is recorded on the loan when it enters the fallback state, so a later change of the setting never moves a date already running.
 - **Counted from entry**, on a clock that does not run while the platform is paused, like every other deadline of a loan.
+- **A part match does not restart it.** An internal match that closes part of the loan leaves the date where it was.
 - **A top-up that does not cure does not restart it.** Otherwise a borrower could put the end off for ever with small amounts.
 - **A cure ends it.** The loan is open again. If it falls into the fallback state again later, that is a new entry with a new count.
 - **No extension by the lender.** A holder who is present can claim, and one who is away cannot extend. The alternative is in section 7.
@@ -94,3 +95,4 @@ The finishing step after 30 days, in kind, callable by anyone, with no extension
 8. A change of the setting does not move a date already recorded.
 9. The lender's request to the backstop is void after the step.
 10. On a closing network the step runs.
+11. A part internal match before the date: the date does not move; the step applies the scaled-down split and takes no more collateral than is left under the loan's hold; the lender's claim then pays both that part and what the match held for the lender; the borrower's and the treasury's parts are the scaled ones.
