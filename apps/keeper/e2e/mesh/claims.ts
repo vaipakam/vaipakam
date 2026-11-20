@@ -10,15 +10,29 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { TOKEN_ABI, type Party } from '@vaipakam/anvil-harness/scenarioChain';
 import type { MeshChain } from './mesh';
 
-/** `LibVaipakam.RewardDelivery.Wallet`: pay the claim to the caller's wallet. */
-const TO_WALLET = 1;
+/** `LibVaipakam.RewardDelivery.Vault`: pay the claim into the caller's vault.
+ *  The payout rule (#3805) refuses a party's reward sent to a wallet; only
+ *  the owner's own withdrawal reaches one. */
+const TO_VAULT = 2;
 
 export function balanceOf(sc: MeshChain, token: Address, who: Address): Promise<bigint> {
   return sc.pub.readContract({ address: token, abi: TOKEN_ABI, functionName: 'balanceOf', args: [who] }) as Promise<bigint>;
 }
 
+/** `who`'s VPFI in its vault on `sc`; 0 while it has no vault yet (a claim
+ *  into the vault creates one). */
+async function vaultBalance(sc: MeshChain, token: Address, who: Party): Promise<bigint> {
+  const vault = (await sc.pub.readContract({
+    address: sc.diamond,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getUserVaultAddress',
+    args: [sc.address(who)],
+  } as never)) as Address;
+  return /^0x0{40}$/i.test(vault) ? 0n : balanceOf(sc, token, vault);
+}
+
 /**
- * What `who`'s claim on `sc` would pay to the wallet, by running the claim
+ * What `who`'s claim on `sc` would pay into its vault, by running the claim
  * itself in a frame that always reverts, or null when the claim would revert
  * for a reason of its own (nothing to claim, among them).
  */
@@ -29,7 +43,7 @@ export async function simulatedClaim(sc: MeshChain, who: Party): Promise<bigint 
       address: sc.diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'simulateClaimInteractionRewards',
-      args: [sc.address(who), TO_WALLET],
+      args: [sc.address(who), TO_VAULT],
     } as never);
   } catch (err) {
     const reverted = err instanceof BaseError ? err.walk((e) => e instanceof ContractFunctionRevertedError) : null;
@@ -42,19 +56,19 @@ export async function simulatedClaim(sc: MeshChain, who: Party): Promise<bigint 
 }
 
 /**
- * Claim `who`'s rewards on `sc` (a mirror) into the wallet until a claim pays.
+ * Claim `who`'s rewards on `sc` (a mirror) into its vault until a claim pays.
  * A claim that defers opens the staging domain of its entry's slice, and that
  * domain is stepped home by its permissionless step, by another account.
- * Returns what the paying claim moved to the wallet.
+ * Returns what the paying claim moved into the vault.
  */
 export async function claimUntilPaid(sc: MeshChain, who: Party): Promise<bigint> {
   const vpfi = sc.fixture.artifact.vpfiMirror as Address;
   for (let round = 0; round < 4; round++) {
     const simulated = await simulatedClaim(sc, who); // eslint-disable-line no-await-in-loop
-    const before = await balanceOf(sc, vpfi, sc.address(who)); // eslint-disable-line no-await-in-loop
+    const before = await vaultBalance(sc, vpfi, who); // eslint-disable-line no-await-in-loop
     const from = await sc.blockNumber(); // eslint-disable-line no-await-in-loop
-    await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_WALLET]); // eslint-disable-line no-await-in-loop
-    const paid = (await balanceOf(sc, vpfi, sc.address(who))) - before; // eslint-disable-line no-await-in-loop
+    await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_VAULT]); // eslint-disable-line no-await-in-loop
+    const paid = (await vaultBalance(sc, vpfi, who)) - before; // eslint-disable-line no-await-in-loop
     if (paid > 0n) {
       expect(paid).toBe(simulated);
       return paid;
