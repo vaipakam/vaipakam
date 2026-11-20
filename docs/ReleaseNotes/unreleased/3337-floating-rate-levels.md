@@ -1,4 +1,4 @@
-## Thread — Cap and floor levels on the rate reference (PR #<n>)
+## Thread — Cap and floor levels on the rate reference (PR #3833)
 
 The rate reference now carries the cap and floor levels a floating-rate loan
 will be bounded by (#3337 part 2, the levels step; design:
