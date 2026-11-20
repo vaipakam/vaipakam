@@ -91,7 +91,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose,
   const { mode } = useMode();
   const diamond = chain.diamondAddress;
   const account = own.account;
-  // No platform token on this network: every fee is charged at its full rate.
+  // No platform token on this network: no holding discount applies.
   const hold = useHoldDiscount(chain);
   // #3205 — the indexer's moved verdict for a position-bound offer.
   const flows = indexerPositionFlowReader(useWorldRail().indexer, chain.chainId);
@@ -552,8 +552,8 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose,
               <RiskGate chain={chain} own={own} need={riskNeed} source={riskSource} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
             {hold === 'none' ? (
-              <p className="tier-b" data-testid="accept-full-rate">
-                {text('consent.fullRate')}
+              <p className="tier-b" data-testid="accept-no-hold-discount">
+                {text('consent.noHoldDiscount')}
               </p>
             ) : (
               review.consent === false && <p className="tier-b">{text(lender ? 'lendAccept.shareOff' : 'accept.feeOff')}</p>

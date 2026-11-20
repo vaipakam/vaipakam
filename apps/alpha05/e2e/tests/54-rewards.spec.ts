@@ -2,7 +2,7 @@
  * Rewards (matrix RW-01..RW-10): one page for
  * the wallet's rewards and its VPFI. On the fixture, which sets no VPFI
  * token, the page shows the rewards, says the platform token is not
- * installed and every fee is at its full rate, and offers no deposit,
+ * installed and no holding discount applies, and offers no deposit,
  * withdrawal or fee-discount setting. With a VPFI
  * token set (a mintable test token stands in for it), the page reads the
  * wallet's VPFI, says nothing can be withdrawn before a vault exists, and
@@ -42,7 +42,7 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('with no VPFI token set, the page shows rewards, says every fee is at its full rate, and offers no VPFI deposit, withdrawal or discount setting', async ({ launchWallet }) => {
+test('with no VPFI token set, the page shows rewards, says no holding discount applies, and offers no VPFI deposit, withdrawal or discount setting', async ({ launchWallet }) => {
   test.setTimeout(120_000);
   const sc = scenario();
   expect(await sc.read<Hex>('getVPFIToken'), 'the fixture starts with no VPFI token').toBe(ZERO);
@@ -57,14 +57,14 @@ test('with no VPFI token set, the page shows rewards, says every fee is at its f
   const vpfi = page.getByTestId('rewards-vpfi');
   await expect(vpfi).toHaveAttribute('data-vpfi', 'unavailable', { timeout: 60_000 });
   await expect(vpfi).toContainText('The platform token is not installed on this network yet.');
-  await expect(vpfi).toContainText('every fee is charged at its full rate');
+  await expect(vpfi).toContainText('no holding discount applies');
   await expect(page.getByTestId('rewards-vpfi-deposit')).toHaveCount(0);
   await expect(page.getByTestId('rewards-vpfi-withdraw')).toHaveCount(0);
   await expect(page.getByTestId('rewards-tier')).toHaveCount(0);
   // No platform token: no discount setting to offer, and the section says
-  // every fee is at its full rate.
+  // no holding discount applies.
   await expect(page.getByTestId('consent-toggle')).toHaveCount(0);
-  await expect(page.getByTestId('consent-full-rate')).toHaveText('No platform token is installed on this network yet, so every fee is charged at its full rate.');
+  await expect(page.getByTestId('consent-no-hold-discount')).toHaveText('No platform token is installed on this network yet, so no holding discount applies to any fee.');
   await fitsWidth(page);
 });
 

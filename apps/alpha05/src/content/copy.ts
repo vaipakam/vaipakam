@@ -1171,7 +1171,7 @@ export const copy = {
   },
   consent: {
     title: B('Fee discount'),
-    fullRate: B('No platform token is installed on this network yet, so every fee is charged at its full rate.'),
+    noHoldDiscount: B('No platform token is installed on this network yet, so no holding discount applies to any fee.'),
     reading: B('Reading your fee-discount setting…'),
     failed: A('Your fee-discount setting could not be read ({{reason}}). That is not the same as off.'),
     stale: B('The latest re-read failed; this is the last setting read.'),
@@ -2436,7 +2436,7 @@ export const copy = {
       'rewards-vpfi',
     ),
     reading: B('Reading your VPFI on this network…'),
-    unset: A('The platform token is not installed on this network yet. It arrives with the rewards phase, on every network together. Until then no holding discount applies to anyone, every fee is charged at its full rate, and there is nothing to deposit or withdraw here.'),
+    unset: A('The platform token is not installed on this network yet. It arrives with the rewards phase, on every network together. Until then no holding discount applies to anyone, and there is nothing to deposit or withdraw here.'),
     tokenFailed: A('This network’s VPFI token could not be read ({{reason}}), so depositing and withdrawing are not offered until it can be.'),
     failed: A('Your VPFI on this network could not be read ({{reason}}). That is not the same as none.'),
     unread: B('not read'),

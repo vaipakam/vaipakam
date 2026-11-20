@@ -88,7 +88,7 @@ test('the faucet mints a test token, a test NFT and a multi-token, measures each
 });
 
 /** The fee-discount setting exists only where a platform token is installed
- *  (otherwise the section says every fee is at its full rate), so the toggle
+ *  (otherwise the section says no holding discount applies), so the toggle
  *  tests install one: a mintable test token stands in for it. */
 async function installPlatformToken(sc: ReturnType<typeof scenario>): Promise<void> {
   await sc.diamondWrite('admin', 'setVPFIToken', [(sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!]);

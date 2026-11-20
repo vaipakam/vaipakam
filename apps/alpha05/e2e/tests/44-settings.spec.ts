@@ -126,7 +126,7 @@ test('when the browser will not keep the report for the reload, the page stays a
   await fitsWidth(page);
 });
 
-test('with a wallet: the Terms state on this network and the full-rate fee line', async ({ launchWallet }) => {
+test('with a wallet: the Terms state on this network and the no-holding-discount fee line', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
   const { page, account } = await launchWallet('freshLender');
@@ -135,9 +135,9 @@ test('with a wallet: the Terms state on this network and the full-rate fee line'
   const terms = page.getByTestId('settings-terms');
   await expect(terms).toHaveAttribute('data-terms', 'none', { timeout: 30_000 });
   await expect(terms).toContainText('No Terms of Service are in force on');
-  // The fixture installs no platform token, so the fee section says every
-  // fee is at its full rate and offers no discount setting.
-  await expect(page.getByTestId('settings-fees').getByTestId('consent-full-rate')).toBeVisible({ timeout: 30_000 });
+  // The fixture installs no platform token, so the fee section says no
+  // holding discount applies and offers no discount setting.
+  await expect(page.getByTestId('settings-fees').getByTestId('consent-no-hold-discount')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('settings-fees').getByTestId('consent-toggle')).toHaveCount(0);
 
   await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);

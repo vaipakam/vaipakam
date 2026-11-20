@@ -11,11 +11,13 @@ const ZERO = '0x0000000000000000000000000000000000000000';
  *
  * The platform token arrives with the rewards phase (owner decision
  * 2026-11-20), so at launch no network has it installed. While the
- * Diamond reports no token, no wallet holds a discount tier and every fee
- * is charged at its full rate, so a fee screen must say that instead of
- * offering a discount setting or a tier.
+ * Diamond reports no token, no wallet holds a discount tier, so no holding
+ * discount applies to any fee and a fee screen must say that instead of
+ * offering a discount setting or a tier. It must not say every fee is at
+ * its full rate: other reductions, such as a referral's share, still apply
+ * and are in the fee previews.
  *
- * - `none`: the network reports no platform token: full-rate fees.
+ * - `none`: the network reports no platform token: no holding discount.
  * - `installed`: a token is installed; the tier and setting apply.
  * - `unread`: the read failed, or its last refresh did; the screen must not
  *   claim either.
@@ -27,21 +29,34 @@ export type HoldDiscount = 'reading' | 'none' | 'installed' | 'unread';
 export function holdDiscountFrom(read: Pick<ChainRead<Hex>, 'state' | 'data' | 'error'>): HoldDiscount {
   // A refresh that failed leaves the last answer in place with an error. That
   // answer is no longer a confirmed current one (the token may have been
-  // installed meanwhile), so it is stated unread, never as full rate.
+  // installed meanwhile), so it is stated unread, never as no discount.
   if (read.data !== null) return read.error !== null ? 'unread' : read.data.toLowerCase() === ZERO ? 'none' : 'installed';
   return read.state === 'failed' ? 'unread' : 'reading';
 }
 
-/** The one read every fee screen shares (same cache key as the tier card).
+/** The platform token as every screen reads it: the read itself, the
+ *  holding-discount state it supports, and the token's address while one is
+ *  reported. One hook, one cache entry and one set of read options, so no
+ *  screen can treat the same answer differently (a cached answer whose
+ *  refresh failed is `unread` everywhere).
+ *
  *  Installing the token is a configuration change the network can make
  *  while a page is open, so the read refreshes like any live read instead
  *  of being cached for good: a page left open across the installation
- *  stops stating full-rate fees once the token is there. */
-export function useHoldDiscount(chain: SupportedChain | null): HoldDiscount {
+ *  stops stating that no holding discount applies once the token is there. */
+export type PlatformToken = { read: ChainRead<Hex>; hold: HoldDiscount; token: Hex | null };
+
+export function usePlatformToken(chain: SupportedChain | null): PlatformToken {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const read = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), {
     enabled: chain !== null,
     ...(chain ? { chain } : {}),
   });
-  return chain === null ? 'reading' : holdDiscountFrom(read);
+  const token = read.data !== null && read.data.toLowerCase() !== ZERO ? read.data : null;
+  return { read, hold: chain === null ? 'reading' : holdDiscountFrom(read), token };
+}
+
+/** The holding-discount state alone, for screens that need nothing else. */
+export function useHoldDiscount(chain: SupportedChain | null): HoldDiscount {
+  return usePlatformToken(chain).hold;
 }

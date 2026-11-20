@@ -79,10 +79,10 @@ export function FeeDiscountConsent() {
   if (!own || !chain) return null;
   if (hold === 'none') {
     return (
-      <section className="home-section consent" aria-labelledby="consent-title" data-consent="full-rate">
+      <section className="home-section consent" aria-labelledby="consent-title" data-consent="no-hold-discount">
         <h2 id="consent-title">{text('consent.title')}</h2>
-        <p className="tier-b" data-testid="consent-full-rate">
-          {text('consent.fullRate')}
+        <p className="tier-b" data-testid="consent-no-hold-discount">
+          {text('consent.noHoldDiscount')}
         </p>
       </section>
     );

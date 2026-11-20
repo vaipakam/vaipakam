@@ -30,7 +30,7 @@ type Hex = `0x${string}`;
  *
  * Where the network has no platform token installed (every network until
  * the rewards phase), no wallet holds a discount tier, so the section says
- * the fee is charged at its full rate and reads nothing else.
+ * no holding discount applies and reads nothing else.
  */
 export function LenderDiscount({ loanId, chain, lender }: { loanId: bigint; chain: SupportedChain; lender: Hex }) {
   const diamond = chain.diamondAddress as Hex;
@@ -43,8 +43,8 @@ export function LenderDiscount({ loanId, chain, lender }: { loanId: bigint; chai
     <section className="home-section position-facts" aria-labelledby="position-discount" data-testid="position-discount" data-hold={hold}>
       <h2 id="position-discount">{text('position.discountTitle')}</h2>
       {hold === 'none' ? (
-        <p className="tier-b" data-testid="position-discount-full-rate">
-          {text('consent.fullRate')}
+        <p className="tier-b" data-testid="position-discount-no-hold-discount">
+          {text('consent.noHoldDiscount')}
         </p>
       ) : (
         <ReadState read={read}>{(r) => <DiscountFacts r={r} lender={lender} />}</ReadState>
