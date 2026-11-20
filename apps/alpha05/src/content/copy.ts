@@ -376,6 +376,8 @@ export const copy = {
     approvalRefused: A('The position token would refuse this: {{reason}}'),
     approvalLeg: B('Approval removed'),
     approvalLegMissing: B('The transaction did not show the approval being removed.'),
+    approvalMoved: A('The approval now names a different address from this review, so nothing was sent. Open the review again.'),
+    approvalGone: A('This token no longer carries a transfer approval, so there is nothing to remove.'),
     defaultRefusedPaused: A('The grace period is over, but the protocol is paused, so no default can start until it resumes.'),
     defaultRefusedSequencer: A('The grace period is over, but this network’s sequencer is down or recovering, so no default can start until it is healthy again.'),
     defaultRefused: A('The grace period is over, but the protocol refuses a default for now: the lender does not meet a check this network requires to start one.'),

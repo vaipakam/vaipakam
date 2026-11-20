@@ -15,6 +15,7 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
+import { readLiveHolderOrNull } from '../positions/positionNft';
 import { askAfter } from '../tx/simulate';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -128,6 +129,19 @@ export function RepayLoan({ loanId, chain, own, meta, onClose, namedHolder }: Re
         const after = await putBack(asset, prior, amount, since);
         throw new StatedRefusal({ code: 'RepayStopped', reason: `${reason} ${after.sentence}`, reopensAt: null, remedy: null });
       };
+
+      // #3769 — a payer who does not hold the borrower position pays only for
+      // the holder the page named. The approval can wait for hours (a
+      // multi-signature wallet), so the holder is read again here, at or
+      // after the approval's block and right before the repayment prompt; a
+      // holder that moved stops the payment and puts the approval back.
+      if (namedHolder !== undefined) {
+        const holder = await askAfter(own, since, (c, blockNumber) => readLiveHolderOrNull(c, diamond, r.loan.borrowerTokenId, blockNumber));
+        if (holder.kind === 'unreadable') return stop(format('flow.unreadable', { reason: holder.reason }));
+        if (holder.kind === 'reverted') return stop(format('flow.unreadable', { reason: refusalFromError(holder.error).reason }));
+        if (payerHolderBlocker({ ...r, borrowerHolder: holder.value }, account, namedHolder) !== null)
+          return stop(holder.value === null ? text('payer.holderChangedUnread') : format('payer.holderChanged', { holder: holder.value }));
+      }
 
       // The dry run: the protocol's own verdict on this repayment, now.
       const dry = await askAfter(own, since, (c, blockNumber) => c.simulateContract({ address: diamond, abi: REPAY_ABI, functionName: 'repayLoan', args: [loanId], account, blockNumber }));

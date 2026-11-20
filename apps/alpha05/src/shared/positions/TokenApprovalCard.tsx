@@ -21,7 +21,7 @@ import { holdsFlow, useStoredValue, useTxEntry } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
-import { clearTokenApprovalCall, positionNftForDiamond } from './positionNft';
+import { clearTokenApprovalCall, positionNftForDiamond, readTokenApprovalOrNull } from './positionNft';
 
 type Hex = `0x${string}`;
 
@@ -89,6 +89,16 @@ export function TokenApprovalCard({
   const identity = reviewIdentity(own);
   const call = clearTokenApprovalCall(diamond, tokenId);
   const ask = () => askThrough(own, (cl) => cl.simulateContract({ ...call, account }));
+  /** Codex #3806 — the address the token is approved for now, against the
+   *  one this review names: clearing succeeds whatever it names, so the dry
+   *  run alone cannot tell a review of A from a removal of B. */
+  const approvalNow = async (): Promise<{ kind: 'same' } | { kind: 'moved'; now: Hex | null } | { kind: 'unreadable'; reason: string }> => {
+    const read = await askThrough(own, (cl) => readTokenApprovalOrNull(cl, diamond, tokenId));
+    if (read.kind === 'unreadable') return read;
+    if (read.kind === 'reverted') return { kind: 'unreadable', reason: refusalFromError(read.error).reason };
+    const now = read.value === null || read.value === 'none' ? null : read.value;
+    return now !== null && now.toLowerCase() === to.toLowerCase() ? { kind: 'same' } : { kind: 'moved', now };
+  };
 
   const tx = useTrackedTx({
     key,
@@ -96,6 +106,9 @@ export function TokenApprovalCard({
     account,
     sources: own.sources,
     send: async () => {
+      const held = await approvalNow();
+      if (held.kind === 'unreadable') throw new StatedRefusal({ code: 'Unreadable', reason: format('flow.unreadable', { reason: held.reason }), reopensAt: null, remedy: null });
+      if (held.kind === 'moved') throw new StatedRefusal({ code: 'ApprovalMoved', reason: text('position.approvalMoved'), reopensAt: null, remedy: null });
       const asked = await ask();
       if (asked.kind === 'reverted') {
         const r = refusalFromError(asked.error);
@@ -131,6 +144,15 @@ export function TokenApprovalCard({
     };
     const recheck = async (): Promise<Recheck> => {
       try {
+        const held = await approvalNow();
+        if (held.kind === 'unreadable') return held;
+        if (held.kind === 'moved') {
+          // The review names the approval as it is now, or says it is gone.
+          if (held.now === null) return { kind: 'refused', refusal: { code: 'ApprovalGone', reason: text('position.approvalGone'), reopensAt: null, remedy: null } };
+          setOpenedTo(held.now);
+          setReadAt(Date.now());
+          return { kind: 'changed', what: text('position.approvalRowFrom') };
+        }
         const asked = await ask();
         if (asked.kind === 'reverted') return { kind: 'refused', refusal: refusalFromError(asked.error) };
         if (asked.kind === 'unreadable') return { kind: 'unreadable', reason: asked.reason };
