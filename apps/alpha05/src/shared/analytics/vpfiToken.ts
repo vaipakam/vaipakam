@@ -10,6 +10,7 @@
  * facts say the cap belongs to the home network, never zero.
  */
 import { parseAbi, type PublicClient } from 'viem';
+import { cleanTokenLabel } from '@vaipakam/lib/tokenLabel';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { SUPPORTED_CHAINS, type SupportedChain } from '../../chain/chains';
 import { readVpfiHome } from '../rewards/vpfiFacts';
@@ -80,8 +81,9 @@ export async function readVpfiToken(c: PublicClient, chain: SupportedChain, bloc
   const at = { address: token, abi: TOKEN, blockNumber } as const;
   const [home, name, symbol, decimals, supply, owner, paused] = await Promise.all([
     readVpfiHome(c, chain.diamondAddress, blockNumber).catch(() => null),
-    fact(c.readContract({ ...at, functionName: 'name' })),
-    fact(c.readContract({ ...at, functionName: 'symbol' })),
+    // The shared label rule, as for every token the app names.
+    fact(c.readContract({ ...at, functionName: 'name' }).then((n) => cleanTokenLabel(n, 'name'))),
+    fact(c.readContract({ ...at, functionName: 'symbol' }).then((n) => cleanTokenLabel(n, 'symbol'))),
     fact(c.readContract({ ...at, functionName: 'decimals' }).then(Number)),
     fact(c.readContract({ ...at, functionName: 'totalSupply' })),
     fact(c.readContract({ ...at, functionName: 'owner' })),
