@@ -1,0 +1,334 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "reference_",
+        "type": "address",
+        "internalType": "contract IRateReference"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "DAY_WINDOW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "LONG_TERM_WINDOW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MONTH_WINDOW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "REFERENCE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IRateReference"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "band",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "b",
+        "type": "tuple",
+        "internalType": "struct IRateReference.Band",
+        "components": [
+          {
+            "name": "available",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "termAverage1e18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outside",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "above",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "distanceBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "linkedRate",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum IRateReference.LinkKind"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rate1e18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "enum IRateReference.LinkRefusal"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "status",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "st",
+        "type": "tuple",
+        "internalType": "struct IRateReference.Status",
+        "components": [
+          {
+            "name": "seriesId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "index",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "held",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lastUpdate",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "holding",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "holdingSince",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "stale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "unusual",
+            "type": "uint8",
+            "internalType": "enum IRateReference.Unusual"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "termAverage",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ta",
+        "type": "tuple",
+        "internalType": "struct IRateReference.TermAverage",
+        "components": [
+          {
+            "name": "available",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "rate1e18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "average24h",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "averageLong",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "longWindow",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "weightBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "unusual",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum IRateReference.Unusual"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "weightBps",
+    "inputs": [
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "windowForTerm",
+    "inputs": [
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  }
+]
