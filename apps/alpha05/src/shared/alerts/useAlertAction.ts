@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { useConfig } from 'wagmi';
-import { newRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
+import { alertRequestUnused, newRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import { signMessageFor } from '../tx/walletGuard';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
 import { alertBody, alertMessage, alertRoute, readAlertAnswer, type AlertAction, type AlertAnswer } from './alerts';
@@ -145,9 +145,10 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
   const busy = entry.run.phase === 'signing' || entry.run.phase === 'sending';
 
   /** Ask the wallet to sign `p` and send it. `p` is kept before the wallet
-   *  is asked and dropped once the service answers, except when it could
-   *  not check the signature yet (nothing recorded the request, so the same
-   *  one may be sent again). A declined signature drops it; any other
+   *  is asked and dropped once the service answers, except when the service
+   *  refused it before recording it (`alertRequestUnused`: a busy or
+   *  unavailable limiter, or a check that could not run), so the same one
+   *  may be sent again. A declined signature drops it; any other
    *  failure (a wallet that stopped waiting, a network error) keeps it, to
    *  be finished later. */
   const send = useCallback(
@@ -174,7 +175,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       try {
         const res = await client.request(route.method, route.path, alertBody(action, wallet, chainId, p.issuedAt, signature, p.requestKey));
         const answer = readAlertAnswer(action, res.status, res.data);
-        if (answer.ok || answer.problem !== 'verify-down') drop();
+        if (!alertRequestUnused(res.status, (res.data as { error?: unknown } | null)?.error)) drop();
         const at = Math.floor(Date.now() / 1000);
         recordAnswer(chainId, wallet, action, answer, at);
         if (answer.ok && answer.action === 'unlink' && answer.scope === 'wallet') dropWalletCodes(wallet);

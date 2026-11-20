@@ -445,7 +445,15 @@ export async function saveAlertPrefs(
         ...(change.pushAlerts ? { push_channel: 'subscribed' } : {}),
       },
       (issuedAt, keyHash) => buildAlertSettingsMessage(wallet, chainId, change, issuedAt, keyHash),
-      { prefs, dueDateChanged: !!opts.dueDateChanged, bandsChanged: !!opts.bandsChanged },
+      // `pushRefused` rides with the kept request (#3836): the save sent
+      // again without the Push opt-in is one the agent already refused Push
+      // for, so finishing it later must report Push as not stored.
+      {
+        prefs,
+        dueDateChanged: !!opts.dueDateChanged,
+        bandsChanged: !!opts.bandsChanged,
+        pushRefused: !withPush && prefs.pushEnabled,
+      },
     );
     return signAndSendAlertRequest(req, opts.signMessage, post);
   };
@@ -458,7 +466,9 @@ export async function saveAlertPrefs(
   // from before this change reads it as a failure rather than as "Push is
   // on". This client knows the answer: Push is not stored, and the same
   // save is sent again without the opt-in so everything else in it lands.
-  let pushRefused = false;
+  let pushRefused =
+    opts.resume?.kind === 'save-settings' &&
+    (opts.resume.context as { pushRefused?: unknown } | undefined)?.pushRefused === true;
   if (res.status === 409 && res.data?.error === 'push-unavailable') {
     pushRefused = true;
     res = await attempt(false);

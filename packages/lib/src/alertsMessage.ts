@@ -80,6 +80,33 @@ export function requestKeyHash(requestKey: `0x${string}`): `0x${string}` {
   return keccak256(requestKey);
 }
 
+/**
+ * #3836 — whether the alert service refused a signed request BEFORE it
+ * recorded it as used, so the same signed request may be sent again and the
+ * browser must keep it. One rule for both apps.
+ *
+ * Those answers are the ones given before the one-time record is written:
+ * the admission budget taken ahead of every limited route (429
+ * `rate-limited`, or 503 when the limiter is missing or could not count),
+ * the signature check's own budget (429 from the verification gate), and a
+ * signature check that could not run (503 `verification-unavailable`). Every
+ * other answer, an acceptance included, means the request was used or can
+ * never be, so it is dropped. The service names the one limit it applies
+ * after recording a request (the test alert's cooldown) differently, so a
+ * `rate-limited` answer is never that.
+ */
+export function alertRequestUnused(status: number, error: unknown): boolean {
+  if (status === 429) return error === 'rate-limited' || error === 'verification_failed';
+  if (status === 503) {
+    return (
+      error === 'verification-unavailable' ||
+      error === 'rate-limit-unavailable' ||
+      error === 'rate-limit-binding-missing'
+    );
+  }
+  return false;
+}
+
 /** The lines every alert message ends with: who, where, when, and the
  *  request key's hash. */
 function trailer(wallet: string, chainId: number, issuedAt: number, keyHash: string): string[] {

@@ -4,7 +4,7 @@
  * wallet is asked until the alert service answers, so a wallet whose owners
  * take days to approve can finish it later, and only this browser can.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserRejectedRequestError } from 'viem';
 import { buildTelegramLinkMessage, isRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import {
@@ -16,6 +16,7 @@ import {
   signAndSendAlertRequest,
   type AlertServiceAnswer,
 } from './alertRequest';
+import { DEFAULT_PREFS, saveAlertPrefs } from './alerts';
 
 const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
 const CHAIN = 84532;
@@ -92,16 +93,25 @@ describe('signAndSendAlertRequest', () => {
     expect(loadPendingAlertRequest(CHAIN, WALLET, NOW)).toBeNull();
   });
 
-  it('keeps it only when the service could not check it yet, which records nothing', async () => {
+  it('keeps it only when the service refused it before recording it', async () => {
     const req = linkRequest();
-    await signAndSendAlertRequest(req, async () => '0xsig', async () => answer(503, 'verification-unavailable'));
-    expect(loadPendingAlertRequest(CHAIN, WALLET, NOW)).not.toBeNull();
+    for (const [status, error] of [
+      [503, 'verification-unavailable'],
+      [429, 'rate-limited'],
+      [503, 'rate-limit-unavailable'],
+      [503, 'rate-limit-binding-missing'],
+      [429, 'verification_failed'],
+    ] as const) {
+      await signAndSendAlertRequest(req, async () => '0xsig', async () => answer(status, error));
+      expect(loadPendingAlertRequest(CHAIN, WALLET, NOW), `${status} ${error}`).not.toBeNull();
+    }
     // Any other answer, refusals included, is final for this request.
     for (const [status, error] of [
       [409, 'request-superseded'],
       [409, 'request-already-used'],
       [503, 'link-unavailable'],
       [401, 'verification_failed'],
+      [429, 'test-alert-cooldown'],
     ] as const) {
       await signAndSendAlertRequest(req, async () => '0xsig', async () => answer(status, error));
       expect(loadPendingAlertRequest(CHAIN, WALLET, NOW)).toBeNull();
@@ -175,5 +185,45 @@ describe('the data-rights export (#3836)', () => {
     expect(exported).toContain(JSON.stringify(WITHHELD_REQUEST_KEY).slice(1, -1));
     // The browser's own copy is untouched: it can still finish the request.
     expect(loadPendingAlertRequest(CHAIN, WALLET, NOW)?.requestKey).toBe(req.requestKey);
+  });
+});
+
+describe('a kept save the agent refused Push for (#3836)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('still reports Push as not stored when it is finished later', async () => {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const answers = [
+      new Response(JSON.stringify({ error: 'push-unavailable' }), { status: 409 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => answers.shift()!));
+    const prefs = { ...DEFAULT_PREFS, pushEnabled: true };
+    let calls = 0;
+    // The first save is answered "Push unavailable"; the wallet then stops
+    // waiting on the save sent again without it, so that one is kept.
+    await expect(
+      saveAlertPrefs(WALLET as `0x${string}`, CHAIN, prefs, {
+        signMessage: async () => {
+          calls += 1;
+          if (calls === 2) throw new Error('the wallet stopped waiting');
+          return '0xsig';
+        },
+      }),
+    ).rejects.toThrow(/stopped waiting/);
+    const kept = loadPendingAlertRequest(CHAIN, WALLET);
+    expect(kept?.kind).toBe('save-settings');
+    expect(kept?.body.push_channel).toBeUndefined();
+
+    // Finished later, in a fresh call: the agent stores the rest, and Push
+    // is still reported as refused.
+    const outcome = await saveAlertPrefs(WALLET as `0x${string}`, CHAIN, prefs, {
+      signMessage: async () => '0xsig',
+      resume: kept!,
+    });
+    expect(outcome).toBe('unavailable');
   });
 });

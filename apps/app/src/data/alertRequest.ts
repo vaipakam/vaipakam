@@ -23,6 +23,7 @@
  */
 import {
   LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
+  alertRequestUnused,
   newRequestKey,
   requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
@@ -178,10 +179,10 @@ export interface AlertServiceAnswer {
  * Ask the wallet to sign `req` and send it. The request is kept in this
  * browser before the wallet is asked, so a page closed while the owners
  * approve can still finish it. It is dropped once the service answers,
- * except when the answer is that it could not check the signature yet
- * (`verification-unavailable`: nothing recorded the request, so the same
- * signed request may be sent again), and when the owner rejects it in the
- * wallet.
+ * except when the service refused it before recording it (a busy or
+ * unavailable limiter, or a signature check that could not run:
+ * `alertRequestUnused`), so the same signed request may be sent again. It
+ * is also dropped when the owner rejects it in the wallet.
  * Any other failure (a wallet that gave up waiting, a network error) keeps
  * it, to be finished later.
  */
@@ -204,7 +205,7 @@ export async function signAndSendAlertRequest(
     signature,
     requestKey: req.requestKey,
   });
-  if (!(res.status === 503 && res.data?.error === 'verification-unavailable')) {
+  if (!alertRequestUnused(res.status, res.data?.error)) {
     clearPendingAlertRequest(req.chainId, req.wallet, req.requestKey);
   }
   return res;

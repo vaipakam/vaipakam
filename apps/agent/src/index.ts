@@ -1051,7 +1051,10 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     TEST_ALERT_COOLDOWN_SECONDS,
   );
   if (!reserved) {
-    return json({ error: 'rate-limited' }, 429, corsOrigin);
+    // Its own name (#3836): this limit applies after the request was
+    // recorded as used, unlike every `rate-limited` answer, so the app
+    // drops the request rather than keeping it to send again.
+    return json({ error: 'test-alert-cooldown' }, 429, corsOrigin);
   }
   // `sendMessage` returns whether Telegram accepted the send. A silent
   // failure here would let the frontend mark the wallet "verified" when
