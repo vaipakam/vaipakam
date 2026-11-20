@@ -55,7 +55,6 @@ import {
   OfferMatchFacetABI,
   OfferMatchIntentFacetABI,
   RiskAccessFacetABI,
-  RiskPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
   CollectionOfferFacetABI,
@@ -108,10 +107,15 @@ import { stepPublisher } from './stepStatus';
 // relevant facet ABIs so viem can resolve every selector against the
 // Diamond.
 // `getActiveLenderIntents` lives on LenderIntentFacet (moved off MetricsFacet
-// in #3618); `previewIntent` on
-// RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchIntentFacet (split out of
+// in #3618); `matchIntent` on OfferMatchIntentFacet (split out of
 // OfferMatchFacet in the #1219 host split) — added for the #625
 // WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
+// `previewIntent` is taken from the combined Diamond ABI rather than from its
+// host facet's ABI: its host has moved twice (RiskAccessFacet, then
+// RiskPreviewFacet in #1104, then IntentPreviewFacet in #3843), and a host's
+// ABI that no longer carries it left the intent-fill confirmation unable to
+// encode the call at runtime, hidden by the `as Abi` casts.
+export const PREVIEW_INTENT_ABI: Abi = (DIAMOND_ABI_VIEM as Abi).filter((x) => x.type === 'function' && x.name === 'previewIntent');
 const MATCHER_ABI: Abi = [
   ...(MetricsFacetABI as Abi),
   ...(OfferCreateFacetABI as Abi),
@@ -120,7 +124,7 @@ const MATCHER_ABI: Abi = [
   ...(OfferMatchFacetABI as Abi),
   ...(OfferMatchIntentFacetABI as Abi), // matchIntent — its own host since #1219
   ...(RiskAccessFacetABI as Abi),
-  ...(RiskPreviewFacetABI as Abi), // previewIntent — split off RiskAccessFacet (#1104)
+  ...PREVIEW_INTENT_ABI,
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
   ...(LenderIntentFacetABI as Abi), // rollIntentLoan — #625 WI-2c part 2b
   ...(CollectionOfferFacetABI as Abi), // getCollectionOffer / matchCollectionOffer — #3688
