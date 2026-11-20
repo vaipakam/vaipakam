@@ -47,6 +47,7 @@ So a borrower with eight loans funds eight payment reserves, sets eight plans, a
 - By `borrowInstant`, for the loans it opens, unless the borrower names an existing borrowing (section 8). The settings the call carries (the renewal limits, the plan for the due date) become the new borrowing's.
 - By a rate auction's settle, for the loans of that auction. The first loan settled opens it and the rest join it.
 - By the first fill of a request that carries renewal limits and is filled by a slot (`InstantMarketDesign.md` 6.1, last paragraph). The limits the request carried become the new borrowing's settings.
+- A request may instead name an existing borrowing its creator owns (`BorrowInPartsDesign.md` 3.1, added 2026-11-20). It then carries no settings of its own and opens no borrowing: each loan it opens joins the one it names.
 - By the holder, for one loan that has none, when they first fund a reserve or set anything of section 6. The funding and setting entries take a borrowing, or a loan that has none, and open the borrowing in the same call.
 
 A loan in no borrowing has no reserve and no settings. Nothing is lost by that: a loan needs neither until its holder wants one.
@@ -132,6 +133,8 @@ The holder's own actions may name loans, because the holder may choose. A step t
 - **The cap** is checked first, against the stored list after a prune (section 4).
 - Each new loan is an ordinary new loan: its own term from its own opening, its own collateral, its own fee. Fees stay as decided on 2026-11-17 for every loan, with no fee by kind or by route.
 - **"Borrowed X of Y"** is an app figure. Y is what the borrower said they wanted; the contracts hold no target and promise none.
+
+**A request may name the borrowing too** (added 2026-11-20, `BorrowInPartsDesign.md` 3.1). Each fill of such a request is an add, by these same rules, checked when the request is posted and again at each fill: the settings version the request recorded, the borrowing's limit against the request's stated rate, and the cap after a prune, counted at posting against the most loans the request can open. A fill that fails one is refused with its reason and the request stays open. This is how an instant borrow leaves what did not fit in one transaction as a request whose loans land in the same borrowing.
 
 A rate auction's loans must fit the cap. That is an item for its builder (section 16).
 
