@@ -3,6 +3,9 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -199,6 +202,28 @@ contract OfferParallelSaleFacetTest is SetupTest {
             call.ctx.collateralAsset, address(collateralNFT),
             "executor collateralAsset mismatch"
         );
+    }
+
+    /// #3744 — a pre-loan sale's proceeds land as FREE balance in the
+    /// holder's vault: the depository ledger rises with the tracked balance,
+    /// so the holder can withdraw them (the only exit).
+    function test_preLoanSaleProceeds_creditTheHoldersFreeBalance() public {
+        _scaffoldDefaultOffer();
+        address executor = makeAddr("offerSaleExecutor");
+        TestMutatorFacet(address(diamond)).setOfferPrepayListingExecutorRaw(uint96(OFFER_ID), executor);
+        uint256 proceeds = 3 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), proceeds);
+        uint256 before = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrowerHolder, mockERC20, 0);
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).recordOfferSaleProceeds(uint96(OFFER_ID), mockERC20, proceeds);
+
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrowerHolder, mockERC20, 0) - before,
+            proceeds,
+            "proceeds are the holder's free balance"
+        );
+        assertEq(IERC20(mockERC20).balanceOf(borrowerVaultAddr), proceeds, "proceeds in the holder's vault");
     }
 
     // ─── 2. Precondition revert paths ───────────────────────────────────

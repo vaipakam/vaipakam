@@ -454,9 +454,11 @@ contract OfferFillHolderTest is SetupTest {
         AdminFacet(address(diamond)).setKYCEnforcement(true);
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
         ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
+        assertEq(_previewCode(id), uint8(OfferAcceptFacet.AcceptError.KYCRequired), "preview names the holder's tier");
         _acceptExpecting(id, abi.encodeWithSelector(IVaipakamErrors.KYCRequired.selector));
 
         ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+        assertEq(_previewCode(id), 0, "preview clears once the holder's tier does");
         _acceptRaw(id);
     }
 

@@ -9002,6 +9002,11 @@ library LibVaipakam {
         ///      (`LibFeeEntitlement.offerFullConsented`); a transfer lapses it.
         ///      Appended — append-only.
         mapping(uint256 => address) offerFullTariffBy;
+        /// @dev #3744 — the offer token's transfer count when
+        ///      `offerFullTariffBy` gave the consent. The consent counts only
+        ///      while the count is unchanged, so a round trip (away and back)
+        ///      lapses it too. Appended — append-only.
+        mapping(uint256 => uint256) offerFullTariffMoves;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

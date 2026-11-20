@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -495,7 +496,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         offer.creatorFull = creatorFull;
         offer.creatorMaxCStar = maxCStar;
         offer.creatorAllowFullDowngrade = allowDowngrade;
-        s.offerFullTariffBy[offerId] = creatorFull ? msg.sender : address(0);
+        LibFeeEntitlement.recordFullConsent(offerId, creatorFull ? msg.sender : address(0));
         emit OfferCreatorFullTariffSet(
             offerId,
             creatorFull,

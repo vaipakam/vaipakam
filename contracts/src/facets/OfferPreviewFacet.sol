@@ -393,6 +393,13 @@ contract OfferPreviewFacet {
                         acceptor,
                         _valueNumeraire
                     )
+                    // #3744 — the holder of the offer's token, as the accept
+                    // checks it.
+                    || (offerHolder != offer.creator
+                        && !ProfileFacet(address(this)).meetsKYCRequirement(
+                            offerHolder,
+                            _valueNumeraire
+                        ))
             ) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.KYCRequired;
                 return preview;

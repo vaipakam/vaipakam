@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -311,7 +312,7 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         // its maker; for a collection slice it is the parent's holder, who gave
         // the parent's consent and receives the slice's token.
         address by = LibOfferRefund.sliceTokenTo(o.creator);
-        LibVaipakam.storageSlot().offerFullTariffBy[offerId] = by;
+        LibFeeEntitlement.recordFullConsent(offerId, by);
         emit OfferCreatorFullTariffSet(offerId, true, full.maxCStar, full.allowDowngrade);
         emit OfferFullTariffConsentBy(offerId, by);
     }

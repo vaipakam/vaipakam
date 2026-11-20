@@ -1043,6 +1043,46 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
     }
 
+    /// #3744 — a holder's Full-tariff consent lapses when the offer token
+    /// moves, and a round trip (away and back) does not revive it: the fill
+    /// then runs on the standard tariff and draws no VPFI from the vault.
+    function test_3744_fullConsent_roundTrip_lapses() public {
+        _config().setFeeEntitlementEnabled(true);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(offerId, true, c, /*allowDowngrade=*/ false);
+
+        uint256 token = OfferCancelFacet(address(diamond)).getOffer(offerId).positionTokenId;
+        address away = makeAddr("roundTripAway");
+        LibTestPositionNFT.move(address(diamond), token, away);
+        LibTestPositionNFT.move(address(diamond), token, lender);
+
+        address lVault = _vault(lender);
+        uint256 before = vpfiToken.balanceOf(lVault);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full, "round trip lapsed the consent");
+        assertEq(fe.lenderTariffPaid, 0, "no tariff charged");
+        assertEq(vpfiToken.balanceOf(lVault), before, "no VPFI drawn from the lender's vault");
+    }
+
+    /// Control for the test above: the same consent with the token unmoved
+    /// still charges Full.
+    function test_3744_fullConsent_unmoved_charges() public {
+        _config().setFeeEntitlementEnabled(true);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(offerId, true, c, /*allowDowngrade=*/ false);
+
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint8(fe.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.Full), "unmoved consent charges Full");
+    }
+
     /// The substitution must not leak: a lender who did NOT authorize Full on
     /// their offer stays non-Full through a match. Without this, "read the
     /// lender offer" could be satisfied by reading the wrong offer, or by

@@ -6,6 +6,7 @@ import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -469,6 +470,10 @@ contract PrepayListingFacet is
         // received.
         amount = LibDelivery.pushMeasured(principalAsset, vaultAddr, amount);
         LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
+        // Free balance, as every holder payout is (the policy's holder
+        // classes credit the same ledger): it leaves only through the
+        // holder's own withdrawal.
+        LibDepositoryLedger.credit(borrower, principalAsset, 0, amount);
         emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
     }
 
