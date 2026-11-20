@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
@@ -231,7 +232,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         // stays on the frozen funds that move on to the buyer.
         if (reservedNet > net) reservedNet = net;
         LibEncumbrance.releaseActiveHeldPart(loanId, heldAt, reservedNet);
-        s.heldForLender[loanId] = held - net;
+        LibLenderSide.subHeld(s, loanId, net);
         address asset = s.loans[loanId].principalAsset;
         uint256 credited = _payAuthorized(s, heldAt, seller, loanId, asset, net);
         _setAsideForSeller(s, loanId, seller, asset, credited);
@@ -313,10 +314,9 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.SellerInterestClaim[] memory claims = s.sellerInterestClaims[loanId];
         if (claims.length == 0) return 0;
-        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         LibVaipakam.Loan storage loan = s.loans[loanId];
         uint256[] memory pays = _rank(
-            s, loan, claims, claim.asset, _rowRecovery(claim), LibVaipakam.effectiveTreasuryFeeBps(loan)
+            s, loan, claims, s.lenderClaims[loanId].asset, _rowRecovery(s, loanId), LibVaipakam.effectiveTreasuryFeeBps(loan)
         );
         for (uint256 i; i < pays.length; ++i) share += pays[i];
     }
@@ -358,14 +358,14 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
             );
             if (!released) return;
         }
-        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
-        _splitAndPay(s, loanId, loan, loan.lender, claim.asset, _rowRecovery(claim), true);
+        _splitAndPay(s, loanId, loan, loan.lender, s.lenderClaims[loanId].asset, _rowRecovery(s, loanId), true);
     }
 
     /// @dev What a lender claim row offers the split. A row already paid, not
     ///      in an ERC-20, or never written has nothing to split: the seller
     ///      claims close unpaid (recovery 0).
-    function _rowRecovery(LibVaipakam.ClaimInfo storage claim) private view returns (uint256) {
+    function _rowRecovery(LibVaipakam.Storage storage s, uint256 loanId) private view returns (uint256) {
+        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         return claim.claimed || claim.asset == address(0) ||
             claim.assetType != LibVaipakam.AssetType.ERC20 ? 0 : claim.amount;
     }
@@ -392,7 +392,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         for (uint256 i; i < pays.length; ++i) paid += pays[i];
         if (fromClaimRow && paid > 0) {
             LibEncumbrance.reduceLenderProceeds(loanId, fromUser, asset, paid);
-            s.lenderClaims[loanId].amount -= paid;
+            LibLenderSide.subFinal(s, loanId, paid);
         }
         for (uint256 i; i < claims.length; ++i) {
             _closeOne(s, loanId, loan, fromUser, asset, claims[i], pays[i], feeBps);

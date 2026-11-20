@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -26,6 +27,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 
 /**
  * @title RiskMatchLiquidationFacet
@@ -1004,14 +1006,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // holder claims them via `claimAsLender` (NFT-owner-gated,
                 // sanctions-checked), which also burns the lender NFT and
                 // settles the loan once the borrower side clears.
-                LibVaipakam.storageSlot().lenderClaims[loan.id] = LibVaipakam.ClaimInfo({
+                // #3760 — through the one lender-side writer; the holder's part
+                // is what the row keeps and what is reserved below.
+                lenderProceeds = LibLenderSide.setFinal(LibVaipakam.storageSlot(), loan.id, LibVaipakam.ClaimInfo({
                     asset: loan.principalAsset,
                     amount: lenderProceeds,
                     assetType: LibVaipakam.AssetType.ERC20,
                     tokenId: 0,
                     quantity: 0,
                     claimed: false
-                });
+                }));
                 // #998 S10 (#1006 / #1132) — both holders' fail-closed markers
                 // (lender for the `lenderClaims` row above, borrower for any
                 // `_retainInternalMatchResidual` over-collateralized residual) are
@@ -1040,7 +1044,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // `heldForLender` is the same accumulator Preclose uses; the
                 // adds compose.)
                 LibVaipakam.Storage storage sa = LibVaipakam.storageSlot();
-                sa.heldForLender[loan.id] += lenderProceeds;
+                lenderProceeds = LibLenderSide.addHeld(sa, loan.id, loan.principalAsset, lenderProceeds);
                 // #998 S10 (#1006) — a PARTIAL internal match parks this leg's
                 // lender proceeds into `heldForLender` for a LATER terminal claim.
                 // The match is HF-gated (oracle up here), so record the frozen
@@ -1090,14 +1094,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // `_settleLeg` deposited into `loan.lender`'s vault). This
                 // overwrites any stale at-fallback snapshot lender claim
                 // with the match proceeds owed to the current holder.
-                s.lenderClaims[loan.id] = LibVaipakam.ClaimInfo({
+                lenderProceeds = LibLenderSide.setFinal(s, loan.id, LibVaipakam.ClaimInfo({
                     asset: loan.principalAsset,
                     amount: lenderProceeds,
                     assetType: LibVaipakam.AssetType.ERC20,
                     tokenId: 0,
                     quantity: 0,
                     claimed: false
-                });
+                }));
                 // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
                 // recorded centrally at the `InternalMatched` transition (terminalize).
                 // #585 — VPFI proceeds reservation (see the Active branch).
@@ -1184,7 +1188,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // BOTH the matched principal and the residual. See the Active
             // partial branch.
             if (lenderProceeds > 0) {
-                s.heldForLender[loan.id] += lenderProceeds;
+                lenderProceeds = LibLenderSide.addHeld(s, loan.id, loan.principalAsset, lenderProceeds);
                 // #998 S10 (#1006) — same as the Active partial branch: record the
                 // frozen marker now (match is HF-gated, oracle up) since these
                 // held proceeds are claimed at a LATER terminal that can run during
@@ -1248,7 +1252,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // leg was already stamped at the `heldForLender +=` above.
                 // The matched proceeds already exited; the lender's residual
                 // collateral claim is zero (Diamond consumed).
-                s.lenderClaims[loan.id].amount = 0;
+                LibLenderSide.setFinalAmount(s, loan.id, 0);
                 // Fallback shortfall written off — loan terminal. #1808 — the
                 // owed principal is kept, so a seller claim on this loan still
                 // ranks behind the holder's principal.
@@ -1305,8 +1309,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             snap.lenderPrincipalDue = (snap.lenderPrincipalDue * newCollat) / oldCollat;
             snap.treasuryPrincipalDue = (snap.treasuryPrincipalDue * newCollat) / oldCollat;
 
-            LibVaipakam.ClaimInfo storage lenderClaim = s.lenderClaims[loan.id];
-            lenderClaim.amount = snap.lenderCollateral;
+            LibLenderSide.setFinalAmount(s, loan.id, snap.lenderCollateral);
             LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loan.id];
             borrowerClaim.amount = snap.borrowerCollateral;
             borrowerClaim.claimed = snap.borrowerCollateral == 0;

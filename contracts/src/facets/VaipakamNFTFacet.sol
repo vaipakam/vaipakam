@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibPositionNFT, IPositionNFTCore} from "../libraries/LibPositionNFT.sol";
@@ -179,6 +180,14 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         // Read from the account's own record, not the core's holder lock.
         if (c.enabled && c.locked && LibProtectedAccount.isRecovered(from)) revert TransferFromRecoveredAccount(from, to);
         if (c.retired && to != c.manager) revert TransferFromRetiredAccount(from, to);
+        // #3760 — a lender position under an advance does not move, except
+        // the replacement move of a retired account to its new wallet, which
+        // follows the person and carries the advance with it (§6.5).
+        {
+            uint256 loanId = LibPositionNFT._storage().loanIds[tokenId];
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            if (st.loans[loanId].lenderTokenId == tokenId && !c.retired) LibAdvance.requireUnlocked(st, loanId);
+        }
         _syncTierExclusion(LibPositionNFT._storage().loanIds[tokenId]);
         _stampLenderEntry(tokenId, to, true);
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -556,6 +557,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // (its holder, or the holder's replacement once one retired it).
         LibTerms.requireCurrent(LibProtectedAccount.manager(borrowerNftOwner));
         LibTerms.requireCurrent(LibProtectedAccount.manager(lenderNftOwner));
+
+        // #3760 — never while an advance stands on the lender position: its
+        // repayment rests on the loan's due date (LenderCashOutDesign §6.5).
+        LibAdvance.requireUnlocked(s, loanId);
 
         // ── Both-side cap consent + staleness fence ──────────────────
         LibVaipakam.AutoExtendCaps storage borrowerCaps =

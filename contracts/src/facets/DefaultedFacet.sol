@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -418,14 +419,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 }
 
                 // Record collateral claim for the lender
-                s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+                uint256 lenderKept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                     asset: loan.collateralAsset,
                     amount: loan.collateralAmount,
                     assetType: loan.collateralAssetType,
                     tokenId: loan.collateralTokenId,
                     quantity: loan.collateralQuantity,
                     claimed: false
-                });
+                }));
                 // #592 (ReservationV2 §4.1) — in-kind/illiquid default: the
                 // lender claim asset is the COLLATERAL, not the principal. VPFI
                 // is collateral-eligible, so when the (ERC-20) collateral that
@@ -439,7 +440,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     loan.collateralAsset == s.vpfiToken
                 ) {
                     LibEncumbrance.encumberLenderProceeds(
-                        loanId, loan.lender, loan.collateralAsset, loan.collateralAmount
+                        loanId, loan.lender, loan.collateralAsset, lenderKept
                     );
                 }
 
@@ -539,14 +540,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // recorded centrally at the `Defaulted` transition (terminalizeFromAny).
 
             // Record lender's claimable prepay fees. heldForLender handled by ClaimFacet.
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: prepayToLender,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
             // No borrower claim on NFT rental default
         }
 

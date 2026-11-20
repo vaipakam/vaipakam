@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTerms} from "./LibTerms.sol";
+import {LibAdvance} from "./LibAdvance.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
@@ -42,6 +43,11 @@ library LibLoan {
         // seller is not asked.
         LibTerms.requireCurrent(newLender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #3760 — the stored lender is the advance's custody for its whole
+        // life: no migration while the position is locked. Every route
+        // already refuses at its own entry; this holds it at the one place
+        // the stored lender changes hands.
+        LibAdvance.requireUnlocked(s, loanId);
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.lenderTokenId);
         // Both sale routes have moved the held balance into the buyer's vault

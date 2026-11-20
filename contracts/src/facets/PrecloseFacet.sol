@@ -6,6 +6,7 @@ import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -341,20 +342,20 @@ contract PrecloseFacet is
             );
 
             // Record lender's claimable (principal + interest)
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            uint256 lenderKept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.principalAsset,
                 amount: plan.lenderDue,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
             // #592 — reserve VPFI lender proceeds against the unstake path
             // until the current holder claims (released in ClaimFacet). No-op
             // for non-VPFI principal.
             if (loan.principalAsset == s.vpfiToken) {
                 LibEncumbrance.encumberLenderProceeds(
-                    loanId, loan.lender, loan.principalAsset, plan.lenderDue
+                    loanId, loan.lender, loan.principalAsset, lenderKept
                 );
             }
 
@@ -500,14 +501,14 @@ contract PrecloseFacet is
             );
 
             // Record lender's claimable (rental fees in prepayAsset)
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: lenderShare,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
 
             // Refund unused prepay + buffer to borrower (stays in borrower's vault).
             // Pass-2 A1/D5 (#1189) — order as (prepay + buffer) − totalDue so the
@@ -855,20 +856,19 @@ contract PrecloseFacet is
         // holder's part of it is recorded as held for the lender side, so a
         // later sale pays it to that seller ({LibInterestLedger.holderParked}).
         // The shortfall is the holder's top-up, never a seller's interest.
+        // The holder's gross and net interest, parked below once the held
+        // store has kept its part (#3760: an open advance takes its part
+        // first, and that part counts as paid to the holder).
+        uint256[3] memory parkedInterest; // [gross, net, what arrived]
         if (isErc20) {
             (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
                 s, loan, msg.sender, payAsset, accruedInterest, accruedInterest - treasuryFee
             );
             lenderShare -= sellersNet;
-            LibInterestLedger.holderParked(
-                s,
-                loan,
-                accruedInterest - sellersGross,
-                accruedInterest - treasuryFee - sellersNet,
-                lenderShare,
-                false
-            );
+            parkedInterest[0] = accruedInterest - sellersGross;
+            parkedInterest[1] = accruedInterest - treasuryFee - sellersNet;
         }
+        parkedInterest[2] = lenderShare;
         if (lenderShare > 0) {
             // T-037 — direct borrower → lender's vault via the cross-payer
             // chokepoint. Counter ticks up under the lender even though the
@@ -894,7 +894,9 @@ contract PrecloseFacet is
                 ),
                 bytes4(0)
             );
-            s.heldForLender[loanId] += lenderShare;
+            // #3760 — through the one lender-side writer: an open advance on
+            // the position takes its part first; the rest is held and reserved.
+            lenderShare = LibLenderSide.addHeld(s, loanId, payAsset, lenderShare);
             // #597 — reserve the held-for-lender VPFI against the unstake path
             // (the lender could otherwise `withdrawVPFIFromVault` to drain it
             // before the holder claims). `transferObligationViaOffer` KEEPS
@@ -910,6 +912,11 @@ contract PrecloseFacet is
                     loanId, loan.lender, payAsset, lenderShare
                 );
             }
+        }
+        if (isErc20) {
+            LibInterestLedger.holderParked(
+                s, loan, parkedInterest[0], parkedInterest[1], parkedInterest[2], lenderShare, false
+            );
         }
 
         // ── 1b. NFT rental: settle rent accrued since the last deduction ─────

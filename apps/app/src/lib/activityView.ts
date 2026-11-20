@@ -225,6 +225,19 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // the companion of `LoanExtended` in the same transaction, so it rides
   // inside that row (below the default of 20) and states where the charge
   // came from.
+  // #3760 — lender cash-out: the advance and "Sell now". The booking from a
+  // loan payment and a skipped buyer ride inside their parent rows.
+  AdvanceTaken: { label: 'Advance taken', category: 'loan-modify', priority: 60 },
+  AdvanceRepaidByHolder: { label: 'Advance repaid', category: 'loan-modify', priority: 50 },
+  AdvancePaidFromPosition: { label: 'Advance repaid from a loan payment', category: 'loan-modify', priority: 15 },
+  AdvancePaidOut: { label: 'Advance paid out', category: 'loan-modify', priority: 40 },
+  AdvancePayoutDeferred: { label: 'Advance payout deferred', category: 'loan-modify', priority: 40 },
+  AdvanceClosed: { label: 'Advance closed', category: 'loan-modify', priority: 30 },
+  AdvanceInKindSplit: { label: 'Collateral split with an advance', category: 'loan-default', priority: 30 },
+  AdvanceSlotSet: { label: 'Advance consent updated', category: 'other', priority: 40 },
+  AdvancesEnabledSet: { label: 'Advances switched on or off', category: 'other', priority: 20 },
+  SellNowFilled: { label: 'Position sold', category: 'loan-modify', priority: 75 },
+  SellNowSourceSkipped: { label: 'Buyer skipped', category: 'loan-modify', priority: 15 },
   LoanReserveFunded: { label: 'Loan reserve funded', category: 'loan-modify', priority: 40 },
   LoanReserveWithdrawn: { label: 'Loan reserve withdrawn', category: 'loan-modify', priority: 40 },
   ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },

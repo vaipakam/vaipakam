@@ -492,7 +492,9 @@ contract BackstopAbsorbTest is SetupTest {
                 lenderPrincipalDue: due,
                 treasuryPrincipalDue: tDue,
                 active: active,
-                retryAttempted: retried
+                retryAttempted: retried,
+                rateNum: 0,
+                rateDen: 0
             })
         );
 
@@ -520,7 +522,9 @@ contract BackstopAbsorbTest is SetupTest {
                 lenderPrincipalDue: 0,
                 treasuryPrincipalDue: tDue,
                 active: active,
-                retryAttempted: retried
+                retryAttempted: retried,
+                rateNum: 0,
+                rateDen: 0
             })
         );
         (uint256 cashBefore, uint256 exposureBefore, ) =

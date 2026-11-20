@@ -11,6 +11,7 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
+import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "./EarlyWithdrawalDirectFacet.sol";
@@ -176,6 +177,14 @@ contract SaleExitVerdictFacet {
         if (loan.status != LibVaipakam.LoanStatus.Active || holder == address(0)) {
             _add(r, abi.encodeWithSelector(IVaipakamErrors.LoanNotActive.selector), 0);
             return _trim(r);
+        }
+
+        // #3760 — an advance against the position locks it: no sale, listing
+        // or takeover until the advance is repaid and its money has reached
+        // the slot owner. It lifts only by repayment (no known time).
+        if (LibAdvance.locked(s, loanId)) {
+            _add(r, abi.encodeWithSelector(LibAdvance.AdvanceLocksPosition.selector, loanId), 0);
+            if (_full(r)) return _trim(r);
         }
 
         // Protected account mode — a locked or retired holder's position does

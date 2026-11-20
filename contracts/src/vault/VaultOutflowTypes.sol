@@ -96,6 +96,16 @@ library VaultOutflowTypes {
      *           Diamond derives the inviter from that user's own binding and
      *           refuses one whose period has ended. A protected inviter is
      *           paid into its vault, as for every wallet payout.
+     *         - AdvanceToHolder (#3760): an advance on a loan, from the Auto-lend
+     *           slot owner's vault into the vault of the holder of THAT loan's
+     *           lender token now (`positionToken`), as free balance. Only the
+     *           amount the advance host authorized in this transaction moves.
+     *         - AdvanceRepayment (#3760): money booked to an advance, from the
+     *           vault that holds it into the vault of the advance's slot owner,
+     *           read from the advance record (never named by the caller), as
+     *           free balance. Not a payout to the holder, so the holder's
+     *           protection delay does not hold it. Only the amount the advance
+     *           host authorized in this transaction moves.
      *         What a loan or an open offer owes a party always lands in the
      *         position holder's VAULT as free balance (PositionHolder); only
      *         the owner's own withdrawal reaches a wallet (owner decision
@@ -120,7 +130,9 @@ library VaultOutflowTypes {
         Consolidation,
         Recovery,
         IntegratorShare,
-        ReferralShare
+        ReferralShare,
+        AdvanceToHolder,
+        AdvanceRepayment
     }
 
     /// @notice #3246 part 2 — one asset a clawback or a recovered account's
@@ -294,5 +306,7 @@ library OutflowReason {
     uint8 internal constant STANDING_INSTRUCTION = 25; // #3681: a standing instruction's draw on a loan reserve
     uint8 internal constant INTEGRATOR_SHARE = 26; // an integrator's share of the initiation fee
     uint8 internal constant REFERRAL_SHARE = 27; // an inviter's share of the initiation fee
+    uint8 internal constant ADVANCE = 28; // #3760: an advance to a lender position's holder
+    uint8 internal constant ADVANCE_REPAYMENT = 29; // #3760: an advance repaid to its slot owner
 
 }

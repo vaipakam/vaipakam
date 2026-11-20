@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
@@ -275,14 +276,14 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // Lender gets the full rental (already deducted daily via this function).
             // The lender's claim for accumulated daily deductions is already in vault.
             // Record a zero-amount lender claim so ClaimFacet can still return the NFT.
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: 0,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
 
             // Borrower gets buffer refund (stays in borrower's vault)
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({

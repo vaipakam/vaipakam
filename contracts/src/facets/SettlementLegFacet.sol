@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -475,11 +476,14 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         );
         if (p.assetType == LibVaipakam.AssetType.ERC20) {
             // The claim pays what reached the lender's vault.
-            s.lenderClaims[loanId].amount = arrived;
+            // #3760 — the money reached the lender side's vault now, so an
+            // open advance on the position takes its part here; the row and
+            // the reservation carry the holder's.
+            uint256 kept = LibLenderSide.setFinalAmount(s, loanId, arrived);
             // VPFI has a user-facing exit from the vault: reserve the proceeds
             // until the holder claims, as a delivered leg is (#592).
             if (p.asset == s.vpfiToken) {
-                LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, p.asset, arrived);
+                LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, p.asset, kept);
             }
         }
         emit SettlementLegReleased(loanId, p.payer, arrived);

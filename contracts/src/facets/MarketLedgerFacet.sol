@@ -114,6 +114,29 @@ contract MarketLedgerFacet {
         _sync(s, io.owner, io.lendingAsset, io.collateralAsset, io.slot);
     }
 
+    /// @notice #3760 — the advance principal a slot has out on loan
+    ///         positions moved from `from` to `to` (an advance taken, paid
+    ///         from the position, repaid by its holder, or closed short): the
+    ///         slot's live principal moves by the same amount, so an advance
+    ///         counts toward the slot's exposure until it is repaid, and the
+    ///         slot's figures follow. Saturates, never reverts.
+    /// @dev    Diamond-internal: `LenderSideFacet` and `LenderAdvanceFacet`.
+    function onSlotAdvance(
+        address owner,
+        address lendingAsset,
+        address collateralAsset,
+        uint8 slot,
+        uint256 from,
+        uint256 to
+    ) external {
+        _onlyDiamond();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        mapping(uint8 => uint256) storage live = s.lenderIntentLivePrincipal[owner][lendingAsset][collateralAsset];
+        uint256 l = live[slot];
+        live[slot] = (l > from ? l - from : 0) + to;
+        _sync(s, owner, lendingAsset, collateralAsset, slot);
+    }
+
     // ─── Permissionless housekeeping ──────────────────────────────────────
 
     /// @notice Move the stored Declared and Available totals for a lending

@@ -6,6 +6,7 @@ import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -273,21 +274,31 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             lenderPrincipalDue: lenderPrincDue,
             treasuryPrincipalDue: treasuryPrincDue,
             active: true,
-            retryAttempted: false
+            retryAttempted: false,
+            rateNum: 0,
+            rateDen: 0
         });
+        // #3760 — an open advance on the position takes its in-kind share
+        // after the one retry at the rate this split used: record it.
+        if (s.advances[loanId].open && oracleAvailable) {
+            (, LibFallback.Rate memory r) =
+                LibFallback.tryOracleRate(address(this), loan.collateralAsset, loan.principalAsset);
+            s.fallbackSnapshot[loanId].rateNum = r.num;
+            s.fallbackSnapshot[loanId].rateDen = r.den;
+        }
 
         // Record claims in collateral units. ClaimFacet will either rewrite
         // these to principal-asset amounts on a successful retry, or move
         // the collateral out of the borrower's vault per this split if the
         // retry fails (or none is run).
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+        LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: lenderCol,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: false
-        });
+        }));
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: borrowerCol,
@@ -636,7 +647,7 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         take = shortfall < snap.treasuryCollateral ? shortfall : snap.treasuryCollateral;
         snap.treasuryCollateral -= take;
         snap.lenderCollateral -= shortfall - take;
-        s.lenderClaims[loanId].amount = snap.lenderCollateral;
+        LibLenderSide.setFinalAmount(s, loanId, snap.lenderCollateral);
         LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
         borrowerClaim.amount = snap.borrowerCollateral;
         borrowerClaim.claimed = snap.borrowerCollateral == 0;

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -15,7 +16,6 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
-import {LibHeldForLender} from "../libraries/LibHeldForLender.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -307,7 +307,7 @@ contract ClaimFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoanStatus();
         LibAuth.requireLenderNftOwner(loan);
         _stampFrozenClaimants(loanId);
-        (uint256 amount, address asset) = LibHeldForLender.take(s, loanId, loan);
+        (uint256 amount, address asset) = LibLenderSide.takeHeld(s, loanId, loan);
         if (amount == 0) revert NothingToClaim();
         LibSanctionedLock.beginMoveOut(s, loan.lender);
         uint256 paid = LibVaultOutflow.toPositionHolder(
@@ -333,7 +333,13 @@ contract ClaimFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoanStatus();
         LibAuth.requireBorrowerNftOwner(loan);
         _stampFrozenClaimants(loanId);
-        if (LibCloseoutFreeze.payHeldBorrowerExtra(s, loanId, loan, msg.sender) == 0) revert NothingToClaim();
+        uint256 paid = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(EncumbranceMutateFacet.payHeldBorrowerExtra, (loanId, msg.sender)), bytes4(0)
+            ),
+            (uint256)
+        );
+        if (paid == 0) revert NothingToClaim();
     }
 
     /// @dev Records each side's holder as its fail-closed claimant when the
@@ -644,8 +650,14 @@ contract ClaimFacet is
         // can never reach seeded absorb CASH sharing the same vault/token.
         if (absorbed > 0) s.backstopWarehousedCollateral[c] += absorbed;
         snap.active = false;
-        // The lender claim is cash-satisfied here (not paid via the record).
-        s.lenderClaims[loanId].claimed = true;
+        // #3760 — the cash is the lender slice's arrival: an open advance on
+        // the position takes its part first (moved into the stored lender's
+        // vault and set aside under the advance's lien), and the holder is
+        // paid the rest below. An advance and a seller claim never coexist.
+        uint256 toAdvance = LibLenderSide.absorbAdvance(s, loanId, vault, due);
+        // The lender claim is cash-satisfied here (not paid via the record);
+        // what is set aside for the advance moves to the slot owner now.
+        LibLenderSide.markFinalClaimed(s, loanId);
 
         // Release the originating intent's exposure + any VPFI reservation, like
         // the normal claim — the lender's principal returns to their control.
@@ -683,14 +695,15 @@ contract ClaimFacet is
                 (uint256)
             );
         }
-        if (due > toSellers) {
+        if (due > toSellers + toAdvance) {
             // #3205 part 2 (decided default) — the backstop vault pays the
             // lender-position holder's VAULT, as any holder payout does.
+            uint256 toHolder = due - toSellers - toAdvance;
             LibDelivery.requireFull(
                 p,
-                due - toSellers,
+                toHolder,
                 LibVaultOutflow.toPositionHolder(
-                    vault, LibVaultOutflow.ERC20, p, 0, due - toSellers, loanId, loan.lenderTokenId, OutflowReason.BACKSTOP
+                    vault, LibVaultOutflow.ERC20, p, 0, toHolder, loanId, loan.lenderTokenId, OutflowReason.BACKSTOP
                 )
             );
         }
@@ -1069,8 +1082,10 @@ contract ClaimFacet is
             );
         }
 
-        // Mark claimed before transfer to prevent re-entrancy
-        claim.claimed = true;
+        // Mark claimed before transfer to prevent re-entrancy. #3760 — an
+        // advance still open closes here, and what is set aside for it moves
+        // to the slot owner first.
+        LibLenderSide.markFinalClaimed(s, loanId);
 
         // #393 v1-b — if this loan was opened via `matchIntent`, release the
         // originating lender intent's live-principal cap: the principal is now
@@ -1600,8 +1615,11 @@ contract ClaimFacet is
             // The lender slice goes into the STORED lender's vault, where the
             // lender claim's payout withdraws it to the verified NFT owner.
             // #2440 — the claim names the slice the vault received.
-            s.lenderClaims[loanId].amount =
-                _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender);
+            // #3760 — an open advance takes its part of the slice at the
+            // fallback's own rate (LenderCashOutDesign §6.6).
+            LibLenderSide.settleFinalInKind(
+                s, loanId, _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender)
+            );
         }
         snap.active = false;
         // Partial-match / no-match / retry-swap: the (scaled) residual is
@@ -1744,14 +1762,14 @@ contract ClaimFacet is
             }
         }
 
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+        LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderGets,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: false
-        });
+        }));
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: borrowerGets,

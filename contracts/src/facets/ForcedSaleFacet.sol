@@ -6,6 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
@@ -631,14 +632,14 @@ contract ForcedSaleFacet is IVaipakamErrors {
             ),
             (uint256, bool)
         );
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+        uint256 lenderKept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderNet,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: false
-        });
+        }));
         // #1132 (S10) — the row's writer registers its holder: the current
         // lender-position holder's fail-closed claimant marker lands with the
         // claim itself, whichever entry reached this host. The caller's
@@ -648,7 +649,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #592 — reserve VPFI lender proceeds against the unstake path until
         // the current holder claims; ClaimFacet releases.
         if (!parked && loan.principalAsset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, loan.principalAsset, lenderNet);
+            LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, loan.principalAsset, lenderKept);
         }
         out.lenderPaid = lenderNet;
 
