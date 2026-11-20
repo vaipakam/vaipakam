@@ -201,6 +201,85 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   names current protection, priceability, recorded reference, and checkpoint
   requirements; adding a guard later leaves the offer fillable until it lands.
   Missing hourly coverage blocks fills, and an unsupported deployment says so.
+- Lend opens on lending continuously (Auto-lend) as the pre-selected choice,
+  with one link to a one-time offer instead; a deployment may instead ask
+  the lender to choose between "Lend continuously (recommended)" and "Lend
+  once" with neither selected. The device remembers the last choice per
+  wallet and network. The form pre-selects, each as its own switch:
+  re-lending repayments through the platform's keeper (the roll action only,
+  added to what that keeper already holds), interest by time, and the
+  instant market's fills, renewal and takeover consents. A switch the
+  contracts would refuse is off and greyed with its reason: the instant
+  consents need interest by time, the market on for the network and an
+  eligible pair (an unreadable answer is "not known", never a guess);
+  re-lending is never offered for the platform token, is stated as given
+  where it already is, and is not pre-selected where keeper access is off
+  with other keepers approved, where switching it on lists every keeper and
+  the actions it would regain and needs that list confirmed. Rate auction
+  bids, advances and buying existing loans stay visible and off. The slot's
+  terms, funding and every chosen consent go in one transaction with every
+  step required, and the review states each choice as sent, what a slot
+  fills (no prepay listing or interest cadence) and that the instant
+  choices are ready a few seconds after landing. Changing a slot's terms
+  sends its instant consents again in the same transaction, or states them
+  cleared when the new terms cannot carry them. Free vault balance is never
+  lent by any of this.
+- Auto-lend has no end date unless the lender states one: "Lend for a set
+  period" is a choice, off at the start. Re-lending a repayment is
+  pre-selected only where the platform's keeper reports that step running on
+  the network, and the form says when it is not running or not known. Until
+  loan renewal is built, renewal is shown as not available yet and no renewal
+  consent is sent. The review says what "no end date" means here, and that
+  funds in a loan come back when it is repaid, sooner only by a handover at
+  face value (where deployed) or a sale available at that moment; no date of
+  return is promised.
+- Borrow opens on "Borrow now": the borrower states the amount, the most
+  collateral, the term and the highest rate (no rate is suggested). The
+  review is the protocol's own answer for the borrower's wallet in that
+  block, labelled as what this block gives, listing each loan with its
+  lender, rate and collateral. Signing asks again just before the prompt and
+  never borrows less than the figure shown. Collateral comes from the vault's
+  free balance first, then the wallet, approved for exactly the wallet's part
+  and naming the contract it is given to. Where the lenders ready cover part,
+  the borrower may borrow that part and then post a request for exactly the
+  rest; where they cover none, or the market is off on the network, the
+  review says nothing is borrowed now and offers a request. Every loan ends
+  on its due date; it does not renew.
+- An Auto-lend that already exists gains no instant-market consent until
+  its owner signs for it. Where the market can take its pair, its card
+  offers one line that opens a review of those consents alone, each
+  pre-selected and switchable; it moves no money and changes no limit.
+- Every Auto-lend starts with lending paused while the collateral price is
+  moving fast. Its card states, from the protocol's own answer, whether
+  fills may go ahead, are paused and why (a fast move, the pair lacking its
+  last two hourly price checks, no readable price), or the owner switched
+  the pause off; a paused Auto-lend never reads as "no matches". The owner
+  may switch it off or back on for one Auto-lend through a review that moves
+  no money, and the setup review says the pause starts on and what off means.
+- An active Auto-lend with money waiting can say why it is not lending.
+  The app asks the index for the open borrow requests on its pair closest
+  to its terms, then asks the protocol whether it would fill each from this
+  Auto-lend now, and states the closest one's first refusal in the
+  protocol's terms, a fill it would take, or that no request stands. It
+  never promises a fill, and an index that does not answer is said as
+  unknown, never as an empty pair.
+- A live loan's page says what the loan is to the side the reader holds:
+  a fixed-rate loan for its term that does not renew (until renewal is
+  built), that lent funds cannot be withdrawn, and, for the borrower,
+  whether repaying early pays interest only for the days used. The date row
+  is the date the loan falls due, never a date funds come back.
+- The lender holder of a live loan has one door, "Get cash from this loan":
+  Leave it comes first, then Sell now (a handover to another lender at face
+  value where the instant market's takeover takes the loan, or a sale into a
+  standing buy offer) and Sell at my price (a listing at the lender's stated
+  rate). Each route states what the lender receives as the protocol states
+  it, and that interest earned and not yet paid stays theirs. A route that is
+  not open names each reason in the protocol's words and when it can open,
+  or that no time is set.
+- The Vault page shows each token on three lines kept apart: the free
+  balance (the only figure Withdraw offers), capital waiting in Auto-lend
+  (taken out of the Auto-lend as its own step), and principal in loans,
+  labelled "in loans, not withdrawable".
 - A newly posted or edited offer waits the protocol's minimum terms age
   before fill. The review shows the configured wait and remaining chain time,
   offers no signing step while blocked, and refreshes each block. An unread
@@ -570,11 +649,26 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   both liquid and illiquid outcomes because liquidity is checked at fill.
   The public Key risks page also covers depegs, delayed or wrong prices, local
   tax and law responsibility, and third-party wallets and networks.
+- Taking an offer, for either side, shows "What happens if" under the
+  side's downside line, labelled an illustration and not a forecast, with
+  amounts for this loan: what a 30% fall in the collateral price does to the
+  loan-to-value against the liquidation threshold the loan would carry, and
+  roughly how far the price can fall before liquidation starts (or that no
+  price-based liquidation applies, or that the figure could not be read); a
+  late repayment (a late fee, then the default once the grace period for
+  this term ends); and an early repayment (the whole term's interest still
+  owed, or about half the interest halfway through a pro-rata loan, with the
+  initiation fee not returned). The late fee's amount is shown once the
+  protocol publishes its schedule.
 - A published Terms version takes effect for acceptance only after it is
   configured on the network. Earlier frozen versions remain unchanged.
   Version 3 rewords the software and network risk line, which now ends
   "These risks come with every blockchain system"; the app's key-risk list
-  carries the same sentence as the Terms text. The approved
+  carries the same sentence as the Terms text. Version 4 adds to the lending
+  risk line that lent funds stay in the loan until the borrower repays and
+  cannot be withdrawn before that, and that a sale of the loan to another
+  lender is possible only if one accepts. The list stays at six entries, and
+  the app's lending entry carries the same sentences. The approved
   clauses describe the interface's non-party role, non-custody, eligibility,
   as-is service, indemnity, and a liability ceiling of the prior twelve months'
   fees bounded between $10 and $1,000; governing law and dispute handling are

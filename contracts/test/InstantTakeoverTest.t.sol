@@ -19,6 +19,12 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
+import {MockRateReferenceLink} from "./mocks/MockRateReferenceLink.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 
 /**
  * @title  InstantTakeoverTest
@@ -51,10 +57,21 @@ contract InstantTakeoverTest is InstantMarketBase {
     }
 
     function _slotWith(address who, uint256 rateBps, uint256 maxExposure, uint32 maxDays, bool consent) internal {
+        _slotWithTerms(who, rateBps, maxExposure, maxDays, consent, LibVaipakam.IntentRateTerms(0, 0, false));
+    }
+
+    function _slotWithTerms(
+        address who,
+        uint256 rateBps,
+        uint256 maxExposure,
+        uint32 maxDays,
+        bool consent,
+        LibVaipakam.IntentRateTerms memory terms
+    ) internal {
         vm.prank(who);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, maxExposure, rateBps, MAX_INIT_LTV_BPS,
-            maxDays, MIN_FILL, false, 0, true, true, type(uint64).max
+            maxDays, MIN_FILL, false, 0, true, true, terms, type(uint64).max
         );
         ERC20Mock(mockERC20).mint(who, maxExposure);
         vm.prank(who);
@@ -193,6 +210,35 @@ contract InstantTakeoverTest is InstantMarketBase {
         _takeover(lender, loanId, lender2);
     }
 
+    /// #3635 A — a linked incoming slot admits the loan at its EFFECTIVE
+    /// floor for the term the loan has left, and refuses by name while its
+    /// link cannot be used (#3782 review).
+    function test_linkedSlotFloorBindsTheTakeover() public {
+        MockRateReferenceLink ref = new MockRateReferenceLink();
+        MockProtocolRegistry(OracleAdminFacet(address(diamond)).getProtocolRegistry()).setPointer(
+            RegistryKeys.RATE_REFERENCE, address(ref)
+        );
+        ref.setTermAverage(5e16);
+        ref.setLinked(7e16, 0); // 7% + 1 point margin -> effective floor 8%
+        _slot(lender, 500, PRINCIPAL, true);
+        _slotWithTerms(lender2, 300, PRINCIPAL, TERM, true, LibVaipakam.IntentRateTerms(1, 100, false));
+        _age();
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](1);
+        srcs[0] = _src(lender);
+        (, InstantMarketFacet.InstantFill[] memory fills) = _borrow(_req(PRINCIPAL, 2000 ether, 700, PRINCIPAL), srcs);
+        uint256 loanId = fills[0].loanId;
+        _mockLtv(MAX_INIT_LTV_BPS);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(InstantTakeoverFacet.InstantTakeoverRateBelowSlot.selector, 500, 800)
+        );
+        _takeover(lender, loanId, lender2);
+
+        ref.setLinked(0, 1); // the reference is unavailable: fail closed
+        vm.expectRevert(abi.encodeWithSelector(RateLinkFacet.RateLinkUnavailable.selector, uint8(1)));
+        _takeover(lender, loanId, lender2);
+    }
+
     function test_refusedWhenDueDatePastSlotTerm() public {
         uint256 loanId = _openAndOffer(500, 10, true);
         vm.expectPartialRevert(InstantTakeoverFacet.InstantTakeoverTermPastSlot.selector);
@@ -266,6 +312,81 @@ contract InstantTakeoverTest is InstantMarketBase {
         _takeover(keeper, loanId, lender2);
         assertEq(_vaultBal(lender, mockERC20) - holderVaultBefore, PRINCIPAL, "holder paid face value");
         assertEq(_loan(loanId).lender, lender2, "position moved");
+    }
+
+    /// @dev #3761 — the preview accepts what the takeover accepts and states
+    ///      the principal the incoming slot pays; the takeover then pays it.
+    function test_previewAcceptsAndStatesThePrincipal() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        (bool accepted, bytes memory refusal, uint256 principalPaid) =
+            InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender, lender2, 0);
+        assertTrue(accepted, "accepted");
+        assertEq(refusal.length, 0, "no refusal");
+        assertEq(principalPaid, PRINCIPAL, "face value");
+        uint256 holderVaultBefore = _vaultBal(lender, mockERC20);
+        _takeover(lender, loanId, lender2);
+        assertEq(_vaultBal(lender, mockERC20) - holderVaultBefore, principalPaid, "the takeover paid the preview");
+    }
+
+    /// @dev #3761 — a refusal comes back as the error the takeover raises.
+    function test_previewReturnsTheTakeoversRefusal() public {
+        uint256 loanId = _openAndOffer(600, TERM, true);
+        (bool accepted, bytes memory refusal, uint256 principalPaid) =
+            InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender, lender2, 0);
+        assertFalse(accepted, "refused");
+        assertEq(principalPaid, 0, "nothing paid");
+        assertEq(
+            refusal,
+            abi.encodeWithSelector(InstantTakeoverFacet.InstantTakeoverRateBelowSlot.selector, 500, 600),
+            "the takeover's own error"
+        );
+        (accepted, refusal, ) = InstantTakeoverFacet(address(diamond)).previewTakeover(999, lender, lender2, 0);
+        assertEq(refusal, abi.encodeWithSelector(InstantTakeoverFacet.InstantLoanNotEligible.selector, 999));
+    }
+
+    /// @dev #3761 — the preview reads the caller it is given: a stranger is
+    ///      refused, a keeper holding the holder's mandate accepted.
+    function test_previewReadsTheCaller() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        (bool accepted, , ) = InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender2, lender2, 0);
+        assertFalse(accepted, "a stranger is refused");
+        address keeper = makeAddr("preview-keeper");
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
+        (accepted, , ) = InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, keeper, lender2, 0);
+        assertTrue(accepted, "the mandated keeper is accepted");
+    }
+
+    /// @dev #3761 — an incoming slot whose funded capital is below the
+    ///      principal is refused by the takeover and by its preview with the
+    ///      same error.
+    function test_refusedWhenTheIncomingSlotIsUnderfunded() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.prank(lender2);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            lender2, mockERC20, mockCollateralERC20, 0, PRINCIPAL / 2
+        );
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        bytes memory expected = abi.encodeWithSelector(
+            LibEncumbrance.IntentCapitalInsufficient.selector,
+            lender2, mockERC20, mockCollateralERC20, uint8(0), PRINCIPAL, PRINCIPAL / 2
+        );
+        (bool accepted, bytes memory refusal, uint256 principalPaid) =
+            InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender, lender2, 0);
+        assertFalse(accepted, "refused");
+        assertEq(principalPaid, 0, "nothing paid");
+        assertEq(refusal, expected, "the takeover's own error");
+        vm.expectRevert(expected);
+        _takeover(lender, loanId, lender2);
     }
 
     /// @dev Only the position's holder (or its direct-sale keeper) starts it.

@@ -17,6 +17,8 @@
  *                                      lifetime); homepage hero card.
  *   GET /offers/active?...          — paginated active offer list.
  *   GET /offers/:id                 — single offer by id.
+ *   GET /intents/nearest            — #3660: the open borrow requests
+ *                                     closest to an Auto-lend slot's terms.
  *   GET /offers/:id/nearest         — #3623: the other side's open
  *                                      offers closest to an open offer.
  *   GET /offers/by-creator/:addr    — wallet's offers regardless of
@@ -34,6 +36,7 @@ import { chainNotServed, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { offerPositionFlows, type PositionFlowJson } from './positionFlowMoves';
+import { nearestOpposite } from './nearestOpposite';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -66,7 +69,7 @@ export function jsonResponse(body: unknown, status = 200): Response {
  * and a worker-cached offer interchange transparently in the
  * frontend's offer-card rendering.
  */
-interface OfferRow {
+export interface OfferRow {
   chain_id: number;
   offer_id: number;
   status: string;
@@ -667,46 +670,80 @@ export async function handleOfferNearest(req: Request, env: Env, offerIdRaw: str
     if (ineligible !== null) {
       return jsonResponse({ chainId, offerId, eligible: false, reason: ineligible });
     }
-    const myMin = me.interest_rate_bps;
-    const myMax = Math.max(me.interest_rate_bps, me.interest_rate_bps_max);
-    // The two statements carry the same filter, written out in each so the
-    // schema guard prepares both against the migrated schema. The rate gap is
-    // 0 where the two ranges meet, else how far apart they sit (a range whose
-    // max reads below its min is taken as its min).
-    const binds = [chainId, me.offer_type === 0 ? 1 : 0, me.lending_asset, me.collateral_asset, me.creator, now];
-    const [rows, count] = await Promise.all([
-      env.DB.prepare(
-        `SELECT *, MAX(0, interest_rate_bps - ?, ? - MAX(interest_rate_bps, interest_rate_bps_max)) AS rate_gap
-           FROM offers
-          WHERE chain_id = ? AND status = 'active' AND offer_type = ?
-            AND lending_asset = ? AND collateral_asset = ?
-            AND asset_type = 0 AND collateral_asset_type = 0
-            AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-            AND lower(creator) <> lower(?)
-            AND (expires_at = 0 OR expires_at > ?)
-          ORDER BY rate_gap ASC, ABS(duration_days - ?) ASC, offer_id DESC LIMIT ?`,
-      )
-        .bind(myMax, myMin, ...binds, me.duration_days, limit)
-        .all<OfferRow & { rate_gap: number }>(),
-      env.DB.prepare(
-        `SELECT COUNT(*) AS n
-           FROM offers
-          WHERE chain_id = ? AND status = 'active' AND offer_type = ?
-            AND lending_asset = ? AND collateral_asset = ?
-            AND asset_type = 0 AND collateral_asset_type = 0
-            AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-            AND lower(creator) <> lower(?)
-            AND (expires_at = 0 OR expires_at > ?)`,
-      )
-        .bind(...binds)
-        .first<{ n: number }>(),
-    ]);
-    const found = rows.results ?? [];
+    const { rows: found, count } = await nearestOpposite(env, {
+      chainId,
+      side: me.offer_type === 0 ? 1 : 0,
+      lendingAsset: me.lending_asset,
+      collateralAsset: me.collateral_asset,
+      exclude: me.creator,
+      rateMin: me.interest_rate_bps,
+      rateMax: Math.max(me.interest_rate_bps, me.interest_rate_bps_max),
+      durationDays: me.duration_days,
+      term: 'distance',
+      now,
+      limit,
+    });
     const json = await toJsonRows(env, chainId, found);
     const candidates = json.map((o, i) => ({ ...o, rateGapBps: found[i].rate_gap }));
-    return jsonResponse({ chainId, offerId, eligible: true, candidates, oppositeOpen: count?.n ?? candidates.length });
+    return jsonResponse({ chainId, offerId, eligible: true, candidates, oppositeOpen: count });
   } catch (err) {
     console.error('[offerRoutes] nearest failed', redactedError(err));
+    return jsonResponse({ error: 'nearest-failed' }, 500);
+  }
+}
+
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+/** The rate ceiling an Auto-lend slot states: it takes any rate at or above
+ *  its lowest, so the range it meets runs this high. */
+const RATE_UNBOUNDED = 1_000_000_000;
+
+/**
+ * GET /intents/nearest?chainId=8453&owner=0x..&lending=0x..&collateral=0x..&minRateBps=500&maxDurationDays=30&limit=5
+ *
+ * #3660 — for an Auto-lend slot (a standing lend intent), the open borrow
+ * requests on its pair that sit closest to its terms, so its owner can be
+ * told what keeps it from lending. The slot's terms come from the chain
+ * through the caller; this index holds no intents. Ranked by the same rule
+ * as `/offers/:id/nearest` ({@link nearestOpposite}): the rate gap below the
+ * slot's lowest rate, then how far a request's term runs past the slot's
+ * longest. `oppositeOpen` counts every open request on the pair. A CACHE
+ * ranking, never a verdict: the app asks the protocol's own intent preview
+ * for each request before it names a gap.
+ */
+export async function handleIntentNearest(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = requestedChainId(url);
+  const p = url.searchParams;
+  const owner = p.get('owner') ?? '';
+  const lending = p.get('lending') ?? '';
+  const collateral = p.get('collateral') ?? '';
+  if (!ADDRESS.test(owner) || !ADDRESS.test(lending) || !ADDRESS.test(collateral)) return jsonResponse({ error: 'bad-address' }, 400);
+  const minRate = Number(p.get('minRateBps'));
+  const maxDays = Number(p.get('maxDurationDays'));
+  if (!Number.isSafeInteger(minRate) || minRate < 0 || !Number.isSafeInteger(maxDays) || maxDays < 0) return jsonResponse({ error: 'bad-terms' }, 400);
+  const rawLimit = Number.parseInt(p.get('limit') ?? '', 10);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, NEAREST_MAX) : NEAREST_DEFAULT;
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
+  try {
+    const { rows: found, count } = await nearestOpposite(env, {
+      chainId,
+      side: 1,
+      lendingAsset: lending,
+      collateralAsset: collateral,
+      exclude: owner,
+      rateMin: minRate,
+      rateMax: RATE_UNBOUNDED,
+      durationDays: maxDays,
+      term: 'over',
+      now: Math.floor(Date.now() / 1000),
+      limit,
+    });
+    const json = await toJsonRows(env, chainId, found);
+    const candidates = json.map((o, i) => ({ ...o, rateGapBps: found[i].rate_gap }));
+    return jsonResponse({ chainId, candidates, oppositeOpen: count });
+  } catch (err) {
+    console.error('[offerRoutes] intent nearest failed', redactedError(err));
     return jsonResponse({ error: 'nearest-failed' }, 500);
   }
 }

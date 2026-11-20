@@ -1,6 +1,84 @@
 [
   {
     "type": "function",
+    "name": "previewDirectSale",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "accepted",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "refusal",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "sellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortfall",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "heldMoving",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requireDirectSaleAdmissible",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "shortfall",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "sellLoanViaBuyOffer",
     "inputs": [
       {
@@ -4024,6 +4102,17 @@
         "name": "which",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

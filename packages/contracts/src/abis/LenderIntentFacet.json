@@ -180,6 +180,28 @@
         "internalType": "bool"
       },
       {
+        "name": "rate",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.IntentRateTerms",
+        "components": [
+          {
+            "name": "linkKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "linkMarginBps",
+            "type": "int16",
+            "internalType": "int16"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
         "name": "validUntil",
         "type": "uint64",
         "internalType": "uint64"
@@ -579,6 +601,55 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LenderIntentRateTermsSet",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "linkKind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "linkMarginBps",
+        "type": "int16",
+        "indexed": false,
+        "internalType": "int16"
+      },
+      {
+        "name": "warnings",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false

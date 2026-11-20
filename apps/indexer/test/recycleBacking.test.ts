@@ -25,7 +25,9 @@ import {
   isAbiShapeMismatch,
   isMissingSelectorRevert,
   retainedFrom,
+  SETTLED_MIGRATION,
   snapshotMaxAgeMs,
+  storedBlockSettled,
   storedCustodyFrom,
   storedPayloadIsComplete,
 } from '../src/recycleRoutes';
@@ -430,6 +432,9 @@ const migrationsUpTo = (exclusivePrefix?: string) =>
  */
 const CUSTODY_MIGRATION_FILE = `${CUSTODY_MIGRATION}.sql`;
 const CUSTODY_MIGRATION_PREFIX = CUSTODY_MIGRATION_FILE.slice(0, 4);
+/** Migration 0104 (#2210), by the route's own constant, like the one above. */
+const SETTLED_MIGRATION_FILE = `${SETTLED_MIGRATION}.sql`;
+const SETTLED_MIGRATION_PREFIX = SETTLED_MIGRATION_FILE.slice(0, 4);
 
 const CHAIN = 84532;
 const DIAMOND = getDeployment(CHAIN)!.diamond;
@@ -484,14 +489,22 @@ function missingSelectorError(data: string = FUNCTION_DOES_NOT_EXIST_SELECTOR) {
  * with the same first eight, so a fallback is distinguishable only by the
  * custody columns it leaves empty — which is the property under test.
  */
-function fakeClient(v2: V2Figures | Error, block = SAFE_BLOCK) {
+function fakeClient(v2: V2Figures | Error, block = SAFE_BLOCK, settled = true) {
   const calls: string[] = [];
   const f = v2 instanceof Error ? BASE : v2;
   const legacy8 = [f.vpfiBalance, f.bucket, 60n, 10n, 2n, 5n, f.stranded, f.recovery] as const;
   const client = {
     getChainId: async () => CHAIN,
-    getBlock: async () => ({ number: block, timestamp: BigInt(Math.floor(Date.now() / 1000)) }),
-    getBlockNumber: async () => block + 64n,
+    // `settled: false` — the provider refuses the `safe` tag, so the head
+    // resolver falls back to `latest - 32` (#2210). `latest` is chosen so the
+    // fallback lands on `block`, keeping every read at the same pin.
+    getBlock: async (args: { blockTag?: string; blockNumber?: bigint }) => {
+      if (args.blockTag === 'safe' && !settled) {
+        throw Object.assign(new Error('unsupported block tag'), { name: 'RpcRequestError', code: -32601 });
+      }
+      return { number: block, timestamp: BigInt(Math.floor(Date.now() / 1000)) };
+    },
+    getBlockNumber: async () => (settled ? block + 64n : block + 32n),
     readContract: async (args: { functionName: string; blockNumber: bigint }) => {
       calls.push(`${args.functionName}@${args.blockNumber}`);
       switch (args.functionName) {
@@ -510,13 +523,20 @@ function fakeClient(v2: V2Figures | Error, block = SAFE_BLOCK) {
   return { client, calls };
 }
 
-function harness(opts: { preCustodyColumns?: boolean } = {}) {
+function harness(opts: { preCustodyColumns?: boolean; preSettledColumn?: boolean } = {}) {
   // Fails loudly if the custody migration was renamed without updating
   // CUSTODY_MIGRATION — otherwise the rollout case would silently run
   // against the full schema and prove nothing about the fallback.
   expect(MIGRATION_FILES).toContain(CUSTODY_MIGRATION_FILE);
+  expect(MIGRATION_FILES).toContain(SETTLED_MIGRATION_FILE);
   const h = createSqliteD1(
-    migrationsUpTo(opts.preCustodyColumns ? CUSTODY_MIGRATION_PREFIX : undefined),
+    migrationsUpTo(
+      opts.preCustodyColumns
+        ? CUSTODY_MIGRATION_PREFIX
+        : opts.preSettledColumn
+          ? SETTLED_MIGRATION_PREFIX
+          : undefined,
+    ),
   );
   const env = {
     DB: h.d1,
@@ -526,8 +546,8 @@ function harness(opts: { preCustodyColumns?: boolean } = {}) {
   return { h, env };
 }
 
-async function capture(env: Env, v2: V2Figures | Error, block = SAFE_BLOCK) {
-  const fake = fakeClient(v2, block);
+async function capture(env: Env, v2: V2Figures | Error, block = SAFE_BLOCK, settled = true) {
+  const fake = fakeClient(v2, block, settled);
   vi.mocked(createChainClient).mockReturnValue(fake.client as never);
   await captureBackingSnapshot(env, CHAIN, 1);
   return fake.calls;
@@ -938,5 +958,198 @@ describe('backing capture + serve — custody state and the shared verdict', () 
     const b = await served(env);
     expect(b.unavailableReason).toBe('not-captured-yet');
     expect(b.pendingMigration).toBe(CUSTODY_MIGRATION);
+  });
+});
+
+describe('backing capture + serve — whether the pinned block was settled (#2210)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const FIGS = { ...BASE, activated: true, known: true, holderBalance: 9n, holderAttributed: 9n };
+
+  it('a block the chain answered as `safe` is published as settled', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS);
+    expect(
+      h.db.prepare(`SELECT block_settled FROM recycle_backing_snapshot WHERE chain_id = ?`).get(CHAIN),
+    ).toEqual({ block_settled: 1 });
+    const b = await served(env);
+    expect(b.blockNumber).toBe(SAFE_BLOCK.toString());
+    expect(b.blockSettled).toBe(true);
+  });
+
+  it('a guessed head is captured, stored as NOT settled, and published so beside its block', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, false);
+    expect(
+      h.db.prepare(`SELECT block_settled FROM recycle_backing_snapshot WHERE chain_id = ?`).get(CHAIN),
+    ).toEqual({ block_settled: 0 });
+    const b = await served(env);
+    // Still published — withholding would read as a quiet chain — but never
+    // as a confirmed block.
+    expect(b.unavailableReason).toBeNull();
+    expect(b.blockNumber).toBe(SAFE_BLOCK.toString());
+    expect(b.blockSettled).toBe(false);
+    // The operator log keeps the provider's reason; the payload names no cause.
+    const warned = vi.mocked(console.warn).mock.calls.map((c) => String(c[0]));
+    expect(warned.some((w) => w.includes('NOT a block the chain confirmed as settled'))).toBe(true);
+    expect(JSON.stringify(b)).not.toMatch(/unsupported|RpcRequestError/);
+  });
+
+  it('a newer reading never inherits an older one’s answer', async () => {
+    const { env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, false);
+    await capture(env, FIGS, SAFE_BLOCK + 1n, true);
+    expect((await served(env)).blockSettled).toBe(true);
+    await capture(env, FIGS, SAFE_BLOCK + 2n, true);
+    expect((await served(env)).blockSettled).toBe(true);
+  });
+
+  it('a row captured before 0104 reads as NOT RECORDED, never as settled', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS);
+    h.db.prepare(`UPDATE recycle_backing_snapshot SET block_settled = NULL`).run();
+    const b = await served(env);
+    expect(b.unavailableReason).toBeNull();
+    expect(b.blockSettled).toBeNull();
+  });
+
+  it('an unavailable block carries blockSettled: null', async () => {
+    const { env } = harness();
+    const b = await served(env);
+    expect(b.unavailableReason).toBe('not-captured-yet');
+    expect(b.blockSettled).toBeNull();
+  });
+
+  it('ROLLOUT WINDOW (0104 not applied): the read tolerates the old schema and says not recorded', async () => {
+    const { h, env } = harness({ preSettledColumn: true });
+    // A row the previous Worker wrote, which never names the column.
+    const prev = harness();
+    await capture(prev.env, FIGS);
+    const row = prev.h.db.prepare(`SELECT * FROM recycle_backing_snapshot`).get() as Record<string, unknown>;
+    delete row.block_settled;
+    const cols = Object.keys(row);
+    h.db
+      .prepare(
+        `INSERT INTO recycle_backing_snapshot (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+      )
+      .run(...(cols.map((c) => row[c]) as never[]));
+    const b = await served(env);
+    expect(b.unavailableReason).toBeNull();
+    // The custody columns are present, so custody is still read.
+    expect(b.custodyActivated).toBe(true);
+    expect(b.pendingMigration).toBeNull();
+    expect(b.blockSettled).toBeNull();
+    const warned = vi.mocked(console.warn).mock.calls.map((c) => String(c[0]));
+    expect(warned.some((w) => w.includes(SETTLED_MIGRATION))).toBe(true);
+  });
+
+  it('the capture REFUSES rather than writing a guessed block unmarked when 0104 is missing', async () => {
+    const { h, env } = harness({ preSettledColumn: true });
+    const fake = fakeClient(FIGS, SAFE_BLOCK, false);
+    vi.mocked(createChainClient).mockReturnValue(fake.client as never);
+    await expect(captureBackingSnapshot(env, CHAIN, 1)).rejects.toThrow(/block_settled/);
+    expect(h.db.prepare(`SELECT COUNT(*) AS n FROM recycle_backing_snapshot`).get()).toEqual({ n: 0 });
+  });
+
+  it('storedBlockSettled reads only 1 and 0 as answers', () => {
+    expect(storedBlockSettled(1)).toBe(true);
+    expect(storedBlockSettled(0)).toBe(false);
+    for (const v of [null, undefined, 2, '1', true, -1]) expect(storedBlockSettled(v)).toBeNull();
+  });
+});
+
+// ─── The capture-replacement rule (#2210) ───────────────────────────────
+
+function stored(h: ReturnType<typeof harness>['h']) {
+  return h.db
+    .prepare(`SELECT block_number, block_settled FROM recycle_backing_snapshot WHERE chain_id = ?`)
+    .get(CHAIN);
+}
+
+describe('backing capture — which reading replaces the stored one (#2210)', () => {
+  const FIGS = { ...BASE, activated: true, known: true, holderBalance: 9n, holderAttributed: 9n };
+  const T0 = Date.parse('2026-11-19T00:00:00.000Z');
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** The staleness window the read route would apply to the stored row now. */
+  function windowMs(h: ReturnType<typeof harness>['h']): number {
+    const row = h.db
+      .prepare(`SELECT chain_count, tick_minutes FROM recycle_backing_snapshot WHERE chain_id = ?`)
+      .get(CHAIN) as { chain_count: number; tick_minutes: number };
+    return snapshotMaxAgeMs(row.chain_count, row.tick_minutes, row.chain_count, row.tick_minutes);
+  }
+
+  it('a settled capture beats a guessed one, even at a LOWER block', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK + 10n, false);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 10n).toString(), block_settled: 0 });
+    vi.setSystemTime(T0 + 60_000);
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    expect((await served(env)).blockSettled).toBe(true);
+  });
+
+  it('settled over settled: the block only rises', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    await capture(env, FIGS, SAFE_BLOCK - 1n, true);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    await capture(env, FIGS, SAFE_BLOCK + 1n, true);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 1n).toString(), block_settled: 1 });
+  });
+
+  it('guessed over guessed: the block only rises', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, false);
+    await capture(env, FIGS, SAFE_BLOCK - 1n, false);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 0 });
+    await capture(env, FIGS, SAFE_BLOCK + 1n, false);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 1n).toString(), block_settled: 0 });
+  });
+
+  it('a guessed capture never replaces a settled one still inside its staleness window', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    const w = windowMs(h);
+    // A higher guessed block, inside the window and right at its edge: refused.
+    for (const at of [T0 + 60_000, T0 + w]) {
+      vi.setSystemTime(at);
+      await capture(env, FIGS, SAFE_BLOCK + 5n, false);
+      expect(stored(h), `at +${at - T0}ms`).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    }
+    expect((await served(env)).blockSettled).toBe(true);
+  });
+
+  it('once the settled reading is past its window, a RISING guessed one may replace it', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    // One millisecond past the window: the read route would now withhold it.
+    vi.setSystemTime(T0 + windowMs(h) + 1);
+    // Never backwards, even then.
+    await capture(env, FIGS, SAFE_BLOCK - 1n, false);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    await capture(env, FIGS, SAFE_BLOCK + 5n, false);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 5n).toString(), block_settled: 0 });
+    const b = await served(env);
+    expect(b.unavailableReason).toBeNull();
+    expect(b.blockSettled).toBe(false);
   });
 });

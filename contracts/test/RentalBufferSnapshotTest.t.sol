@@ -149,7 +149,10 @@ contract RentalBufferSnapshotTest is SetupTest {
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
                 collateralAmount: 0, // a rental carries no collateral (#2949)
-                collateralAmountMax: 0
+                collateralAmountMax: 0,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -195,7 +198,10 @@ contract RentalBufferSnapshotTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -232,7 +238,10 @@ contract RentalBufferSnapshotTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 }

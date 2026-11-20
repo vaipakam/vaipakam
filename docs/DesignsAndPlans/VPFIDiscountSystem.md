@@ -2,7 +2,7 @@
 
 T-087 (full umbrella). Code-free, implementation-independent description of how a user's VPFI stake produces a yield-fee discount they receive at settlement — on the canonical chain (Base) and across every mirror chain Vaipakam deploys to.
 
-This spec complements [`CrossChainTierPropagation.md`](CrossChainTierPropagation.md) (transport-layer mechanics for how the cached tier travels) by stating the user-facing INTENT end-to-end: stake → tier resolution → discount application. As required by [`README.md`](README.md), this spec is the test oracle: it states intent, not implementation. Specific function names, storage slots, and library call paths are intentionally omitted; the deployed contracts are what's *under test*, not the source of the spec.
+This spec complements [`CrossChainTierPropagation.md`](CrossChainTierPropagation.md) (transport-layer mechanics for how the cached tier travels) by stating the user-facing INTENT end-to-end: stake → tier resolution → discount application. As required by [`README.md`](../../README.md), this spec is the test oracle: it states intent, not implementation. Specific function names, storage slots, and library call paths are intentionally omitted; the deployed contracts are what's *under test*, not the source of the spec.
 
 ## 1. Purpose
 

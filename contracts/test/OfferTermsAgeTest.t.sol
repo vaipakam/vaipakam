@@ -77,7 +77,10 @@ contract OfferTermsAgeTest is SetupTest {
             expiresAt: expiresAt,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -117,7 +120,10 @@ contract OfferTermsAgeTest is SetupTest {
             expiresAt: expiresAt,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -200,7 +206,7 @@ contract OfferTermsAgeTest is SetupTest {
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         uint256 editedAt = vm.getBlockTimestamp();
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferRate(id, 600, 600, type(uint64).max);
+        OfferMutateFacet(address(diamond)).setOfferRate(id, 600, 600, 0, 0, false, type(uint64).max);
         assertEq(
             OfferCancelFacet(address(diamond)).getOffer(id).termsSetAt,
             uint64(editedAt),

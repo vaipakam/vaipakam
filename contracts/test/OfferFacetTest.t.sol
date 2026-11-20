@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
@@ -273,7 +274,7 @@ contract OfferFacetTest is Test {
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
-        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestRateLinkCut.withRateLinkHost(LibTestTermsCut.withTermsHost(cuts)); // #3734, #3635 A
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -583,7 +584,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -643,7 +647,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -683,7 +690,10 @@ contract OfferFacetTest is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Aon,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.PositionTokenNotAccepted.selector);
@@ -736,7 +746,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -805,7 +818,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -876,7 +892,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -919,7 +938,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -980,7 +1002,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1032,7 +1057,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1116,7 +1144,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1173,7 +1204,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1236,7 +1270,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1284,7 +1321,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1327,7 +1367,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1365,7 +1408,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1414,7 +1460,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1468,7 +1517,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1545,7 +1597,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1601,7 +1656,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1650,7 +1708,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1701,7 +1762,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1755,7 +1819,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1813,7 +1880,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1870,7 +1940,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1921,7 +1994,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1965,7 +2041,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2023,7 +2102,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2083,7 +2165,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2148,7 +2233,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2207,7 +2295,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2254,7 +2345,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2301,7 +2395,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2371,7 +2468,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2411,7 +2511,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2461,7 +2564,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2517,7 +2623,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2573,7 +2682,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2625,7 +2737,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2685,7 +2800,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2738,7 +2856,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2803,7 +2924,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2893,7 +3017,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2938,7 +3065,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -2985,7 +3115,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3042,7 +3175,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3107,7 +3243,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3178,7 +3317,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3233,7 +3375,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3306,7 +3451,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3364,7 +3512,10 @@ contract OfferFacetTest is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
         vm.prank(user1);
         vm.expectRevert(OfferCreateFacet.RentalQuantityAboveVaultRange.selector);
@@ -3422,7 +3573,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3485,7 +3639,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3551,7 +3708,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3615,7 +3775,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3668,7 +3831,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3748,7 +3914,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3828,7 +3997,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3894,7 +4066,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3965,7 +4140,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4056,7 +4234,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4118,7 +4299,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4175,7 +4359,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4225,7 +4412,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4272,7 +4462,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4333,7 +4526,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4394,7 +4590,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4453,7 +4652,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4510,7 +4712,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4567,7 +4772,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4620,7 +4828,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4679,7 +4890,10 @@ contract OfferFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4731,7 +4945,10 @@ contract OfferFacetTest is Test {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 

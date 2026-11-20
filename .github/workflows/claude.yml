@@ -6,7 +6,10 @@ name: Claude Code
 # main-only environment would refuse them. A mention in the PR conversation
 # still reaches the action.
 on:
-  issue_comment:
+  # The job below runs only for a comment by an owner, member or
+  # collaborator, and its token sits behind the main-only environment, so
+  # this trigger cannot run untrusted code with the secret (#3548).
+  issue_comment: # zizmor: ignore[dangerous-triggers]
     types: [created]
   issues:
     types: [opened]
@@ -37,6 +40,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Run Claude Code

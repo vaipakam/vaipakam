@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -10,7 +11,7 @@ import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
-import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
+import {OfferMatchFacet} from "./OfferMatchFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
@@ -25,7 +26,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *         report"; a fill that reverts changes nothing.
  * @dev    Each fill materializes a transient borrower slice (the borrower's
  *         request, at the source's own price) and runs the shared match core
- *         (`LibOfferMatchExecute`), so every origination check runs for it:
+ *         (`OfferMatchFacet.matchCoreInternal`), so every origination check runs for it:
  *         health factor, loan-to-value against the slot's or offer's limit,
  *         risk access, sanctions, self-trade, the ageing rule (#3443), the
  *         maker's price-move guard, expiry and the level rules. The match
@@ -35,10 +36,12 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *         A slot fill draws from the slot's capital lien and runs the one
  *         slot rule (`LibIntentFill`) the solver route runs.
  *
- *         Its own facet: the match core is most of its size, and the
+ *         Its own facet: the fill rules are most of its size, and the
  *         borrower entry, settings and views (`InstantMarketFacet`) do not
- *         fit beside it under EIP-170. Refreshed together with
- *         InstantMarketFacet, which calls it.
+ *         fit beside them under EIP-170. The match core it used to inline is
+ *         reached through `OfferMatchFacet.matchCoreInternal` since #3635 A.
+ *         Refreshed together with InstantMarketFacet, which calls it, and
+ *         with OfferMatchFacet, which hosts the core.
  */
 contract InstantFillFacet {
     /// @notice Only the Diamond itself may call {fillInstant}.
@@ -81,6 +84,9 @@ contract InstantFillFacet {
         uint256 collRemaining; // collateral still offered
         uint256 amountWanted; // the request's whole amount
         uint256 collateralOffered; // the request's whole collateral
+        // #3713 section 6.4 — the borrower's acknowledgement of a fill whose
+        // actual rate is outside the warning band around the term average.
+        bool rateFarFromAverageAcknowledged;
     }
 
     /// @notice What one fill opened.
@@ -104,21 +110,31 @@ contract InstantFillFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool isSlot = r.source.kind == 0;
         uint256 lenderOfferId;
+        uint256 reqColl;
+        (res.amount, res.rateBps, res.collateral, reqColl) = _size(s, r);
         if (isSlot) {
-            (lenderOfferId, res.amount, res.rateBps) = _drawSlot(s, r);
+            lenderOfferId = LibIntentFill.drawAndMaterialize(
+                r.source.owner, r.lendingAsset, r.collateralAsset, r.source.slot, res.amount, reqColl,
+                res.rateBps, r.termDays, false, r.allowsPartialRepay
+            );
         } else {
-            (lenderOfferId, res.amount, res.rateBps) = _sizeOffer(s, r);
+            lenderOfferId = r.source.offerId;
         }
-        res.collateral = res.amount == r.remaining
-            ? r.collRemaining
-            : (res.amount * r.collateralOffered) / r.amountWanted;
         res.fromWallet = _fundCollateral(r.borrower, r.collateralAsset, res.collateral);
         uint256 borrowerSlice = LibIntentFill.materialize(_borrowerSlice(r, res), r.borrower);
         // The borrower slice's collateral is the floor for this match, so the
         // match locks exactly the share drawn above.
-        res.loanId = LibOfferMatchExecute.executeMatchFor(
+        // #3635 A / #3713 — an instant fill is a taker step: loan creation
+        // band-checks its actual rate with the request's acknowledgement
+        // (`RateLinkFacet.originationRate`). Set around this one match only.
+        s.instantTakerActive = true;
+        s.instantRateFarAck = r.rateFarFromAverageAcknowledged;
+        // The match core, hosted once on OfferMatchFacet; no matcher, so no
+        // match share is paid.
+        res.loanId = OfferMatchFacet(address(this)).matchCoreInternal(
             lenderOfferId, borrowerSlice, res.collateral, address(0)
         );
+        s.instantTakerActive = false;
         if (isSlot) {
             LibIntentFill.recordSlotLoan(
                 s, res.loanId, r.source.owner, r.lendingAsset, r.collateralAsset,
@@ -129,11 +145,50 @@ contract InstantFillFacet {
         LibMarketLedger.markInstant(s, s.loans[res.loanId]);
     }
 
-    /// @dev A slot source: the instant-market consent (aged like the slot's
-    ///      terms), the price limit, then the one slot rule and the draw.
-    function _drawSlot(LibVaipakam.Storage storage s, FillRequest calldata r)
+    /// @notice #3761 — what one source would give this request now: the
+    ///         principal, the source's price and the collateral share, sized
+    ///         by the same rule {fillInstant} sizes by. Reverts with the
+    ///         source-level refusal {fillInstant} would raise.
+    /// @dev    Covers the source only. The loan checks the match core runs
+    ///         when the fill opens the loan (health factor, loan-to-value,
+    ///         risk access, sanctions, the ageing and price-move rules) and
+    ///         the collateral funding are not in it; `borrowInstant` reports
+    ///         a fill they refuse as a skipped source.
+    function quoteFill(FillRequest calldata r)
+        external
+        view
+        returns (uint256 amount, uint256 rateBps, uint256 collateral)
+    {
+        (amount, rateBps, collateral, ) = _size(LibVaipakam.storageSlot(), r);
+    }
+
+    /// @dev The one sizing rule for a fill: the source's amount and price,
+    ///      then the fill's share of the borrower's collateral, in proportion
+    ///      to principal, the fill that completes the request taking the
+    ///      remainder. `reqColl` is a slot's collateral requirement (zero for
+    ///      an offer source).
+    function _size(LibVaipakam.Storage storage s, FillRequest calldata r)
         private
-        returns (uint256 sliceOfferId, uint256 amount, uint256 rateBps)
+        view
+        returns (uint256 amount, uint256 rateBps, uint256 collateral, uint256 reqColl)
+    {
+        if (r.source.kind == 0) {
+            (amount, rateBps, reqColl) = _sizeSlot(s, r);
+        } else {
+            (amount, rateBps) = _sizeOffer(s, r);
+        }
+        collateral = amount == r.remaining
+            ? r.collRemaining
+            : (amount * r.collateralOffered) / r.amountWanted;
+    }
+
+    /// @dev A slot source: the instant-market consent (aged like the slot's
+    ///      terms), the price limit, then the one slot rule. The draw is the
+    ///      fill's.
+    function _sizeSlot(LibVaipakam.Storage storage s, FillRequest calldata r)
+        private
+        view
+        returns (uint256 amount, uint256 rateBps, uint256 reqColl)
     {
         address owner = r.source.owner;
         uint8 slot = r.source.slot;
@@ -144,16 +199,14 @@ contract InstantFillFacet {
             s.instantSlot[owner][r.lendingAsset][r.collateralAsset][slot];
         if (!consent.fills) revert InstantSlotNotOffered();
         LibTiming.requireIntentAged(owner, consent.setAt);
-        rateBps = intent.minRateBps;
+        // #3635 A — a slot's price is its effective floor for this fill's
+        // term (the linked rate when it is higher).
+        rateBps = LibIntentFill.slotFloor(intent, r.lendingAsset, r.termDays);
         if (rateBps > r.maxRateBps) revert InstantRateAboveLimit(rateBps, r.maxRateBps);
         amount = _slotRoom(s, intent, owner, r);
-        uint256 reqColl = LibIntentFill.admitFill(
+        reqColl = LibIntentFill.admitFill(
             s, intent, owner, r.lendingAsset, r.collateralAsset, slot,
             r.termDays, false, r.allowsPartialRepay, amount
-        );
-        sliceOfferId = LibIntentFill.drawAndMaterialize(
-            owner, r.lendingAsset, r.collateralAsset, slot, amount, reqColl,
-            rateBps, r.termDays, false, r.allowsPartialRepay
         );
     }
 
@@ -185,9 +238,9 @@ contract InstantFillFacet {
     function _sizeOffer(LibVaipakam.Storage storage s, FillRequest calldata r)
         private
         view
-        returns (uint256 offerId, uint256 amount, uint256 rateBps)
+        returns (uint256 amount, uint256 rateBps)
     {
-        offerId = r.source.offerId;
+        uint256 offerId = r.source.offerId;
         LibVaipakam.Offer storage o = s.offers[offerId];
         if (
             o.offerType != LibVaipakam.OfferType.Lender
@@ -197,6 +250,13 @@ contract InstantFillFacet {
                 || o.useFullTermInterest
         ) revert InstantOfferNotSource(offerId);
         rateBps = o.interestRateBps;
+        // #3635 A — a linked offer's price is its effective floor for this
+        // fill's term.
+        if (o.linkKind != 0) {
+            rateBps = RateLinkFacet(address(this)).linkedFloor(
+                r.lendingAsset, r.termDays, o.linkKind, o.linkMarginBps, rateBps
+            );
+        }
         if (rateBps > r.maxRateBps) revert InstantRateAboveLimit(rateBps, r.maxRateBps);
         if (o.fillMode == LibVaipakam.FillMode.Aon) {
             amount = o.amount;
@@ -262,6 +322,10 @@ contract InstantFillFacet {
         p.collateralAssetType = LibVaipakam.AssetType.ERC20;
         p.prepayAsset = r.lendingAsset; // unused for an ERC-20 loan; non-zero placeholder
         p.creatorRiskAndTermsConsent = true; // given on `borrowInstant`
+        // #3713 — the slice's ceiling is the fill's actual rate, so it carries
+        // the request's band acknowledgement (the same flag the origination
+        // check reads for this fill).
+        p.rateFarFromAverageAcknowledged = r.rateFarFromAverageAcknowledged;
         p.fillMode = LibVaipakam.FillMode.Partial;
         p.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.None;
         p.useFullTermInterest = false; // every instant-market loan carries interest by time

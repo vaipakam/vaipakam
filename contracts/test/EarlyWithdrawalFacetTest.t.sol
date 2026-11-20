@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
 import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
@@ -465,7 +466,7 @@ contract EarlyWithdrawalFacetTest is Test {
             functionSelectors: helperTest.getReferralFacetSelectors()
         });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
-        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestRateLinkCut.withRateLinkHost(LibTestTermsCut.withTermsHost(cuts)); // #3734, #3635 A
         cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
@@ -551,7 +552,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -589,7 +593,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -844,7 +851,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1130,6 +1140,56 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, higher, 0, type(uint256).max, type(uint64).max);
     }
 
+    /// @dev #3761 — the direct-sale preview states the seller's net and the
+    ///      shortfall the sale then settles: a sale bound to the previewed net
+    ///      fills, one bound a wei above it is refused.
+    function test_3761_previewStatesTheNetTheSaleSettles() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        uint256 higher = _buyOfferAtRate(600);
+        LibTestTiming.backdateTerms(address(diamond), higher);
+        (bool accepted, bytes memory refusal, uint256 sellerNet, uint256 shortfall, uint256 heldMoving) =
+            EarlyWithdrawalDirectFacet(address(diamond)).previewDirectSale(activeLoanId, higher, lender);
+        assertTrue(accepted, "accepted");
+        assertEq(refusal.length, 0, "no refusal");
+        assertGt(shortfall, 0, "a higher-rate buyer is owed a shortfall");
+        assertEq(sellerNet, PRINCIPAL - shortfall, "net is principal less shortfall");
+        assertEq(heldMoving, 0, "nothing held");
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(EarlyWithdrawalDirectFacet.SaleNetBelowReviewed.selector, sellerNet, sellerNet + 1)
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, higher, sellerNet + 1, heldMoving, type(uint64).max
+        );
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, higher, sellerNet, heldMoving, type(uint64).max
+        );
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender, newLender, "sold");
+    }
+
+    /// @dev #3761 — a refusal comes back as the error the sale raises, read
+    ///      for the seller the preview is given.
+    function test_3761_previewReturnsTheSalesRefusal() public {
+        LibTestTiming.backdateTerms(address(diamond), 1);
+        (bool accepted, bytes memory refusal, uint256 sellerNet, , ) =
+            EarlyWithdrawalDirectFacet(address(diamond)).previewDirectSale(activeLoanId, 1, lender);
+        assertFalse(accepted, "refused");
+        assertEq(sellerNet, 0, "no net on a refusal");
+        assertEq(refusal, abi.encodeWithSelector(IVaipakamErrors.InvalidSaleOffer.selector), "the sale's own error");
+
+        uint256 higher = _buyOfferAtRate(600);
+        LibTestTiming.backdateTerms(address(diamond), higher);
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
+        (accepted, refusal, , , ) =
+            EarlyWithdrawalDirectFacet(address(diamond)).previewDirectSale(activeLoanId, higher, lender);
+        assertFalse(accepted, "a protected seller's shortfall is refused");
+        assertEq(bytes4(refusal), LibProtectedAccount.LockedSaleShortfall.selector, "the lock's own error");
+    }
+
     /// @dev #3339 — a LOCKED protected vault still holds its positions: the
     ///      lock usually means a key is suspected.
     function testLockedProtectedSellerIsStillRefused() public {
@@ -1188,7 +1248,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -1915,7 +1978,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 saleOfferId = _listSaleOffer();
         vm.prank(lender);
         vm.expectRevert(OfferMutateFacet.SaleVehicleImmutable.selector);
-        OfferMutateFacet(address(diamond)).setOfferRate(saleOfferId, 600, 600, type(uint64).max);
+        OfferMutateFacet(address(diamond)).setOfferRate(saleOfferId, 600, 600, 0, 0, false, type(uint64).max);
     }
 
     /// @dev #951 (redesign D3) — a linked sale vehicle cannot be filled through
@@ -1956,7 +2019,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3407,7 +3473,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3719,7 +3788,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3794,7 +3866,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3852,7 +3927,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3906,7 +3984,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -3971,7 +4052,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4018,7 +4102,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4066,7 +4153,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4127,7 +4217,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4170,7 +4263,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4231,7 +4327,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4289,7 +4388,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4475,7 +4577,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4586,7 +4691,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4637,7 +4745,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4708,7 +4819,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4761,7 +4875,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -4809,7 +4926,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -5703,7 +5823,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -5764,7 +5887,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -6218,7 +6344,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

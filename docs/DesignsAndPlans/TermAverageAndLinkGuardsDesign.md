@@ -94,11 +94,21 @@ A rate is **outside the band** when the term average is available and the rate i
 - A rate inside the band when signed and outside when the transaction lands is refused; the app re-quotes. The app sets the flag only after the second confirmation of #3715.
 - When the term average is unavailable there is no band and no flag is asked for.
 - **What the prompt says (#3715).** The second confirmation shows three plain figures and the user's own rate, not a formula: "Floating rate for <asset>: 8.2% today, 6.1% over 30 days, 5.4% over 90 days. Your fixed rate of 15% for 1 year is well above these. Continue?" The three figures are `averaged(asset, window)` for 24 hours, 30 days and 90 days; one that is unavailable is shown as "not available", never as a number. Where the blended figure itself is shown it has one label, "average for this term".
+- **Which rate is checked (design thread ruling, 2026-11-19, #3635 A build).** A maker is checked on the typed bound that is the worst rate they can end up with; a taker on the rate actually taken.
+  - A lender offer or intent slot is checked on its floor, a borrower offer on its ceiling, a direct accept on the loan's actual rate.
+  - Never checked: a lender's open-ended maximum (an intent slice's protocol maximum), a lender offer's typed maximum, a borrower offer's typed lowest rate.
+  - An instant borrow is a taker step: each fill's actual rate is checked, not the borrower's stated maximum. One flag on the call covers its fills and is needed if any fill is outside the band. A fill inside when signed but outside when it lands is refused.
+  - A rate-linked offer is checked on its typed bound at the write. A third-party match asks for no flag.
+  - Both directions (far above and far below) are tested on the one checked rate. One shared check gives one answer in every preview, and the direction never depends on the side.
+  - The warnings mask follows the same rate: the checked bound on the offer-created, offer-modified and intent-set events, the actual rate on the loan-opened event. Bit 1 is far above, bit 2 far below; bit 0 is reserved for the collateral-concentration warning (#3685, loan-opened only).
+  - An edit that leaves the checked bound unchanged asks for no new flag; changing it is a write of the rate.
 - **The event states it (#3719).** The loan-opened, offer-created, offer-modified and intent-set events carry a `warnings` mask that the contract derives from this check (one bit for a fixed rate far above the term average, one for far below). It is never a caller input, so a website cannot send it empty, and the platform's own alert can say that a loan opened at a rate far from the average.
 
 This is a prompt, not a price rule. A manipulated average can at most ask a user for one more confirmation, or fail to ask.
 
 ## 7. Depth is counted from reserved capital
+
+Amended 2026-11-19 (#3811, `LendingBalanceDesign.md` 3.7): capital is reserved per lender and lending asset, not per slot. Read "a slot's reserved capital" below as the lender's lending balance, counted once per lender: available is the sum, over lenders, of the lesser of the balance and the room left on that lender's open slots. Declared is retired in favour of set aside, the per-pair available figure is no longer kept on-chain, and the three stated limits stand with one more, given there.
 
 A slot's **declared** exposure is a limit its owner typed. It is not money. A slot lends only from the capital reserved for it, which is held under the intent's own lien, per slot, and changes only through the intent's own steps (funding, a fill, a repayment returned to the slot, an exit). That figure is exact on-chain, so depth is counted from it and nothing needs marking.
 
@@ -123,7 +133,8 @@ A slot with a large declared exposure and no reserved capital therefore adds not
 
 A standing rule, written into the functional spec when the first such figure is built, for the app's recent-rates band, any ranking, and the own-rate source if it is ever added:
 
-- each loan is weighted by the interest paid on it so far, never by principal;
+- each loan is weighted by the interest paid on it so far, never by principal; an open loan counts by what it has paid, and a loan's status is not a filter: a loan that later defaulted or was liquidated keeps the weight of the interest that reached its lender side;
+- a loan whose agreed rate the indexer has not confirmed from the ledger is left out, since it has no rate to place, and the figure states how many loans were left out for that reason;
 - left out: loans whose rate came from a link, loans between addresses the self-trade rule would refuse, loans younger than a minimum age;
 - one wallet's share of the weight is capped, and the figure is not shown below a minimum number of distinct lenders and of distinct borrowers;
 - the figure is a trimmed median or a quartile band, never a mean.

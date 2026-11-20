@@ -1,18 +1,17 @@
 /**
- * node:test suite for lifecycle-policy.mjs's recovery-window floors (#1476).
+ * node:test suite for lifecycle-policy.mjs's recovery-window floor (#1476,
+ * re-derived in #3158).
  *
- * The monthly floor was 31 rather than 8 for one reason: nothing inspected the
- * monthly prefixes, so the window could not be justified by detection and had
- * to outlast the monthly write cadence instead. #1476 gave that tier the same
- * weekly healthcheck the daily tier had, which is what permits the same
- * derivation and therefore the same number. (#1463 slice 2 replaced that
- * healthcheck with the daily backup watcher; the floors are kept as
- * minimums, see lifecycle-policy.mjs.)
+ * The floor used to differ by tier: 8 days daily, 31 monthly, because the
+ * weekly healthcheck fully verified only the newest period of each family.
+ * The daily backup watcher (#1463 slice 2) replaced it and lists EVERY
+ * version of every tier, so an overwrite of any retained period shows up as a
+ * second version on the next run. One detector, one derivation, one floor.
  *
- * These tests exist so the floor cannot drift back to a value nothing
- * justifies, and so the committed declaration is checked against the floors
- * on every CI run rather than only when an operator happens to hold B2
- * credentials (`--check` needs live ones and is therefore unreachable in CI).
+ * These tests exist so the floor cannot drift to a value nothing justifies,
+ * and so the committed declaration is checked against it on every CI run
+ * rather than only when an operator happens to hold B2 credentials (`--check`
+ * needs live ones and is therefore unreachable in CI).
  */
 
 import { test } from 'node:test';
@@ -22,8 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  MIN_RECOVERY_DAYS_DAILY,
-  MIN_RECOVERY_DAYS_MONTHLY,
+  MIN_RECOVERY_DAYS,
   assertPolicyCeilings,
 } from './lifecycle-policy.mjs';
 
@@ -43,19 +41,11 @@ test('the committed declaration satisfies both floors and ceilings', () => {
   assert.doesNotThrow(() => assertPolicyCeilings(declared, fail));
 });
 
-test('the monthly floor is NOT lowered to the daily one', () => {
-  assert.equal(MIN_RECOVERY_DAYS_DAILY, 8);
-  // 31, deliberately. The retired healthcheck READ the monthly prefixes, but
-  // fully verifies only the NEWEST period of each family; older retained
-  // months get presence-and-pairing only, and an overwrite leaves both keys
-  // in place. An 8-day window there would rest on a detector that does not
-  // watch those objects.
-  assert.equal(MIN_RECOVERY_DAYS_MONTHLY, 31);
-  assert.ok(
-    MIN_RECOVERY_DAYS_MONTHLY > MIN_RECOVERY_DAYS_DAILY,
-    'the monthly floor may not be lowered to the daily one while only the ' +
-      'newest monthly period is fully verified',
-  );
+test('the floor is the one derived against the daily watcher', () => {
+  // 3 days of detection (one skipped run plus the scheduler's delay) + 4 to
+  // respond + 1 of slack. Both tiers share it, because the watcher checks
+  // every retained version of both, not only the newest period.
+  assert.equal(MIN_RECOVERY_DAYS, 8);
 });
 
 test('a recovery window under the floor is rejected, per tier', () => {
@@ -65,14 +55,12 @@ test('a recovery window under the floor is rejected, per tier', () => {
     assert.ok(rule, `${prefix} missing from the declaration`);
     // One day under the floor — the boundary, not an obviously silly value.
     const total = rule.daysFromUploadingToHiding + rule.daysFromHidingToDeleting;
-    const floor =
-      prefix === 'archives/' ? MIN_RECOVERY_DAYS_DAILY : MIN_RECOVERY_DAYS_MONTHLY;
-    rule.daysFromHidingToDeleting = floor - 1;
-    rule.daysFromUploadingToHiding = total - (floor - 1); // hold the ceiling constant
+    rule.daysFromHidingToDeleting = MIN_RECOVERY_DAYS - 1;
+    rule.daysFromUploadingToHiding = total - (MIN_RECOVERY_DAYS - 1); // hold the ceiling constant
     assert.throws(
       () => assertPolicyCeilings(bad, fail),
       /floor/i,
-      `${prefix} accepted a 7-day recovery window`,
+      `${prefix} accepted a window one day under the floor`,
     );
   }
 });
@@ -81,17 +69,11 @@ test('exactly the floor is accepted — the bound is inclusive', () => {
   // An off-by-one here would silently forbid the very value the comment
   // derives, and the next operator would raise the number to make it pass.
   const ok = structuredClone(declared);
-  // Each tier at ITS OWN floor — they differ, and using one number for both
-  // is what the previous version of this test did.
-  const floors = {
-    'archives/': MIN_RECOVERY_DAYS_DAILY,
-    'archives-monthly/': MIN_RECOVERY_DAYS_MONTHLY,
-  };
-  for (const [prefix, floor] of Object.entries(floors)) {
+  for (const prefix of ['archives/', 'archives-monthly/']) {
     const rule = ok.rules.find((r) => r.fileNamePrefix === prefix);
     const total = rule.daysFromUploadingToHiding + rule.daysFromHidingToDeleting;
-    rule.daysFromHidingToDeleting = floor;
-    rule.daysFromUploadingToHiding = total - floor;
+    rule.daysFromHidingToDeleting = MIN_RECOVERY_DAYS;
+    rule.daysFromUploadingToHiding = total - MIN_RECOVERY_DAYS;
   }
   // The manifest siblings keep their declared values, so this also confirms
   // the two prefixes in a tier are validated independently.

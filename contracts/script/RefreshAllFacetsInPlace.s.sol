@@ -107,6 +107,7 @@ import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {LenderCashOutFacet} from "../src/facets/LenderCashOutFacet.sol";
 import {LenderAdvanceFacet} from "../src/facets/LenderAdvanceFacet.sol";
 import {LenderSideFacet} from "../src/facets/LenderSideFacet.sol";
@@ -380,9 +381,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // selectors move hosts, so the Replace cut repoints them.
     // 133 -> 136: IntegratorFacet (#3682), StandingOfferCheckFacet (#3720)
     // and ReferralFacet (#3722). Their selectors are new (Adds).
-    // 136 -> 139: LenderCashOutFacet, LenderAdvanceFacet and LenderSideFacet
+    // 136 -> 137: RateLinkFacet (#3635 A, #3713). Its selectors are new.
+    // 137 -> 140: LenderCashOutFacet, LenderAdvanceFacet and LenderSideFacet
     // (#3760, the lender cash-out). Their selectors are new (Adds).
-    uint256 public constant EXPECTED_FACETS = 139;
+    uint256 public constant EXPECTED_FACETS = 140;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1528,13 +1530,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getStandingOfferCheckSelectors()
         );
         items[135] = Item("referralFacet", ArtifactDeploy.deploy(type(ReferralFacet).name), _getReferralSelectors());
-        items[136] = Item(
+        items[136] = Item("rateLinkFacet", ArtifactDeploy.deploy(type(RateLinkFacet).name), _getRateLinkSelectors());
+        items[137] = Item(
             "lenderCashOutFacet", ArtifactDeploy.deploy(type(LenderCashOutFacet).name), _getLenderCashOutSelectors()
         );
-        items[137] = Item(
+        items[138] = Item(
             "lenderAdvanceFacet", ArtifactDeploy.deploy(type(LenderAdvanceFacet).name), _getLenderAdvanceSelectors()
         );
-        items[138] = Item("lenderSideFacet", ArtifactDeploy.deploy(type(LenderSideFacet).name), _getLenderSideSelectors());
+        items[139] = Item("lenderSideFacet", ArtifactDeploy.deploy(type(LenderSideFacet).name), _getLenderSideSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

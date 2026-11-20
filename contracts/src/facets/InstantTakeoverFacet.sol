@@ -136,11 +136,11 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
      *         instant market on, an instant-market loan with interest by
      *         time, and nothing held for the lender position. Returns the
      *         ABI-encoded refusal the takeover would raise, or empty.
-     * @dev    The ONE position-level rule: `_takeover` reverts with it, and
-     *         `LenderCashOutFacet.cashOptions` reads it for a keeper, whose
-     *         only "sell now" source is a takeover slot, so the read and the
-     *         execution cannot disagree. The caller's exit verdict and every
-     *         slot-level check stay where they are.
+     * @dev    The ONE position-level rule: the takeover's admission
+     *         ({_requireAdmissible}, so the takeover and {previewTakeover})
+     *         reverts with it, and `LenderCashOutFacet.cashOptions` reads it
+     *         for a keeper, whose only "sell now" source is a takeover slot,
+     *         so the read and the execution cannot disagree.
      */
     function takeoverPositionRefusal(uint256 loanId) public view returns (bytes memory) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -158,38 +158,15 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @dev The takeover body. `caller` is who started it.
     function _takeover(address caller, uint256 loanId, address incoming, uint8 slot) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        {
-            bytes memory refusal = takeoverPositionRefusal(loanId);
-            if (refusal.length != 0) {
-                assembly ("memory-safe") {
-                    revert(add(refusal, 0x20), mload(refusal))
-                }
-            }
-        }
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
-        {
-            // The holder starts it, or a keeper holding the holder's
-            // early-withdrawal mandate for this loan (InstantMarketDesign §7).
-            // The proceeds always reach the holder's vault, so the direct-sale
-            // exit rule is read for the holder; the keeper is screened itself.
-            address actor = caller;
-            if (
-                actor != holder &&
-                LibAuth.keeperMayActFor(actor, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, holder)
-            ) {
-                LibVaipakam._assertNotSanctioned(actor);
-                LibServiceCapacity.chargeKeeper(); // one keeper action (#1219)
-                actor = holder;
-            }
-            SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
-                loanId, actor, SaleExitVerdictFacet.SaleRoute.Direct
-            );
-        }
-        address borrowerNow = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        if (incoming == holder || incoming == borrowerNow) revert InstantTakeoverSameParty(incoming);
-        _admitTakeover(s, loan, incoming, slot);
-        _screenIncoming(s, loan, holder, incoming, borrowerNow);
+        (address holder, , bool byKeeper) = _requireAdmissible(s, loan, loanId, caller, incoming, slot);
+        if (byKeeper) LibServiceCapacity.chargeKeeper(); // one keeper action (#1219)
+        // The position-move gate's own call also clears a stale sanctions
+        // registry entry on a clean read, which the shared view only reads.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(ProfileFacet.enforcePositionMoveNotSanctioned.selector, holder, incoming),
+            bytes4(0)
+        );
 
         // The incoming slot's capital pays the principal outstanding into the
         // outgoing holder's vault, measured on arrival.
@@ -224,6 +201,97 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         emit InstantTakenOver(loanId, holder, incoming, slot, paid, earned);
     }
 
+    /// @notice #3761 — whether {takeoverInstant} would accept handing
+    ///         `loanId` to `incoming`'s slot `slot` if `caller` sent it now,
+    ///         and what the outgoing holder would receive.
+    /// @dev    Runs the same admission the takeover runs ({_requireAdmissible}),
+    ///         so the two cannot disagree. A refusal is returned as the custom
+    ///         error the takeover would raise. What it does not cover: the
+    ///         transaction deadline, the pause, and the keeper's capacity
+    ///         charge when `caller` is a keeper.
+    /// @return accepted      Whether the takeover would be accepted.
+    /// @return refusal       The ABI-encoded error it would revert with, or
+    ///                       empty when accepted.
+    /// @return principalPaid The principal outstanding the incoming slot pays
+    ///                       into the outgoing holder's vault. A token that
+    ///                       charges on transfer delivers less; the takeover
+    ///                       measures what arrives. The holder's earned
+    ///                       interest is not in it: it stays a seller claim on
+    ///                       the loan, paid as the borrower pays interest.
+    function previewTakeover(uint256 loanId, address caller, address incoming, uint8 slot)
+        external
+        view
+        returns (bool accepted, bytes memory refusal, uint256 principalPaid)
+    {
+        try this.requireTakeoverAdmissible(loanId, caller, incoming, slot) returns (uint256 principal) {
+            return (true, "", principal);
+        } catch (bytes memory reason) {
+            return (false, reason, 0);
+        }
+    }
+
+    /// @notice Reverts with the first reason {takeoverInstant} would refuse
+    ///         the takeover for `caller`; otherwise returns the principal the
+    ///         incoming slot would pay. The revert form of {previewTakeover}.
+    function requireTakeoverAdmissible(uint256 loanId, address caller, address incoming, uint8 slot)
+        external
+        view
+        returns (uint256 principal)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        _requireAdmissible(s, loan, loanId, caller, incoming, slot);
+        return loan.principal;
+    }
+
+    /// @dev The one admission rule for a takeover sent by `caller`: the
+    ///      market switch, the loan's eligibility, who may start it (the
+    ///      holder, or a keeper with the holder's early-withdrawal mandate,
+    ///      screened itself), the direct-sale exit for the holder, nothing
+    ///      held, the parties, the incoming slot's admission and the incoming
+    ///      lender's screens. Read-only; the takeover adds the keeper charge
+    ///      and the mutating half of the position-move gate.
+    function _requireAdmissible(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        address caller,
+        address incoming,
+        uint8 slot
+    ) private view returns (address holder, address borrowerNow, bool byKeeper) {
+        {
+            bytes memory refusal = takeoverPositionRefusal(loanId);
+            if (refusal.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(refusal, 0x20), mload(refusal))
+                }
+            }
+        }
+        holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
+        {
+            // The holder starts it, or a keeper holding the holder's
+            // early-withdrawal mandate for this loan (InstantMarketDesign §7).
+            // The proceeds always reach the holder's vault, so the direct-sale
+            // exit rule is read for the holder; the keeper is screened itself.
+            address actor = caller;
+            if (
+                actor != holder &&
+                LibAuth.keeperMayActFor(actor, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, holder)
+            ) {
+                LibVaipakam._assertNotSanctioned(actor);
+                byKeeper = true;
+                actor = holder;
+            }
+            SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
+                loanId, actor, SaleExitVerdictFacet.SaleRoute.Direct
+            );
+        }
+        borrowerNow = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        if (incoming == holder || incoming == borrowerNow) revert InstantTakeoverSameParty(incoming);
+        _admitTakeover(s, loan, incoming, slot);
+        _screenIncoming(s, loan, holder, incoming, borrowerNow);
+    }
+
     /// @dev The incoming slot admits the loan as if it were opened now.
     function _admitTakeover(
         LibVaipakam.Storage storage s,
@@ -243,9 +311,6 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             if (!consent.takeover) revert InstantTakeoverNotOffered();
             LibTiming.requireIntentAged(incoming, consent.setAt);
         }
-        if (loan.interestRateBps < intent.minRateBps) {
-            revert InstantTakeoverRateBelowSlot(loan.interestRateBps, intent.minRateBps);
-        }
         LibIntentTerms.Lifecycle verdict =
             LibIntentTerms.lifecycleVerdict(intent.acceptsProRata, false, loan.allowsPartialRepay);
         if (verdict == LibIntentTerms.Lifecycle.FullTermRequired) revert LibIntentFill.LenderIntentFullTermRequired();
@@ -258,6 +323,12 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
                 maturity > block.timestamp + uint256(intent.maxDurationDays) * 1 days
                     || (intent.lendUntil != 0 && maturity > intent.lendUntil)
             ) revert InstantTakeoverTermPastSlot(maturity);
+            // #3635 A — the slot's effective floor for the term the loan has
+            // left, as if it were opened now: a linked slot reads its linked
+            // rate, and refuses by name while the link cannot be used.
+            uint256 left = maturity > block.timestamp ? maturity - block.timestamp : 0;
+            uint256 floorBps = LibIntentFill.slotFloor(intent, loan.principalAsset, (left + 1 days - 1) / 1 days);
+            if (loan.interestRateBps < floorBps) revert InstantTakeoverRateBelowSlot(loan.interestRateBps, floorBps);
         }
         // The same calm-price check every other fill of a lender intent slot
         // runs (on unless the slot's owner switched it off).
@@ -269,6 +340,16 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             s.lenderIntentLivePrincipal[incoming][loan.principalAsset][loan.collateralAsset][slot] + loan.principal
                 > intent.maxExposure
         ) revert LibIntentFill.LenderIntentExposureExceeded();
+        {
+            // The slot pays the principal out of its funded capital, which an
+            // active slot can lack (never funded, or withdrawn).
+            uint256 funded = s.lenderIntentCapital[incoming][loan.principalAsset][loan.collateralAsset][slot];
+            if (loan.principal > funded) {
+                revert LibEncumbrance.IntentCapitalInsufficient(
+                    incoming, loan.principalAsset, loan.collateralAsset, slot, loan.principal, funded
+                );
+            }
+        }
         uint256 ltv = RiskFacet(address(this)).calculateLTV(loan.id);
         if (ltv > intent.maxInitLtvBps) revert InstantTakeoverLtvAboveSlot(ltv, intent.maxInitLtvBps);
         // The incoming lender takes the loan on as new: the one new-loan
@@ -277,7 +358,9 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev The incoming lender is screened as a standing participant:
-    ///      sanctions, the position-move screen, country and KYC against the
+    ///      sanctions, the position-move screen (its read-only half: the
+    ///      takeover's own call to the gate refuses exactly these and may also
+    ///      clear a stale registry entry), country and KYC against the
     ///      borrower, and risk access for the pair.
     function _screenIncoming(
         LibVaipakam.Storage storage s,
@@ -285,12 +368,10 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         address holder,
         address incoming,
         address borrowerNow
-    ) private {
+    ) private view {
         LibVaipakam._assertNotSanctioned(incoming);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(ProfileFacet.enforcePositionMoveNotSanctioned.selector, holder, incoming),
-            bytes4(0)
-        );
+        if (LibVaipakam.positionMovePartyBlocked(holder)) revert LibVaipakam.SanctionedAddress(holder);
+        if (LibVaipakam.positionMovePartyBlocked(incoming)) revert LibVaipakam.SanctionedAddress(incoming);
         LibCompliance.enforceCountryAndKyc(
             address(this), incoming, borrowerNow, loan.principalAsset, loan.principal,
             loan.collateralAsset, loan.collateralAmount

@@ -188,24 +188,32 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @notice The match core run for another facet of this Diamond, with the
-    ///         matcher named by that facet's entry. #3328: the collection offer's
-    ///         `matchCollectionOffer` pairs a one-token lender slice through the
-    ///         same core every other match uses; hosting the core here keeps one
-    ///         runtime copy instead of a fourth inlined one in a facet near
-    ///         EIP-170. The calling entry holds the Diamond's reentrancy guard and
-    ///         applies its own gates (sanctions, the match switch, the solver
-    ///         charge); this entry adds none, so it is callable only by the
-    ///         Diamond itself.
-    /// @param lenderOfferId   The lender offer (the collection slice).
-    /// @param borrowerOfferId The borrower offer it is paired with.
-    /// @param matcher         The match-share recipient: the outer entry's caller.
-    /// @return loanId         The newly initiated loan.
-    function matchCoreInternal(uint256 lenderOfferId, uint256 borrowerOfferId, address matcher)
-        external
-        returns (uint256 loanId)
-    {
+    ///         matcher named by that facet's entry. One runtime copy of the
+    ///         core serves every other match route through this entry: the
+    ///         collection offer's `matchCollectionOffer` (#3328), the Auto-lend
+    ///         slot's `OfferMatchIntentFacet.matchIntent` and the instant
+    ///         market's `InstantFillFacet.fillInstant` (#3635 A, when the rate
+    ///         link's effective bounds pushed both of those over EIP-170). The
+    ///         calling entry holds the Diamond's reentrancy guard and applies
+    ///         its own gates (sanctions, the match switch, the solver charge);
+    ///         this entry adds none, so it is callable only by the Diamond
+    ///         itself.
+    /// @param lenderOfferId     The lender offer (a slot, collection or source slice).
+    /// @param borrowerOfferId   The borrower offer it is paired with.
+    /// @param borrowerCollFloor The least collateral the match may lock from the
+    ///                          borrower offer (0 for none; the instant market
+    ///                          passes the share it drew for this fill).
+    /// @param matcher           The match-share recipient: the outer entry's
+    ///                          caller, or zero for none (the instant market).
+    /// @return loanId           The newly initiated loan.
+    function matchCoreInternal(
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId,
+        uint256 borrowerCollFloor,
+        address matcher
+    ) external returns (uint256 loanId) {
         if (msg.sender != address(this)) revert MatchCoreOnlyDiamondInternal(msg.sender);
-        loanId = LibOfferMatchExecute.executeMatchFor(lenderOfferId, borrowerOfferId, 0, matcher);
+        loanId = LibOfferMatchExecute.executeMatchFor(lenderOfferId, borrowerOfferId, borrowerCollFloor, matcher);
     }
 
     /// @notice {matchCoreInternal} was called by anyone but the Diamond itself.

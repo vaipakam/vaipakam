@@ -37,6 +37,9 @@
 //  - the indexer's `GET /offers/:id/nearest?chainId&limit` (#3623): the
 //    other side's open token offers on the offer's pair, ranked as the
 //    indexer ranks them. Refused while the posture is `down`;
+//  - the indexer's `GET /intents/nearest` (#3660): the open borrow requests
+//    closest to an Auto-lend slot's terms, ranked as the indexer ranks them.
+//    Refused while the posture is `down`;
 //  - the indexer's `GET /offers/markets?chainId`, the rate desk's market
 //    list: the open token-against-token offers above, unexpired and without
 //    the sale and early-close vehicles, grouped by both tokens and the term,
@@ -256,6 +259,33 @@ async function nearestOffers(id, url) {
   }
   all.sort((a, b) => a.rateGapBps - b.rateGapBps || Math.abs(a.durationDays - me.durationDays) - Math.abs(b.durationDays - me.durationDays) || b.offerId - a.offerId);
   return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: true, candidates: all.slice(0, limit), oppositeOpen: all.length } };
+}
+
+/** `/intents/nearest` (#3660): the open borrow requests on an Auto-lend
+ *  slot's pair, unexpired, without the vehicles and the slot owner's own,
+ *  closest rate first (how far a request's ceiling sits below the slot's
+ *  lowest rate), then by how far its term runs past the slot's longest,
+ *  newest on a tie, as the indexer ranks them. */
+async function nearestForIntent(url) {
+  const p = url.searchParams;
+  const owner = (p.get('owner') ?? '').toLowerCase();
+  const lending = (p.get('lending') ?? '').toLowerCase();
+  const collateral = (p.get('collateral') ?? '').toLowerCase();
+  const minRate = Number(p.get('minRateBps'));
+  const maxDays = Number(p.get('maxDurationDays'));
+  const limit = Math.min(10, Math.max(1, Number(p.get('limit') ?? 5)));
+  const all = [];
+  for (const oid of await offerIds()) {
+    const row = await offerRow(oid);
+    if (row === null || !unexpired(row) || row.offerType !== 1) continue;
+    if (row.lendingAsset !== lending || row.collateralAsset !== collateral) continue;
+    if (row.assetType !== 0 || row.collateralAssetType !== 0 || row.isSaleVehicle || row.isOffsetVehicle || row.creator === owner) continue;
+    const rateGapBps = Math.max(0, minRate - Math.max(row.interestRateBps, row.interestRateBpsMax));
+    all.push({ ...row, rateGapBps });
+  }
+  const over = (r) => Math.max(0, r.durationDays - maxDays);
+  all.sort((a, b) => a.rateGapBps - b.rateGapBps || over(a) - over(b) || b.offerId - a.offerId);
+  return { chainId: CHAIN_ID, candidates: all.slice(0, limit), oppositeOpen: all.length };
 }
 
 /** `/offers/markets`: the open token-against-token offers grouped into
@@ -533,6 +563,14 @@ let posture = 'live';
  *  live test networks the keeper does not rank. */
 let rankings = new Map();
 let rankingsDown = false;
+/** What `/rates/curve` and `/rates/curve/history` answer (#3751), by
+ *  `chainId:asset` (lowercase) and `chainId:asset:days`: a spec stores an
+ *  answer in the index's shape, or a refusal status (429 for the request
+ *  limit, 503 for an unavailable chain). Unset, the curve is the index's
+ *  answer for an asset its pass has never written. */
+let rateCurves = new Map();
+let rateHistories = new Map();
+let rateCurveStatus = null;
 
 /** Signed orders posted to the book, by order hash: the canonical text,
  *  the signature and the post's order (asks and bids keep it as a tie). */
@@ -925,6 +963,7 @@ const server = http.createServer(async (req, res) => {
           '/offers/active',
           '/offers/markets',
           '/offers/:id/nearest',
+          '/intents/nearest',
           '/loans/recent',
           '/loans/rate-candles',
           '/loans/by-participant',
@@ -937,6 +976,7 @@ const server = http.createServer(async (req, res) => {
           '/__stub/notifications',
           '/activity?wallet=, /__stub/activity',
           '/assets/rankings, /__stub/rankings',
+          '/rates/curve, /rates/curve/history, /__stub/rates',
           '/signed-offers, /__stub/signed-offers',
           '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
           '/__stub/agent',
@@ -955,6 +995,9 @@ const server = http.createServer(async (req, res) => {
       agent = freshAgent();
       rankings = new Map();
       rankingsDown = false;
+      rateCurves = new Map();
+      rateHistories = new Map();
+      rateCurveStatus = null;
       signedBook = new Map();
       signedBookLags = false;
       signedReplay = new Set();
@@ -996,6 +1039,17 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true });
       return;
     }
+    if (url.pathname === '/__stub/rates' && req.method === 'POST') {
+      // { curve } stores a /rates/curve answer, { history } a history
+      // answer (keyed by its own chainId, asset and days), { status } makes
+      // both routes refuse with that status, { status: null } lifts it.
+      const next = JSON.parse(await readBody(req));
+      if (next.curve) rateCurves.set(`${next.curve.chainId}:${String(next.curve.asset).toLowerCase()}`, next.curve);
+      if (next.history) rateHistories.set(`${next.history.chainId}:${String(next.history.asset).toLowerCase()}:${next.history.days}`, next.history);
+      if ('status' in next) rateCurveStatus = next.status;
+      json(res, 200, { ok: true });
+      return;
+    }
     if (url.pathname === '/__stub/config' && req.method === 'POST') {
       // The whole answer `/config/:chainId` gives for that chain, as the
       // index writes it ({ chainId, available, values, ... }).
@@ -1016,6 +1070,45 @@ const server = http.createServer(async (req, res) => {
       }
       const chainId = Number(configPath[1]);
       json(res, 200, configSnapshots.get(chainId) ?? { chainId, available: false });
+      return;
+    }
+    if ((url.pathname === '/rates/curve' || url.pathname === '/rates/curve/history') && req.method === 'GET') {
+      if (rateCurveStatus !== null) {
+        json(res, rateCurveStatus, { error: rateCurveStatus === 429 ? 'rate-limited' : 'unavailable' });
+        return;
+      }
+      const chainId = Number(url.searchParams.get('chainId'));
+      const asset = (url.searchParams.get('asset') ?? '').toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(asset)) {
+        json(res, 400, { error: 'bad-asset' });
+        return;
+      }
+      if (url.pathname === '/rates/curve/history') {
+        const days = Number(url.searchParams.get('days') ?? '30');
+        const stored = rateHistories.get(`${chainId}:${asset}:${days}`);
+        json(res, 200, stored ?? { chainId, asset, days, termRange: null, lookbackDays: null, notice: 'observed-averages-not-advice-forecast-or-offer', rule: {}, rows: [] });
+        return;
+      }
+      const stored = rateCurves.get(`${chainId}:${asset}`);
+      const terms = [7, 30, 90, 180, 365];
+      json(
+        res,
+        200,
+        stored ?? {
+          chainId,
+          asset,
+          notice: 'observed-averages-not-advice-forecast-or-offer',
+          computed: false,
+          day: null,
+          asOf: null,
+          reference: { source: 'outside-rate-reference', terms: terms.map((days) => ({ days, state: 'not-published', valueBps: null, a24Bps: null, a90Bps: null, weightBps: null })) },
+          ownLoans: {
+            source: 'platform-repaid-loans',
+            rule: {},
+            terms: terms.map((days) => ({ days, termRange: null, lookbackDays: null, state: 'not-computed', reason: null, p25Bps: null, medianBps: null, p75Bps: null, loans: 0, lenders: 0, borrowers: 0 })),
+          },
+        },
+      );
       return;
     }
     if (url.pathname === '/assets/rankings' && req.method === 'GET') {
@@ -1255,6 +1348,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await offerMarkets());
+      return;
+    }
+    if (url.pathname === '/intents/nearest' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      json(res, 200, await nearestForIntent(url));
       return;
     }
     const nearestPath = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);

@@ -116,7 +116,10 @@ contract TermsGateTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -355,7 +358,7 @@ contract TermsGateTest is SetupTest {
         _expectTerms(borrower, 2);
         vm.prank(borrower);
         PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max
+            loanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, false, type(uint64).max
         );
     }
 
@@ -367,6 +370,7 @@ contract TermsGateTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, PRINCIPAL, 500, 5000, 30, 1 ether, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         );
         _expectTerms(lender, 1);

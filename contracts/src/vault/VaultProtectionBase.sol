@@ -72,6 +72,9 @@ abstract contract VaultProtectionBase {
     uint8 public constant PURPOSE_RECOVERY = 8;
     uint8 public constant PURPOSE_RECOVERY_PROOF = 9;
     uint8 public constant PURPOSE_CLAWBACK = 10;
+    /// @notice #3246 part 2 — a replaced account's request to move its
+    ///         position tokens to the wallet that replaced it.
+    uint8 public constant PURPOSE_POSITION_MOVE = 11;
 
     /// @notice #3246 part 2 — how long a CHANGE of the recovery address waits
     ///         (owner decision 2026-11-06). A first setting waits twice the
@@ -148,6 +151,13 @@ abstract contract VaultProtectionBase {
     /// @dev The owner or a signer claws back; `assets` is
     ///      keccak256(abi.encode(the ClawbackAsset list)).
     bytes32 public constant CLAWBACK_TYPEHASH = keccak256("Clawback(bytes32 assets,uint256 nonce,uint64 expiry)");
+    /// @notice #3246 part 2 — the replacing wallet asks to move the replaced
+    ///         account's position tokens to itself (`to`, the owner record).
+    bytes32 public constant POSITION_MOVE_TYPEHASH =
+        keccak256("PositionMove(address to,uint256 nonce,uint64 expiry)");
+    /// @notice The owner or a signer cancels the pending move maturing `at`.
+    bytes32 public constant POSITION_MOVE_CANCEL_TYPEHASH =
+        keccak256("PositionMoveCancel(uint64 at,uint256 nonce,uint64 expiry)");
 
     /// @notice How a key authorizes one write: `sig` empty means a direct call
     ///         from `key`; otherwise its EIP-712 / ERC-1271 signature.
@@ -207,6 +217,17 @@ abstract contract VaultProtectionBase {
     ///         and recovered for good, and its free balance pays `recovery`.
     ///         The Diamond's `AccountClawedBack` lists what moved.
     event AccountRecovered(address indexed account, address indexed recovery, address indexed by, uint8 role);
+    /// @notice #3246 part 2 — the wallet that replaced `account` asked to move
+    ///         the account's position tokens to itself (`to`). They may move
+    ///         from `readyAt` until one further delay later, unless the
+    ///         request is cancelled or dropped first. An alert reports it as
+    ///         it reports a proposed replacement.
+    event PositionMoveRequested(address indexed account, address indexed to, uint64 readyAt, address by);
+    /// @notice The owner or a signer cancelled the pending position move.
+    event PositionMoveCancelled(address indexed account, uint64 readyAt, address by);
+    /// @notice A lock, a further replacement or a clawback dropped the pending
+    ///         position move.
+    event PositionMoveDropped(address indexed account, uint64 readyAt);
 
     /// @notice #3719 — a role on the account changed: the owner (primary
     ///         wallet), a secondary signer, or the recovery nominee (a
@@ -271,6 +292,9 @@ abstract contract VaultProtectionBase {
     error RecoveryInUse();
     /// @notice A recovered account stays locked and protected for good.
     error RecoveredAccount();
+    /// @notice #3246 part 2 — moving positions to a replacing wallet needs a
+    ///         completed replacement.
+    error NotReplaced();
 
     constructor() {
         SELF = address(this);
@@ -378,6 +402,11 @@ abstract contract VaultProtectionBase {
             _clearPendingRecovery(l);
             emit RecoveryAddressDropped(_account(), p);
             emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_ADDRESS, p, l.recovery);
+        }
+        uint64 move = P.positionMovePending(l);
+        if (move != 0) {
+            l.positionMoveAt = 0;
+            emit PositionMoveDropped(_account(), move);
         }
         l.epoch += 1;
     }

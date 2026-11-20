@@ -53,7 +53,7 @@ const LOAN_STORAGE = /^struct LibVaipakam\.Loan storage\b/;
 export const ALLOWED = [
   {
     site: 'src/facets/LoanFacet.sol:LoanFacet._copyFinancialFields',
-    writes: 4,
+    writes: 3,
     reason:
       'Origination writes the loan record before it exists to anyone; the ledger opens lazily at the start time, so there is no earlier stretch to price.',
   },

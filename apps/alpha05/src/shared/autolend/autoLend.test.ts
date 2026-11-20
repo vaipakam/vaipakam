@@ -53,6 +53,8 @@ const NONE: IntentRecord = {
   termsSetAt: 0n,
   lendUntil: 0n,
   acceptsProRata: false,
+  linkKind: 0,
+  linkMarginBps: 0,
 };
 const RECORD: IntentRecord = {
   ...NONE,
@@ -97,10 +99,14 @@ describe('the Auto-lend form', () => {
   });
 
   it('refuses an end date that is not after today, and keeps an empty one as none', () => {
-    const past = parse({ lendUntil: '2027-01-10' });
+    const past = parse({ setPeriod: true, lendUntil: '2027-01-10' });
     expect(!past.ok && past.errors.lendUntil).toBe('past');
     expect(parsed({ lendUntil: '' }).lendUntilDate).toBeNull();
-    expect(parsed({ lendUntil: '2027-02-01' }).lendUntilDate).toBe('2027-02-01');
+    expect(parsed({ setPeriod: true, lendUntil: '2027-02-01' }).lendUntilDate).toBe('2027-02-01');
+    // #3763: open-ended unless the lender chooses a set period.
+    expect(parsed({ setPeriod: false, lendUntil: '2027-02-01' }).lendUntilDate).toBeNull();
+    const empty = parse({ setPeriod: true, lendUntil: '' });
+    expect(!empty.ok && empty.errors.lendUntil).toBe('date');
   });
 
   it('ignores the Advanced limits outside Advanced, so a hidden figure never reaches the protocol', () => {
@@ -183,14 +189,14 @@ describe('what stops a setup before any dry run', () => {
 
 describe('the setup call', () => {
   it('sends the terms and the funding as one batch, every step required, terms first', () => {
-    const d = autoLendDraft(USDC, WETH, parsed({ proRata: true, lendUntil: '2027-03-01' }));
+    const d = autoLendDraft(USDC, WETH, parsed({ proRata: true, setPeriod: true, lendUntil: '2027-03-01' }));
     const call = setupCall(d, 100n * E6, 99n, null);
     expect(call.functionName).toBe('multicall');
     const steps = call.args[0] as readonly { callData: Hex; allowFailure: boolean }[];
     expect(steps.map((s) => s.allowFailure)).toEqual([false, false]);
     const set = decodeFunctionData({ abi: INTENT, data: steps[0]!.callData });
     expect(set.functionName).toBe('setLenderIntent');
-    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, 99n]);
+    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, 99n]);
     const fund = decodeFunctionData({ abi: INTENT, data: steps[1]!.callData });
     expect(fund).toEqual({ functionName: 'fundLenderIntent', args: [USDC, WETH, 0, 1000n * E6] });
     // The batch ABI names the steps' errors, so a step's revert decodes.
@@ -231,6 +237,12 @@ describe('a change of an Auto-lend', () => {
     expect(setupCall(change(), 200n * E6, 99n, { ...RECORD, requiresKeeperAuth: true }).args[8]).toBe(true);
   });
 
+  it('keeps a recorded market link, so a change never drops the slot\'s linked floor', () => {
+    const linked = setupCall(change(), 200n * E6, 99n, { ...RECORD, linkKind: 1, linkMarginBps: 100 });
+    expect(linked.args[12]).toEqual({ linkKind: 1, linkMarginBps: 100, rateFarFromAverageAcknowledged: false });
+    expect(setupCall(change(), 200n * E6, 99n, RECORD).args[12]).toEqual({ linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false });
+  });
+
   it('adds money in the same batch when an amount is typed', () => {
     const call = setupCall(change({ amount: '50' }), 200n * E6, 99n, RECORD);
     expect(call.functionName).toBe('multicall');
@@ -256,7 +268,7 @@ describe('a change of an Auto-lend', () => {
 
   it('opens the form on the recorded limits, exactly', () => {
     const i = inputFromIntent({ ...RECORD, lendUntil: 0n }, 6);
-    expect(i).toMatchObject({ amount: '', rate: '5.5', ltv: '60', days: '60', lendUntil: '', exposure: '2000', minFill: '200' });
+    expect(i).toMatchObject({ amount: '', rate: '5.5', ltv: '60', days: '60', setPeriod: false, lendUntil: '', exposure: '2000', minFill: '200' });
     expect(bpsText(725n)).toBe('7.25');
     expect(bpsText(800n)).toBe('8');
   });

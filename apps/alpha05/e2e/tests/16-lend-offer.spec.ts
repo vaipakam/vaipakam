@@ -26,6 +26,8 @@ async function openForm(page: Page, collateral: Hex): Promise<void> {
   await connectWallet(page);
   await page.getByTestId('pick-lending').locator('select').selectOption(WETH);
   await page.getByTestId('pick-collateral').locator('select').selectOption(collateral);
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await page.getByTestId('lend-choice-once').check();
   await page.getByTestId('lend-offer-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Your lending offer' })).toBeVisible();
   // The terms offered are the protocol's own, read before a review opens.
@@ -154,6 +156,8 @@ test('a lender posts their own offer: exact figures, an exact approval of the am
   // Closing returns to the requests, and the next offer starts from a clean form.
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('lend-offer-open')).toBeVisible();
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await page.getByTestId('lend-choice-once').check();
   await page.getByTestId('lend-offer-open').click();
   await expect(page.getByTestId('request-amount')).toHaveValue('');
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_COLLECTION, canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, NO_RATE_LINK, canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { createIndexerClient } from '../reads/world/indexerClient';
 import { bookSignedOrderFrom, makerCover, readMarketSignedBook, sortSides, standingRateBps, type BookSignedOrder } from './signedBook';
 import { orderHashOf, type SignedOrderWire } from './signedOrder';
@@ -54,6 +54,7 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     nonce: '7',
     deadline: '2000',
     ...NO_COLLECTION,
+    ...NO_RATE_LINK,
     ...patch,
   };
 }

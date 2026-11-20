@@ -8,10 +8,15 @@ import { createHash } from 'node:crypto';
 const DAY = 86_400_000;
 
 /**
- * Enough of B2's native API for the watcher: authorize, versioned listing
+ * Enough of B2's native API (version 4) for the watcher: authorize, versioned listing
  * with (name, id) paging, download by id, upload with file info and a
  * compliance retention (refused on a bucket without Object Lock), and a
  * retention update that may only lengthen.
+ *
+ * Every native call must use API version 4, as the current B2 CLI's keys
+ * require (#3222): any other version is answered the way B2 answers a
+ * version 3 sign-in with such a key. A key is confined to one `bucket`, to
+ * several (`buckets`), or to none (`bucket: null`, the account-wide case).
  */
 export function fakeB2({ pageSize = 2, now: NOW } = {}) {
   const buckets = new Map();
@@ -29,12 +34,12 @@ export function fakeB2({ pageSize = 2, now: NOW } = {}) {
     // `store`, the request takes effect and the answer is still the error, as
     // B2 can do.
     faults: [],
-    bucket(name, { lock = false } = {}) {
-      buckets.set(name, { id: `bkt-${name}`, name, lock, versions: [], bytes: new Map() });
+    bucket(name, { lock = false, lifecycleRules = [] } = {}) {
+      buckets.set(name, { id: `bkt-${name}`, name, lock, lifecycleRules, versions: [], bytes: new Map() });
       return b2;
     },
-    key(id, { bucket, capabilities, namePrefix = null }) {
-      keys.set(id, { id, bucket, capabilities, namePrefix });
+    key(id, { bucket, buckets: many, capabilities, namePrefix = null }) {
+      keys.set(id, { id, bucket: many ? many[0] : bucket, scope: many ?? (bucket == null ? null : [bucket]), capabilities, namePrefix });
       return b2;
     },
     put(bucketName, fileName, body, at) {
@@ -67,19 +72,54 @@ export function fakeB2({ pageSize = 2, now: NOW } = {}) {
     },
     async handle(url, init = {}) {
       const u = new URL(url);
+      const version = /^\/b2api\/(v\d+)\//.exec(u.pathname)?.[1];
+      if (version && version !== 'v4') {
+        return json({ code: 'bad_request', message: `This request is not currently supported on API version number ${version.slice(1)}` }, 400);
+      }
       if (u.pathname.endsWith('/b2_authorize_account')) {
         const [id] = Buffer.from(init.headers.Authorization.slice(6), 'base64').toString().split(':');
         const k = keys.get(id);
         if (!k) return json({ message: 'bad key' }, 401);
-        const b = buckets.get(k.bucket);
+        const scope = k.scope == null ? null : k.scope.map((n) => ({ id: buckets.get(n)?.id ?? `bkt-${n}`, name: n }));
         return json({
           accountId: 'acct',
           authorizationToken: id,
-          apiInfo: { storageApi: { apiUrl: api, downloadUrl: dl, capabilities: k.capabilities, bucketId: b.id, bucketName: b.name, namePrefix: k.namePrefix } },
+          apiInfo: {
+            storageApi: {
+              apiUrl: api,
+              downloadUrl: dl,
+              s3ApiUrl: 'https://s3.us-west-005.backblazeb2.com',
+              allowed: { buckets: scope, capabilities: k.capabilities, namePrefix: k.namePrefix },
+            },
+          },
         });
       }
       const k = keyOf(init.headers?.Authorization) ?? null;
       const b = k && buckets.get(k.bucket);
+      if (u.pathname.endsWith('/b2_list_buckets')) {
+        // The bucket settings the lifecycle applier reads. A key confined to
+        // buckets sees only those, as B2 answers it.
+        const body = JSON.parse(init.body);
+        const visible = [...buckets.values()].filter((x) => k.scope == null || k.scope.includes(x.name));
+        const found = visible.filter((x) => (body.bucketId ? x.id === body.bucketId : body.bucketName ? x.name === body.bucketName : true));
+        return json({
+          buckets: found.map((x) => ({
+            bucketId: x.id,
+            bucketName: x.name,
+            bucketType: 'allPrivate',
+            lifecycleRules: x.lifecycleRules,
+            fileLockConfiguration: { isClientAuthorizedToRead: true, value: { isFileLockEnabled: x.lock } },
+          })),
+        });
+      }
+      if (u.pathname.endsWith('/b2_update_bucket')) {
+        if (!k.capabilities.includes('writeBuckets')) return json({ code: 'unauthorized', message: 'unauthorized' }, 401);
+        const body = JSON.parse(init.body);
+        const target = [...buckets.values()].find((x) => x.id === body.bucketId);
+        if (!target || (k.scope != null && !k.scope.includes(target.name))) return json({ code: 'unauthorized', message: 'unauthorized' }, 401);
+        target.lifecycleRules = body.lifecycleRules;
+        return json({ bucketId: target.id, bucketName: target.name, lifecycleRules: target.lifecycleRules });
+      }
       if (u.pathname.endsWith('/b2_list_file_versions')) {
         const body = JSON.parse(init.body);
         const sorted = b.versions

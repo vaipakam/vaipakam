@@ -6342,6 +6342,15 @@ const copySource = {
       // preview does not say which, so the copy names both cases.
       termsNotAccepted:
         'This offer can’t be taken right now: one side has not accepted the Terms of Service in force on this network. If it’s you, accept the Terms and try again. If it’s the offer’s creator, the offer can be taken once they accept. Nothing was sent.',
+      // #3635 A — a rate-linked offer: its link cannot be used now (the
+      // reference is unreadable for the term, or the market is unusual for a
+      // term over 30 days), or the linked bound crossed its typed limit.
+      rateReferenceUnavailable:
+        'This offer’s rate follows the market reference, and that reference can’t be read for this loan’s term right now, so the offer can’t be taken. It may clear later. Nothing was sent.',
+      rateReferenceUnusual:
+        'This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.',
+      rateRangeEmpty:
+        'This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6879,6 +6888,7 @@ const copySource = {
       InterestPaymentAttemptFailed: 'Interest payment from reserve did not go through',
       IntentCalmCheckSet: 'Auto-lend price check changed',
       LenderIntentIntegratorNamed: 'Auto-lend integrator named',
+      LenderIntentRateTermsSet: 'Auto-lend rate link set',
       IntegratorShareSettled: 'Integrator fee share settled',
       ReferralShareSettled: 'Referral fee share settled',
       InviterBound: 'Invitation accepted',
@@ -7847,6 +7857,19 @@ const copySource = {
       'Block {{block}} ({{at}}), read from contract {{contract}}. The platform reads these figures on a rotating schedule, so they trail the chain.',
       ['block', 'at', 'contract'],
     ),
+    // #2210 — whether the block above is one the chain confirmed as settled.
+    // Three states, never two: a reading that predates the record (or an
+    // indexer that does not publish it) is "Not recorded", never "Yes". The
+    // cause of a fallback is NOT named: it is taken on any failure of the
+    // settled read, a timeout included, so a stated cause would be a guess.
+    blockFinalityLabel: 'Block confirmed by the chain as settled',
+    blockFinalitySettled: 'Yes',
+    blockFinalityEstimated: 'No, estimated',
+    blockFinalityUnknown: 'Not recorded',
+    // Shown only beside "No, estimated": what an estimated block means for
+    // the figures pinned to it.
+    blockFinalityEstimatedNote:
+      'The chain did not report a settled block when these figures were read, so the block is an estimate a fixed number of blocks behind the newest one. If the chain later reorganised past that point, these figures would describe a block that is no longer part of it.',
     backingUnavailable:
       'The retained reserve is not shown. It is published only alongside the tokens actually behind it, never on its own, and no current reading of those tokens is available to publish.',
     backingReasonNotCaptured: 'No reading of the chain has been taken yet.',

@@ -103,6 +103,7 @@ import ReferralFacetABI from './ReferralFacet.json';
 import LenderCashOutFacetABI from './LenderCashOutFacet.json';
 import LenderAdvanceFacetABI from './LenderAdvanceFacet.json';
 import LenderSideFacetABI from './LenderSideFacet.json';
+import RateLinkFacetABI from './RateLinkFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import ClaimViewFacetABI from './ClaimViewFacet.json';
 import LenderIntentViewFacetABI from './LenderIntentViewFacet.json';
@@ -241,6 +242,8 @@ import VaultBeaconABI from './VaultBeacon.json';
 import PositionNFTABI from './PositionNFT.json';
 import ProtocolRegistryABI from './ProtocolRegistry.json';
 import PriceGuardABI from './PriceGuard.json';
+// #3337 part 1 — the RateReference (standalone).
+import RateReferenceABI from './RateReference.json';
 // #3379 B2 — the vault code and its protected-mode rules (standalone).
 import VaipakamVaultImplementationABI from './VaipakamVaultImplementation.json';
 import VaultProtectionABI from './VaultProtection.json';
@@ -319,6 +322,7 @@ export {
   LenderCashOutFacetABI,
   LenderAdvanceFacetABI,
   LenderSideFacetABI,
+  RateLinkFacetABI,
   ClaimFacetABI,
   ClaimViewFacetABI,
   LenderIntentViewFacetABI,
@@ -408,6 +412,7 @@ export {
   PositionNFTABI,
   ProtocolRegistryABI,
   PriceGuardABI,
+  RateReferenceABI,
   VaipakamVaultImplementationABI,
   VaultProtectionABI,
   VaultRecoveryABI,

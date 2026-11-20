@@ -48,8 +48,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *            re-run to continue — keeps a single run's gas bounded).
  *
  *        Run (per chain):
- *          source .env && forge script script/FinalizeInteractionDays.s.sol \
- *            --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+ *          bash script/with-env.sh 'forge script script/FinalizeInteractionDays.s.sol \
+ *            --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --slow'
+ *        (`.env` read as data, #1939. Single quotes, so the RPC URL is
+ *        expanded after the load, not before it.)
  *
  *        Idempotent: already-reported days are skipped, already-
  *        finalized days are skipped, and the identity setters re-assign

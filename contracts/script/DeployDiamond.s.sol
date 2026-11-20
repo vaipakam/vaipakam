@@ -80,6 +80,7 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {LenderCashOutFacet} from "../src/facets/LenderCashOutFacet.sol";
 import {LenderAdvanceFacet} from "../src/facets/LenderAdvanceFacet.sol";
 import {LenderSideFacet} from "../src/facets/LenderSideFacet.sol";
@@ -170,6 +171,7 @@ import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
 import {PriceGuardDeployment} from "./lib/PriceGuardDeployment.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {RateReference} from "../src/oracle/reference/RateReference.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
@@ -184,6 +186,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @notice #3272 — the PriceGuard built in step 5c-ii, and the feed
     ///         registry it reads (recorded only when this run created it).
     address public priceGuard;
+    /// @notice #3337 part 1 — the RateReference built with the registry.
+    address public rateReference;
     address public feedRegistry;
     bool internal feedRegistryCreated;
     /// @dev #3272 — the inputs {setPriceGuardInputs} names.
@@ -633,6 +637,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
         // #3722 — the referral binding, settings, quote and payment.
         ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
+        // #3635 A / #3713 — the one host of the rate link and the warning band.
+        RateLinkFacet rateLinkFacet = RateLinkFacet(ArtifactDeploy.deploy(type(RateLinkFacet).name));
         // #3760 — the lender cash-out door, the advance, and the one order
         // of payment for a lender side carrying an advance.
         LenderCashOutFacet lenderCashOutFacet = LenderCashOutFacet(ArtifactDeploy.deploy(type(LenderCashOutFacet).name));
@@ -684,7 +690,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](140);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -828,10 +834,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[133] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
         cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
+        cuts[136] = _buildCut(address(rateLinkFacet), _getRateLinkSelectors());
         // #3760 — lender cash-out.
-        cuts[136] = _buildCut(address(lenderCashOutFacet), _getLenderCashOutSelectors());
-        cuts[137] = _buildCut(address(lenderAdvanceFacet), _getLenderAdvanceSelectors());
-        cuts[138] = _buildCut(address(lenderSideFacet), _getLenderSideSelectors());
+        cuts[137] = _buildCut(address(lenderCashOutFacet), _getLenderCashOutSelectors());
+        cuts[138] = _buildCut(address(lenderAdvanceFacet), _getLenderAdvanceSelectors());
+        cuts[139] = _buildCut(address(lenderSideFacet), _getLenderSideSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1488,6 +1495,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeVaultRecovery(vaultRecovery);
         Deployments.writePriceGuard(priceGuard);
         Deployments.writePriceGuardReader(PriceGuard(priceGuard).READER());
+        Deployments.writeRateReference(rateReference);
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
@@ -1614,6 +1622,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("integratorFacet", address(integratorFacet));
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("referralFacet", address(referralFacet));
+        Deployments.writeFacet("rateLinkFacet", address(rateLinkFacet));
         Deployments.writeFacet("lenderCashOutFacet", address(lenderCashOutFacet));
         Deployments.writeFacet("lenderAdvanceFacet", address(lenderAdvanceFacet));
         Deployments.writeFacet("lenderSideFacet", address(lenderSideFacet));
@@ -1800,12 +1809,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     function _deployProtocolRegistry(address admin) internal {
         _deployPriceGuard(admin);
+        _deployRateReference(admin);
         // #3569 — the treasury is not a registry pointer: it is the vault
         // code's immutable TREASURY, written nowhere else.
-        bytes32[] memory keys = new bytes32[](1);
-        address[] memory values = new address[](1);
+        bytes32[] memory keys = new bytes32[](2);
+        address[] memory values = new address[](2);
         keys[0] = RegistryKeys.PRICE_GUARD;
         values[0] = priceGuard;
+        // #3337 part 1 — RATE_REFERENCE: the rate reference the Diamond reads
+        // for market-linked rate limits and the warning band. Born with no
+        // series; each asset's series is proposed by its owner and opens
+        // after the reference's own delay (a separate configure step).
+        keys[1] = RegistryKeys.RATE_REFERENCE;
+        values[1] = rateReference;
         protocolRegistry = ArtifactDeploy.deploy(
             type(ProtocolRegistry).name,
             abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
@@ -1822,6 +1838,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         require(
             IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.PRICE_GUARD) == priceGuard,
             "DeployDiamond: the protocol registry does not name the price guard"
+        );
+    }
+
+    /// @dev #3337 part 1 — the standalone rate reference, owned by the admin
+    ///      (also its first guardian, who may only mute a source). Its change
+    ///      delay is 7 days on a production chain and 0 on a testnet, which
+    ///      the reference itself allows only on a listed testnet.
+    function _deployRateReference(address admin) internal {
+        uint64 delay_ = Deployments.requiresProductionGovernance() ? uint64(7 days) : uint64(0);
+        rateReference = ArtifactDeploy.deploy(
+            type(RateReference).name, abi.encode(admin, admin, diamond, delay_)
         );
     }
 
@@ -2457,6 +2484,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `ReferralFacet` (#3722) — the referral binding,
     ///      its settings and views, the fee quote and the isolated payment.
+    /// @dev Selectors for `RateLinkFacet` (#3635 A, #3713) — the linked
+    ///      bound, the warning band check and the link admission every offer,
+    ///      intent, match and accept path self-calls.
+    function _getRateLinkSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](15);
+        s[0] = RateLinkFacet.getRateReference.selector;
+        s[1] = RateLinkFacet.rateLinkBound.selector;
+        s[2] = RateLinkFacet.offerRateBounds.selector;
+        s[3] = RateLinkFacet.rateWarnings.selector;
+        s[4] = RateLinkFacet.checkRateWrite.selector;
+        s[5] = RateLinkFacet.offerCheckedRate.selector;
+        s[6] = RateLinkFacet.admitOfferRate.selector;
+        s[7] = RateLinkFacet.originationRate.selector;
+        s[8] = RateLinkFacet.loanRateWarnings.selector;
+        s[9] = RateLinkFacet.requireLinkAdmissible.selector;
+        s[10] = bytes4(keccak256("WARN_FAR_ABOVE()"));
+        s[11] = bytes4(keccak256("WARN_FAR_BELOW()"));
+        s[12] = RateLinkFacet.matchRate.selector;
+        s[13] = RateLinkFacet.linkedFloor.selector;
+        s[14] = RateLinkFacet.effectiveRateBounds.selector;
+    }
+
     function _getReferralSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](8);
         s[0] = ReferralFacet.bindInviter.selector;
@@ -2755,7 +2804,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `InstantMarketFacet` — the instant market (#3656):
     ///      settings, the slot consents, the instant borrow and its views.
     function _getInstantMarketSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](9);
         s[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
         s[1] = InstantMarketFacet.setInstantMaxFills.selector;
         s[2] = InstantMarketFacet.getInstantMarketConfig.selector;
@@ -2763,24 +2812,32 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = InstantMarketFacet.getInstantSlot.selector;
         s[5] = InstantMarketFacet.borrowInstant.selector;
         s[6] = InstantMarketFacet.getInstantGroup.selector;
+        s[7] = InstantMarketFacet.instantPairEligible.selector;
+        // #3761 — the borrow sized source by source, before any approval.
+        s[8] = InstantMarketFacet.previewBorrowInstant.selector;
     }
 
     /// @dev Selectors for `InstantFillFacet` — one instant-borrow fill
     ///      (Diamond-internal).
     function _getInstantFillSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = InstantFillFacet.fillInstant.selector;
+        // #3761 — one source sized by the fill's own rule.
+        s[1] = InstantFillFacet.quoteFill.selector;
     }
 
     /// @dev Selectors for `InstantTakeoverFacet` — a lender's takeover at
     ///      face value into another lender's slot.
     function _getInstantTakeoverSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](5);
         s[0] = InstantTakeoverFacet.takeoverInstant.selector;
+        // #3761 — the takeover's admission as a preview and its revert form.
+        s[1] = InstantTakeoverFacet.previewTakeover.selector;
+        s[2] = InstantTakeoverFacet.requireTakeoverAdmissible.selector;
         // #3760 — the cash-out door's Diamond-internal takeover fill.
-        s[1] = InstantTakeoverFacet.takeoverInstantFor.selector;
+        s[3] = InstantTakeoverFacet.takeoverInstantFor.selector;
         // #3760 — the position-level takeover rule, read by cashOptions.
-        s[2] = InstantTakeoverFacet.takeoverPositionRefusal.selector;
+        s[4] = InstantTakeoverFacet.takeoverPositionRefusal.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -3282,10 +3339,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      its EIP-170 headroom back. #1922 (#1503 item 6) bound the sale to
     ///      the seller's reviewed quote; #3412 made that the only entry.
     function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        // #3761 — the sale's admission as a preview and its revert form.
+        s[1] = EarlyWithdrawalDirectFacet.previewDirectSale.selector;
+        s[2] = EarlyWithdrawalDirectFacet.requireDirectSaleAdmissible.selector;
         // #3760 — the cash-out door's Diamond-internal direct-sale fill.
-        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferFor.selector;
+        s[3] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferFor.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
@@ -3821,7 +3881,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](86);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -4001,6 +4061,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         s[85] = ConfigFacet.setMinTermsAgeSec.selector;
+        // The late-fee schedule the fee is charged by.
+        s[86] = ConfigFacet.getLateFeeSchedule.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

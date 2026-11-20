@@ -31,25 +31,21 @@
  * deletion by the whole lifetime PLUS that gap. The gap is minutes; a full day
  * of headroom makes the arithmetic hold without depending on it.
  *
- * THE DETECTOR THESE FLOORS WERE DERIVED AGAINST IS RETIRED (#1463 slice 2).
- * Everything below that names "the healthcheck" means the Worker's weekly
- * `healthcheck.ts`, which checked the newest archive against its manifest —
- * hash, size, decryptability. It caught corruption and a BLIND overwrite, and
- * not an authenticated forgery: a compromised Worker yielded both B2
- * credential pairs and the symmetric archive key from one environment, so an
- * attacker could enumerate the genuine nonce and write a self-consistent
- * encrypted pair at that key, and every check passed.
+ * THE DETECTOR THE FLOOR IS DERIVED AGAINST (#3158). The routine inspection
+ * is the DAILY ledger watcher (`scripts/backup-ledger.mjs`, run by
+ * `.github/workflows/backup-ledger.yml`). Each run lists every version of
+ * every archive and manifest in all three tiers, records each archive version
+ * it has not seen (its own SHA-256 and length, under a compliance retention
+ * outside the Worker's reach) and pages when a name holds a second version, an
+ * archive stops matching what was recorded, or a recorded one is hidden or
+ * deleted early. An overwrite at ANY name, newest or oldest, daily or monthly,
+ * therefore adds a version the next run reports.
  *
- * Slice 2 removed it, and the read key and archive key with it. The routine
- * inspection is now the DAILY ledger watcher (`scripts/backup-ledger.mjs`),
- * which records every archive version and its digest outside the Worker and
- * pages when a name holds a second version or an archive stops matching what
- * was recorded. The floors below are KEPT AS THEY WERE: the watcher inspects
- * more often and more completely than the healthcheck did, so a floor derived
- * against the weekly cycle is still a defensible minimum. Re-deriving them
- * against the watcher is a separate decision and is not made here. They stay
- * floors of USEFULNESS — time for a human to act on a page — not a
- * sufficiency argument.
+ * It replaced the Worker's weekly `healthcheck.ts` (#1463 slice 2), which
+ * checked only the newest archive of each family in full. That is why an
+ * earlier revision of this file derived the floors from a weekly cycle, and
+ * gave the monthly tier a higher one: its older retained months were never
+ * inspected in full. Neither reason describes the system any more.
  *
  * WHY THE RECOVERY TERM HAS A FLOOR. `daysFromHidingToDeleting` is the window
  * in which a SUPERSEDED version can still be recovered — the only defence
@@ -77,19 +73,27 @@
  * nearly-expired archive; bounding that needs immutability (Object Lock or
  * retention, #1469) rather than lifecycle arithmetic.
  *
- * The floor below was derived from the CADENCE of the only routine inspection
- * these objects then got — the healthcheck, which ran on Mondays off the daily cron — and
- * NOT from any alert. Per the note above, no alert fires for an authenticated
- * forgery. So the floor says: the window must outlive one full inspection
- * cycle, which is 7 days plus a day of slack. Under it, a window can open and
- * close entirely between two inspections.
+ * HOW THE FLOOR IS DERIVED. The window must outlive the time from an
+ * overwrite to a human copying the superseded version out of the bucket:
  *
- * Read that as the weakest defensible bound, not as response time. An earlier
- * revision of this comment derived the floor from "the next Monday's alert
- * fires — the alert and the deletion race", which was the framing the note
- * above retires; it survived three rounds of corrections in three other files
- * before being caught here (#1471 r6/r7/r8/r9). The declaration should sit
- * above the floor so a human has room to act on an out-of-band signal.
+ *   detection   3 days. The overwrite lands just after a run; GitHub skips
+ *               the next scheduled run (nothing pages a run that never
+ *               starts, only one that fails); the run after that reports
+ *               it, up to about 8 hours after its scheduled time, the delay
+ *               GitHub has shown for this workflow.
+ *   response    4 days. The page has to reach the operator, who then follows
+ *               the restore runbook to save the superseded version. That
+ *               allows a weekend and a working day.
+ *   slack       1 day.
+ *
+ * That is 8 days, the same figure the weekly derivation reached, for a
+ * different reason: detection is much faster, and the time it saved now goes
+ * to the human. It is a floor of USEFULNESS, not a sufficiency argument. A
+ * watcher outage longer than one skipped run is outside it, and so is an
+ * operator away longer than the response allowance.
+ *
+ * The same floor holds for BOTH tiers, because the same run inspects both the
+ * same way. The declaration may (and for the monthly tier does) sit above it.
  */
 
 /**
@@ -128,56 +132,16 @@ export const DAILY_MAX_TOTAL_DAYS = 29;
 /** Published: monthly archives kept 12 months. */
 export const MONTHLY_MAX_TOTAL_DAYS = 365;
 /**
- * Recovery-window floors, PER TIER, because the tiers are not inspected the
- * same way. (The derivation as made, against the weekly healthcheck; see the
- * retirement note at the top of this file.) Both were READ by the weekly
- * healthcheck (#1476), but only the
- * newest period of each family is verified in full — which is enough to
- * derive the daily floor, whose newest period turns over every night, and is
- * NOT enough to derive the monthly one. See the monthly note below.
+ * The recovery-window floor, for the daily and the monthly tier alike. The
+ * derivation is in the header above: one skipped watcher run plus GitHub's
+ * start delay to detect, four days for a human to act, one day of slack.
  *
- * Daily: 8 is the weekly healthcheck's cadence (Mon 09:00 UTC) plus a day.
- * Read that as the interval at which SOMETHING routinely looks at these
- * objects — not as response time after an alert. Per the note above, the
- * healthcheck cannot raise one for an authenticated forgery, so the floor is
- * "the window outlives one full cycle of the only routine inspection there
- * is", which is the weakest defensible reading and the honest one.
- *
- * Monthly: STAYS 31, and #1476 did not change it. I lowered it to 8 on the
- * reasoning that the healthcheck now covers the monthly prefixes, and review
- * showed that reasoning does not reach far enough. The check FULLY verifies
- * (hash, size, decrypt) only the NEWEST period of each family; every other
- * retained month gets a presence-and-pairing check. An overwrite or a
- * corruption of an older month leaves both keys in place, so it passes those
- * checks silently, and the genuine superseded version can reach its deletion
- * date with no alert ever raised.
- *
- * The floor's derivation is "the window outlives one full cycle of the only
- * routine inspection there is". That holds only for objects the cycle
- * actually inspects in full. For the older retained months it does not, so
- * an 8-day window there would have been justified by a detector that does
- * not watch them — the same substitution of a number for a detector this
- * comment previously called out, made again one level down.
- *
- * Rotating full verification across the retained months was considered and
- * is worse: with ~10 months and one extra object per weekly run, each month
- * is verified about every 11 weeks, so the honest floor would be ~78 days,
- * not 8. Verifying all of them every run is not affordable inside the
- * Worker's memory and CPU budget.
- *
- * Before #1476 the check examined only `manifests/<recent dates>/`, so a
- * monthly overwrite was detected by nothing and the floor could not be
- * justified by detection at all — it was 31 purely so the window outlasted
- * the monthly write cadence. Note which way that argument ran: the weaker
- * guarantee was ACKNOWLEDGED in this comment while the number quietly stood
- * in for a detector that did not exist. The floor moved only once the
- * detector it names actually existed, not before.
- *
- * Both floors remain floors of USEFULNESS, not sufficiency: neither tier's
- * check can raise an alert for an authenticated forgery (#1473).
+ * It used to be two numbers, 8 for daily and 31 for monthly, because the
+ * retired weekly healthcheck verified only the newest monthly period in full.
+ * The daily watcher inspects every version of every period on every run, so a
+ * higher monthly floor would now be a number with no detector behind it.
  */
-export const MIN_RECOVERY_DAYS_DAILY = 8;
-export const MIN_RECOVERY_DAYS_MONTHLY = 31;
+export const MIN_RECOVERY_DAYS = 8;
 
 /**
  * Throws unless every declared rule is within its published ceiling.
@@ -256,11 +220,11 @@ export function assertPolicyCeilings(decl, fail) {
 
   const groups = [
     { prefixes: DAILY_PREFIXES, max: DAILY_MAX_TOTAL_DAYS,
-      floor: MIN_RECOVERY_DAYS_DAILY, promise:
+      floor: MIN_RECOVERY_DAYS, promise:
         'PrivacyPolicy.md: nightly archives kept 30 days, and a support ' +
         "ticket's backup copies live only in that tier" },
     { prefixes: MONTHLY_PREFIXES, max: MONTHLY_MAX_TOTAL_DAYS,
-      floor: MIN_RECOVERY_DAYS_MONTHLY, promise:
+      floor: MIN_RECOVERY_DAYS, promise:
         'PrivacyPolicy.md: monthly archives kept 12 months, then age out' },
   ];
 
@@ -374,19 +338,10 @@ export function assertPolicyCeilings(decl, fail) {
             `under the ${floor}-day floor for this tier.\nThat term is the ONLY ` +
             `window in which a superseded (possibly forged-over) object can be ` +
             `recovered.\n` +
-            (DAILY_PREFIXES.includes(prefix)
-              ? `The floor was derived against the WEEKLY healthcheck, under ` +
-                `which 8 days let the window close inside a single inspection ` +
-                `cycle. The daily backup watcher replaced it (#1463), and the ` +
-                `floor is kept as a minimum: it buys time for a human to act ` +
-                `on a page, not a guarantee (#1469).`
-              : `The monthly floor is HIGHER than the daily one on purpose. ` +
-                `It was set when the weekly healthcheck fully verified only ` +
-                `the NEWEST monthly period, so the window had to outlast the ` +
-                `monthly write cadence rather than an inspection cycle. The ` +
-                `daily backup watcher replaced that check (#1463), and the ` +
-                `floor is kept as a minimum until it is re-derived against ` +
-                `the watcher.`),
+            `The floor is one skipped run of the daily backup watcher, plus ` +
+            `four days for a human to save the superseded version, plus a day ` +
+            `of slack (#3158). It buys time to act on a page; it is not a ` +
+            `guarantee (#1469).`,
         );
       }
     }

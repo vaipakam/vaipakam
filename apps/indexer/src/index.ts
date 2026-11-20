@@ -32,6 +32,7 @@
  *       GET  /offers/recent       GET  /loans/stats
  *       GET  /offers/:offerId     GET  /loans/timeseries
  *       GET  /offers/:offerId/nearest
+ *       GET  /intents/nearest
  *       GET  /offers/by-creator/:address     GET /loans/:loanId
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
  *       GET  /loans/rate-candles  GET  /loans/by-participant
@@ -134,6 +135,7 @@ import {
   handleOffersRecent,
   handleOfferById,
   handleOfferNearest,
+  handleIntentNearest,
   handleOffersByCreator,
   handleOffersByCurrentHolder,
   handleOffersPreflight,
@@ -604,6 +606,13 @@ export default {
     if (url.pathname === '/rewards/claimed') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleRewardsClaimed(req, resolved);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /intents/nearest (#3660) ───────────────────────────────
+    if (url.pathname === '/intents/nearest') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleIntentNearest(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 

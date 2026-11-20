@@ -224,7 +224,7 @@ function EditFields({
   const next: EditTerms | null =
     rMin === null || rMax === null || aMin === null || aMax === null || cMin === null || cMax === null
       ? null
-      : { amount: aMin, amountMax: aMax, interestRateBps: rMin, interestRateBpsMax: rMax, collateralAmount: cMin, collateralAmountMax: cMax };
+      : { amount: aMin, amountMax: aMax, interestRateBps: rMin, interestRateBpsMax: rMax, collateralAmount: cMin, collateralAmountMax: cMax, linkKind: o.linkKind, linkMarginBps: o.linkMarginBps };
   const problems = next === null ? [] : termsProblems(o, next);
   const shownProblems = problems.filter((p) => p !== 'unchanged' || asked);
   const ready = next !== null && problems.length === 0;

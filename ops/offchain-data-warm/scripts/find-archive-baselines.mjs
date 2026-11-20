@@ -45,6 +45,7 @@ import { fileURLToPath } from 'node:url';
 // period" here would let the two disagree, and this script's whole output
 // is a period the operator is asked to commit.
 import { isRealPeriod, validateBaseline } from '../src/tiers.ts';
+import { authorize, listAllVersions, requireScope } from './lib/b2-native.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..', '..');
@@ -173,166 +174,85 @@ function loadCreds() {
  */
 const ALLOWED_CAPABILITIES = ['listBuckets', 'listFiles', 'readFiles'];
 
-async function authorize(keyId, appKey) {
-  const res = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${keyId}:${appKey}`).toString('base64')}`,
-    },
-  });
-  if (!res.ok) {
-    fail(`b2_authorize_account failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const apiUrl = data.apiInfo?.storageApi?.apiUrl ?? data.apiUrl;
-  // The endpoint comes from B2's own authorize response, so pin it to
-  // Backblaze rather than following wherever the body points. Cheap, and
-  // it turns "trust the response" into a checked assumption.
-  let host;
+/**
+ * Sign in and confine the run to the read key's one bucket, through the
+ * shared module's rule (#3032). It refuses, before anything is listed:
+ *
+ *  - a capability outside the allowlist above, so the master key or any key
+ *    that can write, delete or override a retention cannot run a routine
+ *    discovery. `setup-backblaze.mjs` says the master stays offline after
+ *    provisioning, and a routine command is exactly where that quietly stops
+ *    being true;
+ *  - a key that may reach every bucket, or several. A read key for ONE
+ *    bucket is the documented posture, and anything wider is a different key
+ *    than the one this command certifies;
+ *  - a key scoped to another bucket than `BUCKET_NAME`, so one bucket's
+ *    periods are never reported under another's name;
+ *  - a key restricted to a name prefix. One limited to
+ *    `archives-monthly/2026-07/` would make every older object invisible to
+ *    the listing, and the script would print a later baseline, or none, and
+ *    mask exactly the cuts it exists to find.
+ */
+async function signIn(keyId, appKey) {
+  let auth;
   try {
-    host = new URL(apiUrl).host;
-  } catch {
-    fail(`b2_authorize_account returned an unusable apiUrl`);
+    auth = await authorize(keyId, appKey);
+  } catch (e) {
+    fail(e?.message ?? String(e));
   }
-  if (!/(^|\.)backblazeb2\.com$/.test(host)) {
-    fail(`refusing to call a non-Backblaze apiUrl host: ${host}`);
-  }
-  // REJECT MASTER CAPABILITY, rather than trusting a variable name. This
-  // script lists six prefixes; it must not be able to write, delete, or
-  // mint keys while doing it. `setup-backblaze.mjs` says the master key
-  // stays offline after provisioning, and a routine discovery command is
-  // exactly where that quietly stops being true.
-  const caps = data.apiInfo?.storageApi?.capabilities ?? data.allowed?.capabilities ?? [];
-  if (caps.length === 0) {
+  if (auth.capabilities.length === 0) {
     fail('authorize returned no capability list; refusing to assume read-only');
   }
-  const extra = caps.filter((c) => !ALLOWED_CAPABILITIES.includes(c));
-  if (extra.length > 0) {
-    fail(
-      `this key holds ${extra.length} capability(ies) beyond read-only:\n` +
-        `  ${extra.slice(0, 8).join(', ')}${extra.length > 8 ? ', …' : ''}\n\n` +
-        `  Refusing to run an inventory with more authority than it needs.\n` +
-        `  Use the bucket-scoped read key: ${ALLOWED_CAPABILITIES.join(' + ')}.`,
-    );
-  }
-  // A key can ALSO be restricted to a `namePrefix`, independently of its
-  // capabilities and bucket scope. One limited to `archives-monthly/2026-07/`
-  // authorizes cleanly, passes both checks above, and then makes every
-  // older object invisible to the listing — so the script would print a
-  // later baseline, or NONE, and mask exactly the cuts it exists to find.
-  const namePrefix = data.apiInfo?.storageApi?.namePrefix ?? data.allowed?.namePrefix;
-  if (namePrefix) {
-    fail(
-      `this key is restricted to namePrefix "${namePrefix}" — it cannot see\n` +
-        `  the whole family, so any baseline derived from it would be a\n` +
-        `  floor on what this KEY can list, not on what the bucket holds.`,
-    );
-  }
-  return {
-    token: data.authorizationToken,
-    apiUrl,
-    // Needed by `b2_list_buckets`, which REQUIRES accountId — omitting it
-    // made the master-key path fail before listing anything.
-    accountId: data.accountId ?? data.apiInfo?.storageApi?.accountId,
-    allowedBucketId: data.apiInfo?.storageApi?.bucketId ?? data.allowed?.bucketId,
-    allowedBucketName: data.apiInfo?.storageApi?.bucketName ?? data.allowed?.bucketName,
-  };
-}
-
-async function b2(auth, endpoint, body) {
-  // CodeQL flags `apiUrl` as request-forgery because it traces to B2's own
-  // authorize response. It is B2 telling us which shard to talk to, reached
-  // with credentials from the operator's own `.env` — the same pattern and
-  // the same justification as `setup-backblaze.mjs`.
-  const res = await fetch(`${auth.apiUrl}/b2api/v3/${endpoint}`, {
-    method: 'POST',
-    headers: { Authorization: auth.token, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    fail(`${endpoint} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
-  }
-  return res.json();
-}
-
-async function resolveBucketId(auth) {
-  // BUCKET SCOPE IS REQUIRED, not merely honoured when present. The old
-  // fallback resolved the configured bucket through `b2_list_buckets` for
-  // an unscoped key — so routine discovery could run on a credential able
-  // to list and read every bucket in the account, which is the same
-  // least-authority failure as accepting the master, one notch quieter.
-  // A read key for ONE bucket is the documented posture; anything wider
-  // is a different key than the one this command is meant to certify.
-  if (!auth.allowedBucketId) {
-    fail(
-      'this key is not bucket-scoped — it can reach every bucket in the\n' +
-        '  account. Use the read key scoped to the backup bucket alone.',
-    );
-  }
-  if (auth.allowedBucketName && auth.allowedBucketName !== BUCKET) {
-    fail(
-      `this key is scoped to bucket "${auth.allowedBucketName}" but ` +
-        `BUCKET_NAME is "${BUCKET}" — refusing to report one bucket's ` +
-        `periods under another's name`,
-    );
-  }
-  return auth.allowedBucketId;
-}
-
-const PAGE_CAP = 500;
-
-async function periodsUnder(auth, bucketId, prefix, tier) {
-  const periods = new Set();
-  let files = 0;
-  let startFileName = null;
-  let startFileId = null;
-  for (let page = 0; ; page++) {
-    if (page >= PAGE_CAP) {
-      // FAIL, never return partial. Exiting quietly here would print an
-      // "earliest" drawn from a prefix of the listing — and with a leaked
-      // write key seeding lexically-early foreign names, that is exactly
-      // how a wrong baseline gets committed. A cap that silently
-      // truncates is worse than no cap.
-      fail(
-        `listing ${prefix} exceeded ${PAGE_CAP} pages without completing. ` +
-          `Refusing to report a partial inventory as the baseline.`,
-      );
-    }
-    // VERSIONS, not names. `b2_list_file_names` returns only CURRENT
-    // versions, so an oldest cut that was administratively hidden — the
-    // precise loss these declared baselines exist to detect — looks like a
-    // period that never existed, and the baseline advances past it. The
-    // bucket still holds the evidence; the wrong call was hiding it.
-    const data = await b2(auth, 'b2_list_file_versions', {
-      bucketId,
-      prefix,
-      maxFileCount: 1000,
-      ...(startFileName ? { startFileName } : {}),
-      ...(startFileId ? { startFileId } : {}),
+  try {
+    const bucketId = requireScope(auth, {
+      label: 'read',
+      bucket: BUCKET,
+      allowed: ALLOWED_CAPABILITIES,
+      required: ['listFiles'],
     });
-    for (const f of data.files ?? []) {
-      files += 1;
-      const rest = f.fileName.slice(prefix.length);
-      if (!rest.includes('/')) continue;
-      const seg = rest.split('/')[0];
-      // Real calendar period, not merely the right width. `2026-00` passes
-      // a width check AND sorts before every genuine month, so it would be
-      // reported as the baseline and committed — then rejected by
-      // `validateBaseline`, after the operator had already been told to
-      // set it.
-      if (isRealPeriod(tier, seg)) periods.add(seg);
-    }
-    if (!data.nextFileName) break;
-    startFileName = data.nextFileName;
-    // `b2_list_file_versions` pages on the (name, id) PAIR — carrying only
-    // the name re-reads the first version of that file forever.
-    startFileId = data.nextFileId ?? null;
+    return { auth, bucketId };
+  } catch (e) {
+    fail(
+      `${e?.message ?? e}\n\n` +
+        `  Refusing to run an inventory with any other key than the read key\n` +
+        `  scoped to ${BUCKET} alone (${ALLOWED_CAPABILITIES.join(' + ')}).`,
+    );
   }
-  return { periods: [...periods].sort(), files };
+}
+
+/**
+ * The real calendar periods under one prefix, from every file VERSION.
+ *
+ * Versions, not names: `b2_list_file_names` returns only CURRENT versions,
+ * so an oldest cut that was administratively hidden (the precise loss these
+ * declared baselines exist to detect) would look like a period that never
+ * existed, and the baseline would advance past it. The shared listing pages
+ * on the (name, id) pair and throws rather than return a partial listing, so
+ * an "earliest" is never drawn from part of the bucket.
+ */
+async function periodsUnder(auth, bucketId, prefix, tier) {
+  let versions;
+  try {
+    versions = await listAllVersions(auth, bucketId, prefix);
+  } catch (e) {
+    fail(`${e?.message ?? e}. Refusing to report a partial inventory as the baseline.`);
+  }
+  const periods = new Set();
+  for (const f of versions) {
+    const rest = f.fileName.slice(prefix.length);
+    if (!rest.includes('/')) continue;
+    const seg = rest.split('/')[0];
+    // Real calendar period, not merely the right width. `2026-00` passes
+    // a width check AND sorts before every genuine month, so it would be
+    // reported as the baseline and committed, then rejected by
+    // `validateBaseline` after the operator had already been told to set it.
+    if (isRealPeriod(tier, seg)) periods.add(seg);
+  }
+  return { periods: [...periods].sort(), files: versions.length };
 }
 
 const creds = loadCreds();
-const auth = await authorize(creds.id, creds.key);
-const bucketId = await resolveBucketId(auth);
+const { auth, bucketId } = await signIn(creds.id, creds.key);
 
 console.log(`\nBucket: ${BUCKET}\n`);
 const toSet = [];

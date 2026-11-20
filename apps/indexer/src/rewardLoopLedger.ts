@@ -471,9 +471,17 @@ export async function ensureRewardLoopBackfill(
 }
 
 /**
- * Apply the RL-2 ledger effects for one scan's decoded logs. Runs the
- * one-time activity_events backfill first (a single cheap SELECT once
- * done). Returns the number of events applied fresh (replays skip).
+ * Apply the RL-2 ledger effects for one block's decoded logs. Returns the
+ * number of events applied fresh (replays skip).
+ *
+ * PRECONDITION: the caller has already run {@link ensureRewardLoopBackfill}
+ * for this chain in the current pass, before any `activity_events` row of
+ * the pass was inserted. The chain scan does it once at the top of
+ * `runChainPass`, above every return (pinned by
+ * oneTimeBackfillReachability.test.ts). This function used to repeat that
+ * check itself, which once the scan went block by block (#2221) cost one D1
+ * read per event block for a flag the pass had already set (#2835); the
+ * check is a per-pass step, so it lives in the per-pass prologue only.
  *
  * @param fallbackTimestampBlocks Blocks whose `blockTimestamps` entry is
  *        the ingest's wall-clock sentinel. A reward log in such a block
@@ -492,8 +500,6 @@ export async function applyRewardLoopLedger(
   fallbackTimestampBlocks: Set<bigint> = new Set(),
   retryTimestamp?: (blockNumber: bigint) => Promise<number | null>,
 ): Promise<number> {
-  await ensureRewardLoopBackfill(env, chainId);
-
   let applied = 0;
   for (const log of logs) {
     if (!HANDLED.has(log.eventName)) continue;

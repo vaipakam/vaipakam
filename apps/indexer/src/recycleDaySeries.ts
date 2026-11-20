@@ -532,21 +532,23 @@ export async function ensureReportedCumulativeProjection(
 }
 
 /**
- * Ingest entry point — called from the chain scan with every decoded log.
- * Returns the number of events actually applied (fresh, non-replay).
+ * Ingest entry point — called from the chain scan with one block's decoded
+ * logs. Returns the number of events actually applied (fresh, non-replay).
  *
- * Runs the one-time backfill first, and does so unconditionally — a
- * caught-up scan with no matching logs is exactly when a freshly deployed
- * consumer needs it most.
+ * PRECONDITION: the caller has already run {@link ensureRecycleSeriesBackfill}
+ * and {@link ensureReportedCumulativeProjection} for this chain in the
+ * current pass. The chain scan runs both once at the top of `runChainPass`,
+ * above every return, so a caught-up pass with no matching logs still gets
+ * them (pinned by oneTimeBackfillReachability.test.ts). They used to be
+ * repeated here as well, which once the scan went block by block (#2221)
+ * cost two D1 reads per event block for flags the pass had already set
+ * (#2835); they are per-pass steps and live in the per-pass prologue only.
  */
 export async function applyRecycleDaySeries(
   logs: RecycleSeriesLog[],
   env: Env,
   chainId: number,
 ): Promise<number> {
-  await ensureRecycleSeriesBackfill(env, chainId);
-  await ensureReportedCumulativeProjection(env, chainId);
-
   let applied = 0;
   for (const log of logs) {
     if (!HANDLED.has(log.eventName)) continue;
