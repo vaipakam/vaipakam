@@ -79,7 +79,8 @@ import { AlertDelivery, pushRailConfigOf, type Alert, type DeliveryOutcome } fro
 import { stepPublisher } from './stepStatus';
 import { pushRailStatus } from '@vaipakam/push';
 import { agentClientOf, agentUnconfiguredReason } from './agentClient';
-import { listProtectedAccountsAfter } from './db';
+import { deploymentFloor, listProtectedAccountsAfter } from './db';
+import { chainTailReads, d1VaultSet, describeTailReport, vaultSecurityAlerts, type VaultSetStore, type VaultTailReport } from './protectedVaultEvents';
 import { chainClaimReads, describeClaimReport, recoveryClaimAlerts, type ClaimAlertReport } from './protectedRecoveryClaim';
 import { alertOwners, protectedStoreOf, LOCK_REQUEST_TTL_SEC, lockFromTelegram, type AlertReport, type LockResult, type ProtectedStore } from './protectedTelegram';
 import type { PassTick } from './passSchedule';
@@ -93,7 +94,7 @@ import { StepSender } from './stepSender';
 import { leadStageCutoffMs, runIndex } from './runWindow';
 import { protectionCall, VAULT_PROTECTION_VIEWS_ABI } from '@vaipakam/lib/protectedAccountView';
 import type { DiamondProtection, VaultProtectionPending, VaultProtectionState, VaultReplacementTally } from '@vaipakam/lib/protectedAccountView';
-import { accountFrom, noVault, protectionRead, vaultReads, type ProtectedAccount } from './protectedVault';
+import { accountFrom, noVault, protectionRead, readProtectedAccount, vaultReads, type ProtectedAccount } from './protectedVault';
 
 /** Only the functions and events this pass names, plus every Diamond error. */
 const PICK: ReadonlySet<string> = new Set([
@@ -323,6 +324,10 @@ export interface ProtectedDeps {
      *  after `after`; with it, the owner alerts step also announces recovery
      *  claims (`protectedRecoveryClaim.ts`). */
     claimAccounts?: (after: string, limit: number) => Promise<Address[]>;
+    /** #3346: the keeper's set of real vaults; with it, the owner alerts
+     *  step also reads the vaults' own security events
+     *  (`protectedVaultEvents.ts`). */
+    vaultSet?: VaultSetStore;
   };
 }
 
@@ -345,6 +350,8 @@ export interface ProtectedReport {
   alerts: AlertReport | null;
   /** The recovery claim alerts' figures; null when they are off. */
   claims?: ClaimAlertReport | null;
+  /** The vault security alerts' figures (#3346); absent when they are off. */
+  vaultAlerts?: VaultTailReport | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   /** Steps that used their whole share of sends this run; what they left
@@ -424,6 +431,7 @@ export async function runProtectedAccount(env: Env, tick: PassTick): Promise<voi
             lock,
             alerts: alertsOn,
             store: protectedStoreOf(agent, env.DB, chain.diamond as Address, unconfigured ?? undefined),
+            vaultSet: d1VaultSet(env.KEEPER_DB, chain.id, chain.diamond as string),
             claimAccounts: async (after, limit) => (await listProtectedAccountsAfter(env.DB, chain.id, after, limit)) as Address[],
             notify: (a) => delivery.deliver(a),
             appOrigin,
@@ -455,6 +463,7 @@ export function describeReport(r: ProtectedReport): string {
           `owner-alerts=sent ${r.alerts.sent}, retrying ${r.alerts.retrying}, undelivered ${r.alerts.undelivered}, stale ${r.alerts.stale}, unsubscribed ${r.alerts.unsubscribed}`,
         ]),
     ...(r.claims ? [describeClaimReport(r.claims)] : []),
+    ...(r.vaultAlerts ? [describeTailReport(r.vaultAlerts)] : []),
     ...(r.waiting.size > 0 ? [`waiting=${[...r.waiting].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
@@ -573,6 +582,34 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
           if (err instanceof PastRunDeadline) throw err;
           sender.noteUnread('recovery-claims', shortErr(err));
         }
+      }
+      // #3346 — the vault's own security events (a lock, a replacement, a
+      // loosening request), read from the chain: the ledger does not carry
+      // them since B2.
+      const tailStage = r.withCutoff(leadStageCutoffMs(Date.now(), r.cutoff, ALERT_STAGE_SHARE));
+      if (tg!.vaultSet) try {
+        report.vaultAlerts = await vaultSecurityAlerts({
+          vaultSet: tg!.vaultSet,
+          reads: chainTailReads(tailStage, diamond, deploymentFloor(chainId), async (account) => {
+            try {
+              const a = await readProtectedAccount(tailStage, account);
+              return a.retired ? (a.controller.toLowerCase() as Address) : account;
+            } catch (err) {
+              if (err instanceof PastRunDeadline) throw err;
+              return null;
+            }
+          }),
+          cursors: deps.cursors,
+          chainId,
+          diamond,
+          subscriber: (w) => tg!.store.subscriber(chainId, w),
+          notify: tg!.notify,
+          appOrigin: tg!.appOrigin,
+          cutoff: tailStage.cutoff,
+        });
+      } catch (err) {
+        if (err instanceof PastRunDeadline) throw err;
+        sender.noteUnread('vault-alerts', shortErr(err));
       }
     }
     if (tgDeps && tg!.lock) {

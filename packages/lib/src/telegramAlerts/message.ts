@@ -29,6 +29,7 @@ import {
   type StandingSkipReason,
 } from './standingCopy';
 import { TERMS_HOLDS, termsAnnouncedText, type TermsHold } from './termsCopy';
+import { SECURITY_CHANGES, securityChangeText, type SecurityChange } from './securityCopy';
 import { CLAIM_ENDS, CLAIM_STAGES, recoveryClaimEndedText, recoveryClaimOpenText, type ClaimEnd, type ClaimStage } from './recoveryClaimCopy';
 
 /** The LOCK outcomes the keeper reports (`protectedTelegram.ts`). */
@@ -72,7 +73,22 @@ export type TelegramAlert =
   /** #3756 — the claim asked at `requestedAt` ended (`end`). `by` names the
    *  key that cancelled it, when read; `pauseUntil` is when a new claim may
    *  be asked, null when no pause is in force. */
-  | { kind: 'recoveryClaimEnded'; end: ClaimEnd; requestedAt: number; by: string | null; pauseUntil: number | null };
+  | { kind: 'recoveryClaimEnded'; end: ClaimEnd; requestedAt: number; by: string | null; pauseUntil: number | null }
+  /** #3346 — a change that loosens the account's protection was asked for.
+   *  `subject` the address it names (a signer, a destination, a recovery
+   *  address), `what` an asset and amount (written out), `seconds` a duration
+   *  (a delay, a wait, an idle period; 0 = off), `at` when it takes effect
+   *  (unix seconds), `by` who asked; each null where the change has none or
+   *  the chain did not say. */
+  | {
+      kind: 'securityChange';
+      change: SecurityChange;
+      subject: string | null;
+      what: string | null;
+      seconds: number | null;
+      at: number | null;
+      by: string | null;
+    };
 
 /** A message with where it goes. */
 export interface AddressedAlert {
@@ -216,6 +232,17 @@ function parseAlert(raw: unknown): TelegramAlert | null {
         pauseUntil: a.pauseUntil as number | null,
       };
     }
+    case 'securityChange': {
+      if (!(SECURITY_CHANGES as readonly unknown[]).includes(a.change)) return null;
+      const addr = (v: unknown): string | null | undefined => (v === null ? null : typeof v === 'string' && ADDRESS.test(v) ? v.toLowerCase() : undefined);
+      const subject = addr(a.subject);
+      const by = addr(a.by);
+      const what = plainOrNull(a.what);
+      if (subject === undefined || by === undefined || what === undefined) return null;
+      if (a.seconds !== null && !isInt(a.seconds, 0, 2 ** 40)) return null;
+      if (a.at !== null && !isInt(a.at, 1, 2 ** 40)) return null;
+      return { kind: 'securityChange', change: a.change as SecurityChange, subject, what, seconds: a.seconds as number | null, at: a.at as number | null, by };
+    }
     default:
       return null;
   }
@@ -314,6 +341,21 @@ export function renderTelegramAlert(m: AddressedAlert, ctx: RenderContext): { te
         title: s.pushTitle,
       };
     }
+    case 'securityChange':
+      return securityChangeText(
+        ctx.locale,
+        a.change,
+        w,
+        c,
+        {
+          subject: a.subject,
+          what: a.what,
+          hours: a.seconds === null ? null : Math.round(a.seconds / 360) / 10,
+          at: a.at === null ? null : utcMinute(a.at),
+          by: a.by,
+        },
+        `${ctx.appOrigin}/`,
+      );
     case 'recoveryClaim':
       return recoveryClaimOpenText(ctx.locale, a.stage, w, c, a.recovery, utcMinute(a.requestedAt), utcMinute(a.runnableAt), utcMinute(a.lapsesAt), `${ctx.appOrigin}/`);
     case 'recoveryClaimEnded':

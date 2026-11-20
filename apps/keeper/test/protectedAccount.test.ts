@@ -1063,21 +1063,21 @@ describe('the Telegram steps', () => {
     expect(store.handled.size).toBe(0);
   });
 
-  it('alerts the owner on a lock, a queued payout and a proposed replacement, as data for the agent and as text for Push', async () => {
+  it('alerts the owner on a Ready change, a queued payout and a Ready top-up, as data for the agent and as text for Push', async () => {
     store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
     store.chats.set(ALICE, '42');
     const at = NOW_SEC - 30;
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: SIGNER }, blockAt: at, block: 1, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: ALICE, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 1, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: at, block: 2, log: 0, tx: '0x' });
-    ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: BOB, by: SIGNER, round: '1' }, blockAt: at, block: 3, log: 0, tx: '0x' });
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: BOB, by: BOB }, blockAt: at, block: 4, log: 0, tx: '0x' }); // no chat, no Push
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: ALICE }, blockAt: NOW_SEC - 7200, block: 5, log: 0, tx: '0x' }); // stale
+    ledger.rows.push({ kind: 'ReadyTopUpRequested', args: { account: ALICE, asset: ASSET, amount: '2500000', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 3, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: BOB, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 4, log: 0, tx: '0x' }); // no chat, no Push
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: ALICE, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 7200, block: 5, log: 0, tx: '0x' }); // stale
     const r = await run(false, true);
     expect(r.alerts).toEqual({ sent: 3, undelivered: 0, retrying: 0, stale: 1, unsubscribed: 1 });
     // Telegram is always asked (only the agent knows who linked a chat);
     // Push only for a subscriber.
     expect(sent.map((a) => [tgTo(a), a.pushSubscriber])).toEqual([[ALICE, ALICE], [ALICE, ALICE], [ALICE, ALICE], [BOB, null]]);
-    expect(sent[0].telegram!.message.alert).toEqual({ kind: 'locked', by: SIGNER });
+    expect(sent[0].telegram!.message.alert).toEqual({ kind: 'securityChange', change: 'idleLengthen', subject: null, what: null, seconds: 0, at: NOW_SEC + 3600, by: null });
     expect(sent[1].telegram!.message.alert).toEqual({
       kind: 'payout',
       what: `2.5 USDC (${ASSET.slice(0, 8)}…${ASSET.slice(-6)})`,
@@ -1089,13 +1089,12 @@ describe('the Telegram steps', () => {
       lockHint: false,
     });
     for (const a of sent.slice(0, 3)) expect(a.text, 'the Push text is the wording the agent renders').toBe(tgText(a));
-    expect(tgText(sent[0])).toContain(`locked by ${SIGNER}, a wallet allowed to lock it`);
+    expect(tgText(sent[0])).toContain('Switching off the Ready idle period was requested.');
     expect(tgText(sent[1])).toContain(`to ${DEST}`);
     expect(tgText(sent[1])).toContain('Request code AADYSA');
     expect(tgText(sent[1])).toContain('lock the vault in the app');
-    expect(tgText(sent[2])).toContain(`naming ${BOB}`);
-    // The owner cannot cancel while a signer holds a lock, and is told so.
-    expect(tgText(sent[2])).toContain('only a signer can cancel it');
+    expect(sent[2].telegram!.message.alert).toMatchObject({ kind: 'securityChange', change: 'readyTopUp', what: `2.5 USDC (${ASSET.slice(0, 8)}…${ASSET.slice(-6)})` });
+    expect(tgText(sent[2])).toContain('from Protected to Ready was requested');
     expect(cursors.rows.get(ALERT_NEXT_ITEM)).toBe(encodePos(ledger.rows[4]));
     // Read again: nothing is alerted twice.
     sent = [];
@@ -1146,15 +1145,14 @@ describe('the Telegram steps', () => {
     store.subs.set(`${CHAIN}:${BOB}`, { push: true, locale: 'en' });
     store.chats.set(BOB, '7');
     const at = NOW_SEC - 30;
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: BOB }, blockAt: at, block: 1, log: 0, tx: '0x' });
-    ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: DEST, by: SIGNER, round: '2' }, blockAt: at, block: 2, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: ALICE, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 1, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyTopUpRequested', args: { account: ALICE, asset: ASSET, amount: '2500000', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 2, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: at, block: 3, log: 0, tx: '0x' });
     const r = await run(true, true); // LOCK on: only the retirement withholds the advice
     expect(r.alerts!.sent).toBe(3);
     expect(sent.map((a) => [tgTo(a), a.telegram!.message.wallet, a.pushSubscriber])).toEqual([[BOB, ALICE, BOB], [BOB, ALICE, BOB], [BOB, ALICE, BOB]]);
-    // The text still names the vault, and a lock by its controller is the owner's own.
+    // The text still names the vault.
     expect(tgText(sent[0])).toContain(ALICE.slice(0, 6));
-    expect(tgText(sent[0])).not.toContain('a wallet allowed to lock it');
     // A LOCK from the controller's chat would lock the controller's own
     // vault, so the payout alert does not offer it (Codex #3092 r10).
     expect(tgText(sent[2])).not.toContain('send LOCK');
@@ -1242,8 +1240,8 @@ describe('the Telegram steps', () => {
   it('keeps an alert no channel took but one may, and passes over one refused for good', async () => {
     store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
     const at = NOW_SEC - 30;
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: ALICE }, blockAt: at, block: 1, log: 0, tx: '0x' });
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: SIGNER }, blockAt: at, block: 2, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: ALICE, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 1, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: ALICE, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: at, block: 2, log: 0, tx: '0x' });
     outcomes = [{ telegram: 'retry', push: 'refused' }];
     const first = await run(false, true);
     expect(first.alerts).toMatchObject({ sent: 0, retrying: 1, undelivered: 0 });
@@ -1259,7 +1257,7 @@ describe('the Telegram steps', () => {
 
   it('runs the alerts before the LOCK step, and names a LOCK answer the agent recorded but could not deliver', async () => {
     d.lockGranted.add(ALICE);
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: SIGNER }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: ALICE, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
     store.requests = [request(1, ALICE)];
     store.answers = ['retry'];
     const r = await run(true, true);
@@ -1304,7 +1302,7 @@ describe('the Telegram steps', () => {
     d.lockGranted.add(ALICE);
     store.requests = [request(1, ALICE)];
     store.chats.set(BOB, '7');
-    for (let b = 1; b <= 4; b++) ledger.rows.push({ kind: 'VaultLocked', args: { account: BOB, by: BOB }, blockAt: NOW_SEC - 30, block: b, log: 0, tx: '0x' });
+    for (let b = 1; b <= 4; b++) ledger.rows.push({ kind: 'ReadyIdlePeriodChangeRequested', args: { account: BOB, idle: '0', liveAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: b, log: 0, tx: '0x' });
     const slow = async (a: Alert): Promise<DeliveryOutcome> => {
       sent.push(a);
       if (tgTo(a) === BOB) await new Promise((res) => setTimeout(res, 600));

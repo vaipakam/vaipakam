@@ -74,7 +74,11 @@ export const ALERT_PAGE = 50;
 export const ALERT_NEXT_ITEM = 'alert-next';
 /** An event older than this when first read is not alerted. */
 export const ALERT_MAX_AGE_SEC = 60 * 60;
-export const ALERT_EVENTS = ['VaultLocked', 'PayoutQueued', 'ReplacementProposed'] as const;
+/** The Diamond's events the step reads from the ledger. A lock and a
+ *  proposed replacement are the VAULT's events since #3379 B2, which the
+ *  ledger does not carry: `protectedVaultEvents.ts` reads those from the
+ *  chain (#3346). */
+export const ALERT_EVENTS = ['PayoutQueued', 'ReadyTopUpRequested', 'ReadyIdlePeriodChangeRequested'] as const;
 /** The refusal of a keeper the owner has not granted the lock bit. */
 export const NOT_GRANTED = 'KeeperAccessRequired';
 
@@ -526,6 +530,26 @@ async function composeAlert(
       const what = await describeAsset(d, Number(args.kind), lower(args.asset), uint(args.tokenId) ?? 0n, uint(args.amount) ?? 0n);
       const releaseAt = Number(uint(args.releaseAt) ?? 0n);
       return { kind: 'payout', what, recipient, releaseAt, code: shown, lockHint: await lockWouldWork(d, account, manager) };
+    }
+    // #3346 — the Ready balance: a Protected → Ready top-up and a longer (or
+    // switched-off) idle period loosen what can leave the vault at once.
+    case 'ReadyTopUpRequested': {
+      const what = await describeAsset(d, 0, lower(args.asset), 0n, uint(args.amount) ?? 0n);
+      const at = uint(args.liveAt);
+      return { kind: 'securityChange', change: 'readyTopUp', subject: null, what, seconds: null, at: at === null || at === 0n ? null : Number(at), by: null };
+    }
+    case 'ReadyIdlePeriodChangeRequested': {
+      const idle = uint(args.idle);
+      const at = uint(args.liveAt);
+      return {
+        kind: 'securityChange',
+        change: 'idleLengthen',
+        subject: null,
+        what: null,
+        seconds: idle === null ? null : Number(idle),
+        at: at === null || at === 0n ? null : Number(at),
+        by: null,
+      };
     }
     default:
       return 'skip';

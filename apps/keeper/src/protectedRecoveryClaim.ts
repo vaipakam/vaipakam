@@ -25,13 +25,13 @@
 
 import type { Abi, Address } from 'viem';
 import { VaultRecoveryABI } from '@vaipakam/contracts/abis';
-import { renderTelegramAlert, type AddressedAlert, type TelegramAlert } from '@vaipakam/lib/telegramAlerts/message';
+import type { TelegramAlert } from '@vaipakam/lib/telegramAlerts/message';
 import { CLAIM_STAGES, type ClaimEnd } from '@vaipakam/lib/telegramAlerts/recoveryClaimCopy';
 import type { DiamondProtection, VaultProtectionPending, VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
-import { delivered, worthRetrying, type Alert, type DeliveryOutcome } from './alertDelivery';
+import type { Alert, DeliveryOutcome } from './alertDelivery';
+import { sendOwnerAlert } from './ownerAlertSend';
 import { PastRunDeadline } from './batchRead';
 import { shortErr } from './callErrors';
-import { EpochFenceRefusal } from './epochFence';
 import type { PassReader } from './passReader';
 import { accountFrom } from './protectedVault';
 import type { ScanCursors } from './scanCursors';
@@ -287,25 +287,9 @@ async function deliverAll(d: ClaimAlertDeps, account: Address, alert: TelegramAl
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    const sub = await d.subscriber(to);
-    const message: AddressedAlert = { chainId: d.chainId, wallet: account, ...(to !== account ? { to } : {}), alert };
-    const rendered = renderTelegramAlert(message, { locale: sub?.locale ?? null, chainName: String(d.chainId), appOrigin: d.appOrigin });
-    let outcome: DeliveryOutcome;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      outcome = await d.notify({
-        telegram: { diamond: d.diamond, message },
-        pushSubscriber: sub?.push ? to : null,
-        text: rendered.text,
-        pushTitle: rendered.title,
-        deepLinkUrl: d.appOrigin,
-      });
-    } catch (err) {
-      if (err instanceof PastRunDeadline || err instanceof EpochFenceRefusal) throw err;
-      outcome = { telegram: 'retry', push: 'off' };
-    }
-    if (delivered(outcome)) report.sent += 1;
-    else if (worthRetrying(outcome)) {
+    const result = await sendOwnerAlert(d, account, to, alert);
+    if (result === 'sent') report.sent += 1;
+    else if (result === 'retry') {
       report.retrying += 1;
       left.push(to);
     }
