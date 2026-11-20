@@ -102,7 +102,20 @@ describe('requestUnlink', () => {
     const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
     expect(await requestUnlink(d, W, null, NOW)).toEqual({ kind: 'done', pending: [] });
     expect(chat(store, 84532)).toBeNull();
-    expect(sent).toEqual([]);
+    // #3346 — nothing told the chat beforehand, so it is told now.
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.chat).toBe('42');
+    expect(sent[0]!.text).toContain('no longer gets alerts');
+    expect(sent[0]!.text).toContain('Vaipakam app');
+  });
+
+  it('keeps the unlink when the notice to the old chat fails (#3346)', async () => {
+    const { store, state } = harness();
+    link(store, 84532, '42');
+    const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }), NOW, 'refused');
+    expect(await requestUnlink(d, W, 84532, NOW)).toEqual({ kind: 'done', pending: [] });
+    expect(chat(store, 84532)).toBeNull();
+    expect(sent.map((m) => m.chat)).toEqual(['42']);
   });
 
   it('waits the delay while protected, keeps the chat and tells it', async () => {
@@ -115,10 +128,13 @@ describe('requestUnlink', () => {
     // The protected chain keeps its chat; the open one clears at once.
     expect(chat(store, 84532)).toBe('42');
     expect(chat(store, 421614)).toBeNull();
-    expect(sent).toHaveLength(1);
+    // The protected chain's notice, then (#3346) the open chain's at-once one.
+    expect(sent).toHaveLength(2);
     expect(sent[0]!.chat).toBe('42');
     expect(sent[0]!.text).toContain('CANCEL');
     expect(sent[0]!.text).toContain('LOCK');
+    expect(sent[1]!.chat).toBe('42');
+    expect(sent[1]!.text).toContain('no longer gets alerts');
   });
 
   it('changes nothing when a chain cannot be read', async () => {
@@ -162,6 +178,20 @@ describe('requestRelink', () => {
     expect(chat(store, 84532)).toBe('77');
     expect(await requestRelink(d, W, 84532, '77', 'en')).toBe('linked');
     expect(chat(store, 84532)).toBe('77');
+  });
+
+  it('moves an unprotected account at once and tells the chat it left (#3346)', async () => {
+    const { store, state } = harness();
+    link(store, 84532, '42');
+    const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
+    expect(await requestRelink(d, W, 84532, '77', 'en')).toBe('linked');
+    expect(chat(store, 84532)).toBe('77');
+    expect(sent.map((m) => m.chat)).toEqual(['42']);
+    expect(sent[0]!.text).toContain('different Telegram chat');
+    // Linking the same chat again tells nobody.
+    const again = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
+    expect(await requestRelink(again.d, W, 84532, '77', 'en')).toBe('linked');
+    expect(again.sent).toEqual([]);
   });
 
   it('moves to a different chat only after the delay, telling both chats', async () => {

@@ -100,6 +100,25 @@ async function notifyOldChat(
   return true;
 }
 
+/** #3346 — tell `chatId` that a change which needed no wait has taken
+ *  effect: it no longer gets the alerts of `wallet` on `chainIds`. Nothing
+ *  told it beforehand (only a protected account's change waits and gives
+ *  notice first), so this is the one moment the chat can learn of it. The
+ *  outcome is not retried: the change already applied, and a chat that is no
+ *  longer linked is not kept in any record to retry from. */
+async function tellOldChatNow(
+  deps: ChannelDeps,
+  chatId: string,
+  kind: 'unlink' | 'replace',
+  wallet: string,
+  chainIds: readonly number[],
+  locale: string,
+): Promise<void> {
+  if (!deps.send || chainIds.length === 0) return;
+  const entries = chainIds.map((chainId) => ({ walletShort: shortWallet(wallet), chainId }));
+  await deps.send(chatId, kind === 'unlink' ? channelCopy.removalNow(locale, entries) : channelCopy.moveNow(locale, entries));
+}
+
 /** How many times a request decides again when another request moved the
  *  rows between its read and its write. */
 const DECIDE_ATTEMPTS = 3;
@@ -170,6 +189,11 @@ export async function requestUnlink(
         for (const r of list) told.add(r.chainId);
       }
     }
+    // #3346 — the rows cleared at once had no earlier notice, so tell each
+    // chat now that it no longer gets them. Best effort: the unlink stands.
+    for (const list of groupBy(open, (r) => r.chatId).values()) {
+      await tellOldChatNow(deps, list[0]!.chatId, 'unlink', w, list.map((r) => r.chainId), list[0]!.locale);
+    }
     const pending = waiting.map((r) => ({
       chain_id: r.chainId,
       effective_at: told.has(r.chainId) ? deps.now + delays.get(r.chainId)! : null,
@@ -239,7 +263,13 @@ async function decideRelink(
     return 'unknown';
   }
   const delay = delays.get(chainId);
-  if (delay == null) return immediate();
+  if (delay == null) {
+    const outcome = await immediate();
+    // #3346 — an unprotected move takes effect at once, so the chat it moved
+    // away from is told now (best effort: the move stands either way).
+    if (outcome === 'linked') await tellOldChatNow(deps, current.chatId, 'replace', w, [chainId], current.locale);
+    return outcome;
+  }
   // The pending move is written only while the chat linked now is still the
   // one it moves away from, so a scheduled move or unlink that landed during
   // the protection read is never overwritten by a stale decision.
