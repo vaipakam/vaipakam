@@ -187,7 +187,7 @@ class FakeDiamond {
         const live = l.status === 0 || l.status === 4;
         if (live && s[1].expiresAt !== 0n && this.now < s[1].expiresAt) throw revert('SaleListingLoanStillLive');
         return () => {
-          this.lastLogs = [logOf('LoanSaleListingTornDown', { loanId, saleOfferId: s[0] }), logOf('OfferCanceled', { offerId: s[0], creator: KEEPER })];
+          this.lastLogs = [logOf('LoanSaleListingTornDown', { loanId, saleOfferId: s[0] }), logOf('OfferCanceled', { offerId: s[0], creator: KEEPER, by: KEEPER })];
           this.offers.delete(s[0]);
         };
       }
@@ -214,7 +214,7 @@ class FakeDiamond {
     if (!o.dead && !expired) throw revert('NotCreatorOrNotExpired', [KEEPER, o.expiresAt]);
     if (o.accepted) throw revert('OfferAlreadyAccepted');
     return () => {
-      this.lastLogs = [logOf('OfferCanceled', { offerId, creator: KEEPER })];
+      this.lastLogs = [logOf('OfferCanceled', { offerId, creator: KEEPER, by: KEEPER })];
       this.offers.delete(offerId);
     };
   }
@@ -300,7 +300,7 @@ describe('teardownEvent', () => {
   });
 
   it('names a vehicle cancel from the OfferCanceled event for that offer only', () => {
-    const cancelled = logOf('OfferCanceled', { offerId: 9n, creator: KEEPER });
+    const cancelled = logOf('OfferCanceled', { offerId: 9n, creator: KEEPER, by: KEEPER });
     expect(teardownEvent('vehicle', DIAMOND, 9n, [cancelled])).toBe('offer 9');
     expect(teardownEvent('vehicle', DIAMOND, 8n, [cancelled]), 'another offer').toBeNull();
     expect(teardownEvent('sale', DIAMOND, 9n, [cancelled]), 'a sale teardown is its own event').toBeNull();
