@@ -346,7 +346,6 @@ function decodeStored(raw: string): unknown {
   }
 }
 
-/** Read one storage safely, preserving WHY it came back empty. */
 /** #3836 — where the alert client keeps a signed request a wallet has not
  *  answered yet (`data/alertRequest.ts`). */
 export const PENDING_ALERT_REQUEST_PREFIX = 'vaipakam.alerts.pendingRequest.';
@@ -376,6 +375,7 @@ export function exportedValue(key: string, value: unknown): unknown {
   return value;
 }
 
+/** Read one storage safely, preserving WHY it came back empty. */
 function collect(storage: Storage | null): StoreRead {
   const out: Record<string, unknown> = {};
   if (!storage) return { data: out, refused: true };

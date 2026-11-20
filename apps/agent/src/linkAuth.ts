@@ -119,8 +119,8 @@ const MESSAGE_BUILDERS: Record<
 };
 
 /** How old a request may be once its signature has verified (#3836):
- *  a contract's approval gets the day a Safe's owners may need, an
- *  ordinary wallet's key keeps ten minutes. */
+ *  a contract's approval gets the seven days a Safe's owners may need,
+ *  an ordinary wallet's key keeps ten minutes. */
 export function signatureMaxAgeSeconds(via: 'ecdsa' | 'chain'): number {
   return via === 'chain' ? LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS : LINK_SIGNATURE_MAX_AGE_SECONDS;
 }
@@ -208,7 +208,7 @@ export type LinkVerifyResult =
 /**
  * Verify a parsed signed link request: the timestamp is inside the
  * replay window for how the signature verified (#3836: ten minutes for
- * an ordinary wallet's key, a day for a contract's approval, and ten
+ * an ordinary wallet's key, seven days for a contract's approval, and ten
  * minutes into the future for either) AND the wallet authorised the
  * action-scoped message —
  * plain ECDSA for an ordinary wallet, ERC-1271/6492 against the
@@ -274,6 +274,12 @@ export async function verifySignedLinkRequest(
  * The claim comes AFTER verification, so an unsigned or forged body
  * never writes to the ledger, and BEFORE the action, so two copies of
  * one request racing each other cannot both act.
+ *
+ * It also comes before the newest-first order check (#3836), which the
+ * handlers run afterwards. So a request later refused as superseded has
+ * already used its ledger row. That is intended: a superseded request can
+ * never apply, so the row costs nothing, and claiming first is what keeps
+ * two racing copies to one. Do not move the order check ahead of the claim.
  */
 export async function authoriseAlertRequest(
   httpReq: Request,
