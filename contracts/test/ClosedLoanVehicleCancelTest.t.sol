@@ -93,7 +93,10 @@ contract ClosedLoanVehicleCancelTest is SetupTest {
             expiresAt: 0,
             fillMode: fillMode,
             refinanceTargetLoanId: targetLoanId,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -104,7 +107,7 @@ contract ClosedLoanVehicleCancelTest is SetupTest {
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower), type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         id = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20, type(uint64).max
+            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20, false, type(uint64).max
         );
         vm.stopPrank();
         LibTestTiming.waitOutTermsAge(address(diamond), id);
