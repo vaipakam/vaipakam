@@ -1,6 +1,6 @@
 # A dated end for a loan left in the fallback state
 
-**Status:** design for the owner's decision. Card #3865. Nothing is built from it yet. It changes one line of intended behaviour: today a loan in the fallback state stays curable until the lender position's holder claims, with no end date.
+**Status:** agreed by the owner on 2026-11-20: a dated end, with a wait of 30 days. Card #3865. Nothing is built from it yet. It changes one line of intended behaviour: today a loan in the fallback state stays curable until the lender position's holder claims, with no end date.
 
 **Related:** `NetworkWindDownDesign.md` (section 7, which this gives a date to), `BackstopVaultV0Design.md`, `Vpfi1566CanonicalDeliveredBoundDesign.md` (the fallback custody), `PayoutDestinationRuleDesign.md`.
 
@@ -39,7 +39,7 @@ Then each side collects with its ordinary claim, whenever it likes. The step its
 
 ## 3. The wait
 
-- **Length.** A bounded setting, 30 days as the first proposal, bounds 14 to 90 days. It is recorded on the loan when it enters the fallback state, so a later change of the setting never moves a date already running.
+- **Length.** A bounded setting, 30 days (the owner's figure, 2026-11-20), bounds 14 to 90 days. It is recorded on the loan when it enters the fallback state, so a later change of the setting never moves a date already running.
 - **Counted from entry**, on a clock that does not run while the platform is paused, like every other deadline of a loan.
 - **A top-up that does not cure does not restart it.** Otherwise a borrower could put the end off for ever with small amounts.
 - **A cure ends it.** The loan is open again. If it falls into the fallback state again later, that is a new entry with a new count.
@@ -80,7 +80,7 @@ Then each side collects with its ordinary claim, whenever it likes. The step its
 
 ## 8. Recommendation
 
-The finishing step after 30 days, in kind, callable by anyone, with no extension. The length of the wait is the owner's figure.
+The finishing step after 30 days, in kind, callable by anyone, with no extension. The owner chose this, and the 30 days, on 2026-11-20.
 
 ## 9. Tests
 

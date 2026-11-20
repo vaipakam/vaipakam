@@ -240,14 +240,17 @@ balance under the owner's own hold. Cancelling and taking capital back stay
 available with no end date, the closed view lists them from chain reads, and
 the builder confirms that neither path reads a price, a swap or the indexer.
 
-**A loan in the fallback state does block Closed, and it has no dated end.**
+**A loan in the fallback state does block Closed, and today it has no dated end.**
 It ends when its lender claims, when its borrower cures it, when the
 backstop takes it at the lender's request, or when an internal match closes
 it against an opposite loan, and a cure returns it to an open loan, so
 everything in section 6 keeps running for it. No step on `main` ends an
 unclaimed fallback by a date. One lender who never claims can therefore hold
 a network in Closing. This document does not settle that: it is a question
-for the fallback's own design (#3865).
+for the fallback's own design (#3865). That design, agreed on 2026-11-20,
+lets anyone finish such a loan in kind 30 days after it entered the fallback
+state (`FallbackDatedEndDesign.md`). Once it is built, the earliest Closed
+day counts each fallback loan as ending at its date.
 
 After that:
 
