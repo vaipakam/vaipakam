@@ -4217,7 +4217,7 @@
     "InvalidAssetType": "Tipo de activo inválido.",
     "InvalidOffer": "Oferta no encontrada o ya no válida.",
     "OfferAlreadyAccepted": "La oferta ya fue aceptada.",
-    "NotOfferCreator": "Solo el creador de esta oferta puede realizar esta acción.",
+    "NotOfferHolder": "Solo quien tenga el token de posición de esta oferta puede realizar esta acción.",
     "OfferExpired": "Esta oferta expiró y ya no puede aceptarse ni emparejarse.",
     "OfferExpiryInPast": "La expiración de la oferta debe ser una marca de tiempo futura. Elige una fecha al menos 1 segundo posterior a ahora.",
     "OfferExpiryAboveCap": "La expiración de la oferta está demasiado lejos (tope de horizonte de 1 año). Elige una fecha anterior.",

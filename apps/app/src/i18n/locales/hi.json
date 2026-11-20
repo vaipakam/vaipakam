@@ -4217,7 +4217,7 @@
     "InvalidAssetType": "अमान्य asset type।",
     "InvalidOffer": "Offer नहीं मिला या अब valid नहीं है।",
     "OfferAlreadyAccepted": "Offer पहले ही accepted है।",
-    "NotOfferCreator": "केवल इस offer का creator यह कार्रवाई कर सकता है।",
+    "NotOfferHolder": "केवल वही यह कार्रवाई कर सकता है जिसके पास इस ऑफ़र का पोज़िशन टोकन है।",
     "OfferExpired": "यह offer expire हो चुका है और अब accept या match नहीं हो सकता।",
     "OfferExpiryInPast": "Offer expiry future timestamp होना चाहिए। अभी से कम से कम 1 second बाद की deadline चुनें।",
     "OfferExpiryAboveCap": "Offer expiry बहुत दूर future में है (1-year horizon cap)। पहले की deadline चुनें।",

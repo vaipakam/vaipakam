@@ -4217,7 +4217,7 @@
     "InvalidAssetType": "نوع أصل غير صالح.",
     "InvalidOffer": "العرض غير موجود أو لم يعد صالحا.",
     "OfferAlreadyAccepted": "تم قبول العرض مسبقا.",
-    "NotOfferCreator": "منشئ هذا العرض فقط يمكنه تنفيذ هذا الإجراء.",
+    "NotOfferHolder": "فقط من يحمل رمز مركز هذا العرض يمكنه تنفيذ هذا الإجراء.",
     "OfferExpired": "انتهى هذا العرض ولا يمكن قبوله أو مطابقته.",
     "OfferExpiryInPast": "يجب أن يكون expiry العرض timestamp مستقبليا. اختر deadline بعد الآن بثانية واحدة على الأقل.",
     "OfferExpiryAboveCap": "expiry العرض بعيد جدا في المستقبل (حد أفق سنة واحدة). اختر deadline أقرب.",

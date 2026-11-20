@@ -4217,7 +4217,7 @@
     "InvalidAssetType": "Ungültiger Vermögenswerttyp.",
     "InvalidOffer": "Angebot nicht gefunden oder nicht mehr gültig.",
     "OfferAlreadyAccepted": "Das Angebot wurde bereits angenommen.",
-    "NotOfferCreator": "Nur der Ersteller dieses Angebots kann diese Aktion ausführen.",
+    "NotOfferHolder": "Nur wer den Positionstoken dieses Angebots hält, kann diese Aktion ausführen.",
     "OfferExpired": "Dieses Angebot ist abgelaufen und kann nicht mehr angenommen oder gematcht werden.",
     "OfferExpiryInPast": "Der Angebotsablauf muss ein zukünftiger Zeitstempel sein. Wählen Sie eine Frist mindestens 1 Sekunde nach jetzt.",
     "OfferExpiryAboveCap": "Der Angebotsablauf liegt zu weit in der Zukunft (1-Jahres-Horizontgrenze). Wählen Sie eine frühere Frist.",

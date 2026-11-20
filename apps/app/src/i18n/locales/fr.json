@@ -4217,7 +4217,7 @@
     "InvalidAssetType": "Type d'actif invalide.",
     "InvalidOffer": "Offre introuvable ou plus valide.",
     "OfferAlreadyAccepted": "L'offre a déjà été acceptée.",
-    "NotOfferCreator": "Seul le créateur de cette offre peut effectuer cette action.",
+    "NotOfferHolder": "Seul le détenteur du jeton de position de cette offre peut effectuer cette action.",
     "OfferExpired": "Cette offre a expiré et ne peut plus être acceptée ni appariée.",
     "OfferExpiryInPast": "L'expiration de l'offre doit être un horodatage futur. Choisissez une échéance au moins 1 seconde après maintenant.",
     "OfferExpiryAboveCap": "L'expiration de l'offre est trop éloignée (plafond d'un an). Choisissez une échéance plus proche.",

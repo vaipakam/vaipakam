@@ -4216,7 +4216,7 @@
     "InvalidAssetType": "Invalid asset type.",
     "InvalidOffer": "Offer not found or no longer valid.",
     "OfferAlreadyAccepted": "Offer has already been accepted.",
-    "NotOfferCreator": "Only the creator of this offer can perform this action.",
+    "NotOfferHolder": "Only whoever holds this offer's position token can perform this action.",
     "OfferExpired": "This offer has expired and can no longer be accepted or matched.",
     "OfferExpiryInPast": "Offer expiry must be a future timestamp. Pick a deadline at least 1 second past now.",
     "OfferExpiryAboveCap": "Offer expiry is too far in the future (1-year horizon cap). Pick an earlier deadline.",
