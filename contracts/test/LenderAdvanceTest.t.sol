@@ -780,4 +780,28 @@ contract LenderAdvanceTest is InstantMarketBase {
         vm.prank(lender);
         LenderSideFacet(address(diamond)).repayAdvance(loanId, 10 ether);
     }
+
+    /// @dev A holder whose own part of the final claim is nothing (the
+    ///      advance took all that arrived) still makes the terminal claim:
+    ///      it names who the loan's end belongs to, so it never refuses for
+    ///      an empty amount.
+    function test_holderWithNothingLeftStillClaims() public {
+        _open();
+        _take(300 ether);
+        vm.warp(vm.getBlockTimestamp() + 10 days);
+        vm.prank(taker);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertGt(a.finalToAdvance, 0, "the advance took its part");
+        // Less arrived than was booked: exactly the advance's part is left.
+        _harness();
+        uint256 kept = LenderSideHarnessFacet(address(diamond)).harnessSetFinalAmount(loanId, a.finalToAdvance);
+        assertEq(kept, 0, "nothing for the holder");
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        // Claimed: a second claim is refused as already made.
+        vm.prank(lender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+    }
 }
