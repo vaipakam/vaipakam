@@ -17,6 +17,7 @@ import { useWorldRail } from '../reads/world/WorldRailContext';
 import { assetName, type TokenMetaMap } from '../reads/tokens';
 import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
+import { IssuerPowersLine } from './IssuerPowersLine';
 import {
   classifyAsset,
   listStatuses,
@@ -97,8 +98,13 @@ function AgeLines({ rankings }: { rankings: AssetRankings }) {
 /** The trust line for a chosen ERC-20 (an NFT collection has none yet). */
 export function AssetTrustLine({ asset, chain, meta, testToken }: { asset: Hex; chain: SupportedChain; meta: TokenMetaMap | null; testToken: boolean }) {
   const std = useAssetStandard(asset);
-  if (std.data !== 'erc20') return null;
-  return <TrustFor asset={asset} chain={chain} meta={meta} testToken={testToken} />;
+  if (std.data === undefined) return null;
+  return (
+    <>
+      {std.data === 'erc20' && <TrustFor asset={asset} chain={chain} meta={meta} testToken={testToken} />}
+      <IssuerPowersLine chain={chain} asset={asset} collection={std.data !== 'erc20'} />
+    </>
+  );
 }
 
 function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: SupportedChain; meta: TokenMetaMap | null; testToken: boolean }) {

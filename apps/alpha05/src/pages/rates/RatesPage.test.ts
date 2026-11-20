@@ -86,6 +86,15 @@ describe('RatesView', () => {
     expect(out).toContain('From 14 loans, 6 lenders and 9 borrowers.');
   });
 
+  it('states the loans left out as unconfirmed beside every figure, zero too', () => {
+    const out = html(ready(curve()));
+    expect(out).toContain('2 more left out because their agreed terms are not confirmed yet.');
+    expect(out).toContain('0 more left out because their agreed terms are not confirmed yet.');
+    const silent = html(ready(curve((a) => a.ownLoans.terms.forEach((t: Record<string, unknown>) => delete t.unconfirmedLeftOut))));
+    expect(silent).toContain('The index did not say how many loans it left out as unconfirmed.');
+    expect(html(ready(curve()))).toContain('every loan, open or closed, whatever its status');
+  });
+
   it('says "not enough loans yet" for a withheld point and why another is withheld', () => {
     const out = html(ready(curve()));
     expect(out).toContain('Not enough loans yet');
@@ -99,7 +108,8 @@ describe('RatesView', () => {
     expect(out).toContain('20%');
     expect(out).toContain('Minimum distinct lenders');
     expect(out).toContain('loans whose rate followed a link');
-    expect(out).toContain('partial repayments');
+    expect(out).toContain('fallback recoveries, which pay principal, interest and bonus as one sum');
+    expect(out).not.toContain('loans still open');
     expect(out).toContain('Over 270 days: loans started in the last 730 days');
     expect(out).toContain('The index marks this rule provisional');
     // A setting the app has no name for is listed under the index's own key.

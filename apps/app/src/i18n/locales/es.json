@@ -4075,9 +4075,6 @@
       "latestEndHint": "Contado hasta el final de ese día: {{at}}.",
       "extensionFee": "Una extensión hasta esa fecha añade {{fee}} a tu comisión de apertura del préstamo, por el plazo adicional, tomada de tu vault. Es lo máximo que permiten tus límites; si la comisión sube por encima, la extensión no se realiza hasta que guardes nuevos límites.",
       "extensionFeeNone": "Una extensión hasta esa fecha no añade comisión de apertura: el plazo ya está pagado.",
-      "extensionFeeUnknown": "No se pudo leer la comisión de apertura añadida para esa fecha, así que aún no se pueden guardar los límites.",
-      "extensionFee": "Una extensión hasta esa fecha añade {{fee}} a tu comisión de apertura del préstamo, por el plazo adicional, tomada de tu vault. Es lo máximo que permiten tus límites; si la comisión sube por encima, la extensión no se realiza hasta que guardes nuevos límites.",
-      "extensionFeeNone": "Una extensión hasta esa fecha no añade comisión de apertura: el plazo ya está pagado.",
       "extensionFeeUnknown": "No se pudo leer la comisión de apertura adicional para esa fecha, así que aún no se pueden guardar los límites.",
       "save": "Guardar límites",
       "turnOff": "Desactivar",
@@ -4352,6 +4349,8 @@
     "OfferTermsTooFresh": "Esta oferta se publicó o cambió hace unos segundos, y una oferta solo puede aceptarse cuando sus términos llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
     "IntentTermsTooFresh": "Esta oferta permanente se fijó o cambió hace unos segundos, y solo puede aceptarse cuando sus términos llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
     "SaleNetBelowReviewed": "Esta venta ahora te pagaría menos que el mínimo que revisaste (quizá se devolvió parte del préstamo). No se vendió nada. Revisa la venta de nuevo para ver la cifra actual.",
-    "SaleHeldAboveReviewed": "Desde que revisaste la venta se ha reservado más para el prestamista en este préstamo. No se vendió nada. Revisa la venta de nuevo para ver las cifras actuales."
+    "SaleHeldAboveReviewed": "Desde que revisaste la venta se ha reservado más para el prestamista en este préstamo. No se vendió nada. Revisa la venta de nuevo para ver las cifras actuales.",
+    "InstantSourceRepeated": "Este préstamo nombra la misma fuente más de una vez. Cada fuente solo puede cubrir una vez, así que no se envió nada. Revise el préstamo y vuelva a enviarlo.",
+    "IntentCapitalInsufficient": "El Auto-lend que asume este préstamo no tiene suficientes fondos sin prestar para pagar su principal. No se envió nada."
   }
 }

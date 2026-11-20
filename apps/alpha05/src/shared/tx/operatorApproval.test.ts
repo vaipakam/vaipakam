@@ -10,6 +10,7 @@ const DIAMOND: Hex = '0x3333333333333333333333333333333333333333';
 
 const sent: { operator: Hex; on: boolean }[] = [];
 vi.mock('wagmi/actions', () => ({
+  getAccount: () => ({ status: 'connected', address: WALLET, chainId: 1 }),
   writeContract: vi.fn(async (_c: unknown, req: { args: [Hex, boolean] }) => {
     sent.push({ operator: req.args[0], on: req.args[1] });
     return '0xabc';

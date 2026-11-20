@@ -48,7 +48,11 @@ function AssetChoice({
   const { text, format } = useCopy();
   const id = useId();
   const suggested = leg === 'collateral' && role === 'borrower' ? suggestedCollateral(chain) : suggestedAssets(chain).map((c) => ({ ...c, nft: false }));
-  const isSuggested = value !== null && suggested.some((c) => c.address.toLowerCase() === value.toLowerCase());
+  // The list's own spelling of the value: an address arrives in any case
+  // (a kit link carries it lower-cased, #3773), and the select matches
+  // its options exactly.
+  const match = value !== null ? suggested.find((c) => c.address.toLowerCase() === value.toLowerCase()) : undefined;
+  const isSuggested = match !== undefined;
   const [other, setOther] = useState(value !== null && !isSuggested);
   const [pasted, setPasted] = useState(value !== null && !isSuggested ? value : '');
   // What the reader types is a search unless it starts like an address;
@@ -62,7 +66,7 @@ function AssetChoice({
       <label htmlFor={id}>{label}</label>
       <select
         id={id}
-        value={other ? OTHER : (value ?? '')}
+        value={other ? OTHER : (match?.address ?? value ?? '')}
         onChange={(e) => {
           const v = e.target.value;
           if (v === OTHER) {

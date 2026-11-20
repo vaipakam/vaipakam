@@ -21,8 +21,11 @@
 # deployed build fails on any report; once a build has been driven clean the
 # list moves into the enforced line (rulebook §3.2, deployment acceptance).
 #
-# frame-ancestors allows the Safe dapp-browser origins (the Safe connector is
-# registered); X-Frame-Options is omitted because it cannot express an
+# frame-ancestors allows exactly the origins in src/chain/safeOrigins.ts
+# (the official Safe web app, which opens this app as a Safe App); the build
+# writes them in place of the frame-ancestors placeholder and fails if it is
+# missing.
+# Never a wildcard. X-Frame-Options is omitted because it cannot express an
 # allowlist. frame-src allows the WalletConnect verify iframe.
 #
 # Cloudflare Web Analytics is OFF at the zone (#1592); do not add its host
@@ -34,7 +37,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' __SAFE_APP_ORIGINS__; upgrade-insecure-requests
   Content-Security-Policy-Report-Only: connect-src 'self' __CONNECT_SOURCES__
   X-Robots-Tag: noindex
 
@@ -68,3 +71,18 @@
 /manifest.webmanifest
   Cache-Control: public, max-age=0, must-revalidate
   Content-Type: application/manifest+json
+
+# #3770 — the Safe wallet reads these two files from its own site when the
+# app is added to it. Only they carry a cross-origin read grant, and only
+# for the one listed origin (written in place of the placeholder by the
+# build, from src/chain/safeOrigins.ts). The shell, the RPC proxy and the
+# APIs carry none.
+
+/manifest.json
+  Cache-Control: public, max-age=0, must-revalidate
+  Access-Control-Allow-Origin: __SAFE_APP_CORS_ORIGIN__
+  Vary: Origin
+
+/icon-192.png
+  Access-Control-Allow-Origin: __SAFE_APP_CORS_ORIGIN__
+  Vary: Origin

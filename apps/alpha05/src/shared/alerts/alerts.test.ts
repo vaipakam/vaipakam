@@ -25,6 +25,11 @@ describe('alert messages and bodies', () => {
   it('sends only what a save changes', () => {
     expect(alertBody('link', W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG });
     expect(alertBody({ save: { dueDateReminders: false } }, W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, notify_maturity_approaching: false });
+    // #3434 — the outflow choice: the default goes as null, the others as booleans.
+    expect(alertBody({ save: { vaultOutflowAlerts: 'default' } }, W, 1, 2, SIG)).toMatchObject({ notify_vault_outflow: null });
+    expect(alertBody({ save: { vaultOutflowAlerts: 'on' } }, W, 1, 2, SIG)).toMatchObject({ notify_vault_outflow: true });
+    expect(alertBody({ save: { vaultOutflowAlerts: 'off' } }, W, 1, 2, SIG)).toMatchObject({ notify_vault_outflow: false });
+    expect(alertBody({ save: { dueDateReminders: true } }, W, 1, 2, SIG)).not.toHaveProperty('notify_vault_outflow');
     expect(alertBody({ save: { pushAlerts: true } }, W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, push_channel: 'subscribed' });
     expect(alertBody({ save: { bands: { warnHf: 1.6, alertHf: 1.3, criticalHf: 1.1 } } }, W, 1, 2, SIG)).toEqual({
       wallet: W,

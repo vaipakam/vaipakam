@@ -4075,9 +4075,6 @@
       "latestEndHint": "Compté jusqu’à la fin de ce jour : {{at}}.",
       "extensionFee": "Une prolongation jusqu’à cette date ajoute {{fee}} à vos frais de mise en place du prêt, pour la durée ajoutée, prélevés sur votre vault. C’est le maximum que vos limites autorisent ; si les frais dépassent ce montant, la prolongation n’a pas lieu tant que vous n’enregistrez pas de nouvelles limites.",
       "extensionFeeNone": "Une prolongation jusqu’à cette date n’ajoute aucuns frais de mise en place : la durée est déjà payée.",
-      "extensionFeeUnknown": "Les frais de mise en place ajoutés pour cette date n’ont pas pu être lus, donc les limites ne peuvent pas encore être enregistrées.",
-      "extensionFee": "Une prolongation jusqu’à cette date ajoute {{fee}} à vos frais de mise en place du prêt, pour la durée ajoutée, prélevés sur votre vault. C’est le maximum que vos limites autorisent ; si les frais dépassent ce montant, la prolongation n’a pas lieu tant que vous n’enregistrez pas de nouvelles limites.",
-      "extensionFeeNone": "Une prolongation jusqu’à cette date n’ajoute aucuns frais de mise en place : la durée est déjà payée.",
       "extensionFeeUnknown": "Les frais de mise en place supplémentaires pour cette date n’ont pas pu être lus, les limites ne peuvent donc pas encore être enregistrées.",
       "save": "Enregistrer les limites",
       "turnOff": "Désactiver",
@@ -4352,6 +4349,8 @@
     "OfferTermsTooFresh": "Cette offre a été publiée ou modifiée il y a quelques secondes, et une offre ne peut être prise qu’une fois ses conditions en place depuis quelques secondes. Réessayez dans un instant. Rien n’a été envoyé.",
     "IntentTermsTooFresh": "Cette offre permanente a été définie ou modifiée il y a quelques secondes, et elle ne peut être prise qu’une fois ses conditions en place depuis quelques secondes. Réessayez dans un instant. Rien n’a été envoyé.",
     "SaleNetBelowReviewed": "Cette vente vous verserait désormais moins que le minimum que vous avez examiné (une partie du prêt a peut-être été remboursée). Rien n’a été vendu. Examinez à nouveau la vente pour voir le montant actuel.",
-    "SaleHeldAboveReviewed": "Davantage a été mis de côté pour le prêteur sur ce prêt depuis que vous avez examiné la vente. Rien n’a été vendu. Examinez à nouveau la vente pour voir les montants actuels."
+    "SaleHeldAboveReviewed": "Davantage a été mis de côté pour le prêteur sur ce prêt depuis que vous avez examiné la vente. Rien n’a été vendu. Examinez à nouveau la vente pour voir les montants actuels.",
+    "InstantSourceRepeated": "Cet emprunt cite la même source plus d’une fois. Chaque source ne peut servir qu’une fois, donc rien n’a été envoyé. Vérifiez l’emprunt et renvoyez-le.",
+    "IntentCapitalInsufficient": "L’Auto-lend qui reprend ce prêt ne détient pas assez de fonds non prêtés pour en payer le principal. Rien n’a été envoyé."
   }
 }

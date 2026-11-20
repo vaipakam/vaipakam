@@ -4170,6 +4170,8 @@
     }
   },
   "contractError": {
+    "InstantSourceRepeated": "This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again.",
+    "IntentCapitalInsufficient": "The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent.",
     "MaxLendingAboveCeiling": "Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again.",
     "MinCollateralBelowFloor": "The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.",
     "FunctionDisabled": "This feature is currently turned off by protocol governance. Please try again later.",

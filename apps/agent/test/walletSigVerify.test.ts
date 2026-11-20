@@ -52,6 +52,10 @@ describe('isValidSignatureShape', () => {
     expect(isValidSignatureShape(`0x${'cd'.repeat(900)}`)).toBe(true);
   });
 
+  it('accepts the empty signature a Safe returns for an on-chain approved message (#3770)', () => {
+    expect(isValidSignatureShape('0x')).toBe(true);
+  });
+
   it('rejects odd length, non-hex, missing prefix and the oversize cap', () => {
     expect(isValidSignatureShape(`0x${'ab'.repeat(65)}f`)).toBe(false);
     expect(isValidSignatureShape('0xnot-hex')).toBe(false);
