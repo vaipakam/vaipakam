@@ -5,8 +5,9 @@
  * term stays, and that nothing moves; the finish card checks the protocol's
  * record of the new figures. Raising a lending offer's amount pulls the
  * difference from the wallet through an exact approval into the vault, and
- * lowering it returns the difference to the wallet, each measured from the
- * transaction's own logs. Only the creator is offered the change. Runs on the
+ * lowering it frees the difference in the vault as the lender's own funds
+ * (the wallet is untouched), each measured from the transaction's own logs
+ * and the protocol's record of the release. Only the creator is offered the change. Runs on the
  * desktop and the phone project; the chain is reverted after each test.
  */
 import { erc20Abi, parseEther } from 'viem';
@@ -109,23 +110,25 @@ test('raising a lending offer’s amount pulls the difference through an exact a
   expect(await sc.pub.readContract({ address: lendingAsset, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] })).toBe(0n);
   await finish.getByRole('button', { name: 'Close' }).click();
 
-  // Lowering it returns the difference from the vault to the wallet.
+  // Lowering it frees the difference in the vault, as the lender's own
+  // funds; only the lender's own withdrawal reaches the wallet.
   await page.getByTestId('offer-page-edit').click({ timeout: 60_000 });
   await expect(form.getByTestId('offer-edit-amountMax')).toHaveValue('0.08', { timeout: 30_000 });
   await form.getByTestId('offer-edit-amountMax').fill('0.04');
   await form.getByTestId('offer-edit-amountMin').fill('0.04');
   await form.getByTestId('offer-edit-review').click();
-  await expect(receipt).toContainText('From your vault back', { timeout: 60_000 });
+  await expect(receipt).toContainText('Released from the offer', { timeout: 60_000 });
   await expect(receipt).toContainText('0.04 WETH');
+  await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
   await expect(receipt).toContainText('Wallet prompts: 1');
   const before = await sc.pub.readContract({ address: lendingAsset, abi: erc20Abi, functionName: 'balanceOf', args: [lender] });
   sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
-  await expect(finish).toContainText('Returned to your wallet: 0.04 WETH');
+  await expect(finish).toContainText('Returned to your vault, free to withdraw: 0.04 WETH');
   expect(flags.sentTransactions).toBe(sent + 1);
-  expect(await sc.pub.readContract({ address: lendingAsset, abi: erc20Abi, functionName: 'balanceOf', args: [lender] })).toBe(before + parseEther('0.04'));
+  expect(await sc.pub.readContract({ address: lendingAsset, abi: erc20Abi, functionName: 'balanceOf', args: [lender] })).toBe(before);
   await fitsWidth(page);
 });
 

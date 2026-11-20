@@ -232,6 +232,51 @@ export function creditLots(logs: readonly Log[], diamond: Hex, vault: Hex, refs:
   return out;
 }
 
+/** The `VaultOutflow` classes whose movement stays inside the vaults as free
+ *  balance under the payout rule (owner decision 2026-11-19): an amount
+ *  released from its own lien in the owner's vault (`OwnRelease`, Auto-lend
+ *  capital taken back), and an offer's escrow returned to the vault of its
+ *  position token's holder (`OfferHolder`, an offer cancelled or lowered).
+ *  Only the owner's own withdrawal then reaches a wallet. */
+export const OWN_RELEASE = 19;
+export const OFFER_HOLDER = 20;
+
+/**
+ * What the transaction freed in a vault for `owner` (the account whose vault
+ * the movement started from) of `asset`, from the Diamond's `VaultOutflow`
+ * records of `classes`, as the protocol measured it (`delivered`); null when
+ * it recorded none. `ref` narrows it to one offer; `tokenId` to one NFT. The
+ * destination is read too: `ownVault` is true when it stayed in the owner's
+ * own vault (an offer's creator still holding its token), false when it went
+ * to another holder's vault.
+ */
+export function freedInVault(
+  logs: readonly Log[],
+  diamond: Hex,
+  owner: Hex,
+  asset: Hex,
+  classes: readonly number[],
+  filter: { tokenId?: bigint; ref?: bigint } = {},
+): { amount: bigint; ownVault: boolean } | null {
+  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
+  const events = parseEventLogs({ abi: OUTFLOW, logs: [...own], eventName: 'VaultOutflow', strict: false }) as unknown as { args: Args }[];
+  const hits = events
+    .map((e) => e.args)
+    .filter(
+      (a) =>
+        String(a.owner).toLowerCase() === owner.toLowerCase() &&
+        classes.includes(Number(a.class_)) &&
+        String(a.asset).toLowerCase() === asset.toLowerCase() &&
+        (filter.tokenId === undefined || BigInt(a.tokenId ?? 0n) === filter.tokenId) &&
+        (filter.ref === undefined || BigInt(a.ref ?? 0n) === filter.ref),
+    );
+  if (hits.length === 0) return null;
+  return {
+    amount: hits.reduce((t, a) => t + BigInt(a.delivered ?? 0n), 0n),
+    ownVault: hits.every((a) => String(a.to).toLowerCase() === String(a.vault).toLowerCase()),
+  };
+}
+
 export function vaultCredit(
   logs: readonly Log[],
   diamond: Hex,
