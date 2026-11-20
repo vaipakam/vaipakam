@@ -63,40 +63,6 @@
   },
   {
     "type": "function",
-    "name": "getBackstopAbsorbInfo",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "cash",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "exposure",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getBackstopMinSecondaryOracleCoverage",
     "inputs": [],
     "outputs": [
@@ -143,52 +109,6 @@
   },
   {
     "type": "function",
-    "name": "releaseBackstopAbsorbExposure",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "realizedPrincipal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "seedBackstopAbsorb",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "seedBackstopOrigination",
     "inputs": [
       {
@@ -205,42 +125,6 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setBackstopAbsorbCap",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setBackstopAbsorbEnabled",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -361,24 +245,6 @@
   },
   {
     "type": "function",
-    "name": "sweepBackstopAbsorbCollateral",
-    "inputs": [
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "sweepBackstopNFT",
     "inputs": [
       {
@@ -434,29 +300,6 @@
   },
   {
     "type": "function",
-    "name": "withdrawBackstopAbsorbToTreasury",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "withdrawBackstopToTreasury",
     "inputs": [
       {
@@ -477,144 +320,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbCapSet",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbCollateralSwept",
-    "inputs": [
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbEnabledSet",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbExposureReleased",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "released",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbSeeded",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbWithdrawn",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -936,11 +641,6 @@
   },
   {
     "type": "error",
-    "name": "BackstopAbsorbCollateralInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BackstopAlreadyInitialized",
     "inputs": []
   },
@@ -1113,11 +813,6 @@
   {
     "type": "error",
     "name": "TreasuryNotDiamond",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TreasuryUnset",
     "inputs": []
   },
   {

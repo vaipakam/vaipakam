@@ -93,45 +93,6 @@
   },
   {
     "type": "function",
-    "name": "getSaleListingBounds",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "recorded",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "minSellerNet",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxHeld",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expiry",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "heldNow",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "initRiskBounds",
     "inputs": [
       {
@@ -656,69 +617,6 @@
             "internalType": "address"
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteSellerBounds",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "saleRateBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expiresAt",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "minSellerNet",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxHeld",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "saleAdmission",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "code",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "a",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "b",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
