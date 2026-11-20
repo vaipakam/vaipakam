@@ -101,6 +101,9 @@ export const ACCEPT_ERRORS = [
   'RateReferenceUnavailable',
   'RateReferenceUnusual',
   'RateRangeEmpty',
+  // #3844 — a request posted to take over a named loan's obligation; only
+  // that loan's handover consumes it.
+  'TakeoverOffer',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

@@ -2768,6 +2768,7 @@ export const copy = {
       OfferSaleProceedsCredited: B('Sale proceeds were credited to an offer’s owner.'),
       OffsetCompleted: B('An early close by offset completed.'),
       OffsetOfferCreated: B('An offer was posted to close a loan early by offset.'),
+      TakeoverOfferPosted: B('A request was posted to take over a loan.'),
       OwedAtDefaultRecorded: B('What was owed at default was recorded.'),
       OwedAtInternalMatchRecorded: B('What was owed at an internal match was recorded.'),
       ParallelSaleLockReleased: B('A lock held during a parallel sale was released.'),
@@ -3652,6 +3653,10 @@ export const copy = {
     codeGuard: B('a maker’s price-move guard refuses it now.'),
     codeFresh: B('one of them was posted or changed moments ago; it can be matched shortly.'),
     codeTermsNotAccepted: B('one of the two makers has not accepted the Terms of Service in force on this network.'),
+    codeCollectionParent: B('the lender offer is a collection offer, filled one token at a time through its own route.'),
+    codeReferenceUnavailable: B('a maker’s rate follows the market reference, which cannot be read for this term now.'),
+    codeReferenceUnusual: B('a maker’s rate follows the market reference, which is unusual now; terms over 30 days wait.'),
+    codeTakeover: B('the request is reserved for taking over a named loan, so it cannot be matched.'),
     codeOther: B('reason code {{code}}.'),
     whySummary: B('How a match works'),
     why: C(
@@ -5627,6 +5632,7 @@ export const copy = {
       RateReferenceUnavailable: A("This offer's rate follows the market reference, and that reference cannot be read for this term now, so it cannot be taken. It may clear later."),
       RateReferenceUnusual: A("This offer's rate follows the market reference, and the market is unusual now, so an offer for a term over 30 days cannot be taken. It may clear later."),
       RateRangeEmpty: A("This offer's rate follows the market reference, which has moved past the offer's own limit, so no rate is acceptable now. It may clear later."),
+      TakeoverOffer: A("This request is reserved for taking over a named loan and can't be accepted or matched."),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
       // OFF-60 — a signed order's own refusals, reported only by the
       // protocol's preview of a signed order's fill (#3552).

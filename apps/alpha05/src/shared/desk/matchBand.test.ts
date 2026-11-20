@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, getAddress, type Abi, type Log } from 'viem';
 import { VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
@@ -9,6 +10,7 @@ import {
   INCENTIVE_CLASS,
   capacityText,
   MATCH,
+  MATCH_ERRORS,
   MATCH_OK,
   matchBlockers,
   matchChanged,
@@ -198,11 +200,28 @@ describe('the share and the capacity', () => {
     expect(capacityText({ ...SETTINGS, capacityLimited: null }, copy)).toBe('matchBand.capacityUnread');
   });
 
-  it('words every refusal code, and an unknown one by its number', () => {
-    expect(refusalText(18, copy)).toBe('matchBand.codeCapacity');
-    expect(refusalText(25, copy)).toBe('matchBand.codeFresh');
-    expect(refusalText(26, copy)).toBe('matchBand.codeTermsNotAccepted');
-    expect(refusalText(27, copy)).toBe('matchBand.codeOther(27)');
+  it('names every MatchError the contract declares, in order', () => {
+    const sol = readFileSync(new URL('../../../../../contracts/src/libraries/LibOfferMatch.sol', import.meta.url), 'utf8');
+    const open = sol.indexOf('enum MatchError {');
+    const body = sol.slice(open + 'enum MatchError {'.length, sol.indexOf('}', open));
+    const names = body
+      .split('\n')
+      .map((l) => l.replace(/\/\/.*$/, '').trim())
+      .join('')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    expect([...MATCH_ERRORS]).toEqual(names);
+  });
+
+  it('words every refusal by its name, and an unknown one by its number', () => {
+    const at = (name: (typeof MATCH_ERRORS)[number]) => refusalText(MATCH_ERRORS.indexOf(name), copy);
+    expect(at('CapacityExhausted')).toBe('matchBand.codeCapacity');
+    expect(at('TermsTooFresh')).toBe('matchBand.codeFresh');
+    expect(at('CollectionParent')).toBe('matchBand.codeCollectionParent');
+    expect(at('TermsNotAccepted')).toBe('matchBand.codeTermsNotAccepted');
+    expect(at('TakeoverOffer')).toBe('matchBand.codeTakeover');
+    expect(refusalText(MATCH_ERRORS.length, copy)).toBe(`matchBand.codeOther(${MATCH_ERRORS.length})`);
   });
 });
 

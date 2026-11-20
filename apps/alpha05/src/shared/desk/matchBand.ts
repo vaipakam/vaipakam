@@ -60,42 +60,86 @@ export const MATCH_PAIRS = 12;
 /** `ServiceCapacityRole.Solver`: the role a match is counted against. */
 const SOLVER_ROLE = 0;
 
-/** `LibOfferMatch.MatchError`, by ordinal. */
-export const MATCH_OK = 0;
-const REFUSAL: readonly CopyKey[] = [
-  'matchBand.codeOk',
-  'matchBand.codeAsset',
-  'matchBand.codeAssetType',
-  'matchBand.codeDuration',
-  'matchBand.codeAmount',
-  'matchBand.codeRate',
-  'matchBand.codeCollateral',
-  'matchBand.codeTaken',
-  'matchBand.codeSide',
-  'matchBand.codeHealth',
-  'matchBand.codeLtv',
-  'matchBand.codeSelf',
-  'matchBand.codeExpired',
-  'matchBand.codeAon',
-  'matchBand.codeRefinance',
-  'matchBand.codeCarryOver',
-  'matchBand.codeSale',
-  'matchBand.codeOffset',
-  'matchBand.codeCapacity',
-  'matchBand.codePaused',
-  'matchBand.codeSanctioned',
-  'matchBand.codeSwitch',
-  'matchBand.codeTerms',
-  'matchBand.codeCadence',
-  'matchBand.codeGuard',
-  'matchBand.codeFresh',
-  'matchBand.codeTermsNotAccepted',
-];
+/** `LibOfferMatch.MatchError`, in the contract's order (the ordinal the
+ *  previews return indexes this list). `matchBand.test.ts` pins it to the
+ *  Solidity enum, so a member added there fails the test until it is named
+ *  here; the words are keyed by name below, never by position. */
+export const MATCH_ERRORS = [
+  'Ok',
+  'AssetMismatch',
+  'AssetTypeMismatch',
+  'DurationMismatch',
+  'AmountNoOverlap',
+  'RateNoOverlap',
+  'CollateralBelowRequired',
+  'OfferAccepted',
+  'WrongOfferType',
+  'HFTooLow',
+  'LtvAboveTier',
+  'SelfTrade',
+  'OfferExpired',
+  'AonRequiresFullFill',
+  'RefinanceTagged',
+  'RefinanceCarryOverCollateralShortfall',
+  'SaleVehicleTagged',
+  'OffsetVehicleTagged',
+  'CapacityExhausted',
+  'Paused',
+  'Sanctioned',
+  'MatcherDisabled',
+  'LifecycleTermsMismatch',
+  'CadenceNotAdmitted',
+  'PriceGuardRefused',
+  'TermsTooFresh',
+  'CollectionParent',
+  'TermsNotAccepted',
+  'ReferenceUnavailable',
+  'ReferenceUnusual',
+  'TakeoverOffer',
+] as const;
+export type MatchErrorName = (typeof MATCH_ERRORS)[number];
+
+export const MATCH_OK = MATCH_ERRORS.indexOf('Ok');
+
+/** The words for each refusal, by name. */
+const REFUSAL: Readonly<Record<MatchErrorName, CopyKey>> = {
+  Ok: 'matchBand.codeOk',
+  AssetMismatch: 'matchBand.codeAsset',
+  AssetTypeMismatch: 'matchBand.codeAssetType',
+  DurationMismatch: 'matchBand.codeDuration',
+  AmountNoOverlap: 'matchBand.codeAmount',
+  RateNoOverlap: 'matchBand.codeRate',
+  CollateralBelowRequired: 'matchBand.codeCollateral',
+  OfferAccepted: 'matchBand.codeTaken',
+  WrongOfferType: 'matchBand.codeSide',
+  HFTooLow: 'matchBand.codeHealth',
+  LtvAboveTier: 'matchBand.codeLtv',
+  SelfTrade: 'matchBand.codeSelf',
+  OfferExpired: 'matchBand.codeExpired',
+  AonRequiresFullFill: 'matchBand.codeAon',
+  RefinanceTagged: 'matchBand.codeRefinance',
+  RefinanceCarryOverCollateralShortfall: 'matchBand.codeCarryOver',
+  SaleVehicleTagged: 'matchBand.codeSale',
+  OffsetVehicleTagged: 'matchBand.codeOffset',
+  CapacityExhausted: 'matchBand.codeCapacity',
+  Paused: 'matchBand.codePaused',
+  Sanctioned: 'matchBand.codeSanctioned',
+  MatcherDisabled: 'matchBand.codeSwitch',
+  LifecycleTermsMismatch: 'matchBand.codeTerms',
+  CadenceNotAdmitted: 'matchBand.codeCadence',
+  PriceGuardRefused: 'matchBand.codeGuard',
+  TermsTooFresh: 'matchBand.codeFresh',
+  CollectionParent: 'matchBand.codeCollectionParent',
+  TermsNotAccepted: 'matchBand.codeTermsNotAccepted',
+  ReferenceUnavailable: 'matchBand.codeReferenceUnavailable',
+  ReferenceUnusual: 'matchBand.codeReferenceUnusual',
+  TakeoverOffer: 'matchBand.codeTakeover',
+};
 
 /** Why the protocol refuses a pair, in words. */
 export function refusalText(code: number, copy: Copy): string {
-  const key = REFUSAL[code];
-  return key ? copy.text(key) : copy.format('matchBand.codeOther', { code: String(code) });
+  const name = MATCH_ERRORS[code];
+  return name ? copy.text(REFUSAL[name]) : copy.format('matchBand.codeOther', { code: String(code) });
 }
 
 /** A lender's offer and a borrower's request whose rates overlap. */
