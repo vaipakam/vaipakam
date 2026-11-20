@@ -334,7 +334,10 @@ contract OfferPreviewFacet {
         }
         // #3744 — the holder of the offer's token takes the creator's side
         // of the loan, so a flagged holder makes the offer unfillable.
-        address offerHolder = LibOfferRefund.holder(LibVaipakam.storageSlot().offers[offerId]);
+        // An unstored signed offer (offerId 0) is materialized with its signer
+        // holding the token, so its holder is its creator.
+        address offerHolder =
+            offerId == 0 ? offer.creator : LibOfferRefund.holder(LibVaipakam.storageSlot().offers[offerId]);
         if (offerHolder != offer.creator && LibVaipakam.isSanctionedAddress(offerHolder)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedOfferHolder;
             return preview;

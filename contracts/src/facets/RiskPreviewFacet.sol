@@ -86,10 +86,11 @@ contract RiskPreviewFacet {
             // loan's pair (the exiting seller is exempt — Codex #729 r4).
             return LibRiskAccess.previewActorBlock(s, acceptor, pair);
         }
-        // Normal offer: the creator is re-gated against the LIVE state, then the
+        // Normal offer: the creator's side (#3744: the holder of the offer's
+        // token) is re-gated against the LIVE state, then the
         // acceptor, both against standing consent (#3231).
         uint8 creatorBlock =
-            LibRiskAccess.previewActorBlock(s, s.offers[offerId].creator, pair);
+            LibRiskAccess.previewActorBlock(s, LibOfferRefund.holder(s.offers[offerId]), pair);
         if (creatorBlock != 0) return creatorBlock;
         return LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
@@ -114,7 +115,7 @@ contract RiskPreviewFacet {
         if (!LibVaipakam.cfgRiskAccessGateEnabled()) return 0;
         if (s.saleOfferToLoanId[offerId] != 0) return 0; // exiting seller is exempt
         return LibRiskAccess.previewActorBlock(
-            s, s.offers[offerId].creator, _acceptGatePair(s, offerId)
+            s, LibOfferRefund.holder(s.offers[offerId]), _acceptGatePair(s, offerId)
         );
     }
 
