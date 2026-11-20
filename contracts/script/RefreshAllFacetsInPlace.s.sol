@@ -110,6 +110,7 @@ import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -385,7 +386,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // RiskPreviewFacet) and BackstopAbsorbFacet (backstop Role B governance,
     // split off BackstopFacet), #3843, both for EIP-170. Their selectors move
     // hosts, so the Replace cut repoints them.
-    uint256 public constant EXPECTED_FACETS = 139;
+    // 139 -> 140: IntentPreviewFacet (the standing-intent fill preview, split
+    // off RiskPreviewFacet in #3843 for EIP-170). Its selector moves hosts.
+    uint256 public constant EXPECTED_FACETS = 140;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1539,6 +1542,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         items[138] = Item(
             "backstopAbsorbFacet", ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name), _getBackstopAbsorbSelectors()
+        );
+        // #3843 — previewIntent, split off RiskPreviewFacet (items[63]).
+        items[139] = Item(
+            "intentPreviewFacet", ArtifactDeploy.deploy(type(IntentPreviewFacet).name), _getIntentPreviewSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

@@ -53,6 +53,7 @@ import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
@@ -1496,19 +1497,30 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](8);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
         selectors[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
         selectors[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3
         selectors[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3
-        selectors[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        selectors[7] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        selectors[6] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call
         // (moved here from OfferPreviewFacet in #3328).
-        selectors[8] = RiskPreviewFacet.initRiskBounds.selector;
+        selectors[7] = RiskPreviewFacet.initRiskBounds.selector;
+        // #3843 — previewIntent moved to IntentPreviewFacet.
+    }
+
+    /// @dev #3843 — the standing-intent fill preview, split off
+    ///      `RiskPreviewFacet`. `view`.
+    function getIntentPreviewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = IntentPreviewFacet.previewIntent.selector; // #625 WI-2b
     }
 
     /// @dev #3843 — the sale reads, split off `RiskPreviewFacet`. All `view`.

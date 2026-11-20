@@ -278,6 +278,8 @@ export interface DeploymentFacets {
   saleAdmissionFacet?: HexAddress;
   /** #3843 — backstop Role B (absorb) governance, split off backstopFacet. */
   backstopAbsorbFacet?: HexAddress;
+  /** #3843 — the standing-intent fill preview, split off riskPreviewFacet. */
+  intentPreviewFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

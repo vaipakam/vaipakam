@@ -346,6 +346,8 @@ FACETS=(
   "SaleAdmissionFacet"
   # #3843 — backstop Role B (absorb) governance, split off BackstopFacet.
   "BackstopAbsorbFacet"
+  # #3843 — the standing-intent fill preview, split off RiskPreviewFacet.
+  "IntentPreviewFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

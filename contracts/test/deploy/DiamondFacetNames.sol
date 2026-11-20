@@ -159,7 +159,9 @@ abstract contract DiamondFacetNames {
     ///      137 → 139 with `SaleAdmissionFacet` (the sale reads, split off
     ///      RiskPreviewFacet) and `BackstopAbsorbFacet` (backstop Role B
     ///      governance, split off BackstopFacet), #3843, both for EIP-170.
-    function cutFacetNames() internal pure returns (string[139] memory) {
+    ///      139 → 140 with `IntentPreviewFacet` (the standing-intent fill
+    ///      preview, split off RiskPreviewFacet in #3843 for EIP-170).
+    function cutFacetNames() internal pure returns (string[140] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -471,7 +473,9 @@ abstract contract DiamondFacetNames {
             // #3843 — the sale reads, split off RiskPreviewFacet (EIP-170).
             "SaleAdmissionFacet",
             // #3843 — backstop Role B governance, split off BackstopFacet.
-            "BackstopAbsorbFacet"
+            "BackstopAbsorbFacet",
+            // #3843 — the standing-intent fill preview, split off RiskPreviewFacet.
+            "IntentPreviewFacet"
         ];
     }
 }

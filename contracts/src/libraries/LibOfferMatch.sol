@@ -224,7 +224,7 @@ library LibOfferMatch {
         PairUnpriced
     }
 
-    /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
+    /// @notice Structured outcome of `IntentPreviewFacet.previewIntent`. `ok` is
     ///         true iff EVERY layer cleared: `intentError == Ok` AND
     ///         `matchError == Ok` AND `riskBlock == 0`. The numeric figures
     ///         mirror what the on-chain fill would lock, so a solver can size a
@@ -415,7 +415,7 @@ library LibOfferMatch {
         // mirror serves both stored-offer matches and a synthesized #625
         // auto-lend intent slice — the latter has no stored lender offer to
         // pass an id for (it is materialised only inside the state-changing
-        // `matchIntent`), so `RiskPreviewFacet.previewIntent` builds the slice
+        // `matchIntent`), so `IntentPreviewFacet.previewIntent` builds the slice
         // in memory and previews it through this same core.
         return _previewMatchCore(
             s.offers[lenderOfferId], s.offers[borrowerOfferId], s, borrowerCollFloor
@@ -920,8 +920,8 @@ library LibOfferMatch {
     ///         solver can decide whether to submit `matchIntent` without
     ///         spending gas on a revert.
     /// @dev    The risk-access gate (#671) is layered on by the
-    ///         `RiskPreviewFacet.previewIntent` wrapper — it owns the actor
-    ///         resolver — so `ok` here is provisional (intent + match only);
+    ///         `IntentPreviewFacet.previewIntent` wrapper — it resolves the
+    ///         gated actors — so `ok` here is provisional (intent + match only);
     ///         the wrapper downgrades it if `riskBlock != 0`. The binding
     ///         guarantee that this preview agrees with the live path is the
     ///         `previewIntent` Ok ⟺ `matchIntent` succeeds agreement test.

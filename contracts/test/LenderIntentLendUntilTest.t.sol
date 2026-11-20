@@ -8,7 +8,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
@@ -163,7 +163,7 @@ contract LenderIntentLendUntilTest is SetupTest {
     }
 
     function _preview(uint256 cp, uint256 fill) internal view returns (LibOfferMatch.IntentPreviewResult memory) {
-        return RiskPreviewFacet(address(diamond)).previewIntent(
+        return IntentPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, fill
         );
     }

@@ -32,6 +32,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -46,7 +47,7 @@ import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
  * @title ReplaceStaleFacets
  * @notice Redeploys a curated facet set — OfferCreate, OfferAccept, Oracle,
  *         VaultFactory, Config, NumeraireConfig, OracleAdmin, (since #1649)
- *         RiskPreview + OfferPreview, and (since #3843) SaleAdmission — and re-cuts every selector they own,
+ *         RiskPreview + OfferPreview, and (since #3843) SaleAdmission + IntentPreview — and re-cuts every selector they own,
  *         choosing Add or Replace per selector from the target Diamond's live
  *         routing. Originally targeted the createOffer failure surfacing
  *         `CrossFacetCallFailed(string)` (0x573c3147) on Sepolia — that legacy
@@ -276,15 +277,15 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Fourteen facets (SaleAdmissionFacet joined in #3843), so at most two
-        // cuts each, plus THREE retired-selector Removes (#2459 r4's
-        // previewIntent; #2489's tariff setter; #2812's range flags) — 31 at
-        // most
+        // Fifteen facets (SaleAdmissionFacet and IntentPreviewFacet joined in
+        // #3843), so at most two cuts each, plus THREE retired-selector Removes
+        // (#2459 r4's previewIntent; #2489's tariff setter; #2812's range
+        // flags) — 33 at most
         // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](33);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -435,6 +436,16 @@ contract ReplaceStaleFacets is DeployDiamond {
             address saleAdmissionFacet = ArtifactDeploy.deploy(type(SaleAdmissionFacet).name);
             console.log("SaleAdmissionFacet:  ", saleAdmissionFacet);
             n = _appendPartitioned(staging, n, diamond, saleAdmissionFacet, _getSaleAdmissionSelectors());
+        }
+        // #3843 — `previewIntent` moved off RiskPreviewFacet too. It inlines
+        // the match core, whose `initRiskBounds` self-call the RiskPreviewFacet
+        // cut above carries; without this cut the selector would stay on the
+        // old RiskPreviewFacet bytecode. On a Diamond cut before #3843 it is
+        // routed to RiskPreviewFacet and partitions to Replace, which moves it.
+        {
+            address intentPreviewFacet = ArtifactDeploy.deploy(type(IntentPreviewFacet).name);
+            console.log("IntentPreviewFacet:  ", intentPreviewFacet);
+            n = _appendPartitioned(staging, n, diamond, intentPreviewFacet, _getIntentPreviewSelectors());
         }
         // #1649 — `previewAccept` was carved out of OfferAcceptFacet in #980, so
         // on a pre-#980 Diamond it is routed to the OLD host and this re-points

@@ -7,6 +7,7 @@ import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {SaleAdmissionFacet} from "../../src/facets/SaleAdmissionFacet.sol";
+import {IntentPreviewFacet} from "../../src/facets/IntentPreviewFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -187,7 +188,7 @@ library FacetSelectors {
         s[20] = VaipakamNFTFacet.markOfferPositions.selector;
     }
 
-    /// @notice Full external selector surface of {RiskPreviewFacet} (9) —
+    /// @notice Full external selector surface of {RiskPreviewFacet} (8) —
     ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
     ///
     /// @dev    #1649 / #3326. This facet is not itself refreshed for its own
@@ -196,25 +197,39 @@ library FacetSelectors {
     ///         `initRiskBounds`). The sale reads it carried until #3843
     ///         (`saleAdmission`, `quoteSellerBounds`, `getSaleListingBounds`)
     ///         are on `SaleAdmissionFacet` now; see {saleAdmission} for why
-    ///         the curated scripts must route them.
+    ///         the curated scripts must route them. `previewIntent` is on
+    ///         `IntentPreviewFacet` since #3843 too; see {intentPreview}.
     ///
     ///         Consumers partition this list by live routing (Add the unrouted,
     ///         Replace the routed), so it is correct against an older diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](8);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
         s[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
         s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector;
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector;
-        s[6] = RiskPreviewFacet.previewIntent.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        s[7] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        s[6] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call
         // (moved here from OfferPreviewFacet in #3328).
-        s[8] = RiskPreviewFacet.initRiskBounds.selector;
+        s[7] = RiskPreviewFacet.initRiskBounds.selector;
+    }
+
+    /// @notice Full external selector surface of {IntentPreviewFacet} (1) —
+    ///         mirrors `DeployDiamond._getIntentPreviewSelectors`.
+    ///
+    /// @dev    #3843 split `previewIntent` off `RiskPreviewFacet`. It inlines
+    ///         the shared match core (`LibOfferMatch`), so the curated scripts
+    ///         that refresh the match hosts and RiskPreviewFacet carry it too.
+    ///         Consumers partition this list by live routing: on a Diamond cut
+    ///         before #3843 it is routed to `RiskPreviewFacet`, so it
+    ///         partitions to Replace, which moves it to this facet.
+    function intentPreview() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = IntentPreviewFacet.previewIntent.selector;
     }
 
     /// @notice Full external selector surface of {SaleAdmissionFacet} (3) —

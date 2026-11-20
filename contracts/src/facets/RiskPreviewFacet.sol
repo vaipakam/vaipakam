@@ -5,14 +5,9 @@ import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
-import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
-import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
-import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
-import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
-import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
@@ -32,14 +27,18 @@ import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
  *         #3843 — the sale side (`saleAdmission`, `quoteSellerBounds`,
  *         `getSaleListingBounds`) moved to `SaleAdmissionFacet` when this
  *         facet reached the EIP-170 ceiling. **Those reads are NOT here any
- *         more**; the two facets are refreshed together.
+ *         more**; the two facets are refreshed together. The standing-intent
+ *         fill preview (`previewIntent`, with the match core it inlines) moved
+ *         to `IntentPreviewFacet` in the same change. **`previewIntent` is NOT
+ *         here any more.** The match-actor resolver both facets use is
+ *         `LibRiskAccess.resolveMatchActors`.
  *
  * @dev    Every function here is `external view`: it makes no state write,
  *         emits no event, and declares no local error. The gate DECISION logic
- *         lives entirely in `LibRiskAccess` (+ `LibOfferMatch` for the intent
- *         preview); this facet is a thin selector/glue layer that owns the
- *         actor-resolution + PairId construction the enforcing sites are too
- *         close to EIP-170 to inline. The two reverting asserts
+ *         lives entirely in `LibRiskAccess` (the match-actor resolution
+ *         included); this facet is a thin selector/glue layer that owns the
+ *         PairId construction the enforcing sites are too close to EIP-170 to
+ *         inline. The two reverting asserts
  *         (`assertMatchAllowed`, `assertObligationTransferAllowed`) revert with
  *         `RiskTierTooLow` / `IlliquidPairNotConsented`, both declared in
  *         `LibRiskAccess` via `assertActorMayTransact` — not here.
@@ -238,7 +237,7 @@ contract RiskPreviewFacet {
     ///         a keeper match authors no #662 acknowledgement to substitute.
     /// @dev    Cross-facet entrypoint consumed by `LibOfferMatchExecute.executeMatch`
     ///         (which is near the EIP-170 ceiling, so the classifier lives here).
-    ///         The gated parties + pair come from {_resolveMatchActors}: a normal
+    ///         The gated parties + pair come from {LibRiskAccess.resolveMatchActors}: a normal
     ///         match gates BOTH creators against the borrower offer's pair; a
     ///         lender-sale vehicle exempts the exiting seller and gates only the
     ///         buyer against the linked loan's pair.
@@ -252,7 +251,7 @@ contract RiskPreviewFacet {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
+        ) = LibRiskAccess.resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
         LibRiskAccess.assertActorMayTransact(s, actorA, pair);
         if (actorB != address(0)) {
             LibRiskAccess.assertActorMayTransact(s, actorB, pair);
@@ -279,228 +278,13 @@ contract RiskPreviewFacet {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
+        ) = LibRiskAccess.resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
         uint8 a = LibRiskAccess.previewActorBlock(s, actorA, pair);
         if (a != 0) return a;
         if (actorB != address(0)) {
             return LibRiskAccess.previewActorBlock(s, actorB, pair);
         }
         return 0;
-    }
-
-    /// @notice #625 WI-2b — non-mutating preview of a `matchIntent` fill. A
-    ///         keeper calls this BEFORE submitting `matchIntent` to learn,
-    ///         off-chain and gas-free, whether the fill would succeed and — if
-    ///         not — the exact first reason it would revert. On success it also
-    ///         returns the principal / midpoint rate / required collateral the
-    ///         fill would lock, so a solver can size the call from one read.
-    /// @dev    The intent-level guards + the shared match-admission core run in
-    ///         {LibOfferMatch.previewIntent}; this wrapper layers the #671
-    ///         risk-access gate on top (it owns the actor resolver), exactly as
-    ///         `LibOfferMatchExecute.executeMatch` calls {assertMatchAllowed} after
-    ///         `previewMatch`. The binding guarantee that this preview agrees
-    ///         with the live fill is the `previewIntent` Ok ⟺ `matchIntent`
-    ///         succeeds agreement test (`LenderIntentPreview.t.sol`).
-    /// @param  solver  Prospective filler — `requiresKeeperAuth` is checked
-    ///         against THIS address, not this view's `msg.sender`, so a keeper
-    ///         can preview on behalf of the account that would submit.
-    /// @param  initiator  The route's OUTER initiator (#2459 r4) — the account the
-    ///         fill's capacity charge falls to when `solver` cannot be charged
-    ///         itself: the caller of `backstopFill` when `solver` is the backstop
-    ///         vault, else the transaction's originator (an aggregator adapter with
-    ///         no bound operator). Named, never read from the view's transaction —
-    ///         the real fill charges the initiator `backstopFill` records, which an
-    ///         `eth_call`'s originator need not be. For a solver that sends its own
-    ///         transaction, the solver.
-    /// @param  lender  Intent owner (slice creator).
-    /// @param  lendingAsset / collateralAsset / slot  Intent key (#3626: the slot
-    ///         the fill would draw from).
-    /// @param  counterpartyOfferId  The stored borrower offer to fill against.
-    /// @param  fillAmount  Principal the solver intends to lend this fill.
-    function previewIntent(
-        address solver,
-        address initiator,
-        address lender,
-        address lendingAsset,
-        address collateralAsset,
-        uint8 slot,
-        uint256 counterpartyOfferId,
-        uint256 fillAmount
-    ) external view returns (LibOfferMatch.IntentPreviewResult memory res) {
-        res = LibOfferMatch.previewIntent(
-            solver,
-            lender,
-            lendingAsset,
-            collateralAsset,
-            slot,
-            counterpartyOfferId,
-            fillAmount
-        );
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        // Live order in `executeMatch` (Codex #1115 r2): the intent-level guards
-        // and the slice's duration-cap + per-asset pause run BEFORE
-        // `_createOfferSetup`'s SLICE-CREATOR (lender) risk gate
-        // (`assertActorMayTransact`, gate-on only); the collateral floor, the
-        // >365d cadence bound, the sale-vehicle rejection, and the match core all
-        // run AFTER it; and the BORROWER-side `assertMatchAllowed` runs only once
-        // the slice has fully materialized. So the reported first reason must be:
-        //   • a PRE-gate failure (intent-level, slice duration-cap, slice pause)
-        //     as-is — the risk gate is never reached live;
-        //   • otherwise the SLICE-CREATOR (lender) risk block if it trips, since
-        //     it precedes every post-gate failure (floor / multi-year /
-        //     sale-vehicle / match-core) live;
-        //   • else the surviving post-gate failure, or (on a clean result) the
-        //     BORROWER risk block, then the accept gates.
-        // The post-gate `intentError` set is exactly {SliceCollateralBelowFloor,
-        // SliceMultiYearTerm, SaleVehicleTagged}; any `matchError` is post-gate
-        // too (the match core runs after materialization).
-        bool precedesLenderRisk = !res.ok
-            && res.matchError == LibOfferMatch.MatchError.Ok
-            && res.intentError != LibOfferMatch.IntentError.SliceCollateralBelowFloor
-            && res.intentError != LibOfferMatch.IntentError.SliceMultiYearTerm
-            && res.intentError != LibOfferMatch.IntentError.SaleVehicleTagged;
-        if (precedesLenderRisk) return res;
-
-        // #671 risk-access gate. Resolve the gated parties via the slice's
-        // CREATOR (= `lender`; the slice has no offer id) and the borrower offer;
-        // handles the lender-sale-vehicle branch identically to the enforcing
-        // path.
-        if (LibVaipakam.cfgRiskAccessGateEnabled()) {
-            (
-                address actorA,
-                address actorB,
-                LibRiskAccess.PairId memory pair
-            ) = _resolveMatchActors(s, lender, counterpartyOfferId);
-            // The slice-creator (lender) gate `_createOfferSetup` runs at 883 is
-            // ALWAYS against the materialized SLICE's own assets — the intent's
-            // lend / collateral legs (ERC-20, single-value; tokenIds 0 and prepay
-            // immaterial to the ERC-20 pair key) — for BOTH a normal match and a
-            // lender-sale vehicle. It is NOT the borrower offer's pair: for a
-            // well-formed counterparty the two coincide, but a malformed / stale
-            // one (asset-type mismatch => a post-gate `matchError`) has a
-            // different, possibly riskier borrower pair (Codex #1115 r3); and for
-            // a sale vehicle `executeMatch` reverts `SaleVehicleNotMatchable`
-            // before `assertMatchAllowed` ever gates the sold-loan pair, so the
-            // sold-loan pair must not gate the pre-match lender either (Codex
-            // #1115 r4). Hence: always the slice pair here.
-            LibRiskAccess.PairId memory slicePair = LibRiskAccess.PairId({
-                lendAsset: lendingAsset,
-                lendType: LibVaipakam.AssetType.ERC20,
-                lendTokenId: 0,
-                collAsset: collateralAsset,
-                collType: LibVaipakam.AssetType.ERC20,
-                collTokenId: 0,
-                prepayAsset: address(0)
-            });
-            uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, slicePair);
-            // The borrower gate (`assertMatchAllowed`) is reached live only after
-            // the slice fully materializes (assets matched, not a sale vehicle),
-            // so consult it — against the borrower/loan `pair` — only on a clean
-            // result, never letting a borrower block override an earlier post-gate
-            // failure.
-            if (rb == 0 && res.ok && actorB != address(0)) {
-                rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
-            }
-            res.riskBlock = rb;
-            if (rb != 0) {
-                // The risk gate is the live first-revert reason here; clear any
-                // stale post-gate failure code so consumers keying on
-                // intentError / matchError don't report the later reason.
-                res.ok = false;
-                res.intentError = LibOfferMatch.IntentError.Ok;
-                res.matchError = LibOfferMatch.MatchError.Ok;
-                return res;
-            }
-        }
-
-        // Risk gate cleared (or off): a surviving post-gate failure is now the
-        // correct first reason (its live check comes after the passed risk gate).
-        if (!res.ok) return res;
-
-        // #747 Codex r1/r2/r3 — accept-time gates. After the match + risk gate
-        // the live fill enters `acceptOfferInternal(counterpartyOfferId)` with
-        // the lender slice as acceptor, which can still reject on gates a
-        // borrower newly trips AFTER posting. Reproduce the gates that can fail
-        // on this deploy:
-        //   - sanctions on the borrower (offer creator);
-        //   - `offerConsumedBySale` — the terminal bit a Scenario-A parallel
-        //     sale sets, which `_acceptOffer` rejects with `OfferConsumedBySale`
-        //     even while the row still looks matchable (Codex r2);
-        //   - KYC, when governance has enabled enforcement (Codex r3). Reuse the
-        //     SAME value + predicate the accept path applies: the #627 public
-        //     `calculateTransactionValueNumeraire` (effectivePrincipal for a
-        //     match == the matched amount) and `ProfileFacet.meetsKYCRequirement`
-        //     for BOTH the borrower (offer creator) and the lender (acceptor).
-        //     Gated on the flag so retail (enforcement off) pays no oracle read;
-        //     `meetsKYCRequirement` itself also short-circuits true when off.
-        // (Per-asset pause is mirrored EARLIER at the slice-materialization
-        // stage, matching the live order. Country-pair is compile-time pure-true
-        // on the retail deploy — the gated variant is a separate industrial-fork
-        // function — so it can never block here. Already-accepted / expired are
-        // covered by the match core.)
-        // #3744 — the holder of the borrower offer's token owns the borrower
-        // side, so the accept screens it and applies its KYC tier beside the
-        // creator's and the lender's; the preview asks the same.
-        address boHolder = LibOfferRefund.holder(s.offers[counterpartyOfferId]);
-        bool kycBlocked;
-        if (s.kycEnforcementEnabled) {
-            uint256 valueNumeraire = OfferAcceptFacet(address(this))
-                .calculateTransactionValueNumeraire(
-                    counterpartyOfferId, res.matchAmount
-                );
-            kycBlocked = !LibCompliance.offerPartiesMeetKYC(
-                s.offers[counterpartyOfferId].creator, boHolder, lender, valueNumeraire
-            );
-        }
-        if (
-            LibVaipakam.isSanctionedAddress(s.offers[counterpartyOfferId].creator)
-            || LibVaipakam.isSanctionedAddress(boHolder)
-            || s.offerConsumedBySale[counterpartyOfferId]
-            || kycBlocked
-        ) {
-            res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
-            res.ok = false;
-            return res;
-        }
-        // #3358 — loan creation then asks the borrower offer's origination
-        // rules: the cadence admission and the maker's price-move guard. The
-        // slice is the other side and is minted in the fill, so it carries no
-        // guard a view could read. Same entry the accept and match previews
-        // use, so the three cannot disagree about a refusal.
-        {
-            OfferPriceGuardFacet.OriginationRefusal refusal = OfferPriceGuardFacet(address(this))
-                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0, lender, s.offers[counterpartyOfferId].creator);
-            if (refusal != OfferPriceGuardFacet.OriginationRefusal.None) {
-                res.matchError = refusal == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted
-                    ? LibOfferMatch.MatchError.CadenceNotAdmitted
-                    : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
-                        ? LibOfferMatch.MatchError.TermsNotAccepted
-                        : refusal == OfferPriceGuardFacet.OriginationRefusal.OfferHolderFlagged
-                            ? LibOfferMatch.MatchError.OfferHolderFlagged
-                            : LibOfferMatch.MatchError.PriceGuardRefused;
-                res.ok = false;
-                return res;
-            }
-        }
-        // #1219 review — the fill's capacity charge is its LAST step (after the
-        // match), so it is this preview's last check, for the actor the fill's route
-        // names for `solver` and `initiator` (`LibServiceCapacity.routeActor`).
-        // #2559 (Codex #2563 r1) — the SAME capacity-or-credit rule the fill applies
-        // (`LibPriorityRouting.chargeFill`): a capacity refusal on an opted-in intent
-        // whose owner holds a priority credit is lifted, so the preview stays Ok
-        // exactly when the fill would succeed, and a keeper reading it does not
-        // stop at a fill a credit would carry. Codex #2563 r4 — and it says WHICH
-        // clear case applies (`spendsPriorityCredit`), so the one pre-check tells a
-        // solver whether the fill charges its capacity or spends the owner's credit.
-        if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
-            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset, slot)) {
-                res.spendsPriorityCredit = true;
-            } else {
-                res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
-                res.ok = false;
-            }
-        }
     }
 
     // ─── Internals ───────────────────────────────────────────────────────────
@@ -557,72 +341,6 @@ contract RiskPreviewFacet {
             collType: collType,
             collTokenId: collTokenId,
             prepayAsset: prepayAsset
-        });
-    }
-
-    /// @dev Resolve the gated parties + the pair they are gated against for a
-    ///      keeper match — the single source of truth shared by the enforcing
-    ///      {assertMatchAllowed} and the non-reverting {previewMatchRiskBlock}.
-    ///      `actorA` is always gated; `actorB` is gated only when non-zero.
-    ///
-    ///      NORMAL match: `executeMatch` calls `acceptOfferInternal(borrowerOfferId)`,
-    ///      so the resulting loan copies its `tokenId` / `collateralTokenId` /
-    ///      `prepayAsset` from the BORROWER offer (the match-time asset check pins
-    ///      only the asset contracts + types, not those ids). Both creators are
-    ///      therefore gated against the BORROWER offer's pair — the actual loan —
-    ///      so the lender consents to the pair it joins, not its own offer's
-    ///      possibly-different one. actorA = lender-offer creator, actorB =
-    ///      borrower-offer creator.
-    ///
-    ///      LENDER-SALE vehicle (borrower offer linked via `saleOfferToLoanId`):
-    ///      the exiting seller (borrower-offer creator) is EXEMPT — that risk was
-    ///      accepted at the original loan — and only the BUYER (the lender-offer
-    ///      creator, who acquires the sold lender position) is gated, against the
-    ///      LINKED loan's pair. Mirrors `LoanFacet._maybeRunInitialRiskGates`'s
-    ///      sale-vehicle branch + the PR-2a sale-buyer treatment. actorA = buyer,
-    ///      actorB = address(0).
-    /// @dev The lender leg is passed as a CREATOR ADDRESS (not an offer id) so
-    ///      this same resolver serves a #625 auto-lend intent slice, which is
-    ///      never stored as an offer and so has no id to look up — only its
-    ///      `creator` (the intent owner) is needed here. The id-based callers
-    ///      pass `s.offers[lenderOfferId].creator`.
-    function _resolveMatchActors(
-        LibVaipakam.Storage storage s,
-        address lenderCreator,
-        uint256 borrowerOfferId
-    )
-        private
-        view
-        returns (address actorA, address actorB, LibRiskAccess.PairId memory pair)
-    {
-        uint256 soldLoanId = s.saleOfferToLoanId[borrowerOfferId];
-        if (soldLoanId != 0) {
-            LibVaipakam.Loan storage sold = s.loans[soldLoanId];
-            actorA = lenderCreator; // buyer (incoming lender)
-            actorB = address(0); // seller exempt
-            pair = LibRiskAccess.PairId({
-                lendAsset: sold.principalAsset,
-                lendType: sold.assetType,
-                lendTokenId: sold.tokenId,
-                collAsset: sold.collateralAsset,
-                collType: sold.collateralAssetType,
-                collTokenId: sold.collateralTokenId,
-                prepayAsset: sold.prepayAsset
-            });
-            return (actorA, actorB, pair);
-        }
-        LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
-        actorA = lenderCreator;
-        // #3744 — the owner of each side is the holder of its offer's token.
-        actorB = LibOfferRefund.holder(bo);
-        pair = LibRiskAccess.PairId({
-            lendAsset: bo.lendingAsset,
-            lendType: bo.assetType,
-            lendTokenId: bo.tokenId,
-            collAsset: bo.collateralAsset,
-            collType: bo.collateralAssetType,
-            collTokenId: bo.collateralTokenId,
-            prepayAsset: bo.prepayAsset
         });
     }
 

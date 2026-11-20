@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPriceGuard} from "./LibPriceGuard.sol";
+import {LibOfferRefund} from "./LibOfferRefund.sol";
 
 /// @dev Minimal diamond-routed view the risk gate needs. `getEffectiveLiquidityTier`
 ///      lives on `OracleFacet`; calling it through `address(this)` (the Diamond)
@@ -361,6 +362,76 @@ library LibRiskAccess {
         // frontend collects the ack first instead of letting the tx revert.
         if (midTierStrictBlock(s, actor, p)) return 3;
         return 0;
+    }
+
+    /// @dev Resolve the gated parties + the pair they are gated against for a
+    ///      keeper match — the single source of truth shared by the enforcing
+    ///      `RiskPreviewFacet.assertMatchAllowed`, the non-reverting
+    ///      `RiskPreviewFacet.previewMatchRiskBlock` and
+    ///      `IntentPreviewFacet.previewIntent`. #3843 moved it here from a
+    ///      private helper of RiskPreviewFacet when `previewIntent` left that
+    ///      facet, so the two facets compile the one rule instead of a copy.
+    ///      `actorA` is always gated; `actorB` is gated only when non-zero.
+    ///
+    ///      NORMAL match: `executeMatch` calls `acceptOfferInternal(borrowerOfferId)`,
+    ///      so the resulting loan copies its `tokenId` / `collateralTokenId` /
+    ///      `prepayAsset` from the BORROWER offer (the match-time asset check pins
+    ///      only the asset contracts + types, not those ids). Both creators are
+    ///      therefore gated against the BORROWER offer's pair — the actual loan —
+    ///      so the lender consents to the pair it joins, not its own offer's
+    ///      possibly-different one. actorA = lender-offer creator, actorB =
+    ///      borrower-offer creator.
+    ///
+    ///      LENDER-SALE vehicle (borrower offer linked via `saleOfferToLoanId`):
+    ///      the exiting seller (borrower-offer creator) is EXEMPT — that risk was
+    ///      accepted at the original loan — and only the BUYER (the lender-offer
+    ///      creator, who acquires the sold lender position) is gated, against the
+    ///      LINKED loan's pair. Mirrors `LoanFacet._maybeRunInitialRiskGates`'s
+    ///      sale-vehicle branch + the PR-2a sale-buyer treatment. actorA = buyer,
+    ///      actorB = address(0).
+    /// @dev The lender leg is passed as a CREATOR ADDRESS (not an offer id) so
+    ///      this same resolver serves a #625 auto-lend intent slice, which is
+    ///      never stored as an offer and so has no id to look up — only its
+    ///      `creator` (the intent owner) is needed here. The id-based callers
+    ///      pass `s.offers[lenderOfferId].creator`.
+    function resolveMatchActors(
+        LibVaipakam.Storage storage s,
+        address lenderCreator,
+        uint256 borrowerOfferId
+    )
+        internal
+        view
+        returns (address actorA, address actorB, PairId memory pair)
+    {
+        uint256 soldLoanId = s.saleOfferToLoanId[borrowerOfferId];
+        if (soldLoanId != 0) {
+            LibVaipakam.Loan storage sold = s.loans[soldLoanId];
+            actorA = lenderCreator; // buyer (incoming lender)
+            actorB = address(0); // seller exempt
+            pair = PairId({
+                lendAsset: sold.principalAsset,
+                lendType: sold.assetType,
+                lendTokenId: sold.tokenId,
+                collAsset: sold.collateralAsset,
+                collType: sold.collateralAssetType,
+                collTokenId: sold.collateralTokenId,
+                prepayAsset: sold.prepayAsset
+            });
+            return (actorA, actorB, pair);
+        }
+        LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
+        actorA = lenderCreator;
+        // #3744 — the owner of each side is the holder of its offer's token.
+        actorB = LibOfferRefund.holder(bo);
+        pair = PairId({
+            lendAsset: bo.lendingAsset,
+            lendType: bo.assetType,
+            lendTokenId: bo.tokenId,
+            collAsset: bo.collateralAsset,
+            collType: bo.collateralAssetType,
+            collTokenId: bo.collateralTokenId,
+            prepayAsset: bo.prepayAsset
+        });
     }
 
     /// @notice Risk-gate revert reasons (carried in the facet ABI).

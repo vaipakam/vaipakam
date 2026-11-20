@@ -283,7 +283,7 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
      * @notice Where a fill from `owner`'s intent slot stands against the
      *         calm-price check now: Off (switched off), Clear, NoCheckpoint,
      *         NotCalm or Unpriced (see {LibOfferPriceGuard.Status}).
-     * @dev    The fill and `RiskPreviewFacet.previewIntent` read this same
+     * @dev    The fill and `IntentPreviewFacet.previewIntent` read this same
      *         answer, so they cannot disagree.
      */
     function intentCalmStatus(address owner, address lendingAsset, address collateralAsset, uint8 slot)

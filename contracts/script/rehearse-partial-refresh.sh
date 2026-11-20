@@ -41,7 +41,8 @@
 #      against a fixture that was never broken.
 #   4. Runs the refresh script under test with `--broadcast`.
 #   5. Asserts every `RiskPreviewFacet` selector routes, and all to ONE host,
-#      and the same for `SaleAdmissionFacet` (the sale reads, #3843) —
+#      and the same for `SaleAdmissionFacet` (the sale reads) and
+#      `IntentPreviewFacet` (the standing-intent preview), both #3843 —
 #      a partition bug that split them across old and new addresses would leave
 #      the Diamond routed but running two builds of the same facet.
 #   6. Drives that same scenario with `--broadcast`: a real sale refused under its
@@ -89,7 +90,6 @@ RISK_PREVIEW_SELECTORS=(
   0x012c433a  # assertObligationTransferAllowed
   0x978e1471  # acceptMidTierAckPair
   0x314efc12  # previewCreatorBlock
-  0x51e43cd9  # previewIntent  (#3626: gained the intent slot; was 0x1835a83c, before #2459 r4 0xa7aaae7f)
   0x4e69fd7d  # previewSignedOfferRiskBlocks (#3577)
   0xa81cd082  # initRiskBounds (#3326; moved from OfferPreviewFacet in #3328)
 )
@@ -101,6 +101,13 @@ SALE_ADMISSION_SELECTORS=(
   0x2c87c1a3  # saleAdmission
   0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
   0x1a3370e0  # getSaleListingBounds    (#2672)
+)
+
+# The full IntentPreviewFacet surface, in `FacetSelectors.intentPreview()`
+# order: the standing-intent preview #3843 split off RiskPreviewFacet. Pinned
+# the same way by `RedeploySelectorParityTest`.
+INTENT_PREVIEW_SELECTORS=(
+  0x51e43cd9  # previewIntent  (#3626: gained the intent slot; was 0x1835a83c, before #2459 r4 0xa7aaae7f)
 )
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is
@@ -214,11 +221,12 @@ assert_one_host() {
   echo "    $label: all $# selectors -> $host"
 }
 
-# Every RiskPreviewFacet selector routed to one host, and every
-# SaleAdmissionFacet selector routed to one host (#3843).
+# Every RiskPreviewFacet selector routed to one host, and the same for the two
+# facets #3843 split off it, SaleAdmissionFacet and IntentPreviewFacet.
 assert_risk_preview_routed() {
   assert_one_host "$1" RiskPreviewFacet "${RISK_PREVIEW_SELECTORS[@]}"
   assert_one_host "$1" SaleAdmissionFacet "${SALE_ADMISSION_SELECTORS[@]}"
+  assert_one_host "$1" IntentPreviewFacet "${INTENT_PREVIEW_SELECTORS[@]}"
 }
 
 # Which scenario exercises the sale path each script refreshes.

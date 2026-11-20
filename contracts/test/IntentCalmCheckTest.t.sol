@@ -11,7 +11,7 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -122,7 +122,7 @@ contract IntentCalmCheckTest is SetupTest {
     }
 
     function _preview(uint256 cp) internal view returns (LibOfferMatch.IntentPreviewResult memory) {
-        return RiskPreviewFacet(address(diamond)).previewIntent(
+        return IntentPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
     }
