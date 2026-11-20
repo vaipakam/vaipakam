@@ -67,4 +67,11 @@ describe('waitForSentReceipt (every intermediate step)', () => {
     expect(state.waited).toEqual([hash]);
     expect(r.blockNumber).toBe(7n);
   });
+  it('states a Safe step it cannot follow when the Safe provider cannot be reached', async () => {
+    const id = ('0x' + 'a'.repeat(64)) as `0x${string}`;
+    recordSentKind(id, { viaAccount: true, account: SAFE });
+    state.connector = { id: 'safe', getProvider: async () => Promise.reject(new Error('provider gone')) };
+    await expect(waitForSentReceipt(config, id, 1)).rejects.toBeInstanceOf(AccountTxUnfollowed);
+    expect(state.waited).toEqual([]);
+  });
 });

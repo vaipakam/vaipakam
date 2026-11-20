@@ -111,11 +111,13 @@ export function sendsAccountTxIds(config: Config): boolean {
 }
 
 /** The reader for the connected wallet when it is a Safe opened as a Safe
- *  App; null for any other wallet, whose sends return chain hashes. */
+ *  App; null for any other wallet, and null when the Safe's provider cannot
+ *  be reached. It never throws: every caller treats null as "this page
+ *  cannot follow the step", which keeps a sent step resumable. */
 export async function accountTxReader(config: Config): Promise<AccountTxReader | null> {
   const { connector } = getAccount(config);
   if (!connector || connector.id !== 'safe') return null;
-  const provider = (await connector.getProvider()) as { sdk?: SafeSdkLike } | undefined;
+  const provider = (await connector.getProvider().catch(() => undefined)) as { sdk?: SafeSdkLike } | undefined;
   const sdk = provider?.sdk;
   if (!sdk || typeof sdk.txs?.getBySafeTxHash !== 'function') return null;
   return { status: async (id) => safeStatus(await sdk.txs.getBySafeTxHash(id)) };
@@ -335,7 +337,7 @@ export async function waitForSentReceipt(config: Config, hash: Hex, chainId: num
   // turn a Safe's own id into a chain hash, or the reverse.
   const viaAccount = sent?.viaAccount ?? sendsAccountTxIds(config);
   if (!viaAccount) return waitForTransactionReceipt(config, { hash, chainId });
-  const reader = await accountTxReader(config).catch(() => null);
+  const reader = await accountTxReader(config);
   if (!reader) throw new AccountTxUnfollowed();
   const end = await awaitAccountTx(reader, hash, () => {}, () => {});
   if (end.kind === 'ended') throw new AccountTxEnded(end.reason);
