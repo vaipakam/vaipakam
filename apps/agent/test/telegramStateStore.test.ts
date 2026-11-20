@@ -314,6 +314,21 @@ describe('telegram state store (#1722)', () => {
       expect(mark(store, '7', 2)).toBeNull();
     });
 
+    it('retires a notice that no longer covers any network, so it never holds a batch place', () => {
+      const { store, db } = fresh();
+      store.recordChatType('7', true, 1);
+      link(store, 1, '7');
+      // The wallet-wide notice is still unsent when network 1 sets its own
+      // phrase: the wallet-wide one no longer covers any network of chat 7.
+      store.setPhrase(W, null, 'blue heron', 10, 10);
+      store.setPhrase(W, 1, 'red kite', 20, 20);
+      // A batch of one still reaches the network's notice.
+      expect(store.duePhraseNotices(100, 1)).toEqual([
+        expect.objectContaining({ chatId: '7', chainId: 1, chainIds: [1], target: 'red kite' }),
+      ]);
+      expect(db.prepare('SELECT chain_id FROM phrase_notices').all()).toEqual([{ chain_id: 1 }]);
+    });
+
     it("a network's phrase leaves the other network and its chats untouched", () => {
       const { store } = fresh();
       store.recordChatType('7', true, 1);

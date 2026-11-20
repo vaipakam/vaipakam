@@ -606,47 +606,78 @@ export class TelegramStateStore {
     target: string | null;
     chainIds: number[];
   }[] {
-    const rows = this.sql
-      .exec<{ id: number; wallet: string; chat_id: string; chain_id: number; target: string | null }>(
-        `SELECT id, wallet, chat_id, chain_id, target FROM phrase_notices
-          WHERE attempt_at IS NULL OR attempt_at < ?
-          ORDER BY COALESCE(attempt_at, 0), id
-          LIMIT ?`,
-        retryBefore,
-        limit,
-      )
-      .toArray();
-    return rows.map((r) => {
-      const c = Number(r.chain_id);
-      const linked = this.sql
-        .exec<{ chain_id: number }>(
-          `SELECT chain_id FROM links WHERE wallet = ? AND chat_id = ? ORDER BY chain_id`,
-          r.wallet,
-          r.chat_id,
+    // A notice that covers no network any more (every chat link it named was
+    // removed, or each network set its own phrase since) has nothing to say:
+    // it is retired here, so it never holds a place in the batch.
+    const out: ReturnType<TelegramStateStore['duePhraseNotices']> = [];
+    for (;;) {
+      const rows = this.sql
+        .exec<{ id: number; wallet: string; chat_id: string; chain_id: number; target: string | null }>(
+          `SELECT id, wallet, chat_id, chain_id, target FROM phrase_notices
+            WHERE attempt_at IS NULL OR attempt_at < ?
+            ORDER BY COALESCE(attempt_at, 0), id
+            LIMIT ?`,
+          retryBefore,
+          limit,
         )
         .toArray()
-        .map((x) => Number(x.chain_id));
-      // The wallet-wide phrase does not cover a network that set its own
-      // phrase after it: that network's phrase stays in force there.
-      const own = new Set(
-        this.sql
-          .exec<{ chain_id: number }>(`SELECT chain_id FROM alert_phrases WHERE wallet = ? AND chain_id <> 0`, r.wallet)
-          .toArray()
-          .map((x) => Number(x.chain_id)),
-      );
-      const chainIds = c === 0 ? linked.filter((x) => !own.has(x)) : linked.filter((x) => x === c);
-      return {
-        id: Number(r.id),
-        wallet: r.wallet,
-        chatId: String(r.chat_id),
-        chainId: c,
-        // What the chat was last told on each network the notice covers,
-        // the same phrase its other messages there lead with.
-        told: chainIds.map((x) => this.toldFor(r.wallet, String(r.chat_id), x)),
-        target: r.target === null ? null : String(r.target),
-        chainIds,
-      };
-    });
+        // A re-read after a retirement returns the notices already taken
+        // too (they are still due); only the rest are new.
+        .filter((r) => !out.some((o) => o.id === Number(r.id)));
+      if (rows.length === 0) return out;
+      let retired = 0;
+      for (const r of rows) {
+        const notice = this.phraseNoticeOf(r);
+        if (notice.chainIds.length === 0) {
+          this.sql.exec(`DELETE FROM phrase_notices WHERE id = ?`, notice.id);
+          retired++;
+        } else {
+          out.push(notice);
+        }
+      }
+      if (retired === 0 || out.length >= limit) return out;
+    }
+  }
+
+  /** One due phrase notice, with the networks it covers now. */
+  private phraseNoticeOf(r: { id: number; wallet: string; chat_id: string; chain_id: number; target: string | null }): {
+    id: number;
+    wallet: string;
+    chatId: string;
+    chainId: number;
+    told: (string | null)[];
+    target: string | null;
+    chainIds: number[];
+  } {
+    const c = Number(r.chain_id);
+    const linked = this.sql
+      .exec<{ chain_id: number }>(
+        `SELECT chain_id FROM links WHERE wallet = ? AND chat_id = ? ORDER BY chain_id`,
+        r.wallet,
+        r.chat_id,
+      )
+      .toArray()
+      .map((x) => Number(x.chain_id));
+    // The wallet-wide phrase does not cover a network that set its own
+    // phrase after it: that network's phrase stays in force there.
+    const own = new Set(
+      this.sql
+        .exec<{ chain_id: number }>(`SELECT chain_id FROM alert_phrases WHERE wallet = ? AND chain_id <> 0`, r.wallet)
+        .toArray()
+        .map((x) => Number(x.chain_id)),
+    );
+    const chainIds = c === 0 ? linked.filter((x) => !own.has(x)) : linked.filter((x) => x === c);
+    return {
+      id: Number(r.id),
+      wallet: r.wallet,
+      chatId: String(r.chat_id),
+      chainId: c,
+      // What the chat was last told on each network the notice covers,
+      // the same phrase its other messages there lead with.
+      told: chainIds.map((x) => this.toldFor(r.wallet, String(r.chat_id), x)),
+      target: r.target === null ? null : String(r.target),
+      chainIds,
+    };
   }
 
   /**
