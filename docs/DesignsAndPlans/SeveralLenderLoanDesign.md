@@ -57,7 +57,7 @@ That makes the build two steps, and the first is worth having on its own:
 ## 5. Opening
 
 - **An instant borrow** opens one loan with one part per source it fills from, in place of one loan per source. Each source is still checked by its own rules (a slot's rate, term, loan-to-value, health and exposure limits, its lending balance), a refusing source is still skipped and reported, and the borrow still reverts below the borrower's stated least. Collateral is one amount for the loan.
-- **A rate auction's settle** opens one loan with one part per winning bid, each at its own bid rate.
+- **A rate auction's settle** keeps the auction's own rules (`RateAuctionDesign.md`, 4.5): anyone settles bids a few at a time until the end time, and a bid that cannot open is skipped, reported and may be tried again. Each settling transaction opens one loan, with one part per bid it settles, each at its own bid rate, and never more parts than rule 9 allows. Bids settled by a later transaction start at a different time, so they open another loan (rule 10). An auction therefore ends with one loan per settling transaction, not one per winning bid and not one for the whole auction. Its admission limits, its retry and its end time do not change.
 - **A borrow request filled from several sources in one transaction** opens one loan with a part per source.
 - **Adding a part later** to an open loan is not offered. A later fill or a later borrow starts at a different time, so it is a new loan (rule 10), and it may join the same borrowing.
 
@@ -114,7 +114,7 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 | Loans that store once what is identical (the lighter alternative) | Replaced by this design, which stores it once by having one loan. |
 | The lending balance (#3811) | Unchanged. A part draws from its lender's lending balance as a loan does. |
 | The instant market's fill bound | Becomes the bound on parts (rule 9), measured again. |
-| The rate auction (#3758) | Winning bids become parts of one loan. |
+| The rate auction (#3758) | The bids one settling transaction settles become parts of one loan. The auction's limits, its settling a few at a time and its retry are unchanged (section 5). Its loans still have to fit the borrowing's bound, which counts parts, so that open item of `BorrowingDesign.md` stands as it is. |
 | Takeover, notice to leave, the advance on a lender position, the backstop's purchase | Unchanged routes, reached through separation. |
 | The due-date plan (#3785) and standing instructions (#3681) | Unchanged for the borrower. The renewal step handles a part that will not continue by separating it. |
 | The shortfall reserve | Reads a part's shortfall as it reads a loan's. |
@@ -151,6 +151,7 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 9. **A partial liquidation with parts at different rates** books each part alone, leaves each part's principal as its own loan's would be, and the next repayment, top-up and sale still satisfy tests 1 and 5.
 10. **A claim after a failed sale** by one part's holder separates that part and finalises only its loan; the other parts stay in the fallback state and the borrower can still cure them.
 11. **At the borrowing's bound**, a loan with N parts counts as N; separating a part is never refused by the bound, and an add or a gather that would pass it is refused as today.
+12. **An auction settled over several transactions** opens one loan per transaction, each inside the bound on parts; a bid skipped in one transaction and settled in a later one is a part of the later loan.
 
 ## 14. Open items for the builder to raise, not decide silently
 
@@ -177,6 +178,6 @@ Build it, in this order, and decide the last step on a measurement.
 0. **A measured trial of the opening path** (one loan, 8 parts, from slots) on the CI toolchain, on a branch that is not merged. It replaces the 9 million estimate with a number. If it does not reach 8 lenders inside 80% of the smaller limit, the design is not worth its cost and the planned route stands.
 1. **The seam with one part.** A refactor with no behaviour change, worth having whatever is decided next: it puts the lender side's rules in one place before the audit.
 2. **Parts, separation and the part-aware steps,** with the property tests of section 13 and an adversarial review of its own.
-3. **The opening paths** (instant borrow, then the auction's settle and a request filled in one transaction), the keeper's separation pass, the indexer and the apps.
+3. **The opening paths** (instant borrow, then the auction's settle, one loan per settling transaction, and a request filled in one transaction), the keeper's separation pass, the indexer and the apps.
 
 Step 0 can start beside the builds in flight. Steps 1 to 3 need the owner's decision.
