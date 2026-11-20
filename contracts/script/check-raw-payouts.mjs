@@ -18,7 +18,13 @@
  *     ERC-1155 move, or a native `transfer`);
  *   - a call carrying a `value` option (a native payment); and
  *   - the `.selector` of such a member, or the member passed to
- *     `abi.encodeCall` (a transfer encoded for a low-level call).
+ *     `abi.encodeCall` (a transfer encoded for a low-level call); and
+ *   - a call of `LibDelivery.pushMeasured` from outside LibDelivery. It is
+ *     the library's raw measured push, WITHOUT the credit-if-protected step
+ *     that `pushExact` and `pushOut` take, so a facet calling it with a
+ *     wallet would pay a protected account's wallet directly while the
+ *     transfer itself sits inside a home. Every caller pays a vault, the
+ *     treasury or the Diamond, and is listed below (2026-11-20).
  *
  * Each listed site is keyed by file, contract and function with its count, so
  * a second transfer added to a listed function fails as well, and a listed
@@ -43,6 +49,8 @@ export const HOMES = new Set([
 
 const SCOPE = /^src\/(facets|libraries)\//;
 const NAMES = new Set(['transfer', 'safeTransfer', 'transferFrom', 'safeTransferFrom', 'safeBatchTransferFrom']);
+/** LibDelivery's raw measured push: a home's transfer, reachable without the protected-wallet step. */
+const RAW_PUSH = 'pushMeasured';
 
 const CALLER_REFUND = 'Refunds the caller its own unspent fee, sent with this call; not a payout of anything the protocol holds for anyone.';
 const MESSENGER_FEE = 'Pays the cross-chain messenger (a protocol contract) its fee for a send.';
@@ -79,6 +87,15 @@ export const ALLOWED = [
   { site: 'src/libraries/LibRewardRemitDispatch.sol:LibRewardRemitDispatch.dispatchRemitTail', count: 2, reason: `${MESSENGER_FEE} ${CALLER_REFUND}` },
   { site: 'src/libraries/LibConsolidation.sol:LibConsolidation._moveNFT', count: 2, reason: 'A consolidation leg into the current holder\'s VAULT, under the side\'s lien; never a wallet.' },
   { site: 'src/libraries/LibVpfiRecycle.sol:LibVpfiRecycle.debitRepatriationSurplus', count: 1, reason: 'Releases recycled VPFI to a protocol destination (the reward pool or the return transport), on the pre-custody path.' },
+  // LibDelivery.pushMeasured callers: each pays a vault, the treasury or the Diamond, never a wallet.
+  { site: 'src/facets/BackstopFacet.sol:BackstopFacet.seedBackstopOrigination', count: 1, reason: 'Treasury capital into the backstop VAULT for an origination; no wallet.' },
+  { site: 'src/facets/BackstopFacet.sol:BackstopFacet.seedBackstopAbsorb', count: 1, reason: 'Treasury capital into the backstop VAULT for an absorb; no wallet.' },
+  { site: 'src/facets/RefinanceFacet.sol:RefinanceFacet._settlePayoff', count: 1, reason: 'The borrower\'s payoff share into the OLD LENDER\'S VAULT (vault-to-vault settlement, #3042); no wallet.' },
+  { site: 'src/facets/PrepayListingFacet.sol:PrepayListingFacet.recordOfferSaleProceeds', count: 1, reason: 'A sale\'s proceeds into the seller\'s VAULT; no wallet.' },
+  { site: 'src/facets/VaultPayoutFacet.sol:VaultPayoutFacet.creditOwnerVault', count: 1, reason: 'The credit-if-protected step itself: pays a protected wallet\'s VAULT instead of the wallet.' },
+  { site: 'src/libraries/LibFacet.sol:LibFacet.creditOwnVault', count: 1, reason: 'Credits the owner\'s OWN VAULT as free balance (#3629: no loan step pays a wallet; the owner withdraws through the outflow policy and its protected delay).' },
+  { site: 'src/libraries/LibSanctionedLock.sol:LibSanctionedLock.depositLocked', count: 1, reason: 'A forced flow\'s proceeds into the owner\'s VAULT (locked when the owner is sanctioned); no wallet.' },
+  { site: 'src/facets/TreasuryFeeFacet.sol:TreasuryFeeFacet.collectFeeFromDiamond', count: 1, reason: 'A treasury share to the TREASURY (a protocol address), measured; no user wallet.' },
 ];
 
 const typeOf = (n) => n?.typeDescriptions?.typeString ?? '';
@@ -88,6 +105,9 @@ export function transferKind(node) {
   if (node.nodeType === 'FunctionCall') {
     const e = node.expression;
     if (e?.nodeType === 'MemberAccess' && NAMES.has(e.memberName)) return `${e.memberName}()`;
+    if (e?.nodeType === 'MemberAccess' && e.memberName === RAW_PUSH && e.expression?.name === 'LibDelivery') {
+      return `LibDelivery.${RAW_PUSH}()`;
+    }
     if (e?.nodeType === 'FunctionCallOptions' && (e.names ?? []).includes('value')) return 'native value';
     const first = node.arguments?.[0];
     if (
@@ -132,7 +152,7 @@ export function verdict(sites, allowed = ALLOWED) {
     const where = site.refs.map((r) => `${r.label}${r.line ? ` @${r.line}` : ''}`).join(', ');
     const entry = listed.get(key);
     if (!entry) {
-      problems.push(`${key}: ${site.count} raw transfer(s) outside the outflow policy and LibDelivery (${where}) — pay through LibVaultOutflow or LibDelivery, or list the site with its reason`);
+      problems.push(`${key}: ${site.count} raw transfer(s) outside the outflow policy and LibDelivery (${where}) — pay through LibVaultOutflow, or LibDelivery.pushExact / pushOut (which credit a protected wallet's vault), or list the site with its reason`);
     } else if (entry.count !== site.count) {
       problems.push(`${key}: listed with ${entry.count} transfer(s), found ${site.count} (${where}) — a changed count is a new transfer to justify`);
     }

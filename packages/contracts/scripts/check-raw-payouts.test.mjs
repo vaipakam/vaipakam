@@ -51,3 +51,17 @@ test('an unlisted transfer fails; a listed site at its count passes', () => {
   const ok = transferSites([unit(file, c, fn, Array.from({ length: e.count }, () => call(member('safeTransfer'))))]);
   assert.deepEqual(verdict(ok, [e]), []);
 });
+
+test('a call of LibDelivery.pushMeasured outside LibDelivery is counted (it skips the protected-wallet step)', () => {
+  const lib = (name) => ({ nodeType: 'MemberAccess', memberName: name, expression: { nodeType: 'Identifier', name: 'LibDelivery' } });
+  const u = unit('src/facets/Y.sol', 'Y', 'pay', [
+    call(lib('pushMeasured')),
+    call(lib('pushExact')),
+    call(lib('pushOut')),
+    call({ nodeType: 'MemberAccess', memberName: 'pushMeasured', expression: { nodeType: 'Identifier', name: 'Other' } }),
+  ]);
+  assert.deepEqual(counts(u), { 'src/facets/Y.sol:Y.pay': 1 });
+  assert.ok(verdict(transferSites([u])).some((p) => p.includes('pushExact / pushOut')));
+  // Inside LibDelivery itself it is the home's own move.
+  assert.deepEqual(counts(unit('src/libraries/LibDelivery.sol', 'LibDelivery', 'pushExact', [call(lib('pushMeasured'))])), {});
+});
