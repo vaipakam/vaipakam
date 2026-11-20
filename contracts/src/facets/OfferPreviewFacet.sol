@@ -15,6 +15,7 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LegalFacet} from "./LegalFacet.sol";
@@ -384,23 +385,9 @@ contract OfferPreviewFacet {
                     preview.effectivePrincipal
                 )
                 : _unstoredTransactionValue(offer, preview.effectivePrincipal);
-            if (
-                !ProfileFacet(address(this)).meetsKYCRequirement(
-                    offer.creator,
-                    _valueNumeraire
-                )
-                    || !ProfileFacet(address(this)).meetsKYCRequirement(
-                        acceptor,
-                        _valueNumeraire
-                    )
-                    // #3744 — the holder of the offer's token, as the accept
-                    // checks it.
-                    || (offerHolder != offer.creator
-                        && !ProfileFacet(address(this)).meetsKYCRequirement(
-                            offerHolder,
-                            _valueNumeraire
-                        ))
-            ) {
+            // #3744 — the accept's own rule: creator, the offer token's
+            // holder and the acceptor.
+            if (!LibCompliance.offerPartiesMeetKYC(offer.creator, offerHolder, acceptor, _valueNumeraire)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.KYCRequired;
                 return preview;
             }

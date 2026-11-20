@@ -7,6 +7,7 @@ import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
@@ -1085,12 +1086,10 @@ contract OfferAcceptFacet is
         // Tiered KYC check based on transaction value (per README Section 16)
         uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer, effectivePrincipal);
         if (
-            !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueNumeraire) ||
-            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire) ||
-            // #3744 — and the owners of the two loan sides when they differ:
-            // the holder of the offer's token, and in a match the holder of
-            // the lender offer's token.
-            !ProfileFacet(address(this)).meetsKYCRequirement(LibOfferRefund.holder(offer), valueNumeraire) ||
+            // #3744 — the one origination rule (creator, the offer token's
+            // holder, the acceptor), plus in a match the holder of the lender
+            // offer's token, which owns the acceptor's side.
+            !LibCompliance.offerPartiesMeetKYC(offer.creator, LibOfferRefund.holder(offer), acceptor, valueNumeraire) ||
             !ProfileFacet(address(this)).meetsKYCRequirement(LibOfferRefund.acceptorSideOwner(acceptor), valueNumeraire)
         ) {
             revert KYCRequired();

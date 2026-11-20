@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
@@ -10,7 +11,6 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
-import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -436,22 +436,23 @@ contract RiskPreviewFacet {
         // on the retail deploy — the gated variant is a separate industrial-fork
         // function — so it can never block here. Already-accepted / expired are
         // covered by the match core.)
+        // #3744 — the holder of the borrower offer's token owns the borrower
+        // side, so the accept screens it and applies its KYC tier beside the
+        // creator's and the lender's; the preview asks the same.
+        address boHolder = LibOfferRefund.holder(s.offers[counterpartyOfferId]);
         bool kycBlocked;
         if (s.kycEnforcementEnabled) {
             uint256 valueNumeraire = OfferAcceptFacet(address(this))
                 .calculateTransactionValueNumeraire(
                     counterpartyOfferId, res.matchAmount
                 );
-            kycBlocked =
-                !ProfileFacet(address(this)).meetsKYCRequirement(
-                    s.offers[counterpartyOfferId].creator, valueNumeraire
-                )
-                || !ProfileFacet(address(this)).meetsKYCRequirement(
-                    lender, valueNumeraire
-                );
+            kycBlocked = !LibCompliance.offerPartiesMeetKYC(
+                s.offers[counterpartyOfferId].creator, boHolder, lender, valueNumeraire
+            );
         }
         if (
             LibVaipakam.isSanctionedAddress(s.offers[counterpartyOfferId].creator)
+            || LibVaipakam.isSanctionedAddress(boHolder)
             || s.offerConsumedBySale[counterpartyOfferId]
             || kycBlocked
         ) {
