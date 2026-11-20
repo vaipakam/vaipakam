@@ -102,6 +102,7 @@ import {
   withdrawAmountProblem,
 } from '../data/partialWithdraw';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
+import { TakeoverRequestFlow } from '../components/TakeoverRequestFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
 import { SaleListingHoldCard } from '../components/SaleListingHoldCard';
@@ -5035,6 +5036,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <button type="button" className="btn btn-primary btn-block" disabled>
           {copy.positions.details.confirmingRole}
         </button>
+      ) : null}
+
+      {/* #3845 — a connected wallet holding neither position can post a
+          request to take over this loan's debt. Only the loan's current
+          borrower can use it (the handover card on their view). */}
+      {role === 'viewer' && address && effectivelyActive && principal ? (
+        <TakeoverRequestFlow
+          row={row}
+          principalMeta={principal}
+          collateralMeta={collateralIsNft ? undefined : (collateral ?? undefined)}
+        />
       ) : null}
 
       <p className="muted">

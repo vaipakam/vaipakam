@@ -2016,6 +2016,84 @@ const copySource = {
       'That borrower can’t take over this loan right now — their account no longer meets the requirements for this asset pair. Nothing was approved or sent. Pick a different request.',
     sameWalletNote:
       'A request from your own wallet can’t take over your loan.',
+    shareHint:
+      'Someone who wants to take over this loan can post a request for it from this loan’s page. Share the page’s link with them.',
+  },
+
+  /** #3845 — someone who is not a party to a loan posts a request to take
+   *  over its debt (OfferCreateFacet.createTakeoverOffer). Only the loan's
+   *  current borrower can use it, through the handover above. */
+  takeoverRequest: {
+    title: 'Offer to take over this loan',
+    blurb:
+      'You can post a request to become this loan’s borrower. Only the loan’s current borrower can use it. No lender can fill it, and it is not shown on the offer book. If the borrower uses it, you take on this debt: you receive no new money, your collateral secures the loan, and you repay the lender by the new due date.',
+    start: 'Write a request',
+    reading: 'Reading this loan…',
+    readFailed: 'We couldn’t read this loan right now. Try again in a moment.',
+    notActive: 'This loan is no longer open, so it can’t be taken over.',
+    rental: 'Requests for rentals can’t be posted here yet.',
+    nftCollateral: 'This loan is secured by an NFT. Requests for it can’t be posted here yet.',
+    noTermLeft:
+      'Too little time is left before this loan’s due date. A request needs a term of at least a day, and must stay usable for at least an hour after the borrower’s waiting period.',
+    factPrincipal: tmpl('Debt you would take on: {{amount}}', ['amount']),
+    factRate: tmpl('The loan’s current yearly rate: {{rate}}', ['rate']),
+    factDue: tmpl('The loan’s due date: {{date}}', ['date']),
+    factCollateral: tmpl('Collateral securing it now: {{amount}}', ['amount']),
+    rateLabel: 'Yearly rate you will pay (%)',
+    durationLabel: 'Term (days)',
+    collateralLabel: tmpl('Collateral you lock ({{symbol}})', ['symbol']),
+    rateRange: 'Enter a yearly rate from 0% to 100%.',
+    durationRange: tmpl(
+      'Enter a whole number of days from 1 to {{max}}. The term must end by the loan’s due date, leave the borrower time to use the request, and be no longer than the platform allows.',
+      ['max'],
+    ),
+    collateralMin: tmpl('Lock at least {{min}}, the collateral securing the loan now.', ['min']),
+    rateNote:
+      'The loan carries your rate after the handover. If it is below the loan’s current rate, the borrower pays the lender the difference when handing over. The borrower decides whether to use your request.',
+    usableUntil: tmpl(
+      'Your request can be used until {{date}}. After that its term would end after the loan’s due date, so it can no longer be used.',
+      ['date'],
+    ),
+    rateBandUnavailable: 'We couldn’t check your rate against the average for this term. Try again in a moment.',
+    rateFarAbove: tmpl(
+      'Your rate is well above the average rate on the platform for a {{days}}-day term ({{average}} a year).',
+      ['average', 'days'],
+    ),
+    rateFarBelow: tmpl(
+      'Your rate is well below the average rate on the platform for a {{days}}-day term ({{average}} a year).',
+      ['average', 'days'],
+    ),
+    rateFarAck: 'I confirm this rate. Without this, the request can’t be posted.',
+    waitNote: 'The borrower can use it only after a short waiting period the platform sets.',
+    keepsSettings:
+      'The loan keeps its own repayment settings (payment schedule, partial repayment and interest rules).',
+    settings: tmpl('This loan’s settings now: interest payments: {{cadence}}; {{fullTerm}}; {{partial}}.', ['cadence', 'fullTerm', 'partial']),
+    fullTermYes: 'interest for the full term is owed even if it is repaid early',
+    fullTermNo: 'interest is owed only for the time the loan is open',
+    partialYes: 'partial repayments are allowed',
+    partialNo: 'partial repayments are not allowed',
+    usableHorizon: 'A request can stay usable for at most a year ahead.',
+    collateralFloor: tmpl('Lock at least {{min}}. The platform needs this much collateral for this debt now.', ['min']),
+    checkUnavailable: 'We couldn’t check this request against the platform’s rules right now. Try again in a moment.',
+    noSchedule: 'No interest payment schedule the platform accepts fits this term, so the request can’t be posted. Try a different term.',
+    action: 'Review request',
+    confirm: 'Confirm: post request',
+    consentLabel: 'I understand that if the borrower uses this request, I take on this debt and my collateral secures it.',
+    receiptReceive: 'Nothing now. If the borrower uses your request, you become this loan’s borrower. You receive no money.',
+    receiptLock: tmpl(
+      '{{amount}}, locked in your own vault now, until the request is used or you cancel it.',
+      ['amount'],
+    ),
+    receiptOwe: tmpl(
+      'Nothing now. If the borrower uses it: {{principal}} plus interest at {{rate}} a year, due by the end of your term.',
+      ['principal', 'rate'],
+    ),
+    receiptLose:
+      'If the borrower uses it and you do not repay by the due date and its grace period, the lender can take your collateral.',
+    receiptFees: 'No fee to post the request.',
+    receiptEnds:
+      'The request ends when the borrower uses it, when you cancel it under Offers (your collateral is released), or at the time above. An expired request still holds your collateral until you cancel it.',
+    done: 'Request posted. It shows on this loan’s page for the borrower shortly. Cancel it under Offers to release your collateral.',
   },
 
   /** Preclose Option 3 — offset: the borrower funds a NEW lender

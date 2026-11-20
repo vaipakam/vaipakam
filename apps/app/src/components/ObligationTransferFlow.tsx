@@ -621,7 +621,10 @@ export function ObligationTransferFlow({
       ) : candidates === null ? (
         <p className="muted">{copy.transferOb.bookUnavailable}</p>
       ) : candidates.length === 0 ? (
-        <p className="muted">{copy.transferOb.noneFound}</p>
+        <>
+          <p className="muted">{copy.transferOb.noneFound}</p>
+          <p className="muted">{copy.transferOb.shareHint}</p>
+        </>
       ) : !confirmOpen ? (
         <>
           <p className="field-label" style={{ marginBottom: 4 }}>
