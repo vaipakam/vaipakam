@@ -32,7 +32,7 @@ import {
   type TelegramStatePort,
 } from './alertChannelChange';
 import type { ChannelOp } from './telegramState/store';
-import { channelCopy, handshakeLinked } from './i18n';
+import { channelCopy, handshakeLinked, phraseCopy } from './i18n';
 
 /** What a send reports; only `accepted` counts as the chat being told. */
 export type SendOutcome = 'accepted' | 'refused' | 'transient' | 'unknown';
@@ -48,6 +48,10 @@ export interface ChannelDeps {
   send: ((chatId: string, text: string) => Promise<SendOutcome>) | null;
   read: ProtectionReader;
   now: number;
+  /** #3346 — a Push notice to `wallet`, when it gets Push alerts, that its
+   *  Telegram alert chat on `chainId` changed. Best effort; absent in tests
+   *  and where the agent has no Push rail. */
+  pushChange?: (wallet: string, chainId: number) => Promise<void>;
 }
 
 /** How long a notice that was not accepted waits before the tick retries it. */
@@ -91,32 +95,81 @@ async function notifyOldChat(
       : channelCopy.movePending(locale, entries, when);
   // The change ids this notice names: only these may start their wait.
   const ids = chains.map((c) => c.id);
-  if ((await deps.send(oldChatId, text)) !== 'accepted') {
+  if ((await sendMarked(deps, oldChatId, wallet, locale, text)) !== 'accepted') {
     await deps.state.markNoticeAttempt(ids, deps.now);
     return false;
   }
   await deps.state.markNotified(ids, deps.now);
+  // The new chat is not linked yet, so it is not shown the phrase (#3346).
   if (newChat) await deps.send(newChat.chatId, channelCopy.moveIncoming(newChat.locale, entries, when));
   return true;
 }
 
-/** #3346 — tell `chatId` that a change which needed no wait has taken
- *  effect: it no longer gets the alerts of `wallet` on `chainIds`. Nothing
- *  told it beforehand (only a protected account's change waits and gives
- *  notice first), so this is the one moment the chat can learn of it. The
- *  outcome is not retried: the change already applied, and a chat that is no
- *  longer linked is not kept in any record to retry from. */
-async function tellOldChatNow(
-  deps: ChannelDeps,
-  chatId: string,
-  kind: 'unlink' | 'replace',
-  wallet: string,
-  chainIds: readonly number[],
-  locale: string,
-): Promise<void> {
-  if (!deps.send || chainIds.length === 0) return;
-  const entries = chainIds.map((chainId) => ({ walletShort: shortWallet(wallet), chainId }));
-  await deps.send(chatId, kind === 'unlink' ? channelCopy.removalNow(locale, entries) : channelCopy.moveNow(locale, entries));
+/** How often a notice Telegram did not accept is tried again: a chat-change
+ *  notice for up to an hour (`CHAT_NOTICE_TTL_SECONDS`), a phrase notice
+ *  until it is accepted. */
+export const SHORT_NOTICE_RETRY_SECONDS = 10 * 60;
+
+/** One #3346 notice to a chat about a change that needed no wait. */
+interface ChatNotice {
+  chatId: string;
+  kind: 'unlink' | 'replace' | 'added';
+  wallet: string;
+  chainIds: number[];
+  locale: string;
+  /** What the chat was last told of the wallet's phrase, read BEFORE the
+   *  change (after it, a chat no longer linked has forgotten it). */
+  phrase: string | null;
+}
+
+function chatNoticeText(n: ChatNotice): string {
+  const entries = n.chainIds.map((chainId) => ({ walletShort: shortWallet(n.wallet), chainId }));
+  const body =
+    n.kind === 'unlink'
+      ? channelCopy.removalNow(n.locale, entries)
+      : n.kind === 'replace'
+        ? channelCopy.moveNow(n.locale, entries)
+        : channelCopy.addedNow(n.locale, entries);
+  return phraseCopy.mark(n.locale, [n.phrase], body);
+}
+
+/**
+ * #3346 — tell chats about a change that took effect at once (an unprotected
+ * account's unlink or move, or another chat linked for the wallet): nothing
+ * told them beforehand. Each is recorded, tried once now, and retried by the
+ * tick for up to an hour; the record (and the chat id in it) goes once it is
+ * accepted or dropped. The change stands either way.
+ */
+async function tellChats(deps: ChannelDeps, notices: readonly ChatNotice[]): Promise<void> {
+  for (const n of notices) {
+    if (n.chainIds.length === 0) continue;
+    const ids: number[] = [];
+    for (const chainId of n.chainIds) {
+      ids.push(await deps.state.queueChatNotice(n.chatId, n.wallet, chainId, n.kind, n.phrase, deps.now));
+    }
+    if (!deps.send) continue;
+    const accepted = (await deps.send(n.chatId, chatNoticeText(n))) === 'accepted';
+    for (const id of ids) await deps.state.chatNoticeSent(id, accepted, deps.now);
+  }
+}
+
+/** The phrase line each chat would carry for `wallet`, read now. */
+async function marksOf(deps: ChannelDeps, wallet: string, chatIds: readonly string[]): Promise<Map<string, string | null>> {
+  const unique = [...new Set(chatIds)];
+  const marks = unique.length > 0 ? await deps.state.phraseMarksOf(unique.map((chatId) => ({ wallet, chatId }))) : [];
+  return new Map(unique.map((c, i) => [c, marks[i] ?? null]));
+}
+
+/**
+ * #3346 — send `text` to `chatId`, a chat linked for `wallet`, led by the
+ * phrase that chat was last told (none for a group, or a chat not yet told).
+ * A chat still waiting to take over is not linked, so it is never shown one.
+ * `refused` when no bot can send.
+ */
+async function sendMarked(deps: ChannelDeps, chatId: string, wallet: string, locale: string, text: string): Promise<SendOutcome> {
+  if (!deps.send) return 'refused';
+  const [phrase] = await deps.state.phraseMarksOf([{ wallet, chatId }]);
+  return deps.send(chatId, phraseCopy.mark(locale, [phrase ?? null], text));
 }
 
 /** How many times a request decides again when another request moved the
@@ -174,6 +227,9 @@ export async function requestUnlink(
       ),
       { op: 'revokeCodes', chainId },
     ];
+    // #3346 — what each chat cleared at once was told of the phrase, read
+    // before the commit makes it forget.
+    const marks = await marksOf(deps, w, open.map((r) => r.chatId));
     const result = await deps.state.commit(w, chainId, observed, ops, deps.now, { issuedAt, scope: chainId });
     // A later-signed request was already applied: nothing was written.
     if (!result.ok && result.superseded) return { kind: 'superseded' };
@@ -191,9 +247,18 @@ export async function requestUnlink(
     }
     // #3346 — the rows cleared at once had no earlier notice, so tell each
     // chat now that it no longer gets them. Best effort: the unlink stands.
-    for (const list of groupBy(open, (r) => r.chatId).values()) {
-      await tellOldChatNow(deps, list[0]!.chatId, 'unlink', w, list.map((r) => r.chainId), list[0]!.locale);
-    }
+    await tellChats(
+      deps,
+      [...groupBy(open, (r) => r.chatId).values()].map((list) => ({
+        chatId: list[0]!.chatId,
+        kind: 'unlink' as const,
+        wallet: w,
+        chainIds: list.map((r) => r.chainId),
+        locale: list[0]!.locale,
+        phrase: marks.get(list[0]!.chatId) ?? null,
+      })),
+    );
+    for (const r of open) await deps.pushChange?.(w, r.chainId);
     const pending = waiting.map((r) => ({
       chain_id: r.chainId,
       effective_at: told.has(r.chainId) ? deps.now + delays.get(r.chainId)! : null,
@@ -256,20 +321,34 @@ async function decideRelink(
     return r.ok ? 'linked' : 'moved';
   };
   const [current] = rows;
-  if (!current || current.chatId === newChatId) return immediate();
+  /** Link now and (#3346) tell the chats that were not asked: the chat this
+   *  replaces, if any, and every other chat linked for the wallet. */
+  const linkAndTell = async (): Promise<'linked' | 'moved'> => {
+    if (current?.chatId === newChatId) return immediate();
+    const all = (await linkedRows(deps.state, deps.locales, w, null)).rows;
+    const others = all.filter((r) => r.chatId !== newChatId && r.chatId !== current?.chatId);
+    const marks = await marksOf(deps, w, [...(current ? [current.chatId] : []), ...others.map((r) => r.chatId)]);
+    const outcome = await immediate();
+    if (outcome !== 'linked') return outcome;
+    const notices: ChatNotice[] = [];
+    if (current) {
+      notices.push({ chatId: current.chatId, kind: 'replace', wallet: w, chainIds: [chainId], locale: current.locale, phrase: marks.get(current.chatId) ?? null });
+    }
+    for (const list of groupBy(others, (r) => r.chatId).values()) {
+      notices.push({ chatId: list[0]!.chatId, kind: 'added', wallet: w, chainIds: [chainId], locale: list[0]!.locale, phrase: marks.get(list[0]!.chatId) ?? null });
+    }
+    await tellChats(deps, notices);
+    await deps.pushChange?.(w, chainId);
+    return outcome;
+  };
+  if (!current || current.chatId === newChatId) return linkAndTell();
   const delays = await protectionByRow(deps.read, w, [current]);
   if (delays === null) {
     await deps.send?.(newChatId, channelCopy.protectionUnknown(locale));
     return 'unknown';
   }
   const delay = delays.get(chainId);
-  if (delay == null) {
-    const outcome = await immediate();
-    // #3346 — an unprotected move takes effect at once, so the chat it moved
-    // away from is told now (best effort: the move stands either way).
-    if (outcome === 'linked') await tellOldChatNow(deps, current.chatId, 'replace', w, [chainId], current.locale);
-    return outcome;
-  }
+  if (delay == null) return linkAndTell();
   // The pending move is written only while the chat linked now is still the
   // one it moves away from, so a scheduled move or unlink that landed during
   // the protection read is never overwritten by a stale decision.
@@ -303,15 +382,17 @@ export async function cancelFromChat(deps: ChannelDeps, chatId: string, isPrivat
     return 0;
   }
   const cancelled = await deps.state.cancelPendingForChat(chatId, deps.now);
-  await deps.send?.(
-    chatId,
-    cancelled.length === 0
-      ? channelCopy.cancelNone(locale)
-      : channelCopy.cancelDone(
-          locale,
-          cancelled.map((c) => ({ walletShort: shortWallet(c.wallet), chainId: c.chainId })),
-        ),
-  );
+  if (cancelled.length === 0) {
+    await deps.send?.(chatId, channelCopy.cancelNone(locale));
+  } else if (deps.send) {
+    const text = channelCopy.cancelDone(
+      locale,
+      cancelled.map((c) => ({ walletShort: shortWallet(c.wallet), chainId: c.chainId })),
+    );
+    // The chat stays linked for every wallet it cancelled for (#3346).
+    const phrases = await deps.state.phraseMarksOf(cancelled.map((c) => ({ wallet: c.wallet, chatId })));
+    await deps.send(chatId, phraseCopy.mark(locale, phrases, text));
+  }
   return cancelled.length;
 }
 
@@ -348,18 +429,76 @@ export async function applyDueChannelChanges(deps: ChannelDeps): Promise<number>
   for (const c of due) {
     // The object re-checks that the change is still pending and due, and
     // applies it only while the chat it moves away from is still linked.
+    // #3346 — what the old chat was told, read before the change makes it
+    // forget, so the notice that it no longer gets alerts carries it.
+    const [oldPhrase] = await deps.state.phraseMarksOf([{ wallet: c.wallet, chatId: c.oldChatId }]);
     const r = await deps.state.applyChange(c.id, deps.now);
     if (!r?.applied) continue;
     applied += 1;
     if (!deps.send) continue;
     const entries = [{ walletShort: shortWallet(c.wallet), chainId: c.chainId }];
     if (c.kind === 'unlink') {
-      await deps.send(c.oldChatId, channelCopy.removalApplied(c.locale, entries));
+      await deps.send(c.oldChatId, phraseCopy.mark(c.locale, [oldPhrase ?? null], channelCopy.removalApplied(c.locale, entries)));
     } else {
-      await deps.send(c.oldChatId, channelCopy.moveApplied(c.locale, entries));
-      if (c.newChatId) await deps.send(c.newChatId, handshakeLinked(c.locale, shortWallet(c.wallet), c.chainId));
+      await deps.send(c.oldChatId, phraseCopy.mark(c.locale, [oldPhrase ?? null], channelCopy.moveApplied(c.locale, entries)));
+      // Linked now, so it gets the phrase like every chat that is (#3346).
+      if (c.newChatId) await sendMarked(deps, c.newChatId, c.wallet, c.locale, handshakeLinked(c.locale, shortWallet(c.wallet), c.chainId));
     }
   }
+  await retryChatNotices(deps);
+  await sendPhraseNotices(deps);
   await deps.state.pruneClosed(deps.now);
   return applied;
+}
+
+/** #3346 — retry the chat-change notices Telegram has not accepted yet; the
+ *  store drops any older than an hour. */
+async function retryChatNotices(deps: ChannelDeps): Promise<void> {
+  const due = await deps.state.dueChatNotices(deps.now - SHORT_NOTICE_RETRY_SECONDS, deps.now, APPLY_BATCH);
+  if (!deps.send || due.length === 0) return;
+  const locales = await deps.locales(due.map((n) => ({ wallet: n.wallet, chainId: n.chainId })));
+  const groups = groupBy(
+    due.map((n, i) => ({ ...n, locale: locales[i] ?? 'en' })),
+    (n) => `${n.chatId}|${n.wallet}|${n.kind}|${n.phrase ?? ''}|${n.locale}`,
+  );
+  for (const list of groups.values()) {
+    const first = list[0]!;
+    const notice: ChatNotice = {
+      chatId: first.chatId,
+      kind: first.kind,
+      wallet: first.wallet,
+      chainIds: list.map((n) => n.chainId),
+      locale: first.locale,
+      phrase: first.phrase,
+    };
+    const accepted = (await deps.send(first.chatId, chatNoticeText(notice))) === 'accepted';
+    for (const n of list) await deps.state.chatNoticeSent(n.id, accepted, deps.now);
+  }
+}
+
+/**
+ * #3346 — send the phrase notices due: to each private chat linked for a
+ * wallet whose phrase changed, led by the phrase that chat was last told and
+ * stating the phrase now in force (or that it was removed). The chat moves to
+ * the new phrase only once Telegram accepted the notice; until then the tick
+ * tries again, and the chat's messages keep the phrase it was last told.
+ */
+export async function sendPhraseNotices(deps: ChannelDeps): Promise<void> {
+  if (!deps.send) return;
+  const due = await deps.state.duePhraseNotices(deps.now - SHORT_NOTICE_RETRY_SECONDS, APPLY_BATCH);
+  for (const n of due) {
+    if (n.chainIds.length === 0) continue;
+    const [locale] = await deps.locales([{ wallet: n.wallet, chainId: n.chainIds[0]! }]);
+    // The lock advice only where the account can be locked; a read that
+    // failed gives the plain advice.
+    let protectedAccount = false;
+    for (const chainId of n.chainIds) {
+      const p = await deps.read(n.wallet, chainId);
+      if (p?.enabled) protectedAccount = true;
+    }
+    const entries = n.chainIds.map((chainId) => ({ walletShort: shortWallet(n.wallet), chainId }));
+    const text = phraseCopy.mark(locale, [n.told], phraseCopy.changed(locale, entries, n.target, protectedAccount));
+    const accepted = (await deps.send(n.chatId, text)) === 'accepted';
+    await deps.state.phraseNoticeSent(n.wallet, n.chatId, n.createdAt, accepted, deps.now);
+  }
 }

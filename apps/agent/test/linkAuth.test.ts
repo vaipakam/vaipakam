@@ -12,7 +12,12 @@ import {
   LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
 } from '../src/linkAuth';
-import { requestKeyHash } from '@vaipakam/lib/alertsMessage';
+import {
+  alertPhraseFingerprint,
+  buildAlertPhraseClearMessage,
+  buildAlertPhraseMessage,
+  requestKeyHash,
+} from '@vaipakam/lib/alertsMessage';
 
 // Anvil's first two well-known dev keys — fine in a test, never a
 // real key.
@@ -379,5 +384,31 @@ describe('#3836 — a contract-approved request', () => {
     for (const requestKey of [undefined, '0x1234', KEY.toUpperCase().replace('0X', '0x')]) {
       expect(parseSignedLinkRequest({ ...body, requestKey }).ok).toBe(false);
     }
+  });
+});
+
+describe('the alert phrase requests (#3346)', () => {
+  const parse = (signature: string) => {
+    const parsed = parseSignedLinkRequest({ wallet: ACCOUNT_A.address, chain_id: CHAIN_ID, issuedAt: NOW, signature, requestKey: KEY });
+    if (!parsed.ok) throw new Error('parse failed');
+    return parsed.req;
+  };
+
+  it('verifies only for the phrase whose fingerprint was signed', async () => {
+    const fingerprint = alertPhraseFingerprint(KEY, 'blue heron');
+    const message = buildAlertPhraseMessage(ACCOUNT_A.address, CHAIN_ID, fingerprint, NOW, KEY_HASH);
+    // The signed text never carries the phrase.
+    expect(message).not.toContain('blue heron');
+    const req = parse(await ACCOUNT_A.signMessage({ message }));
+    expect((await verifySignedLinkRequest(req, NOW, EMPTY_ENV, { action: 'set-phrase', fingerprint }, NEVER)).ok).toBe(true);
+    const other = alertPhraseFingerprint(KEY, 'red kite');
+    const v = await verifySignedLinkRequest(req, NOW, CHAIN_ENV, { action: 'set-phrase', fingerprint: other }, DENY);
+    expect(v.ok).toBe(false);
+  });
+
+  it('a removal has its own text, which no other action accepts', async () => {
+    const req = parse(await ACCOUNT_A.signMessage({ message: buildAlertPhraseClearMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH) }));
+    expect((await verifySignedLinkRequest(req, NOW, EMPTY_ENV, 'clear-phrase', NEVER)).ok).toBe(true);
+    expect((await verifySignedLinkRequest(req, NOW, CHAIN_ENV, 'unlink', DENY)).ok).toBe(false);
   });
 });

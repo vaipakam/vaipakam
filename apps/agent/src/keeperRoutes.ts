@@ -37,6 +37,7 @@ import {
 } from '@vaipakam/lib/telegramAlerts/message';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import type { LocaleReader } from './alertChannelChange';
+import { phraseCopy } from './i18n';
 import type { TelegramOutcome } from './telegram';
 import type { KeeperStatePort } from './telegramLinks';
 import type { ChainDeployment } from './telegramState/store';
@@ -188,9 +189,13 @@ async function alerts(chainId: number, body: Record<string, unknown>, d: KeeperR
 /** Render `m` in its recipient's language and send it to `chatId`. */
 async function deliver(m: AddressedAlert, chatId: string, d: KeeperRouteDeps): Promise<KeeperChannelResult> {
   if (!d.send) return 'off';
-  const [locale] = await d.locales([{ wallet: m.to ?? m.wallet, chainId: m.chainId }]);
+  const recipient = m.to ?? m.wallet;
+  const [locale] = await d.locales([{ wallet: recipient, chainId: m.chainId }]);
   const { text } = renderTelegramAlert(m, { locale, chainName: d.chainName(m.chainId), appOrigin: d.appOrigin });
-  return channelResult(await d.send(chatId, text));
+  // #3346 — the phrase is the RECIPIENT's (a manager's chat shows the
+  // manager's), added here at send time; the shared renderer never sees it.
+  const [phrase] = await d.state.phraseMarksOf([{ wallet: recipient, chatId }]);
+  return channelResult(await d.send(chatId, phraseCopy.mark(locale, [phrase ?? null], text)));
 }
 
 /** The agent's send outcome in the keeper's terms. `unknown` (nothing

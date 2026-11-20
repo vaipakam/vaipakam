@@ -71,6 +71,12 @@
  *   POST /telegram/test                     — frontend → send ONE test alert
  *                                             to the linked chat (UX-012;
  *                                             EIP-191 signature required too)
+ *   POST /telegram/phrase                   — frontend → set the wallet's alert
+ *                                             phrase (#3346; signed over its
+ *                                             fingerprint, never the phrase)
+ *   POST /telegram/phrase/clear             — frontend → remove it (signed)
+ *   GET  /telegram/phrase?wallet=           — whether one is set, and since
+ *                                             when (never the phrase)
  *   POST /keeper/lock/poll|pending|handled  — keeper → LOCK requests (#1722;
  *                                             KEEPER_AGENT_TOKEN, keeperRoutes.ts)
  *   POST /keeper/alerts                     — keeper → owner alerts as data
@@ -162,6 +168,10 @@ const CURRENT_DIAMONDS: Record<number, string> = Object.fromEntries(
   Object.entries(DEPLOYMENTS).map(([chainId, d]) => [Number(chainId), d.diamond.toLowerCase()]),
 );
 import { extractCancelCommand, extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
+import { chatChangedPush, phraseCopy } from './i18n';
+import { sendPush } from '@vaipakam/push';
+import { pushRailConfigOf } from './pushRail';
+import { alertPhraseFingerprint, alertPhraseProblem } from '@vaipakam/lib/alertsMessage';
 import { channelCopy, handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
 import {
   authoriseAlertRequest,
@@ -176,6 +186,7 @@ import { chainProtectionReader, d1LocaleReader } from './alertChannelChange';
 import {
   applyDueChannelChanges,
   cancelFromChat,
+  sendPhraseNotices,
   requestRelink,
   requestUnlink,
   type ChannelDeps,
@@ -496,6 +507,17 @@ export default {
     if (url.pathname === '/telegram/test' && req.method === 'POST') {
       return handleTestTelegram(req, resolved);
     }
+    // #3346 — the wallet's alert phrase: set, remove (both signed) and
+    // whether one is set (the status only: never the phrase).
+    if (url.pathname === '/telegram/phrase' && req.method === 'POST') {
+      return handleSetAlertPhrase(req, resolved);
+    }
+    if (url.pathname === '/telegram/phrase/clear' && req.method === 'POST') {
+      return handleClearAlertPhrase(req, resolved);
+    }
+    if (url.pathname === '/telegram/phrase' && req.method === 'GET') {
+      return handleAlertPhraseStatus(url, resolved, resolveAllowedOrigin(req, resolved));
+    }
     // #1040 phase 1 — support-ticket capture from the connected app support
     // widget (rate limit + validation inside the handler).
     if (url.pathname === '/support/ticket' && req.method === 'POST') {
@@ -642,7 +664,14 @@ type CallerBudget =
  */
 export function callerBudgetFor(method: string, path: string): CallerBudget | null {
   if (method === 'PUT' && path === '/thresholds') return 'ALERT_WRITE_RATELIMIT';
-  if (method === 'POST' && (path === '/link/telegram' || path === '/unlink/telegram' || path === '/telegram/test')) {
+  if (
+    method === 'POST' &&
+    (path === '/link/telegram' ||
+      path === '/unlink/telegram' ||
+      path === '/telegram/test' ||
+      path === '/telegram/phrase' ||
+      path === '/telegram/phrase/clear')
+  ) {
     return 'ALERT_WRITE_RATELIMIT';
   }
   if (method === 'POST' && path === '/support/ticket') return 'SUPPORT_TICKET_RATELIMIT';
@@ -893,7 +922,53 @@ function channelDeps(env: Env): ChannelDeps {
     send: token ? (chatId, text) => sendMessage(token, chatId, text) : null,
     read: chainProtectionReader(env),
     now: Math.floor(Date.now() / 1000),
+    pushChange: (wallet, chainId) => pushChatChanged(env, wallet, chainId),
   };
+}
+
+/**
+ * #3346 — the Push notice that a wallet's Telegram alert chat changed on a
+ * network, sent by this Worker's own rail to a wallet that opted in to Push.
+ * It names the network only: no phrase and no chat, and its one link is the
+ * app's own origin. Best effort: a failure is logged and nothing else waits
+ * on it.
+ */
+async function pushChatChanged(env: Env, wallet: string, chainId: number): Promise<void> {
+  const signer = env.PUSH_CHANNEL_PK;
+  if (!signer) return;
+  try {
+    const row = await env.DB.prepare(`SELECT push_channel, locale FROM user_thresholds WHERE wallet = ? AND chain_id = ?`)
+      .bind(wallet.toLowerCase(), chainId)
+      .first<{ push_channel: string | null; locale: string | null }>();
+    if (!row?.push_channel) return;
+    const network = getRpcChains(env).find((c) => c.id === chainId)?.name ?? String(chainId);
+    const { title, body } = chatChangedPush(row.locale, network);
+    await sendPush(
+      { ...pushRailConfigOf(env), channelPk: signer },
+      { subscriber: wallet, title, body, deepLinkUrl: env.FRONTEND_ORIGIN.split(',')[0]!.trim() },
+    );
+  } catch (err) {
+    console.error('[agent] chat-change Push not sent:', redactedError(err));
+  }
+}
+
+/** #3346 — `text` led by the alert phrase each (wallet, chat) pair was last
+ *  told, when any. A state object that cannot be read sends the text as it
+ *  is: a message without the phrase reads as suspect, never as trusted. */
+async function markedText(
+  env: Env,
+  items: { wallet: string; chatId: string }[],
+  locale: string | null | undefined,
+  text: string,
+): Promise<string> {
+  if (items.length === 0) return text;
+  try {
+    const marks = await stateStub(env).phraseMarksOf(items.map((i) => ({ wallet: i.wallet.toLowerCase(), chatId: i.chatId })));
+    return phraseCopy.mark(locale, marks, text);
+  } catch (err) {
+    console.error('[agent] phrase marks unreadable:', redactedError(err));
+    return text;
+  }
 }
 
 /** #1722 — what the keeper routes need: the token, the state object, the
@@ -988,6 +1063,80 @@ async function handleUnlinkTelegram(
   );
 }
 
+/**
+ * #3346 — set the wallet's alert phrase. The body carries the phrase and the
+ * request key; the signed message names neither, only the phrase's
+ * fingerprint, which is recomputed here from the two. So a signature verifies
+ * only for the phrase it was made over, and a public approval (a contract
+ * wallet's) never shows the phrase. A phrase that is not already in its one
+ * accepted form is refused by name, before anything is claimed: it is never
+ * cleaned into a phrase the owner did not type.
+ *
+ * The phrase and the request key never reach a log, a diagnostic or an
+ * error text: every refusal below names the rule, never the value.
+ */
+async function handleSetAlertPhrase(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value as Record<string, unknown> | null;
+  const parsed = parseSignedLinkRequest(body);
+  if (!parsed.ok) return json({ error: 'invalid-payload', reason: parsed.reason }, 400, corsOrigin);
+  const phrase = body?.phrase;
+  if (typeof phrase !== 'string') return json({ error: 'invalid-payload', reason: 'phrase must be a string' }, 400, corsOrigin);
+  const problem = alertPhraseProblem(phrase);
+  if (problem) return json({ error: 'phrase-refused', reason: problem }, 400, corsOrigin);
+  const fingerprint = alertPhraseFingerprint(parsed.req.requestKey, phrase);
+  const verified = await authoriseAlertRequest(req, env, parsed.req, { action: 'set-phrase', fingerprint });
+  if (!verified.ok) return refusal(verified, corsOrigin);
+  const now = Math.floor(Date.now() / 1000);
+  const outcome = await stateStub(env).setPhrase(parsed.req.wallet.toLowerCase(), phrase, parsed.req.issuedAt, now);
+  if (outcome.kind === 'superseded') return superseded(corsOrigin);
+  if (outcome.kind === 'no-private-chat') {
+    return json(
+      { error: 'no-private-chat', reason: 'link a private Telegram chat first; nothing was changed' },
+      409,
+      corsOrigin,
+    );
+  }
+  await tellPhraseNow(env);
+  return json({ ok: true, groupLinked: outcome.groupLinked }, 200, corsOrigin);
+}
+
+/** #3346 — remove the wallet's alert phrase (its own signed text). */
+async function handleClearAlertPhrase(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const parsed = parseSignedLinkRequest(read.value);
+  if (!parsed.ok) return json({ error: 'invalid-payload', reason: parsed.reason }, 400, corsOrigin);
+  const verified = await authoriseAlertRequest(req, env, parsed.req, 'clear-phrase');
+  if (!verified.ok) return refusal(verified, corsOrigin);
+  const outcome = await stateStub(env).setPhrase(parsed.req.wallet.toLowerCase(), null, parsed.req.issuedAt, Math.floor(Date.now() / 1000));
+  if (outcome.kind === 'superseded') return superseded(corsOrigin);
+  await tellPhraseNow(env);
+  return json({ ok: true }, 200, corsOrigin);
+}
+
+/** The notices a phrase change queued, tried at once; the tick retries
+ *  what this does not send. */
+async function tellPhraseNow(env: Env): Promise<void> {
+  try {
+    await sendPhraseNotices(channelDeps(env));
+  } catch (err) {
+    console.error('[agent] phrase notices deferred to the tick:', redactedError(err));
+  }
+}
+
+/** #3346 — whether `wallet` has an alert phrase, and since when. Never the
+ *  phrase itself. */
+async function handleAlertPhraseStatus(url: URL, env: Env, corsOrigin: string): Promise<Response> {
+  const wallet = url.searchParams.get('wallet') ?? '';
+  if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return json({ error: 'invalid-wallet' }, 400, corsOrigin);
+  const status = await stateStub(env).phraseStatus(wallet.toLowerCase());
+  return json({ set: status.set, setAt: status.setAt }, 200, corsOrigin);
+}
+
 /** UX-012 — push a single test alert to the wallet's linked Telegram
  *  chat. Signature-gated over the `test-alert`-scoped message: sending
  *  a Telegram message is an outbound side-effect, so it earns the same
@@ -1064,7 +1213,7 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const outcome = await sendMessage(
     env.TG_BOT_TOKEN,
     linked.chatId,
-    testAlert(linked.locale),
+    await markedText(env, [{ wallet: parsed.req.wallet, chatId: linked.chatId }], linked.locale, testAlert(linked.locale)),
   );
   if (outcome !== 'accepted') {
     return json({ error: 'send-failed' }, 502, corsOrigin);
@@ -1121,8 +1270,13 @@ async function handleTelegramWebhook(
     // Judged on the clock the record step used: a LOCK sent longer ago than
     // the keeper's age limit is answered and never recorded. One with no send
     // time cannot be dated, and is answered as not recorded.
+    const lockLinks = links.map((l) => ({ wallet: l.wallet, chatId: lock.chatId }));
     if (links.length > 0 && lockRequestIsStale(lock.sentAt, nowSec)) {
-      await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lock.sentAt === null ? lockNotRecorded(locale) : lockStale(locale));
+      await sendMessage(
+        env.TG_BOT_TOKEN,
+        lock.chatId,
+        await markedText(env, lockLinks, locale, lock.sentAt === null ? lockNotRecorded(locale) : lockStale(locale)),
+      );
       return new Response('ok', { status: 200 });
     }
     const entry = (l: (typeof links)[number]) => ({ walletShort: `${l.wallet.slice(0, 8)}…${l.wallet.slice(-6)}`, chainId: l.chainId });
@@ -1135,7 +1289,7 @@ async function handleTelegramWebhook(
             ...(recorded.length > 0 ? [lockRecorded(locale, recorded)] : []),
             ...(notRunning.length > 0 ? [lockNotRunning(locale, notRunning)] : []),
           ];
-    await sendMessage(env.TG_BOT_TOKEN, lock.chatId, parts.join('\n\n'));
+    await sendMessage(env.TG_BOT_TOKEN, lock.chatId, await markedText(env, lockLinks, locale, parts.join('\n\n')));
     return new Response('ok', { status: 200 });
   }
 
@@ -1163,7 +1317,11 @@ async function handleTelegramWebhook(
     // updates; replying 200 stops it from retrying the push.
     return new Response('ok', { status: 200 });
   }
-  const { chatId, code } = extracted;
+  const { chatId, code, isPrivate } = extracted;
+  // #3346 — the chat's type, recorded before the code is used, so a failure
+  // here leaves the code for Telegram's redelivery: only a private chat is
+  // ever shown the owner's alert phrase.
+  await stateStub(env).recordChatType(chatId, isPrivate, Math.floor(Date.now() / 1000));
   const match = await consumeTelegramLinkCode(stateStub(env), d1LocaleReader(env.DB), code, Math.floor(Date.now() / 1000));
   if (!match) {
     // No locale to look up (the row didn't resolve); fall back to en.
@@ -1183,7 +1341,7 @@ async function handleTelegramWebhook(
   await sendMessage(
     env.TG_BOT_TOKEN,
     chatId,
-    handshakeLinked(match.locale, walletShort, match.chainId),
+    await markedText(env, [{ wallet: match.wallet, chatId }], match.locale, handshakeLinked(match.locale, walletShort, match.chainId)),
   );
   return new Response('ok', { status: 200 });
 }

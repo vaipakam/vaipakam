@@ -28,6 +28,7 @@
  */
 
 import { keccak256 } from 'viem';
+import { DOMAIN_DOT, PLAIN } from './telegramAlerts/plainText';
 
 /** Replay window — a signed alert request whose signature recovers to
  *  the wallet's own key is rejected when older than this, and every
@@ -227,6 +228,101 @@ export function buildTelegramTestMessage(
     'the wallet below, to confirm delivery works. Signing this message',
     'proves ownership of the wallet. It is not a transaction and costs',
     'no gas.',
+    '',
+    ...trailer(wallet, chainId, issuedAt, keyHash),
+  ].join('\n');
+}
+
+// ─── #3346 — the alert phrase ─────────────────────────────────────────────
+
+/** Fewest and most characters (Unicode code points) an alert phrase may
+ *  have. */
+export const ALERT_PHRASE_MIN = 3;
+export const ALERT_PHRASE_MAX = 32;
+
+/**
+ * The phrase as the owner will sign it, from what they typed: Unicode NFC,
+ * with no space at either end. Nothing else is changed: a phrase that still
+ * breaks the rule is refused by name (`alertPhraseProblem`), never cleaned,
+ * so the owner signs exactly the phrase the bot will show.
+ */
+export function normaliseAlertPhrase(raw: string): string {
+  return raw.normalize('NFC').trim();
+}
+
+/** Why a phrase is refused, or null when it is acceptable as it stands. The
+ *  characters are the bot's free-text rule (`telegramAlerts/plainText`): no
+ *  `/`, `:` or `@`, and no dot before a letter, so a phrase can never form a
+ *  link or a handle. */
+export function alertPhraseProblem(phrase: string): 'too-short' | 'too-long' | 'bad-characters' | 'not-normalised' | null {
+  if (normaliseAlertPhrase(phrase) !== phrase) return 'not-normalised';
+  if (![...phrase].every((ch) => PLAIN.test(ch)) || new RegExp(DOMAIN_DOT.source, 'u').test(phrase)) return 'bad-characters';
+  const length = [...phrase].length;
+  if (length < ALERT_PHRASE_MIN) return 'too-short';
+  if (length > ALERT_PHRASE_MAX) return 'too-long';
+  return null;
+}
+
+/** The fixed tag the fingerprint starts with, so it can never equal a hash
+ *  made for anything else from the same key. */
+export const ALERT_PHRASE_FINGERPRINT_TAG = 'Vaipakam alert phrase v1';
+
+/**
+ * The phrase's fingerprint, which the signed text names in place of the
+ * phrase: the keccak-256 of the fixed tag, the request key's 32 bytes and the
+ * phrase's UTF-8 bytes (the phrase already NFC). The phrase itself never goes
+ * in the signed text, because a contract wallet's approval of that text is
+ * public (#3836). A plain hash of a short phrase could be guessed by trying
+ * phrases; the request key, fresh and random for each request and held only
+ * by the requesting browser, stops that.
+ */
+export function alertPhraseFingerprint(requestKey: `0x${string}`, phrase: string): `0x${string}` {
+  const hex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const enc = new TextEncoder();
+  return keccak256(`0x${hex(enc.encode(ALERT_PHRASE_FINGERPRINT_TAG))}${requestKey.slice(2)}${hex(enc.encode(phrase))}`);
+}
+
+/**
+ * Set or change the wallet's alert phrase (#3346): the words every alert the
+ * bot sends to the wallet's private Telegram chat leads with, so a message
+ * without them is not ours. The text names only the phrase's fingerprint
+ * (`alertPhraseFingerprint`); the agent recomputes it from the request.
+ */
+export function buildAlertPhraseMessage(
+  wallet: string,
+  chainId: number,
+  fingerprint: string,
+  issuedAt: number,
+  keyHash: string,
+): string {
+  return [
+    'Vaipakam — Set the alert phrase',
+    '',
+    "I request that this wallet's alert phrase be set. The phrase is",
+    'not in this message; the line below is its fingerprint. Signing',
+    'this message proves ownership of the wallet. It is not a',
+    'transaction and costs no gas.',
+    '',
+    `Phrase fingerprint: ${fingerprint.toLowerCase()}`,
+    '',
+    ...trailer(wallet, chainId, issuedAt, keyHash),
+  ].join('\n');
+}
+
+/** Remove the wallet's alert phrase (#3346): its own headline and body, so
+ *  no signature for another action can stand for it. */
+export function buildAlertPhraseClearMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+  keyHash: string,
+): string {
+  return [
+    'Vaipakam — Remove the alert phrase',
+    '',
+    "I request that this wallet's alert phrase be removed, so alerts no",
+    'longer lead with it. Signing this message proves ownership of the',
+    'wallet. It is not a transaction and costs no gas.',
     '',
     ...trailer(wallet, chainId, issuedAt, keyHash),
   ].join('\n');
