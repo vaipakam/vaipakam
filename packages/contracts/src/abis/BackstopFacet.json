@@ -63,6 +63,50 @@
   },
   {
     "type": "function",
+    "name": "getBackstopDailyLimit",
+    "inputs": [
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "usedToday",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "roomLeft",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "capital",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limitBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBackstopMinSecondaryOracleCoverage",
     "inputs": [],
     "outputs": [
@@ -125,6 +169,19 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBackstopDailyLimitBps",
+    "inputs": [
+      {
+        "name": "limitBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [],
@@ -320,6 +377,19 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "BackstopDailyLimitBpsSet",
+    "inputs": [
+      {
+        "name": "limitBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -651,6 +721,17 @@
   },
   {
     "type": "error",
+    "name": "BackstopDailyLimitOutOfRange",
+    "inputs": [
+      {
+        "name": "limitBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BackstopDisabled",
     "inputs": []
   },
@@ -663,6 +744,27 @@
     "type": "error",
     "name": "BackstopNotProvisioned",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BackstopOfferAboveDailyLimit",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
