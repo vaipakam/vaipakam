@@ -19,11 +19,11 @@ import type { LegOutcome, MeasuredOutcome, SupersededReason, TxPhase } from './o
 export type TxEvent =
   | { type: 'review' }
   | { type: 'sign' }
-  | { type: 'submitted'; hash: `0x${string}`; at: number }
+  | { type: 'submitted'; hash: `0x${string}`; at: number; viaAccount?: boolean }
   /** `submittedHash` names the transaction this flow sent; `hash` the one
    *  that mined. They may differ only with `repriced`. */
   | { type: 'mined'; submittedHash: `0x${string}`; hash: `0x${string}`; repriced: boolean; blockNumber: bigint; reverted: boolean }
-  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint; unwound?: readonly LegOutcome[]; landed?: readonly LegOutcome[] }
+  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}` | null; reason: SupersededReason; blockNumber: bigint | null; unwound?: readonly LegOutcome[]; landed?: readonly LegOutcome[] }
   | { type: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
   | { type: 'receipt-unknown'; hash: `0x${string}`; message: string }
   /** Track a `receipt-unknown` hash again: back to `submitted`, in flight. */
@@ -41,9 +41,10 @@ export class IllegalTransition extends Error {
 /** A `mined` event is accepted for the submitted hash, or for another hash
  *  only when the wallet repriced it (the same call): a different mined
  *  transaction that is NOT a reprice is a supersession, never a success. */
-function minedFrom(submitted: `0x${string}`, event: TxEvent): TxPhase | null {
+function minedFrom(submitted: `0x${string}`, event: TxEvent, viaAccount: boolean): TxPhase | null {
   if (event.type !== 'mined' || event.submittedHash !== submitted) return null;
-  if (event.hash !== submitted && !event.repriced) return null;
+  // A contract wallet's id always mines under another hash (#3770).
+  if (event.hash !== submitted && !event.repriced && !viaAccount) return null;
   return { kind: 'mined', hash: event.hash, submittedHash: submitted, blockNumber: event.blockNumber, reverted: event.reverted };
 }
 
@@ -64,15 +65,20 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
       if (event.type === 'sign') return { kind: 'signing' };
       break;
     case 'signing':
-      if (event.type === 'submitted') return { kind: 'submitted', hash: event.hash, at: event.at };
+      if (event.type === 'submitted') return { kind: 'submitted', hash: event.hash, at: event.at, ...(event.viaAccount ? { viaAccount: true as const } : {}) };
       if (event.type === 'failed') return { kind: 'failed', message: event.message };
       break;
     case 'submitted':
     case 'receipt-unknown': {
       // The receipt (first try, or a resumed one) for THIS flow's hash.
-      const mined = minedFrom(phase.hash, event);
+      const via = phase.viaAccount === true ? { viaAccount: true as const } : {};
+      const mined = minedFrom(phase.hash, event, phase.viaAccount === true);
       if (mined) return mined;
-      if (event.type === 'superseded' && event.submittedHash === phase.hash && event.minedHash !== phase.hash) {
+      // A mined replacement names another hash; an account wallet's own
+      // ending names none, and only an account wallet's flow may end so.
+      const accountEnd = event.type === 'superseded' && event.minedHash === null && phase.viaAccount === true && (event.reason === 'account-cancelled' || event.reason === 'account-failed');
+      const minedOther = event.type === 'superseded' && event.minedHash !== null && event.minedHash !== phase.hash && event.reason !== 'account-cancelled' && event.reason !== 'account-failed';
+      if (event.type === 'superseded' && event.submittedHash === phase.hash && (accountEnd || minedOther)) {
         return {
           kind: 'superseded',
           submittedHash: event.submittedHash,
@@ -83,8 +89,8 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
           landed: event.landed ?? [],
         };
       }
-      if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, at: phase.at, message: event.message };
-      if (event.type === 'resume' && phase.kind === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'submitted', hash: phase.hash, at: phase.at };
+      if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, at: phase.at, message: event.message, ...via };
+      if (event.type === 'resume' && phase.kind === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'submitted', hash: phase.hash, at: phase.at, ...via };
       break;
     }
     case 'mined':

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { Link } from 'react-router-dom';
 import { useConfig } from 'wagmi';
-import { signTypedData } from 'wagmi/actions';
+import { signTypedDataFor } from '../tx/walletGuard';
 import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -12,7 +12,7 @@ import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { WhyLink } from '../help/WhyLink';
 import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
 import { useMode } from '../../app/ModeContext';
-import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
+import { ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
 import { deliverySplit, legVerdict, moved, openedLoan } from '../offers/acceptOutcome';
 import { acceptFigures, lenderFigures } from '../offers/model';
 import { readVault } from '../offers/reads';
@@ -23,6 +23,8 @@ import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
+import { stepWindow } from '../tx/deadline';
+import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import type { AnchoredReader } from '../tx/anchored';
 import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
@@ -61,6 +63,9 @@ interface AcceptOfferProps {
   meta: TokenMetaMap | null;
   terms: TermsState | null;
   onClose: () => void;
+  /** #3773 — the integrator a kit link named and the reader kept, signed
+   *  into the terms. The page states it on the review. */
+  integrator?: Hex | null;
 }
 
 /**
@@ -78,7 +83,7 @@ interface AcceptOfferProps {
  * arrived in the wallet and what moved into the vault, for a lender what
  * left the wallet and the fee share that came back.
  */
-export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose }: AcceptOfferProps) {
+export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose, integrator = null }: AcceptOfferProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -120,6 +125,8 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
   const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
 
+  // #3770: a contract wallet chooses how long its owners have to approve.
+  const approvalWindow = useApprovalWindow('acceptOffer', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -158,14 +165,15 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
         linkedLoanId: r.linkedLoanId,
         riskTermsHash: r.riskTermsHash,
         nonce: freshNonce(),
-        deadline: block.value.timestamp + BigInt(ACCEPT_DEADLINE_SECONDS),
+        deadline: block.value.timestamp + BigInt(stepWindow('acceptOffer', approvalWindow.choice)),
         illiquidLending: r.lendingClass === 'illiquid',
         illiquidCollateral: r.collateralClass === 'illiquid',
         // A signed order's fill binds the terms to the order's hash.
         ...(r.source.kind === 'signed' ? { offerKey: r.source.order.orderHash } : {}),
+        ...(integrator !== null ? { integrator } : {}),
       });
       say(text('accept.stepSign'));
-      const signature = await signTypedData(config, {
+      const signature = await signTypedDataFor(config, chain.chainId, {
         account,
         domain: {
           name: ACCEPT_TERMS_DOMAIN_NAME,
@@ -543,6 +551,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
             {review.consent === false && <p className="tier-b">{text(lender ? 'lendAccept.shareOff' : 'accept.feeOff')}</p>}
             <WhyLink summaryKey={lender ? 'lendAccept.feeSummary' : 'accept.feeSummary'} detailKey={lender ? 'lendAccept.feeWhy' : 'accept.feeWhy'} />
             <WhyLink summaryKey="accept.signSummary" detailKey={lender ? 'lendAccept.signWhy' : 'accept.signWhy'} />
+            <ApprovalWindowChoice step="acceptOffer" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>

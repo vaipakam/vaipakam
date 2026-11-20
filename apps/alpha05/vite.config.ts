@@ -9,6 +9,7 @@ import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { connectSources, rpcConfigProblems } from './src/chain/endpoints.ts';
+import { applyFrameAncestors } from './src/chain/safeOrigins.ts';
 import { serviceWorkerSource, shellFiles } from './src/shared/install/serviceWorkerSource.ts';
 import { buildCommitLabel, buildSourceTime } from '@vaipakam/lib/buildTime';
 
@@ -24,6 +25,32 @@ process.env.VITE_BUILD_HASH = buildCommitLabel();
 const buildTime = buildSourceTime();
 if (!buildTime.reproducible) console.warn(`[build-time] ${buildTime.reason}; stamping the clock, so this build will not match a rebuild`);
 process.env.VITE_BUILD_TIME = buildTime.iso;
+
+/** #3770 — writes the Safe origin list into `frame-ancestors`, from the one
+ *  list the connector and the runtime guard read; the build fails when
+ *  `_headers` carries no placeholder or the list holds a non-exact origin. */
+function frameAncestorsPlugin(): Plugin {
+  return {
+    name: 'vaipakam-frame-ancestors',
+    apply: 'build',
+    writeBundle(output) {
+      const outDir = output.dir;
+      if (!outDir) return;
+      const file = path.join(outDir, '_headers');
+      let headers: string;
+      try {
+        headers = fs.readFileSync(file, 'utf8');
+      } catch {
+        this.error(`[safe-origins] ${file} is missing`);
+      }
+      try {
+        fs.writeFileSync(file, applyFrameAncestors(headers));
+      } catch (e) {
+        this.error((e as Error).message);
+      }
+    },
+  };
+}
 
 /** Every chain the committed deployments bundle carries a Diamond for. */
 function deployedChainIds(): number[] {
@@ -96,6 +123,7 @@ export default defineConfig(({ mode, command }) => {
           react(),
           serviceWorkerPlugin(),
           cspScriptHashesPlugin() as Plugin,
+          frameAncestorsPlugin(),
           cspConnectSourcesPlugin({
             header: REPORT_ONLY_HEADER,
             sources: () => connectSources(env, deployedChainIds()),

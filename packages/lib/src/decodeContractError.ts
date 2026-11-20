@@ -71,6 +71,11 @@ export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
     "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls.",
   '0xc681ed8e':
     "5-minute cancel cooldown is in effect for unfilled offers. The countdown on the row shows when the offer becomes cancellable.",
+  // #3761 — the instant borrow and the takeover
+  '0x48dbacca':
+    'This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again.',
+  '0x31f81794':
+    'The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent.',
   // #194 — self-trade
   '0x64f4618d':
     "Self-trade not allowed — the lender and borrower addresses are the same. Match against a counterparty's offer instead.",
@@ -613,6 +618,9 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xc681ed8e': 'CancelCooldownActive()',
   // #194 — self-trade prevention
   '0x64f4618d': 'SelfTradeForbidden(address)',
+  // #3761 — the instant borrow and the takeover
+  '0x48dbacca': 'InstantSourceRepeated(uint256)',
+  '0x31f81794': 'IntentCapitalInsufficient(address,address,address,uint8,uint256,uint256)',
   // #125 — AON / IOC fill-mode surface
   '0x23d29961': 'AonRequiresFullFill(uint256,uint256,uint256)',
   '0x7b0e3b56': 'AonRequiresSingleValueAmount()',

@@ -32,7 +32,8 @@ interface BorrowNowFormProps {
 export function BorrowNowForm({ chain, lending, collateral, meta, disabled, onReview }: BorrowNowFormProps) {
   const { text, format } = useCopy();
   const [stored, setStored] = useStoredValue<BorrowNowInput>(`${BORROW_NOW_KEY}:input`);
-  const input = stored ?? DEFAULT_BORROW_NOW;
+  // A draft kept by an earlier build lacks the order fields; the defaults fill them.
+  const input = stored ? { ...DEFAULT_BORROW_NOW, ...stored } : DEFAULT_BORROW_NOW;
   const set = (patch: Partial<BorrowNowInput>) => setStored({ ...input, ...patch });
   const [touched, setTouched] = useState<Partial<Record<BorrowNowField, boolean>>>({});
   const [asked, setAsked] = useState(false);
@@ -54,7 +55,7 @@ export function BorrowNowForm({ chain, lending, collateral, meta, disabled, onRe
 
   const errorText = (field: BorrowNowField, e: BorrowNowError | undefined): string | null => {
     if (e === undefined || !show(field)) return null;
-    const rate = field === 'rate';
+    const rate = field === 'rate' || field === 'spread';
     switch (e) {
       case 'empty':
         return text(rate ? 'borrowNow.errPercentEmpty' : field === 'days' ? 'borrowNow.errDays' : 'borrowNow.errEmpty');
@@ -113,6 +114,19 @@ export function BorrowNowForm({ chain, lending, collateral, meta, disabled, onRe
         </label>
         <p className="tier-a field-hint">{text('borrowNow.partialHint')}</p>
       </div>
+      <fieldset className="field" data-testid="borrownow-order">
+        <legend>{text('borrowNow.orderLegend')}</legend>
+        <label>
+          <input type="radio" name="borrownow-order" checked={input.order === 'best-rate'} onChange={() => set({ order: 'best-rate' })} data-testid="borrownow-order-best" />
+          <span>{text('borrowNow.orderBest')}</span>
+        </label>
+        <label>
+          <input type="radio" name="borrownow-order" checked={input.order === 'fewest-lenders'} onChange={() => set({ order: 'fewest-lenders' })} data-testid="borrownow-order-fewest" />
+          <span>{text('borrowNow.orderFewest')}</span>
+        </label>
+        <p className="tier-a field-hint">{text('borrowNow.orderHint')}</p>
+      </fieldset>
+      {input.order === 'fewest-lenders' && field('spread', text('borrowNow.spreadLabel'), text('borrowNow.spreadHint'), input.spread, (v) => set({ spread: v }))}
       {maxRead.error !== null && maxRead.data === null && <p className="tier-a">{format('flow.unreadable', { reason: maxRead.error })}</p>}
       <p className="actions">
         <button type="submit" className="btn btn-primary" disabled={disabled || parsed === null} data-testid="borrownow-review">

@@ -1,0 +1,22 @@
+{
+  "name": "@vaipakam/lend-kit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Embedded lending kit (#3773): thin builders of the link that opens the platform's own borrow, lend and rent review in the user's wallet, pre-filled, with an integrator's id carried. It holds no key, signs nothing and renders no form; the parser the app reads the link with lives here too, so both sides apply one rule.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.4"
+  }
+}

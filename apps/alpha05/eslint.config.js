@@ -93,7 +93,9 @@ export default defineConfig([
     // protection files are held by another change (#3489) and move onto
     // sendWrite once it lands; they are the only exceptions.
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/shared/tx/send.ts', 'src/shared/protection/SignerAction.tsx', 'src/shared/protection/DestinationAction.tsx'],
+    // #1691: every wallet signature goes through src/shared/tx/walletGuard.ts,
+    // which refuses with no prompt when the wallet or network moved.
+    ignores: ['src/shared/tx/send.ts', 'src/shared/tx/walletGuard.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -105,9 +107,19 @@ export default defineConfig([
               message: 'Send a contract write through sendWrite (src/shared/tx/send.ts): it applies the shared gas margin (RB-GAS).',
             },
             {
+              name: 'wagmi/actions',
+              importNames: ['signTypedData', 'signMessage', 'sendTransaction'],
+              message: 'Ask for a signature through signTypedDataFor / signMessageFor (src/shared/tx/walletGuard.ts): it refuses when the wallet or network moved (#1691).',
+            },
+            {
               name: '@wagmi/core',
               importNames: ['writeContract'],
               message: 'Send a contract write through sendWrite (src/shared/tx/send.ts): it applies the shared gas margin (RB-GAS).',
+            },
+            {
+              name: '@wagmi/core',
+              importNames: ['signTypedData', 'signMessage', 'sendTransaction'],
+              message: 'Ask for a signature through signTypedDataFor / signMessageFor (src/shared/tx/walletGuard.ts): it refuses when the wallet or network moved (#1691).',
             },
           ],
         },

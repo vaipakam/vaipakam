@@ -67,9 +67,15 @@ import { slotRefusalStatus, takeCallerSlot, type SlotOutcome } from './rateLimit
  * bytes any more (#2009): an ERC-6492 wrapper carries the account's
  * factory calldata and is far longer. The cap bounds hostile input;
  * real 6492 wrappers for common account factories sit well under it.
+ *
+ * The EMPTY signature (`0x`) is a valid shape too (#3770): a Safe
+ * that approves messages on-chain answers a signing request with it,
+ * and its ERC-1271 check reads the approval it recorded. It never
+ * passes the ECDSA fast path; the chain path decides it, and the
+ * validator refuses it for an account with no code.
  */
 export const MAX_SIGNATURE_BYTES = 4096;
-export const SIGNATURE_RE = /^0x(?:[0-9a-fA-F]{2})+$/;
+export const SIGNATURE_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 
 export function isValidSignatureShape(s: unknown): s is string {
   return (

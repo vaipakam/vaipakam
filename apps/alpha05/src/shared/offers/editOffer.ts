@@ -339,7 +339,7 @@ export async function modifyArgs(c: PublicClient, offerId: bigint, t: EditTerms)
   // #3713 — this app does not ask for the far-from-average confirmation yet,
   // so an edit that moves the checked rate outside the band is refused by
   // name (`RateFarFromTermAverage`); an edit that leaves it needs none.
-  return [offerId, { ...t, rateFarFromAverageAcknowledged: false }, await chainValidUntil(c)] as const;
+  return [offerId, { ...t, rateFarFromAverageAcknowledged: false }, await chainValidUntil(c, 'editOffer')] as const;
 }
 
 export async function readEditReview(own: OwnStateClient, diamond: Hex, offerId: bigint, terms: EditTerms, identity: string, copy: Copy): Promise<EditReview> {

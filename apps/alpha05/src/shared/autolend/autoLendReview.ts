@@ -201,7 +201,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     // is dry-run again with the approval in place before it is sent.
     const covers = approvalSteps === 0;
     const dry = await askThrough(own, async (c) =>
-      c.simulateContract({ address: diamond, ...setupCall(draft, minFill, await chainValidUntil(c), base, !covers, effective), account }),
+      c.simulateContract({ address: diamond, ...setupCall(draft, minFill, await chainValidUntil(c, 'autoLendSetup'), base, !covers, effective), account }),
     );
     const v = judgeDryRun(dry, true);
     verdict = v.kind === 'ok' && !covers ? { kind: 'needs-approval' } : v;

@@ -12,6 +12,7 @@ import { manageOffers, type ManageKind } from './manage';
 import { AutoLendChange, useChangeOpen } from './AutoLendChange';
 import { InstantSlotCard } from './InstantSlotCard';
 import { CalmCheckCard } from './CalmCheckCard';
+import { SlotHistoryCard } from './SlotHistoryCard';
 import { WhyIntentPanel } from './WhyIntentPanel';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -97,6 +98,7 @@ export function AutoLendSection() {
               {i.acceptsProRata && <p className="tier-b">{text('autoLend.cardProRata')}</p>}
               {state === 'ended' && <p className="tier-a">{text('autoLend.cardEndedNote')}</p>}
               {state === 'stopped' && <p className="tier-a">{text('autoLend.cardStoppedNote')}</p>}
+              {chain !== null && <SlotHistoryCard intent={i} chain={chain} />}
               {chain !== null && own !== null && state === 'active' && <CalmCheckCard intent={i} chain={chain} own={own} meta={meta ?? null} />}
               {chain !== null && own !== null && state === 'active' && i.availableCapital > 0n && <WhyIntentPanel intent={i} chain={chain} own={own} />}
               {chain !== null && own !== null && <InstantSlotCard intent={i} active={state === 'active'} chain={chain} own={own} meta={meta ?? null} />}

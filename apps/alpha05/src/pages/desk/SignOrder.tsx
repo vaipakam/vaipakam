@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useConfig } from 'wagmi';
-import { signTypedData } from 'wagmi/actions';
+import { signTypedDataFor } from '../../shared/tx/walletGuard';
 import type { SupportedChain } from '../../chain/chains';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../../shared/copy/useCopy';
@@ -126,7 +126,7 @@ export function SignOrder({
     setStep({ orderHash: sign.orderHash, step: 'signing' });
     let signature: Hex;
     try {
-      signature = await signTypedData(config, {
+      signature = await signTypedDataFor(config, sign.chainId, {
         account: own.account,
         domain: signedOfferDomain(sign.chainId, diamond),
         types: SIGNED_OFFER_TYPES,

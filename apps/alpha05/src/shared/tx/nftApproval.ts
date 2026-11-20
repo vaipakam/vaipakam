@@ -11,7 +11,7 @@
  * nothing standing.
  */
 import type { Config } from 'wagmi';
-import { waitForTransactionReceipt } from 'wagmi/actions';
+import { waitForSentReceipt } from './accountWallet';
 import { sendWrite } from './send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
@@ -74,7 +74,7 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     const hash = await sendWrite(config, { address: asset, abi: NFT_ABI, functionName: 'approve', args: [to, tokenId], chainId, account });
     let block: bigint;
     try {
-      block = (await waitForTransactionReceipt(config, { hash, chainId })).blockNumber;
+      block = (await waitForSentReceipt(config, hash, chainId)).blockNumber;
     } catch {
       return { landed: false, hash, now: null, at: null };
     }

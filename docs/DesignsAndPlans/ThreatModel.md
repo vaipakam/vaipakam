@@ -164,6 +164,14 @@ lands.
   Full tariff puts in more VPFI than its side can earn back, so only loops
   on the default fee mode can gain. The same bound holds on mirror chains,
   whose loans carry the same cap (#3360 part B).
+- **A signature given to a fake site** (grows with Stage B3 of #3205). Once
+  funded actions are signed, a wallet holds a standing approval to the one
+  shared permit contract and signs for each action. A fake site can ask for a
+  signature that names itself, and nothing on-chain can tell it from a wanted
+  one. The app asks for a signature only as the step before its own send,
+  names the user's own vault on the sign screen, and offers an approval for
+  the exact amount. A user who signs somewhere else is protected by none of
+  that.
 - **Misleading reads.** A lying indexer or proxy can show a misleading list.
   It cannot change what a signed accept does.
 - **Cross-chain message-only effects** (reward accounting, acknowledgements)
