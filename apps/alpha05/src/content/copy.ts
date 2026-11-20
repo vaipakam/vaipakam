@@ -5627,6 +5627,8 @@ export const copy = {
       SignedOfferCoSignatureInvalid: A('This order needs a fresh approval from a co-signer the maker named, and this app cannot obtain one, so it cannot fill the order.'),
       // #3328 — this app has no collection-offer fill, and says so.
       CollectionParent: A('This is a collection offer. It opens one loan per token of a collection and can be taken only through the protocol’s collection-offer fill, which this app does not offer, not by taking it directly.'),
+      // #3744 — the offer's position token now sits with a flagged wallet.
+      SanctionedOfferHolder: A('The wallet now holding this offer’s position token is flagged by the sanctions screen, so the offer cannot be taken. Nothing was sent.'),
     },
     changedOffer: B('The offer'),
     changedPreview: B('What the offer gives you'),
