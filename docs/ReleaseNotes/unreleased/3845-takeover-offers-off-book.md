@@ -6,4 +6,6 @@ The indexer records which loan such an offer names, from the event announcing it
 
 The app's order book leaves them out too. When it reads the book from the chain it asks each borrower offer whether it names a loan. If that read fails, the offer stays in, and the accept preview then gives the refusal by name: "This request is reserved for taking over a named loan, so it can't be accepted or matched." The creator's Open orders still list the offer, so it can be cancelled there. The activity feed labels the event "Takeover offer posted".
 
-Advances #3845. The screens for posting such an offer and for picking one at handover are still to come.
+The loan page's handover card ("Hand this loan to another borrower") now lists only requests posted for that loan, and checks again on the chain before anything is approved that the picked request names this loan. An ordinary borrow request can no longer take over a loan, so it is no longer offered there, and the card's wording says a request must be posted for the loan.
+
+Advances #3845. The screen for posting such a request is still to come; until it ships, the handover card finds a request only if one was posted some other way.

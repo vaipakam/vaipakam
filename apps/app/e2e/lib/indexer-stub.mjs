@@ -265,10 +265,13 @@ async function mapOffer(id, chainNowSec) {
   // is_offset_vehicle on OffsetOfferCreated (always a lender-style
   // offer, Codex #1134 round-5), so linked + offerType decides which
   // flag a row carries.
-  const [o, stateRaw, linkedLoanId] = await Promise.all([
+  const [o, stateRaw, linkedLoanId, takeoverLoanId] = await Promise.all([
     read('getOffer', [BigInt(id)]),
     read('getOfferState', [BigInt(id)]),
     read('getOfferLinkedLoanId', [BigInt(id)]),
+    // #3845 — the worker's `takeover_loan_id` (migration 0117), read live:
+    // the loan a borrower offer was posted to take over, 0 if none.
+    read('getTakeoverOfferLoan', [BigInt(id)]),
   ]);
   if (!o) return null;
   if (!o.creator || /^0x0{40}$/i.test(o.creator)) return null; // slot deleted
@@ -343,6 +346,8 @@ async function mapOffer(id, chainNowSec) {
     // #2528 — the worker's `refinance_target_loan_id` (migration 0068), read
     // live off the same struct: the loan a refinance request is for, 0 if none.
     refinanceTargetLoanId: n(o.refinanceTargetLoanId),
+    // Same null-for-none shape the worker serves.
+    takeoverLoanId: n(takeoverLoanId) || null,
   };
 }
 
@@ -636,11 +641,15 @@ function applyOfferFlags(offers, url, chainNowSec) {
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   const excludeOffsetVehicles =
     url.searchParams.get('excludeOffsetVehicles') === '1';
+  // #3845 — `excludeTakeoverOffers=1` (takeover_loan_id = 0).
+  const excludeTakeoverOffers =
+    url.searchParams.get('excludeTakeoverOffers') === '1';
   return offers.filter(
     (o) =>
       (!excludeExpired || !o.expiresAt || o.expiresAt > chainNowSec) &&
       (!excludeSaleVehicles || o.isSaleVehicle !== true) &&
-      (!excludeOffsetVehicles || o.isOffsetVehicle !== true),
+      (!excludeOffsetVehicles || o.isOffsetVehicle !== true) &&
+      (!excludeTakeoverOffers || !o.takeoverLoanId),
   );
 }
 

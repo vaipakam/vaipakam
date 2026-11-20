@@ -67,9 +67,10 @@ test('chooser surfaces every path; obligation handover completes (Option 2)', as
   const loanId = await newestLoanIdFor(borrower.account.address, 'borrower');
   await borrower.ctx.close();
 
-  // A replacement borrower's standing borrow request matching the
-  // loan exactly: same assets, the loan's outstanding principal,
-  // ≥ collateral, and a term that ends before the loan's due date.
+  // A replacement borrower's request posted for THIS loan (#3844: the
+  // handover consumes only such an offer) matching it exactly: same
+  // assets, the loan's outstanding principal, ≥ collateral, and a term
+  // that ends before the loan's due date.
   const loan = await loanDetails(loanId);
   const seededOfferId = await seedDeskOffer({
     role: 'newBorrower',
@@ -78,6 +79,7 @@ test('chooser surfaces every path; obligation handover completes (Option 2)', as
     amountWeth: formatEther(loan.principal),
     collateralTliq: '150',
     days: 1,
+    takeoverLoanId: loanId,
   });
 
   // BASIC mode: the chooser names the paths and offers the explicit

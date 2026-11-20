@@ -1,7 +1,9 @@
 /**
  * Borrower preclose Option 2 — hand the loan's obligation to a
- * replacement borrower by consuming their standing Borrower Offer
- * (PrecloseFacet.transferObligationViaOffer). Atomic: the new
+ * replacement borrower by consuming the borrower offer they posted for
+ * THIS loan (OfferCreateFacet.createTakeoverOffer, #3844), through
+ * PrecloseFacet.transferObligationViaOffer. An ordinary borrow request
+ * is refused by the contract, so it is never offered here. Atomic: the new
  * borrower's collateral (already escrowed at their offer creation)
  * replaces the exiting borrower's, the exiting borrower pays accrued
  * interest + the lender rate top-up in the same transaction, and the
@@ -11,6 +13,8 @@
  * asset-continuity + lender-favourability triad is mirrored here so a
  * doomed pick is never offered:
  *   - Borrower offer, active, unfilled, not a sale vehicle
+ *   - posted for this loan (the indexed `takeoverLoanId`, re-read
+ *     live at submit through `getTakeoverOfferLoan`)
  *   - same lending/collateral/prepay assets + collateral asset type
  *   - offer amount range covers the loan's outstanding principal
  *   - offer collateral >= the loan's collateral
@@ -63,11 +67,16 @@ import type { TokenMeta } from '../contracts/erc20';
  *  submit-time re-check (same predicate, live values). */
 function offerEligible(
   o: IndexedOffer,
+  loanId: number,
   live: LoanLive,
   chainNow: bigint,
   myAddress: string,
 ): boolean {
   if (o.offerType !== 1) return false; // Borrower offers only
+  // #3844 — only an offer posted for this loan can take it over. An
+  // indexer that predates the field reports none, so nothing is offered
+  // rather than a pick the contract would refuse.
+  if (o.takeoverLoanId !== loanId) return false;
   if (o.status !== 'active') return false;
   if (o.isSaleVehicle) return false;
   if (o.assetType !== AssetType.ERC20) return false;
@@ -148,7 +157,7 @@ export function ObligationTransferFlow({
   const candidates = useMemo(() => {
     if (!offers.data || !address) return offers.data;
     const list = offers.data.filter((o) =>
-      offerEligible(o, live, chainNow, address),
+      offerEligible(o, row.loanId, live, chainNow, address),
     );
     // Cheapest handover first (accrued is common to all — the offer's
     // rate/duration decide the top-up).
@@ -164,7 +173,7 @@ export function ObligationTransferFlow({
       }))
       .sort((a, b) => (a.cost.total < b.cost.total ? -1 : 1))
       .map((x) => x.o);
-  }, [offers.data, address, live, chainNow]);
+  }, [offers.data, address, live, chainNow, row.loanId]);
 
   const picked = useMemo(
     () => candidates?.find((o) => o.offerId === pickedId) ?? null,
@@ -305,7 +314,7 @@ export function ObligationTransferFlow({
         walletChain.diamondAddress,
         address,
       );
-      const [, liveLoan, liveOffer, linkedLoanId, latestBlock] = await Promise.all([
+      const [, liveLoan, liveOffer, linkedLoanId, takeoverLoanId, latestBlock] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -342,6 +351,14 @@ export function ObligationTransferFlow({
           functionName: 'getOfferLinkedLoanId',
           args: [BigInt(picked.offerId)],
         }) as Promise<bigint>,
+        // #3844 — the loan the offer was posted to take over; the
+        // handover refuses any other.
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getTakeoverOfferLoan',
+          args: [BigInt(picked.offerId)],
+        }) as Promise<bigint>,
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
       if (liveLoan.status !== LOAN_STATUS_ACTIVE) {
@@ -374,6 +391,7 @@ export function ObligationTransferFlow({
       // approval, instead of as an opaque revert.
       const gone =
         linkedLoanId !== 0n ||
+        takeoverLoanId !== BigInt(row.loanId) ||
         liveOffer.creator ===
           '0x0000000000000000000000000000000000000000' ||
         liveOffer.accepted ||
