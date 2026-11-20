@@ -214,7 +214,7 @@ library LibSaleListing {
     ///         record, without recording them.
     /// @dev    Split out of {recordSellerBounds} so the quote a seller is shown
     ///         and the bound they are held to are ONE computation rather than
-    ///         two that agree today. `RiskPreviewFacet.quoteSellerBounds` is the
+    ///         two that agree today. `SaleAdmissionFacet.quoteSellerBounds` is the
     ///         external read; every claim about the quote not drifting from the
     ///         rule rests on this being the only place the arithmetic lives.
     ///

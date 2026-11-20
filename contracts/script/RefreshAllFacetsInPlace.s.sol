@@ -108,6 +108,8 @@ import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -379,7 +381,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 133 -> 136: IntegratorFacet (#3682), StandingOfferCheckFacet (#3720)
     // and ReferralFacet (#3722). Their selectors are new (Adds).
     // 136 -> 137: RateLinkFacet (#3635 A, #3713). Its selectors are new.
-    uint256 public constant EXPECTED_FACETS = 137;
+    // 137 -> 139: SaleAdmissionFacet (the sale reads, split off
+    // RiskPreviewFacet) and BackstopAbsorbFacet (backstop Role B governance,
+    // split off BackstopFacet), #3843, both for EIP-170. Their selectors move
+    // hosts, so the Replace cut repoints them.
+    uint256 public constant EXPECTED_FACETS = 139;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1526,6 +1532,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         items[135] = Item("referralFacet", ArtifactDeploy.deploy(type(ReferralFacet).name), _getReferralSelectors());
         items[136] = Item("rateLinkFacet", ArtifactDeploy.deploy(type(RateLinkFacet).name), _getRateLinkSelectors());
+        // #3843 — split off RiskPreviewFacet (items[63]) and BackstopFacet
+        // (items[56]); refreshed with them in this one run.
+        items[137] = Item(
+            "saleAdmissionFacet", ArtifactDeploy.deploy(type(SaleAdmissionFacet).name), _getSaleAdmissionSelectors()
+        );
+        items[138] = Item(
+            "backstopAbsorbFacet", ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name), _getBackstopAbsorbSelectors()
+        );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

@@ -39,15 +39,23 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("ProfileFacet", FacetSelectors.profile());
     }
 
-    /// @dev #1649 — the curated scripts cut this facet not for its own sake but
-    ///      because the sale hosts they refresh cross-call `saleAdmission`:
-    ///      `EarlyWithdrawalFacet` and `EarlyWithdrawalDirectFacet` in
-    ///      `RedeployFacets` (two hosts since the #1780 split), `OfferAcceptFacet`
-    ///      in `ReplaceStaleFacets`. Pin the list so a preview selector added
-    ///      to the facet cannot be silently left out of the curated refresh: the
-    ///      omission would not fail a compile, it would fail a live sale.
+    /// @dev #1649 / #3326 — the curated scripts cut this facet not for its own
+    ///      sake but because the hosts they refresh cross-call it (the match
+    ///      core asks `initRiskBounds`). Pin the list so a preview selector
+    ///      added to the facet cannot be silently left out of the curated
+    ///      refresh: the omission would not fail a compile, it would fail a live
+    ///      call. The sale reads moved to `SaleAdmissionFacet` in #3843.
     function test_RiskPreviewSelectors_MatchCompiledAbi() public view {
         _assertParity("RiskPreviewFacet", FacetSelectors.riskPreview());
+    }
+
+    /// @dev #1649, split off `RiskPreviewFacet` in #3843 — the sale hosts the
+    ///      curated scripts refresh cross-call `saleAdmission`
+    ///      (`SaleExitVerdictFacet`, which both early-withdrawal entries
+    ///      self-call, in `RedeployFacets`; `OfferAcceptFacet` in
+    ///      `ReplaceStaleFacets`). Pin the list for the same reason.
+    function test_SaleAdmissionSelectors_MatchCompiledAbi() public view {
+        _assertParity("SaleAdmissionFacet", FacetSelectors.saleAdmission());
     }
 
     /// @dev #1649 — `ReplaceStaleFacets` refreshes `OfferAcceptFacet`, which

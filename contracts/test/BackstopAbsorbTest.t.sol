@@ -14,6 +14,7 @@ import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibBackstopOracleGate} from "../src/libraries/LibBackstopOracleGate.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -89,8 +90,8 @@ contract BackstopAbsorbTest is SetupTest {
         LibTestVaultBeacon.sync(address(diamond));
         // Role B governance: enable master + absorb, set the cap, seed cash.
         BackstopFacet(address(diamond)).setBackstopEnabled(true);
-        BackstopFacet(address(diamond)).setBackstopAbsorbEnabled(true);
-        BackstopFacet(address(diamond)).setBackstopAbsorbCap(
+        BackstopAbsorbFacet(address(diamond)).setBackstopAbsorbEnabled(true);
+        BackstopAbsorbFacet(address(diamond)).setBackstopAbsorbCap(
             mockERC20,
             mockCollateralERC20,
             CAP
@@ -106,7 +107,7 @@ contract BackstopAbsorbTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         vm.startPrank(owner);
         TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, amount);
-        BackstopFacet(address(diamond)).seedBackstopAbsorb(
+        BackstopAbsorbFacet(address(diamond)).seedBackstopAbsorb(
             mockERC20,
             mockCollateralERC20,
             amount
@@ -370,7 +371,7 @@ contract BackstopAbsorbTest is SetupTest {
         );
         // Exposure incremented by the cash spent.
         (uint256 cash, uint256 exposure, ) =
-            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+            BackstopAbsorbFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(exposure, DUE, "exposure ++ by due");
         assertEq(cash, SEED_CASH - DUE, "cash bucket debited");
         // #1566 S2b -- the slices left the BORROWER's vault (the Diamond held
@@ -524,13 +525,13 @@ contract BackstopAbsorbTest is SetupTest {
             })
         );
         (uint256 cashBefore, uint256 exposureBefore, ) =
-            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+            BackstopAbsorbFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
 
         vm.prank(owner);
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         (uint256 cash, uint256 exposure, ) =
-            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+            BackstopAbsorbFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(cash, cashBefore, "no absorb cash spent");
         assertEq(exposure, exposureBefore, "no exposure taken");
         (uint256 lAfter, , , , , bool activeAfter, ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
@@ -540,7 +541,7 @@ contract BackstopAbsorbTest is SetupTest {
 
     function test_absorb_capExceeded_reverts() public {
         vm.prank(owner);
-        BackstopFacet(address(diamond)).setBackstopAbsorbCap(
+        BackstopAbsorbFacet(address(diamond)).setBackstopAbsorbCap(
             mockERC20, mockCollateralERC20, 100 ether // below DUE (550)
         );
         address lender_ = makeAddr("lender7");
@@ -553,7 +554,7 @@ contract BackstopAbsorbTest is SetupTest {
     function test_absorb_insufficientCash_reverts() public {
         // Fresh pair with a cap but no seeded cash.
         vm.prank(owner);
-        BackstopFacet(address(diamond)).setBackstopAbsorbCap(
+        BackstopAbsorbFacet(address(diamond)).setBackstopAbsorbCap(
             mockERC20, mockCollateralERC20, CAP
         );
         // Drain the seeded cash by spending it: simplest is a separate unseeded
@@ -604,7 +605,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         vm.prank(owner);
-        BackstopFacet(address(diamond)).setBackstopAbsorbEnabled(false);
+        BackstopAbsorbFacet(address(diamond)).setBackstopAbsorbEnabled(false);
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.BackstopAbsorbDisabled.selector);
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
@@ -627,16 +628,16 @@ contract BackstopAbsorbTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         (, uint256 exposureBefore, ) =
-            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+            BackstopAbsorbFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(exposureBefore, DUE, "exposure outstanding");
 
         // Governance attests realized cash from selling the warehoused collateral.
         vm.prank(owner);
-        BackstopFacet(address(diamond)).releaseBackstopAbsorbExposure(
+        BackstopAbsorbFacet(address(diamond)).releaseBackstopAbsorbExposure(
             mockERC20, mockCollateralERC20, DUE
         );
         (, uint256 exposureAfter, ) =
-            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+            BackstopAbsorbFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(exposureAfter, 0, "exposure released");
     }
 
@@ -683,15 +684,15 @@ contract BackstopAbsorbTest is SetupTest {
 
         // Over-sweep (more than warehoused LENDER_COL) reverts.
         vm.prank(owner);
-        vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL + 1);
+        vm.expectRevert(BackstopAbsorbFacet.BackstopAbsorbCollateralInsufficient.selector);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL + 1);
 
         // Exact warehoused amount sweeps to the treasury, the only payee
         // (#3205 part 2: the sweep names no recipient).
         address treasury_ = AdminFacet(address(diamond)).getTreasury();
         uint256 treasuryBefore = IERC20(mockCollateralERC20).balanceOf(treasury_);
         vm.prank(owner);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
         assertEq(IERC20(mockCollateralERC20).balanceOf(treasury_) - treasuryBefore, LENDER_COL, "swept to the treasury");
     }
 
@@ -699,11 +700,11 @@ contract BackstopAbsorbTest is SetupTest {
         uint256 before =
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
         vm.prank(owner);
-        BackstopFacet(address(diamond)).withdrawBackstopAbsorbToTreasury(
+        BackstopAbsorbFacet(address(diamond)).withdrawBackstopAbsorbToTreasury(
             mockERC20, mockCollateralERC20, 100 ether
         );
         (uint256 cash, , ) =
-            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+            BackstopAbsorbFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(cash, SEED_CASH - 100 ether, "bucket debited");
         assertEq(
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20),
@@ -733,7 +734,7 @@ contract BackstopAbsorbTest is SetupTest {
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20);
         // Write-off path: sweep the warehoused collateral to the Diamond (treasury).
         vm.prank(owner);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
         assertEq(
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20) - before,
             LENDER_COL,
@@ -748,8 +749,8 @@ contract BackstopAbsorbTest is SetupTest {
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         ERC20Mock(mockERC20).mint(address(diamond), SEED_CASH);
         TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, SEED_CASH);
-        vm.expectRevert(BackstopFacet.VpfiLendingUnsupported.selector);
-        BackstopFacet(address(diamond)).seedBackstopAbsorb(
+        vm.expectRevert(BackstopAbsorbFacet.VpfiLendingUnsupported.selector);
+        BackstopAbsorbFacet(address(diamond)).seedBackstopAbsorb(
             mockERC20, mockCollateralERC20, SEED_CASH
         );
         vm.stopPrank();
@@ -768,8 +769,8 @@ contract BackstopAbsorbTest is SetupTest {
         b.setBackstopFillEnabled(true);
 
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit BackstopFacet.BackstopAbsorbEnabledSet(true);
-        b.setBackstopAbsorbEnabled(true);
+        emit BackstopAbsorbFacet.BackstopAbsorbEnabledSet(true);
+        BackstopAbsorbFacet(address(diamond)).setBackstopAbsorbEnabled(true);
 
         vm.expectEmit(false, false, false, true, address(diamond));
         emit BackstopFacet.MinBackstopDelaySet(2 hours);

@@ -13,7 +13,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -161,7 +161,7 @@ contract BaseSepoliaSellerClaim is Script {
 
         uint64 deadline = uint64(block.timestamp + SALE_WINDOW);
         (uint256 minSellerNet, uint256 maxHeld) =
-            RiskPreviewFacet(diamond).quoteSellerBounds(loanId, LoanFacet(diamond).getLoanDetails(loanId).interestRateBps, deadline);
+            SaleAdmissionFacet(diamond).quoteSellerBounds(loanId, LoanFacet(diamond).getLoanDetails(loanId).interestRateBps, deadline);
         console.log("Quoted bounds (min seller net, max held):", minSellerNet, maxHeld);
         vm.startBroadcast(lenderKey);
         EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(

@@ -5,7 +5,8 @@
 # WHY THIS EXISTS
 #
 # #1503 gave both lender-exit sale paths a cross-facet call to
-# `RiskPreviewFacet.saleAdmission`. The two CURATED partial-refresh scripts
+# `saleAdmission` (on `RiskPreviewFacet` then, `SaleAdmissionFacet` since
+# #3843). The two CURATED partial-refresh scripts
 # each reinstall facets that make that call:
 #
 #   RedeployFacets      -> EarlyWithdrawalFacet       (listing creation + completion)
@@ -39,7 +40,8 @@
 #      must be the routing one. Without this step the rehearsal could "pass"
 #      against a fixture that was never broken.
 #   4. Runs the refresh script under test with `--broadcast`.
-#   5. Asserts every `RiskPreviewFacet` selector routes, and all to ONE host —
+#   5. Asserts every `RiskPreviewFacet` selector routes, and all to ONE host,
+#      and the same for `SaleAdmissionFacet` (the sale reads, #3843) —
 #      a partition bug that split them across old and new addresses would leave
 #      the Diamond routed but running two builds of the same facet.
 #   6. Drives that same scenario with `--broadcast`: a real sale refused under its
@@ -88,11 +90,17 @@ RISK_PREVIEW_SELECTORS=(
   0x978e1471  # acceptMidTierAckPair
   0x314efc12  # previewCreatorBlock
   0x51e43cd9  # previewIntent  (#3626: gained the intent slot; was 0x1835a83c, before #2459 r4 0xa7aaae7f)
+  0x4e69fd7d  # previewSignedOfferRiskBlocks (#3577)
+  0xa81cd082  # initRiskBounds (#3326; moved from OfferPreviewFacet in #3328)
+)
+
+# The full SaleAdmissionFacet surface, in `FacetSelectors.saleAdmission()`
+# order: the three sale reads #3843 split off RiskPreviewFacet. Pinned the same
+# way by `RedeploySelectorParityTest`.
+SALE_ADMISSION_SELECTORS=(
   0x2c87c1a3  # saleAdmission
   0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
   0x1a3370e0  # getSaleListingBounds    (#2672)
-  0x4e69fd7d  # previewSignedOfferRiskBlocks (#3577)
-  0xa81cd082  # initRiskBounds (#3326; moved from OfferPreviewFacet in #3328)
 )
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is
@@ -188,20 +196,29 @@ start_anvil() {
   [ "$chain" = "31337" ] || fail "expected chain-id 31337, got $chain"
 }
 
-# Every RiskPreviewFacet selector routed, and all to the same host.
-assert_risk_preview_routed() {
-  local diamond="$1" host="" addr
-  for sel in "${RISK_PREVIEW_SELECTORS[@]}"; do
+# Every selector of one facet routed, and all to the same host.
+# Usage: assert_one_host <diamond> <facet label> <selector>...
+assert_one_host() {
+  local diamond="$1" label="$2" host="" addr
+  shift 2
+  for sel in "$@"; do
     addr=$(cast call "$diamond" "facetAddress(bytes4)(address)" "$sel" --rpc-url "$RPC")
     [ "$addr" != "0x0000000000000000000000000000000000000000" ] \
       || fail "$sel unrouted after refresh"
     if [ -z "$host" ]; then
       host="$addr"
     elif [ "$addr" != "$host" ]; then
-      fail "RiskPreviewFacet split across hosts: $sel -> $addr, expected $host"
+      fail "$label split across hosts: $sel -> $addr, expected $host"
     fi
   done
-  echo "    all ${#RISK_PREVIEW_SELECTORS[@]} selectors -> $host"
+  echo "    $label: all $# selectors -> $host"
+}
+
+# Every RiskPreviewFacet selector routed to one host, and every
+# SaleAdmissionFacet selector routed to one host (#3843).
+assert_risk_preview_routed() {
+  assert_one_host "$1" RiskPreviewFacet "${RISK_PREVIEW_SELECTORS[@]}"
+  assert_one_host "$1" SaleAdmissionFacet "${SALE_ADMISSION_SELECTORS[@]}"
 }
 
 # Which scenario exercises the sale path each script refreshes.

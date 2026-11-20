@@ -138,7 +138,9 @@
     "ServiceCapacityFacet",
     "OfferMatchIntentFacet",
     "DiamondCutFacet",
-    "RateLinkFacet"
+    "RateLinkFacet",
+    "SaleAdmissionFacet",
+    "BackstopAbsorbFacet"
   ],
   "proxy": [
     "VaipakamDiamond"

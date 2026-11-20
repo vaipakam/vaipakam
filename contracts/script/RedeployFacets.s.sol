@@ -38,6 +38,7 @@ import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -315,7 +316,9 @@ contract RedeployFacets is Script {
         VaultFactoryFacet vaultFactoryFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
         // #1649 — #1503 gave both `EarlyWithdrawalFacet` sale entry points
         // (`sellLoanViaBuyOffer`, `createLoanSaleOffer`) a cross-facet call to
-        // `RiskPreviewFacet.saleAdmission`. That selector is NEW, so refreshing
+        // `saleAdmission` (on `SaleAdmissionFacet` since #3843, which
+        // `_saleExitVerdictCuts` carries; RiskPreviewFacet is still cut here
+        // for the match core's `initRiskBounds`). That selector is NEW, so refreshing
         // EarlyWithdrawalFacet alone would install sale code that calls an
         // unrouted selector — every sale reverting `FunctionDoesNotExist`
         // through the fallback, with the new bytecode live. Deploy the
@@ -1423,11 +1426,15 @@ contract RedeployFacets is Script {
     ///      Deploys the host and partitions its selectors by live routing (Add
     ///      on a pre-#1841 Diamond, Replace on a current one). Kept out of
     ///      `runWith` so its locals do not join that frame.
-    /// @dev The cuts of two read hosts this refresh carries beside the
+    /// @dev The cuts of three read hosts this refresh carries beside the
     ///      facets that read them: SaleExitVerdictFacet (#1841, both sale
-    ///      entries self-call it) and ForcedSalePreviewFacet (#3205 part 2, the
-    ///      forced-sale previews, sized by the same `LibForcedSalePlan` rule
-    ///      ForcedSaleFacet sells by, so the two are refreshed together).
+    ///      entries self-call it), SaleAdmissionFacet (#3843, split off
+    ///      RiskPreviewFacet: the verdict's `LibSaleSolvency` self-calls its
+    ///      `saleAdmission`, #1649) and ForcedSalePreviewFacet (#3205 part 2,
+    ///      the forced-sale previews, sized by the same `LibForcedSalePlan`
+    ///      rule ForcedSaleFacet sells by, so the two are refreshed together).
+    ///      On a Diamond cut before #3843 the three sale reads are routed to
+    ///      RiskPreviewFacet, so they partition to Replace, which moves them.
     function _saleExitVerdictCuts(address diamond)
         internal
         returns (IDiamondCut.FacetCut[] memory out)
@@ -1436,19 +1443,25 @@ contract RedeployFacets is Script {
         console.log("SaleExitVerdictFacet: ", host);
         address preview = ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name);
         console.log("ForcedSalePreviewFacet:", preview);
+        address admission = ArtifactDeploy.deploy(type(SaleAdmissionFacet).name);
+        console.log("SaleAdmissionFacet:   ", admission);
         (bytes4[] memory toAdd, bytes4[] memory toReplace) =
             _partitionByRouting(diamond, FacetSelectors.saleExitVerdict());
         (bytes4[] memory pvAdd, bytes4[] memory pvReplace) =
             _partitionByRouting(diamond, FacetSelectors.forcedSalePreview());
+        (bytes4[] memory saAdd, bytes4[] memory saReplace) =
+            _partitionByRouting(diamond, FacetSelectors.saleAdmission());
         out = new IDiamondCut.FacetCut[](
             (toAdd.length > 0 ? 1 : 0) + (toReplace.length > 0 ? 1 : 0) + (pvAdd.length > 0 ? 1 : 0)
-                + (pvReplace.length > 0 ? 1 : 0)
+                + (pvReplace.length > 0 ? 1 : 0) + (saAdd.length > 0 ? 1 : 0) + (saReplace.length > 0 ? 1 : 0)
         );
         uint256 i;
         if (toReplace.length > 0) out[i++] = _replace(host, toReplace);
         if (toAdd.length > 0) out[i++] = _add(host, toAdd);
         if (pvReplace.length > 0) out[i++] = _replace(preview, pvReplace);
         if (pvAdd.length > 0) out[i++] = _add(preview, pvAdd);
+        if (saReplace.length > 0) out[i++] = _replace(admission, saReplace);
+        if (saAdd.length > 0) out[i++] = _add(admission, saAdd);
     }
 
     function _loanSelectors() internal pure returns (bytes4[] memory s) {

@@ -13,6 +13,7 @@ import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {BackstopFacet} from "../../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../../src/facets/BackstopAbsorbFacet.sol";
 import {IntentConfigFacet} from "../../src/facets/IntentConfigFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
@@ -172,13 +173,15 @@ abstract contract CustodyInvariantBase is SetupTest {
         // #3431 — the vault code fixes the backstop (test convenience).
         LibTestVaultBeacon.sync(address(diamond));
         b.setBackstopEnabled(true);
-        b.setBackstopAbsorbEnabled(true);
-        b.setBackstopAbsorbCap(usdc, weth, ABSORB_CAP_PER_PAIR);
-        b.setBackstopAbsorbCap(usdc, vpfi, ABSORB_CAP_PER_PAIR);
+        // #3843 — the Role B (absorb) governance is on BackstopAbsorbFacet.
+        BackstopAbsorbFacet a = BackstopAbsorbFacet(address(diamond));
+        a.setBackstopAbsorbEnabled(true);
+        a.setBackstopAbsorbCap(usdc, weth, ABSORB_CAP_PER_PAIR);
+        a.setBackstopAbsorbCap(usdc, vpfi, ABSORB_CAP_PER_PAIR);
         ERC20Mock(usdc).mint(address(diamond), 2 * ABSORB_SEED_PER_PAIR);
         TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(usdc, 2 * ABSORB_SEED_PER_PAIR);
-        b.seedBackstopAbsorb(usdc, weth, ABSORB_SEED_PER_PAIR);
-        b.seedBackstopAbsorb(usdc, vpfi, ABSORB_SEED_PER_PAIR);
+        a.seedBackstopAbsorb(usdc, weth, ABSORB_SEED_PER_PAIR);
+        a.seedBackstopAbsorb(usdc, vpfi, ABSORB_SEED_PER_PAIR);
     }
 
     function _onboardCustodyActors() private {
