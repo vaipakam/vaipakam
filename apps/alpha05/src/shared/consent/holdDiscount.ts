@@ -28,11 +28,14 @@ export function holdDiscountFrom(read: Pick<ChainRead<Hex>, 'state' | 'data'>): 
   return read.state === 'failed' ? 'unread' : 'reading';
 }
 
-/** The one read every fee screen shares (same cache key as the tier card). */
+/** The one read every fee screen shares (same cache key as the tier card).
+ *  Installing the token is a configuration change the network can make
+ *  while a page is open, so the read refreshes like any live read instead
+ *  of being cached for good: a page left open across the installation
+ *  stops stating full-rate fees once the token is there. */
 export function useHoldDiscount(chain: SupportedChain | null): HoldDiscount {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const read = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), {
-    immutable: true,
     enabled: chain !== null,
     ...(chain ? { chain } : {}),
   });
