@@ -147,7 +147,9 @@ export function bookRowFrom(o: Json): BookRow {
 /** One page of the book, newest first, older than `before` when given.
  *  Throws (the indexer's own failure) when the index does not answer. */
 export async function readBookPage(indexer: IndexerClient, chainId: number, before: string | null, limit = BOOK_PAGE): Promise<BookPage> {
-  const q = new URLSearchParams({ chainId: String(chainId), limit: String(limit) });
+  // A takeover request (#3844) is never takeable from a book; the chain's
+  // record is read again where the book renders (`useBookLinks`).
+  const q = new URLSearchParams({ chainId: String(chainId), limit: String(limit), excludeTakeoverOffers: '1' });
   if (before !== null) q.set('before', before);
   const res = await indexer.getJson<{ offers?: unknown; nextBefore?: unknown }>(`/offers/active?${q.toString()}`);
   if (!Array.isArray(res.offers)) throw new Error('The index answered without an offer list.');

@@ -4,6 +4,7 @@ import type { IndexerClient } from '../reads/world/indexerClient';
 import { bookRowFrom, type BookRow } from '../offers/book';
 import { BORROWER, LENDER, TLIQ, WETH } from '../offers/testOffer';
 import { deskLadder, LADDER_PAGES, marketFrom, marketKey, openAmount, parseMarketKey, quoteRate, readMarketBook, readMarkets } from './markets';
+import type { BookLink } from '../offers/bookLinks';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const MARKET = { lending: getAddress(WETH), collateral: getAddress(TLIQ), durationDays: 30 };
@@ -133,6 +134,7 @@ describe('a market’s book', () => {
       excludeExpired: '1',
       excludeSaleVehicles: '1',
       excludeOffsetVehicles: '1',
+      excludeTakeoverOffers: '1',
     });
     expect(new URL(`https://x${ix.paths[1]}`).searchParams.get('before')).toBe('9');
   });
@@ -213,7 +215,21 @@ describe('the ladder', () => {
       MARKET,
       1_000,
     );
-    expect(l.leftOut).toEqual({ expired: 1, notThisMarket: 2, moved: 1, vehicle: 1, filled: 1 });
+    expect(l.leftOut).toEqual({ expired: 1, notThisMarket: 2, moved: 1, vehicle: 1, takeover: 0, filled: 1 });
     expect(l.asks.flatMap((s) => s.offers.map((o) => o.id))).toEqual([7n]);
+  });
+
+  it('leaves out an offer the chain records as bound to a loan or reserved for a takeover', () => {
+    const rows = [row({ offerId: 1 }), row({ offerId: 2 }), row({ offerId: 3, offerType: 1, interestRateBps: 400, interestRateBpsMax: 400 }), row({ offerId: 4 })];
+    const links = new Map<string, BookLink>([
+      ['1', 'linked'],
+      ['2', 'unread'],
+      ['3', 'takeover'],
+      ['4', 'open'],
+    ]);
+    const l = deskLadder(rows, MARKET, 0, links);
+    expect(l.leftOut).toMatchObject({ vehicle: 1, takeover: 1 });
+    expect(l.asks.flatMap((s) => s.offers.map((o) => o.id))).toEqual([2n, 4n]);
+    expect(l.bids).toEqual([]);
   });
 });

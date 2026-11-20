@@ -23,6 +23,7 @@ import { getAddress } from 'viem';
 import { ASSET_ERC20, OFFER_TYPE_LENDER, type LiveLoanRow } from '../positions/model';
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { bookRowFrom, lapsed, type BookRow } from '../offers/book';
+import type { BookLink } from '../offers/bookLinks';
 
 type Hex = `0x${string}`;
 type Json = Record<string, unknown>;
@@ -137,6 +138,7 @@ export async function readMarketBook(indexer: IndexerClient, chainId: number, m:
       excludeExpired: '1',
       excludeSaleVehicles: '1',
       excludeOffsetVehicles: '1',
+      excludeTakeoverOffers: '1',
     });
     if (before !== null) q.set('before', before);
     const res = await indexer.getJson<{ offers?: unknown; nextBefore?: unknown }>(`/offers/active?${q.toString()}`);
@@ -172,8 +174,12 @@ export interface LadderLeftOut {
   /** Bound to a loan position that moved since it opened: it can never
    *  complete (#3205). */
   moved: number;
-  /** A loan-sale or offset vehicle the index still returned. */
+  /** A loan-sale or offset vehicle the index still returned, or an offer
+   *  the chain records as bound to a loan (`getOfferLinkedLoanId`). */
   vehicle: number;
+  /** A request the chain records as reserved for taking over a named loan
+   *  (`getTakeoverOfferLoan`, #3844): nobody can accept or match it. */
+  takeover: number;
   /** Nothing of it is left open. */
   filled: number;
 }
@@ -220,8 +226,13 @@ function steps(rows: readonly BookRow[], highFirst: boolean): DeskStep[] {
   return highFirst ? out.reverse() : out;
 }
 
-export function deskLadder(rows: readonly BookRow[], m: Pick<Market, 'lending' | 'collateral' | 'durationDays'>, nowSec: number): DeskLadder {
-  const leftOut: LadderLeftOut = { expired: 0, notThisMarket: 0, moved: 0, vehicle: 0, filled: 0 };
+export function deskLadder(
+  rows: readonly BookRow[],
+  m: Pick<Market, 'lending' | 'collateral' | 'durationDays'>,
+  nowSec: number,
+  links: ReadonlyMap<string, BookLink> | null = null,
+): DeskLadder {
+  const leftOut: LadderLeftOut = { expired: 0, notThisMarket: 0, moved: 0, vehicle: 0, takeover: 0, filled: 0 };
   const asks: BookRow[] = [];
   const bids: BookRow[] = [];
   for (const r of rows) {
@@ -233,7 +244,8 @@ export function deskLadder(rows: readonly BookRow[], m: Pick<Market, 'lending' |
       r.durationDays !== BigInt(m.durationDays)
     ) {
       leftOut.notThisMarket += 1;
-    } else if (r.kind === 'loan-sale' || r.kind === 'offset') leftOut.vehicle += 1;
+    } else if (r.kind === 'loan-sale' || r.kind === 'offset' || links?.get(r.id.toString()) === 'linked') leftOut.vehicle += 1;
+    else if (links?.get(r.id.toString()) === 'takeover') leftOut.takeover += 1;
     else if (lapsed(r, nowSec)) leftOut.expired += 1;
     else if (r.moved === true) leftOut.moved += 1;
     else if (openAmount(r) === 0n) leftOut.filled += 1;
