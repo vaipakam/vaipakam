@@ -1,4 +1,4 @@
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { getDeployment, isClosedNetwork } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import type { RateLimitBinding } from './rateLimit';
 import { readSecrets, type SecretBinding } from '@vaipakam/lib/secretsStore';
@@ -522,4 +522,15 @@ export function getChainConfigs(env: Env): ChainConfig[] {
     out.push({ ...c, diamond: dep.diamond });
   }
   return out;
+}
+
+/**
+ * #3858 — the chains whose alerts this agent serves: `getChainConfigs` minus
+ * every network whose deployment record says Closed. A Closed network has no
+ * open loan, so there is nothing to warn about: the periodic pre-notify pass
+ * skips it and an alert-settings save for it is refused. Read routes that
+ * show a wallet what it holds keep using `getChainConfigs`.
+ */
+export function getAlertChainConfigs(env: Env): ChainConfig[] {
+  return getChainConfigs(env).filter((c) => !isClosedNetwork(getDeployment(c.id)));
 }

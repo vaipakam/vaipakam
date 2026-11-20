@@ -356,6 +356,16 @@ export interface Deployment {
    *  skips. Written by `DeployTimelock.s.sol`. */
   timelock?: HexAddress;
 
+  /** #3858 — the network's recorded wind-down state. `'closed'` is written
+   *  in a reviewed commit only after the Closed test passes on the chain
+   *  (no loan Active or in the fallback state, the closing switch on); the
+   *  daily launch check fails a closed record the chain contradicts. Absent
+   *  or `'open'` is an open record. Closing is NOT recorded here: it is the
+   *  chain's own fact, read from the closing switch. Read it through
+   *  {@link isClosedNetwork}. A closed network stays in the bundle: its users
+   *  still withdraw, claim, cancel offers and take capital out of slots. */
+  networkState?: NetworkState;
+
   // ── Discriminators ──────────────────────────────────────────────
   /** True on the chain that hosts the canonical VPFIToken + OFT Adapter
    *  (lock/release). Mirror chains burn/mint via `vpfiMirror`. */
@@ -614,6 +624,18 @@ export const DEPLOYMENTS: Readonly<Record<number, Deployment>> = Object.freeze(
     Object.entries(raw).map(([k, v]) => [Number(k), v]),
   ),
 );
+
+/** #3858 — the values a deployment record's `networkState` may carry. */
+export const NETWORK_STATES = ['open', 'closed'] as const;
+
+/** A recorded network state. Closing is not one: the chain says it. */
+export type NetworkState = (typeof NETWORK_STATES)[number];
+
+/** Whether the chain's record says the network is Closed. A missing record,
+ *  or one with no `networkState`, is open. */
+export function isClosedNetwork(dep: Pick<Deployment, 'networkState'> | undefined): boolean {
+  return dep?.networkState === 'closed';
+}
 
 /** Returns the deployment record for a chain, or `undefined` if the
  *  app has no `addresses.json` for that chain (i.e. no Phase-1 deploy

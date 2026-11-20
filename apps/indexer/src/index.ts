@@ -80,10 +80,11 @@ import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
   readSecret,
-  getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
   configuredScanChains,
+  configuredClosedChains,
+  getScanChainConfigs,
   WORKER_NAME,
   type WorkerEnv,
   type Env,
@@ -283,7 +284,7 @@ export default {
     const ingest: Promise<unknown>[] = [];
     if (doIngestEnabled(env) && env.CHAIN_INGEST_DO) {
       const ns = env.CHAIN_INGEST_DO;
-      for (const chain of getChainConfigs(resolved)) {
+      for (const chain of getScanChainConfigs(resolved)) {
         const stub = ns.get(ns.idFromName(String(chain.id)));
         // A DO ping is a request like any other, so it goes through the same
         // counted sender rather than a second mechanism that could drift from
@@ -333,7 +334,7 @@ export default {
     // chain's worth (`BACKING_SNAPSHOT_COST`) is what a tick can spare after
     // ingest. Per-chain cadence is therefore `len(chains) × tick`, which the
     // surface discloses as its capture time rather than implying live.
-    const backingChains = getChainConfigs(resolved);
+    const backingChains = getScanChainConfigs(resolved);
     if (backingChains.length > 0) {
       // The ordinal must advance by ONE PER EXECUTED TICK, not per
       // minute. `shouldRunCronTick` skips 4 of every 5 minutes on the DO
@@ -558,7 +559,7 @@ export default {
     if (url.pathname === '/health/ingest') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') {
-        return handleIngestHealth(earlyRouteEnv(env).DB, configuredScanChains(env));
+        return handleIngestHealth(earlyRouteEnv(env).DB, configuredScanChains(env), configuredClosedChains(env));
       }
       return new Response('Not found', { status: 404 });
     }

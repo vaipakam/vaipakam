@@ -32,7 +32,7 @@
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import { AdminFacetABI, LoanFacetABI, NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
-import { getChainConfigs } from './env';
+import { getAlertChainConfigs } from './env';
 import { pushRailStatus, sendPush } from '@vaipakam/push';
 import { pushRailConfigOf } from './pushRail';
 import { sendMessage } from './telegram';
@@ -325,7 +325,7 @@ interface TickBudget {
 export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 9;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
-  const chains = getChainConfigs(env).filter(
+  const chains = getAlertChainConfigs(env).filter(
     (c) => c.diamond && c.diamond !== '0x0000000000000000000000000000000000000000',
   );
   if (chains.length === 0) return;

@@ -1,4 +1,4 @@
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { getDeployment, isClosedNetwork } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import type { RateLimitBinding } from '@vaipakam/lib/rateLimit';
 import { spendInternal, type TickBudget } from './subrequestBudget';
@@ -446,6 +446,30 @@ const CHAIN_META_IDS = CHAIN_RPC_BINDINGS.map((c) => c.id);
  * see, so it stays in this set.
  */
 export function configuredScanChains(raw: object): number[] {
+  return configuredChains(raw).filter((id) => !isClosedNetwork(getDeployment(id)));
+}
+
+/**
+ * #3858 — the configured chains whose deployment record says the network is
+ * Closed. They are not scanned (see `getScanChainConfigs`), so they are not in
+ * `configuredScanChains` and a prober stops watching their cursor; this list
+ * says why a chain left that set.
+ */
+export function configuredClosedChains(raw: object): number[] {
+  return configuredChains(raw).filter((id) => isClosedNetwork(getDeployment(id)));
+}
+
+/**
+ * The chains whose stored rows this deployment SERVES from a route dispatched
+ * before `resolveEnv`: a deployment artifact and a present RPC binding,
+ * Closed networks included (#3858: a Closed network's rows are kept and
+ * still answer reads; only its scan stops).
+ */
+export function configuredServedChains(raw: object): number[] {
+  return configuredChains(raw);
+}
+
+function configuredChains(raw: object): number[] {
   const bound = raw as Record<string, unknown>;
   return CHAIN_RPC_BINDINGS.filter(
     (c) => bound[c.binding] !== undefined && bound[c.binding] !== null && bound[c.binding] !== '' && !!getDeployment(c.id),
@@ -469,4 +493,18 @@ export function getChainConfigs(env: Env): ChainConfig[] {
     });
   }
   return out;
+}
+
+/**
+ * #3858 — the chains to SCAN now: `getChainConfigs` minus every network whose
+ * deployment record says Closed. A Closed network has no open loan and no
+ * fallback state left, so nothing new can happen on it that the indexer must
+ * record; its rows stay in D1 (nothing here deletes them) and the read routes
+ * keep serving them through `getChainConfigs`. Every scheduled pass that
+ * reads the chain (the ingest scan, its Durable Object pings and alarm, the
+ * backing snapshot, the listing sweep) goes through this, never through
+ * `getChainConfigs` directly.
+ */
+export function getScanChainConfigs(env: Env): ChainConfig[] {
+  return getChainConfigs(env).filter((c) => !isClosedNetwork(getDeployment(c.id)));
 }

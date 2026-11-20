@@ -35,7 +35,7 @@
  * shared `SEAPORT_VERIFY_ABI`.
  */
 
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { getDeployment, isClosedNetwork } from '@vaipakam/contracts/deployments';
 import { PrepayListingFacetABI } from '@vaipakam/contracts/abis';
 import { SEAPORT_VERIFY_ABI } from '@vaipakam/lib/prepayOrderShape';
 import { createPublicClient, http, type Address, type Hex } from 'viem';
@@ -272,6 +272,8 @@ export async function bindListingToProtocol(
 ): Promise<ListingBinding> {
   const deployment = getDeployment(chainId);
   if (!deployment?.diamond) return refuse(400, 'no-deployment-for-chain');
+  // #3858 — a Closed network has no open loan, so nothing on it is listed.
+  if (isClosedNetwork(deployment)) return refuse(400, 'network-closed');
   let chain = reader;
   if (!chain) {
     const rpc = getRpcChains(env).find((c) => c.id === chainId)?.rpc;

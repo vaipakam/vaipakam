@@ -33,13 +33,13 @@
  *    wait on the Secrets Store), so it cannot ask whether the RPC secret
  *    resolves. It asks `chainNotConfigured` instead: the chain has a
  *    deployment artifact and its RPC binding is present
- *    (`configuredScanChains`, read without resolving any secret). That
+ *    (`configuredServedChains`, read without resolving any secret). That
  *    refuses a retired chain or one never set up. A configured chain whose
  *    secret fails still answers from its stored series; `/health/ingest`
  *    is what reports that stall, and the series' own day coverage says
  *    where its record ends.
  */
-import { configuredScanChains, type Env, getChainConfigs } from './env';
+import { configuredServedChains, type Env, getChainConfigs } from './env';
 
 /** The chain a route assumes when the request names none. Kept as it has
  *  always been on these routes, so a client omitting `chainId` sees no
@@ -85,7 +85,7 @@ export function chainNotServed(env: Env, chainId: number): Response | null {
  * module header for what that does and does not establish.
  */
 export function chainNotConfigured(raw: object, chainId: number): Response | null {
-  return configuredScanChains(raw).includes(chainId) ? null : chainUnavailable();
+  return configuredServedChains(raw).includes(chainId) ? null : chainUnavailable();
 }
 
 /** The one response both guards return. */

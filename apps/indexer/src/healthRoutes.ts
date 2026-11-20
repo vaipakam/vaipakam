@@ -24,6 +24,9 @@
  *    is read from the bindings without resolving a secret, and says so:
  *    a configured chain whose secret fails to resolve stays in the set,
  *    because its standing cursor is the stall the prober exists to see.
+ *  - `closed` (#3858): the configured chains whose deployment record says
+ *    the network is Closed. They are not scanned any more, so they leave
+ *    `configured` and their cursor stops by design; their rows are kept.
  *  - `lifecycle` (#2337): per chain, how many loan-status announcements
  *    disagreed with the status diagram, the oldest of them by name, and how
  *    many loans the check tracks (and how many from initiation, the ones it
@@ -106,6 +109,8 @@ export interface IngestHealth {
   schema: SchemaCheck;
   chains: ChainIngestState[];
   configured: ConfiguredScanSet;
+  /** #3858 — configured chains recorded Closed: not scanned, rows kept. */
+  closed: number[];
   /** The loan-status check (#2337); null before migration 0080. */
   lifecycle: LifecycleHealth | null;
 }
@@ -119,6 +124,7 @@ export async function readIngestHealth(
   configuredChains: number[],
   gate: { check(db: D1Like): Promise<SchemaCheck> } = schemaGate,
   nowSec: number = Math.floor(Date.now() / 1000),
+  closedChains: number[] = [],
 ): Promise<IngestHealth> {
   const schema = await gate.check(db);
   // ONE statement, ONE snapshot (Codex #2545 r6 P2): the UNION of cursor rows
@@ -195,6 +201,7 @@ export async function readIngestHealth(
     schema,
     chains,
     configured: { chains: configuredChains, basis: CONFIGURED_SCAN_BASIS },
+    closed: closedChains,
     lifecycle: await readLifecycleHealth(db),
   };
 }
@@ -210,9 +217,13 @@ const HEADERS = {
  * never a 200 with an empty chain list, which a prober would read as
  * "nothing to be stale".
  */
-export async function handleIngestHealth(db: D1Like, configuredChains: number[]): Promise<Response> {
+export async function handleIngestHealth(
+  db: D1Like,
+  configuredChains: number[],
+  closedChains: number[] = [],
+): Promise<Response> {
   try {
-    return new Response(JSON.stringify(await readIngestHealth(db, configuredChains)), { status: 200, headers: HEADERS });
+    return new Response(JSON.stringify(await readIngestHealth(db, configuredChains, schemaGate, undefined, closedChains)), { status: 200, headers: HEADERS });
   } catch (err) {
     console.error('[indexer] /health/ingest read failed', redactedError(err));
     return new Response(JSON.stringify({ error: 'ingest state could not be read' }), {

@@ -37,7 +37,7 @@
  * (bounded), and `scanRunning` is always cleared in `finally`.
  */
 
-import { resolveEnv, getChainConfigs, WORKER_NAME, type WorkerEnv } from './env';
+import { resolveEnv, getScanChainConfigs, WORKER_NAME, type WorkerEnv } from './env';
 import {
   hasD1Binding,
   maintenanceSkipNotice,
@@ -672,9 +672,10 @@ export class ChainIngestDO {
         // The Secrets Store reads at the top of the alarm are counted too —
         // the scan is not the only thing that spends here.
         const resolved = meterEnv(await resolveEnv(this.env, budget), budget);
-        const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
+        const chain = getScanChainConfigs(resolved).find((c) => c.id === chainId);
         if (!chain) {
-          // Chain not configured here (no RPC / no deployment) — nothing to do.
+          // Chain not configured here (no RPC / no deployment), or its
+          // network is recorded Closed (#3858) — nothing to do.
           await this.clearLoopState();
           return;
         }
@@ -850,7 +851,7 @@ export class ChainIngestDO {
     if (this.env.CHAIN_INGEST_VIA_DO === 'true' && chainId !== null) {
       try {
         const resolved = await resolveEnv(this.env);
-        ingestActive = getChainConfigs(resolved).some((c) => c.id === chainId);
+        ingestActive = getScanChainConfigs(resolved).some((c) => c.id === chainId);
       } catch {
         ingestActive = false; // env resolution failed → honest polling
       }

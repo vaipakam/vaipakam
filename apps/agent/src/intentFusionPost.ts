@@ -47,7 +47,7 @@
 
 import type { Env } from './env';
 import { slotRefusal, takeCredentialSlot } from './rateLimit';
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { getDeployment, isClosedNetwork } from '@vaipakam/contracts/deployments';
 import { createPublicClient, http, keccak256, toBytes } from 'viem';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { redactedError } from '@vaipakam/lib/errorDescription';
@@ -240,6 +240,10 @@ export async function handleIntentFusionPost(
   const deployment = getDeployment(parsed.chainId);
   if (!deployment) {
     return jsonErr(corsOrigin, 400, 'no-deployment-for-chain');
+  }
+  // #3858 — a Closed network has no open loan, so it has no order to post.
+  if (isClosedNetwork(deployment)) {
+    return jsonErr(corsOrigin, 400, 'network-closed');
   }
   const expectedDiamond = deployment.diamond.toLowerCase();
   const partiesError = orderPartiesError(kind, parsed.order, expectedDiamond);

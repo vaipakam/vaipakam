@@ -48,7 +48,7 @@ import {
   type Hex,
 } from 'viem';
 import type { Env, ChainConfig } from './env';
-import { getChainConfigs } from './env';
+import { getScanChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   reconcileAfterScan,
@@ -621,7 +621,7 @@ export async function runChainIndexer(
   // The round-robin pointer's own read and write are requests too, and they
   // come out of the same tick's allowance as the chain pass they schedule.
   const env: Env = meterEnv(rawEnv, budget);
-  const chains = getChainConfigs(env);
+  const chains = getScanChainConfigs(env);
   if (chains.length === 0) return [];
 
   // Round-robin: process exactly ONE chain per cron invocation. Free-tier
@@ -739,7 +739,7 @@ export async function sweepUnpublishedListings(
   // Cap by the union of supported chain ids — a row whose chain_id
   // is no longer in the operator's RPC set gets skipped (we can't
   // build a client for it).
-  const chains = getChainConfigs(env);
+  const chains = getScanChainConfigs(env);
   if (chains.length === 0) return;
   const chainById = new Map(chains.map((c) => [c.id, c]));
 

@@ -151,7 +151,7 @@ import {
 } from './telegramLinks';
 import { stateStub } from './telegramState/object';
 import { handleKeeperRoute, isKeeperPath, type KeeperRouteDeps } from './keeperRoutes';
-import { DEPLOYMENTS, getDeployment } from '@vaipakam/contracts/deployments';
+import { DEPLOYMENTS, getDeployment, isClosedNetwork } from '@vaipakam/contracts/deployments';
 
 /** #1722 — the agent's own deployments, chain id to Diamond (lower-case).
  *  Telegram LOCK requests are recorded against these Diamonds only, the same
@@ -712,6 +712,11 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   // state nothing reads.
   if (!getChainConfigs(env).some((c) => c.id === parsed.chain_id)) {
     return json({ error: 'chain-not-configured' }, 400, corsOrigin);
+  }
+  // #3858 — a Closed network gets no alerts, so a save for it would also be
+  // state nothing reads. Said by name so the app can say why.
+  if (isClosedNetwork(getDeployment(parsed.chain_id))) {
+    return json({ error: 'network-closed' }, 400, corsOrigin);
   }
   // #2754 — EVERY settings write carries the wallet's signature over a
   // message naming exactly what it saves. The body's wallet used to be
