@@ -10,7 +10,12 @@
  *  - a phrase is accepted or refused as typed, never cleaned, and a refusal
  *    names the rule it broke;
  *  - setting needs a private Telegram chat linked (the phrase is confirmed
- *    there), and a linked group chat is never shown it.
+ *    there), and a linked group chat is never shown it;
+ *  - where the phrase applies: a wallet's own key sets it for every network,
+ *    a contract wallet's approval only for the network it is given on (the
+ *    service decides from how the wallet signed and says which applied). For
+ *    the latter the card names the network and offers each other network
+ *    where this browser has Telegram linked, one approval each.
  *
  * The wallet signs a fingerprint of the phrase, never the phrase, so a
  * contract wallet's approval does not show it. A request waiting for such an
@@ -19,13 +24,17 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSwitchChain } from 'wagmi';
+import { chainDisplayName, SUPPORTED_CHAINS } from '../chain/chains';
 import { copy } from '../content/copy';
 import {
   alertPhraseProblem,
   clearAlertPhrase,
   fetchAlertPhraseStatus,
+  loadAlertPrefs,
   pendingPhraseMatches,
   setAlertPhrase,
+  type AlertPhraseScope,
 } from '../data/alerts';
 import type { PendingAlertRequest } from '../data/alertRequest';
 
@@ -57,8 +66,12 @@ function problemText(problem: NonNullable<ReturnType<typeof alertPhraseProblem>>
 
 export function AlertPhraseSection({ address, chainId, signMessage, resume, onSettled, cardBusy }: Props) {
   const queryClient = useQueryClient();
-  const statusKey = ['alertPhraseStatus', address.toLowerCase()];
-  const status = useQuery({ queryKey: statusKey, queryFn: () => fetchAlertPhraseStatus(address), staleTime: 30_000 });
+  const statusKey = ['alertPhraseStatus', address.toLowerCase(), chainId];
+  const status = useQuery({ queryKey: statusKey, queryFn: () => fetchAlertPhraseStatus(address, chainId), staleTime: 30_000 });
+  const switcher = useSwitchChain();
+  const network = chainDisplayName(chainId) ?? String(chainId);
+  // The scope the last request here reported, until the status read says.
+  const [lastScope, setLastScope] = useState<AlertPhraseScope | null>(null);
   const [phrase, setPhrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -94,14 +107,17 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
         return;
       }
       setPhrase('');
-      setNotice(outcome.groupLinked ? `${copy.alerts.phraseSaved} ${copy.alerts.phraseGroupNote}` : copy.alerts.phraseSaved);
+      setLastScope(outcome.scope);
+      const saved = outcome.scope === 'network' ? copy.alerts.phraseSavedNetwork(network) : copy.alerts.phraseSaved;
+      setNotice(outcome.groupLinked ? `${saved} ${copy.alerts.phraseGroupNote}` : saved);
     });
   }
 
   function clear(from?: PendingAlertRequest) {
     void run(async () => {
-      await clearAlertPhrase(address, chainId, signMessage, from);
-      setNotice(copy.alerts.phraseCleared);
+      const scope = await clearAlertPhrase(address, chainId, signMessage, from);
+      setLastScope(scope);
+      setNotice(scope === 'network' ? copy.alerts.phraseClearedNetwork(network) : copy.alerts.phraseCleared);
     });
   }
 
@@ -115,17 +131,28 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resume]);
 
-  const disabled = busy || cardBusy;
+  const disabled = busy || cardBusy || switcher.isPending;
   const isSet = status.data?.kind === 'set';
+  // A phrase that applies on this network only: offer each other network
+  // where this browser has Telegram linked for the wallet.
+  const networkScoped = (status.data?.kind === 'set' && status.data.scope === 'network') || lastScope === 'network';
+  const otherLinked = networkScoped
+    ? SUPPORTED_CHAINS.filter((c) => c.chainId !== chainId && loadAlertPrefs(c.chainId, address).telegramLinked)
+    : [];
 
   return (
     <div className="stack" style={{ gap: 8 }} data-testid="alert-phrase">
       <strong>{copy.alerts.phraseTitle}</strong>
       <span className="muted">{copy.alerts.phraseBody}</span>
       <span className="muted">{copy.alerts.phraseTelegramOnly}</span>
+      <span className="muted">{copy.alerts.phraseScopeNote}</span>
       <span>
         {status.data?.kind === 'set'
-          ? copy.alerts.phraseStatusSet(new Date(status.data.setAt * 1000).toLocaleString())
+          ? status.data.scope === 'all'
+            ? copy.alerts.phraseStatusSetAll(new Date(status.data.setAt * 1000).toLocaleString())
+            : status.data.scope === 'network'
+              ? copy.alerts.phraseStatusSetNetwork(network, new Date(status.data.setAt * 1000).toLocaleString())
+              : copy.alerts.phraseStatusSet(new Date(status.data.setAt * 1000).toLocaleString())
           : status.data?.kind === 'none'
             ? copy.alerts.phraseStatusNone
             : status.isLoading
@@ -160,6 +187,24 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
       </div>
       <span className="muted">{copy.alerts.phraseSignNote}</span>
       {notice ? <span role="status">{notice}</span> : null}
+      {otherLinked.length > 0 ? (
+        <div className="stack" style={{ gap: 4 }} data-testid="alert-phrase-other-networks">
+          <span className="muted">{copy.alerts.phraseOtherNetworks}</span>
+          <div className="cluster">
+            {otherLinked.map((c) => (
+              <button
+                key={c.chainId}
+                type="button"
+                className="btn btn-secondary"
+                disabled={disabled}
+                onClick={() => switcher.switchChain({ chainId: c.chainId })}
+              >
+                {copy.alerts.phraseSwitchTo(chainDisplayName(c.chainId) ?? c.name)}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <div className="banner banner-danger" role="alert">
           <span className="banner-body">{error}</span>

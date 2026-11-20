@@ -514,7 +514,7 @@ describe('the alert phrase in channel messages (#3346)', () => {
     const { store, state } = harness();
     store.recordChatType('42', true, 0);
     link(store, 84532, '42');
-    store.setPhrase(W, phrase, 1, 1);
+    store.setPhrase(W, null, phrase, 1, 1);
     const open = reader({ 84532: { enabled: false, delaySeconds: 0 } });
     const first = deps(state, open);
     await sendPhraseNotices(first.d);
@@ -527,22 +527,22 @@ describe('the alert phrase in channel messages (#3346)', () => {
     expect(first.sent[0]!.text).toContain('«blue heron»');
     // The first notice is led by no phrase: the chat had been told none.
     expect(first.sent[0]!.text.startsWith('Your alert phrase')).toBe(false);
-    expect(store.phraseMarksOf([{ wallet: W, chatId: '42' }])).toEqual(['blue heron']);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['blue heron']);
   });
 
   it('a change is led by the phrase the chat was told, and kept until Telegram accepts', async () => {
     const { store, state } = await told('blue heron');
-    store.setPhrase(W, 'red kite', 2, 2);
+    store.setPhrase(W, null, 'red kite', 2, 2);
     const refused = deps(state, reader({ 84532: { enabled: true, delaySeconds: DAY } }), NOW, 'refused');
     await sendPhraseNotices(refused.d);
     expect(refused.sent[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
     expect(refused.sent[0]!.text).toContain('«red kite»');
     // A protected account is told how to lock.
     expect(refused.sent[0]!.text).toContain('lock the vault');
-    expect(store.phraseMarksOf([{ wallet: W, chatId: '42' }])).toEqual(['blue heron']);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['blue heron']);
     const later = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }), NOW + NOTICE_RETRY_SECONDS + 1);
     await sendPhraseNotices(later.d);
-    expect(store.phraseMarksOf([{ wallet: W, chatId: '42' }])).toEqual(['red kite']);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['red kite']);
   });
 
   it('the old chat hears of an unlink with the phrase it was told, and Push is told the network', async () => {
@@ -568,7 +568,7 @@ describe('the alert phrase in channel messages (#3346)', () => {
     expect(toOld).toHaveLength(1);
     expect(toOld[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
     expect(toOld[0]!.text).toContain('Another Telegram chat');
-    expect(store.phraseMarksOf([{ wallet: W, chatId: '77' }])).toEqual([null]);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '77', chainId: 84532 }])).toEqual([null]);
   });
 
   it('a group chat is never shown the phrase', async () => {
@@ -576,10 +576,10 @@ describe('the alert phrase in channel messages (#3346)', () => {
     store.recordChatType('42', true, 0);
     link(store, 84532, '42');
     link(store, 421614, '-5');
-    store.setPhrase(W, 'blue heron', 1, 1);
+    store.setPhrase(W, null, 'blue heron', 1, 1);
     const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 }, 421614: { enabled: false, delaySeconds: 0 } }));
     await sendPhraseNotices(d);
     expect(sent.map((m) => m.chat)).toEqual(['42']);
-    expect(store.phraseMarksOf([{ wallet: W, chatId: '-5' }])).toEqual([null]);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '-5', chainId: 84532 }])).toEqual([null]);
   });
 });

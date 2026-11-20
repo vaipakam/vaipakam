@@ -73,10 +73,15 @@
  *                                             EIP-191 signature required too)
  *   POST /telegram/phrase                   — frontend → set the wallet's alert
  *                                             phrase (#3346; signed over its
- *                                             fingerprint, never the phrase)
- *   POST /telegram/phrase/clear             — frontend → remove it (signed)
- *   GET  /telegram/phrase?wallet=           — whether one is set, and since
- *                                             when (never the phrase)
+ *                                             fingerprint, never the phrase;
+ *                                             every network for a key's
+ *                                             signature, the signed network
+ *                                             for a contract wallet's)
+ *   POST /telegram/phrase/clear             — frontend → remove it (signed,
+ *                                             same scope rule)
+ *   GET  /telegram/phrase?wallet=&chainId=  — whether one is set on that
+ *                                             network, since when, and its
+ *                                             scope (never the phrase)
  *   POST /keeper/lock/poll|pending|handled  — keeper → LOCK requests (#1722;
  *                                             KEEPER_AGENT_TOKEN, keeperRoutes.ts)
  *   POST /keeper/alerts                     — keeper → owner alerts as data
@@ -953,17 +958,17 @@ async function pushChatChanged(env: Env, wallet: string, chainId: number): Promi
 }
 
 /** #3346 — `text` led by the alert phrase each (wallet, chat) pair was last
- *  told, when any. A state object that cannot be read sends the text as it
+ *  told for the network the message is about, when any. A state object that cannot be read sends the text as it
  *  is: a message without the phrase reads as suspect, never as trusted. */
 async function markedText(
   env: Env,
-  items: { wallet: string; chatId: string }[],
+  items: { wallet: string; chatId: string; chainId: number }[],
   locale: string | null | undefined,
   text: string,
 ): Promise<string> {
   if (items.length === 0) return text;
   try {
-    const marks = await stateStub(env).phraseMarksOf(items.map((i) => ({ wallet: i.wallet.toLowerCase(), chatId: i.chatId })));
+    const marks = await stateStub(env).phraseMarksOf(items.map((i) => ({ wallet: i.wallet.toLowerCase(), chatId: i.chatId, chainId: i.chainId })));
     return phraseCopy.mark(locale, marks, text);
   } catch (err) {
     console.error('[agent] phrase marks unreadable:', redactedError(err));
@@ -1090,7 +1095,16 @@ async function handleSetAlertPhrase(req: Request, env: Env): Promise<Response> {
   const verified = await authoriseAlertRequest(req, env, parsed.req, { action: 'set-phrase', fingerprint });
   if (!verified.ok) return refusal(verified, corsOrigin);
   const now = Math.floor(Date.now() / 1000);
-  const outcome = await stateStub(env).setPhrase(parsed.req.wallet.toLowerCase(), phrase, parsed.req.issuedAt, now);
+  // The scope follows the signer's authority, as unlink's does: a key's
+  // signature speaks for the wallet on every network; a contract wallet's
+  // approval only for the network the signed text names.
+  const outcome = await stateStub(env).setPhrase(
+    parsed.req.wallet.toLowerCase(),
+    verified.via === 'chain' ? parsed.req.chain_id : null,
+    phrase,
+    parsed.req.issuedAt,
+    now,
+  );
   if (outcome.kind === 'superseded') return superseded(corsOrigin);
   if (outcome.kind === 'no-private-chat') {
     return json(
@@ -1100,7 +1114,7 @@ async function handleSetAlertPhrase(req: Request, env: Env): Promise<Response> {
     );
   }
   await tellPhraseNow(env);
-  return json({ ok: true, groupLinked: outcome.groupLinked }, 200, corsOrigin);
+  return json({ ok: true, groupLinked: outcome.groupLinked, scope: outcome.scope }, 200, corsOrigin);
 }
 
 /** #3346 — remove the wallet's alert phrase (its own signed text). */
@@ -1112,10 +1126,16 @@ async function handleClearAlertPhrase(req: Request, env: Env): Promise<Response>
   if (!parsed.ok) return json({ error: 'invalid-payload', reason: parsed.reason }, 400, corsOrigin);
   const verified = await authoriseAlertRequest(req, env, parsed.req, 'clear-phrase');
   if (!verified.ok) return refusal(verified, corsOrigin);
-  const outcome = await stateStub(env).setPhrase(parsed.req.wallet.toLowerCase(), null, parsed.req.issuedAt, Math.floor(Date.now() / 1000));
+  const outcome = await stateStub(env).setPhrase(
+    parsed.req.wallet.toLowerCase(),
+    verified.via === 'chain' ? parsed.req.chain_id : null,
+    null,
+    parsed.req.issuedAt,
+    Math.floor(Date.now() / 1000),
+  );
   if (outcome.kind === 'superseded') return superseded(corsOrigin);
   await tellPhraseNow(env);
-  return json({ ok: true }, 200, corsOrigin);
+  return json({ ok: true, scope: outcome.kind === 'set' ? outcome.scope : null }, 200, corsOrigin);
 }
 
 /** The notices a phrase change queued, tried at once; the tick retries
@@ -1128,13 +1148,16 @@ async function tellPhraseNow(env: Env): Promise<void> {
   }
 }
 
-/** #3346 — whether `wallet` has an alert phrase, and since when. Never the
- *  phrase itself. */
+/** #3346 — whether `wallet` has an alert phrase on `chainId`, since when,
+ *  and whether it is that network's own or the wallet's on every network.
+ *  Never the phrase itself. */
 async function handleAlertPhraseStatus(url: URL, env: Env, corsOrigin: string): Promise<Response> {
   const wallet = url.searchParams.get('wallet') ?? '';
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return json({ error: 'invalid-wallet' }, 400, corsOrigin);
-  const status = await stateStub(env).phraseStatus(wallet.toLowerCase());
-  return json({ set: status.set, setAt: status.setAt }, 200, corsOrigin);
+  const chainRaw = url.searchParams.get('chainId') ?? '';
+  if (!/^[1-9][0-9]{0,15}$/.test(chainRaw)) return json({ error: 'invalid-chain' }, 400, corsOrigin);
+  const status = await stateStub(env).phraseStatus(wallet.toLowerCase(), Number(chainRaw));
+  return json({ set: status.set, setAt: status.setAt, scope: status.scope }, 200, corsOrigin);
 }
 
 /** UX-012 — push a single test alert to the wallet's linked Telegram
@@ -1213,7 +1236,7 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const outcome = await sendMessage(
     env.TG_BOT_TOKEN,
     linked.chatId,
-    await markedText(env, [{ wallet: parsed.req.wallet, chatId: linked.chatId }], linked.locale, testAlert(linked.locale)),
+    await markedText(env, [{ wallet: parsed.req.wallet, chatId: linked.chatId, chainId: parsed.req.chain_id }], linked.locale, testAlert(linked.locale)),
   );
   if (outcome !== 'accepted') {
     return json({ error: 'send-failed' }, 502, corsOrigin);
@@ -1270,7 +1293,7 @@ async function handleTelegramWebhook(
     // Judged on the clock the record step used: a LOCK sent longer ago than
     // the keeper's age limit is answered and never recorded. One with no send
     // time cannot be dated, and is answered as not recorded.
-    const lockLinks = links.map((l) => ({ wallet: l.wallet, chatId: lock.chatId }));
+    const lockLinks = links.map((l) => ({ wallet: l.wallet, chatId: lock.chatId, chainId: l.chainId }));
     if (links.length > 0 && lockRequestIsStale(lock.sentAt, nowSec)) {
       await sendMessage(
         env.TG_BOT_TOKEN,
@@ -1341,7 +1364,7 @@ async function handleTelegramWebhook(
   await sendMessage(
     env.TG_BOT_TOKEN,
     chatId,
-    await markedText(env, [{ wallet: match.wallet, chatId }], match.locale, handshakeLinked(match.locale, walletShort, match.chainId)),
+    await markedText(env, [{ wallet: match.wallet, chatId, chainId: match.chainId }], match.locale, handshakeLinked(match.locale, walletShort, match.chainId)),
   );
   return new Response('ok', { status: 200 });
 }

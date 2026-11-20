@@ -45,7 +45,7 @@ export interface KeeperStatePort {
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): Promise<UnansweredLock[]>;
   chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
   /** #3346 — the phrase each (recipient wallet, chat) message leads with. */
-  phraseMarksOf(items: { wallet: string; chatId: string }[]): Promise<(string | null)[]>;
+  phraseMarksOf(items: { wallet: string; chatId: string; chainId: number }[]): Promise<(string | null)[]>;
 }
 
 /** A recorded LOCK no keeper has answered within this long gets one warning
@@ -167,7 +167,7 @@ export async function warnUnansweredLocks(
   const due = await state.takeUnansweredLocks(nowSec - LOCK_UNANSWERED_SEC, nowSec, LOCK_UNANSWERED_BATCH);
   if (due.length === 0) return 0;
   const loc = await locales(due);
-  const marks = await state.phraseMarksOf(due.map((u) => ({ wallet: u.wallet, chatId: u.chatId })));
+  const marks = await state.phraseMarksOf(due.map((u) => ({ wallet: u.wallet, chatId: u.chatId, chainId: u.chainId })));
   let sent = 0;
   for (let i = 0; i < due.length; i++) {
     const u = due[i]!;

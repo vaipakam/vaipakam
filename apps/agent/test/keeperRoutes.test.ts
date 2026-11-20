@@ -201,11 +201,11 @@ describe('alerts route', () => {
     link(B, '77');
     store.recordChatType('42', true, 0);
     store.recordChatType('77', true, 0);
-    store.setPhrase(W, 'blue heron', 1, 1);
-    store.setPhrase(B, 'red kite', 1, 1);
+    store.setPhrase(W, null, 'blue heron', 1, 1);
+    store.setPhrase(B, null, 'red kite', 1, 1);
     for (const [wallet, chat] of [[W, '42'], [B, '77']] as const) {
       const [n] = store.duePhraseNotices(NOW, 10).filter((x) => x.chatId === chat);
-      store.phraseNoticeSent(wallet, chat, n!.createdAt, true, 2);
+      store.phraseNoticeSent(wallet, chat, n!.chainId, n!.createdAt, true, 2);
     }
     await call('/keeper/alerts', { ...base, alerts: [alert(W), alert(W, { to: B })] });
     expect(sent[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);

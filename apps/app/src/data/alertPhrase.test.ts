@@ -38,11 +38,11 @@ describe('setAlertPhrase (#3346)', () => {
       vi.fn(async (_url: string, init: RequestInit) => {
         bodies.push(JSON.parse(String(init.body)));
         kept = loadPendingAlertRequest(84532, WALLET);
-        return new Response(JSON.stringify({ ok: true, groupLinked: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, groupLinked: true, scope: 'network' }), { status: 200 });
       }),
     );
     const { signed, signMessage } = recordingSigner();
-    expect(await setAlertPhrase(WALLET, 84532, 'blue heron', signMessage)).toEqual({ kind: 'set', groupLinked: true });
+    expect(await setAlertPhrase(WALLET, 84532, 'blue heron', signMessage)).toEqual({ kind: 'set', groupLinked: true, scope: 'network' });
     expect(signed[0]).not.toContain('blue heron');
     const key = bodies[0]!.requestKey as `0x${string}`;
     expect(signed[0]).toContain(`Phrase fingerprint: ${alertPhraseFingerprint(key, 'blue heron')}`);

@@ -527,6 +527,9 @@ export function AlertsCard() {
           )}
 
           <AlertPhraseSection
+            // Per network and wallet: a switch starts empty, so the owner
+            // types the phrase again and nothing typed is carried over.
+            key={`${chainId}:${address}`}
             address={address}
             chainId={chainId}
             signMessage={(message) => signMessageAsync({ message })}

@@ -95,7 +95,7 @@ async function notifyOldChat(
       : channelCopy.movePending(locale, entries, when);
   // The change ids this notice names: only these may start their wait.
   const ids = chains.map((c) => c.id);
-  if ((await sendMarked(deps, oldChatId, wallet, locale, text)) !== 'accepted') {
+  if ((await sendMarked(deps, oldChatId, wallet, chains.map((c) => c.chainId), locale, text)) !== 'accepted') {
     await deps.state.markNoticeAttempt(ids, deps.now);
     return false;
   }
@@ -117,9 +117,10 @@ interface ChatNotice {
   wallet: string;
   chainIds: number[];
   locale: string;
-  /** What the chat was last told of the wallet's phrase, read BEFORE the
-   *  change (after it, a chat no longer linked has forgotten it). */
-  phrase: string | null;
+  /** What the chat was last told of the wallet's phrase on each of
+   *  `chainIds`, read BEFORE the change (after it, a chat no longer linked
+   *  has forgotten it). */
+  phrases: (string | null)[];
 }
 
 function chatNoticeText(n: ChatNotice): string {
@@ -130,7 +131,7 @@ function chatNoticeText(n: ChatNotice): string {
       : n.kind === 'replace'
         ? channelCopy.moveNow(n.locale, entries)
         : channelCopy.addedNow(n.locale, entries);
-  return phraseCopy.mark(n.locale, [n.phrase], body);
+  return phraseCopy.mark(n.locale, n.phrases, body);
 }
 
 /**
@@ -145,7 +146,7 @@ async function tellChats(deps: ChannelDeps, notices: readonly ChatNotice[]): Pro
     if (n.chainIds.length === 0) continue;
     const ids: number[] = [];
     for (const chainId of n.chainIds) {
-      ids.push(await deps.state.queueChatNotice(n.chatId, n.wallet, chainId, n.kind, n.phrase, deps.now));
+      ids.push(await deps.state.queueChatNotice(n.chatId, n.wallet, chainId, n.kind, n.phrases[n.chainIds.indexOf(chainId)] ?? null, deps.now));
     }
     if (!deps.send) continue;
     const accepted = (await deps.send(n.chatId, chatNoticeText(n))) === 'accepted';
@@ -154,10 +155,19 @@ async function tellChats(deps: ChannelDeps, notices: readonly ChatNotice[]): Pro
 }
 
 /** The phrase line each chat would carry for `wallet`, read now. */
-async function marksOf(deps: ChannelDeps, wallet: string, chatIds: readonly string[]): Promise<Map<string, string | null>> {
-  const unique = [...new Set(chatIds)];
-  const marks = unique.length > 0 ? await deps.state.phraseMarksOf(unique.map((chatId) => ({ wallet, chatId }))) : [];
-  return new Map(unique.map((c, i) => [c, marks[i] ?? null]));
+async function marksOf(
+  deps: ChannelDeps,
+  wallet: string,
+  pairs: readonly { chatId: string; chainId: number }[],
+): Promise<Map<string, string | null>> {
+  const unique = [...new Map(pairs.map((p) => [markKey(p.chatId, p.chainId), p])).values()];
+  const marks = unique.length > 0 ? await deps.state.phraseMarksOf(unique.map((p) => ({ wallet, chatId: p.chatId, chainId: p.chainId }))) : [];
+  return new Map(unique.map((p, i) => [markKey(p.chatId, p.chainId), marks[i] ?? null]));
+}
+
+/** The key {@link marksOf} files a (chat, network) pair's phrase under. */
+function markKey(chatId: string, chainId: number): string {
+  return `${chatId}|${chainId}`;
 }
 
 /**
@@ -166,10 +176,17 @@ async function marksOf(deps: ChannelDeps, wallet: string, chatIds: readonly stri
  * A chat still waiting to take over is not linked, so it is never shown one.
  * `refused` when no bot can send.
  */
-async function sendMarked(deps: ChannelDeps, chatId: string, wallet: string, locale: string, text: string): Promise<SendOutcome> {
+async function sendMarked(
+  deps: ChannelDeps,
+  chatId: string,
+  wallet: string,
+  chainIds: readonly number[],
+  locale: string,
+  text: string,
+): Promise<SendOutcome> {
   if (!deps.send) return 'refused';
-  const [phrase] = await deps.state.phraseMarksOf([{ wallet, chatId }]);
-  return deps.send(chatId, phraseCopy.mark(locale, [phrase ?? null], text));
+  const phrases = await deps.state.phraseMarksOf(chainIds.map((chainId) => ({ wallet, chatId, chainId })));
+  return deps.send(chatId, phraseCopy.mark(locale, phrases, text));
 }
 
 /** How many times a request decides again when another request moved the
@@ -229,7 +246,7 @@ export async function requestUnlink(
     ];
     // #3346 — what each chat cleared at once was told of the phrase, read
     // before the commit makes it forget.
-    const marks = await marksOf(deps, w, open.map((r) => r.chatId));
+    const marks = await marksOf(deps, w, open.map((r) => ({ chatId: r.chatId, chainId: r.chainId })));
     const result = await deps.state.commit(w, chainId, observed, ops, deps.now, { issuedAt, scope: chainId });
     // A later-signed request was already applied: nothing was written.
     if (!result.ok && result.superseded) return { kind: 'superseded' };
@@ -255,7 +272,7 @@ export async function requestUnlink(
         wallet: w,
         chainIds: list.map((r) => r.chainId),
         locale: list[0]!.locale,
-        phrase: marks.get(list[0]!.chatId) ?? null,
+        phrases: list.map((r) => marks.get(markKey(r.chatId, r.chainId)) ?? null),
       })),
     );
     for (const r of open) await deps.pushChange?.(w, r.chainId);
@@ -327,15 +344,19 @@ async function decideRelink(
     if (current?.chatId === newChatId) return immediate();
     const all = (await linkedRows(deps.state, deps.locales, w, null)).rows;
     const others = all.filter((r) => r.chatId !== newChatId && r.chatId !== current?.chatId);
-    const marks = await marksOf(deps, w, [...(current ? [current.chatId] : []), ...others.map((r) => r.chatId)]);
+    const marks = await marksOf(
+      deps,
+      w,
+      [...(current ? [current.chatId] : []), ...others.map((r) => r.chatId)].map((chatId) => ({ chatId, chainId })),
+    );
     const outcome = await immediate();
     if (outcome !== 'linked') return outcome;
     const notices: ChatNotice[] = [];
     if (current) {
-      notices.push({ chatId: current.chatId, kind: 'replace', wallet: w, chainIds: [chainId], locale: current.locale, phrase: marks.get(current.chatId) ?? null });
+      notices.push({ chatId: current.chatId, kind: 'replace', wallet: w, chainIds: [chainId], locale: current.locale, phrases: [marks.get(markKey(current.chatId, chainId)) ?? null] });
     }
     for (const list of groupBy(others, (r) => r.chatId).values()) {
-      notices.push({ chatId: list[0]!.chatId, kind: 'added', wallet: w, chainIds: [chainId], locale: list[0]!.locale, phrase: marks.get(list[0]!.chatId) ?? null });
+      notices.push({ chatId: list[0]!.chatId, kind: 'added', wallet: w, chainIds: [chainId], locale: list[0]!.locale, phrases: [marks.get(markKey(list[0]!.chatId, chainId)) ?? null] });
     }
     await tellChats(deps, notices);
     await deps.pushChange?.(w, chainId);
@@ -390,7 +411,7 @@ export async function cancelFromChat(deps: ChannelDeps, chatId: string, isPrivat
       cancelled.map((c) => ({ walletShort: shortWallet(c.wallet), chainId: c.chainId })),
     );
     // The chat stays linked for every wallet it cancelled for (#3346).
-    const phrases = await deps.state.phraseMarksOf(cancelled.map((c) => ({ wallet: c.wallet, chatId })));
+    const phrases = await deps.state.phraseMarksOf(cancelled.map((c) => ({ wallet: c.wallet, chatId, chainId: c.chainId })));
     await deps.send(chatId, phraseCopy.mark(locale, phrases, text));
   }
   return cancelled.length;
@@ -431,7 +452,7 @@ export async function applyDueChannelChanges(deps: ChannelDeps): Promise<number>
     // applies it only while the chat it moves away from is still linked.
     // #3346 — what the old chat was told, read before the change makes it
     // forget, so the notice that it no longer gets alerts carries it.
-    const [oldPhrase] = await deps.state.phraseMarksOf([{ wallet: c.wallet, chatId: c.oldChatId }]);
+    const [oldPhrase] = await deps.state.phraseMarksOf([{ wallet: c.wallet, chatId: c.oldChatId, chainId: c.chainId }]);
     const r = await deps.state.applyChange(c.id, deps.now);
     if (!r?.applied) continue;
     applied += 1;
@@ -442,7 +463,7 @@ export async function applyDueChannelChanges(deps: ChannelDeps): Promise<number>
     } else {
       await deps.send(c.oldChatId, phraseCopy.mark(c.locale, [oldPhrase ?? null], channelCopy.moveApplied(c.locale, entries)));
       // Linked now, so it gets the phrase like every chat that is (#3346).
-      if (c.newChatId) await sendMarked(deps, c.newChatId, c.wallet, c.locale, handshakeLinked(c.locale, shortWallet(c.wallet), c.chainId));
+      if (c.newChatId) await sendMarked(deps, c.newChatId, c.wallet, [c.chainId], c.locale, handshakeLinked(c.locale, shortWallet(c.wallet), c.chainId));
     }
   }
   await retryChatNotices(deps);
@@ -469,7 +490,7 @@ async function retryChatNotices(deps: ChannelDeps): Promise<void> {
       wallet: first.wallet,
       chainIds: list.map((n) => n.chainId),
       locale: first.locale,
-      phrase: first.phrase,
+      phrases: list.map((n) => n.phrase),
     };
     const accepted = (await deps.send(first.chatId, chatNoticeText(notice))) === 'accepted';
     for (const n of list) await deps.state.chatNoticeSent(n.id, accepted, deps.now);
@@ -499,6 +520,6 @@ export async function sendPhraseNotices(deps: ChannelDeps): Promise<void> {
     const entries = n.chainIds.map((chainId) => ({ walletShort: shortWallet(n.wallet), chainId }));
     const text = phraseCopy.mark(locale, [n.told], phraseCopy.changed(locale, entries, n.target, protectedAccount));
     const accepted = (await deps.send(n.chatId, text)) === 'accepted';
-    await deps.state.phraseNoticeSent(n.wallet, n.chatId, n.createdAt, accepted, deps.now);
+    await deps.state.phraseNoticeSent(n.wallet, n.chatId, n.chainId, n.createdAt, accepted, deps.now);
   }
 }

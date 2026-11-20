@@ -194,7 +194,7 @@ async function deliver(m: AddressedAlert, chatId: string, d: KeeperRouteDeps): P
   const { text } = renderTelegramAlert(m, { locale, chainName: d.chainName(m.chainId), appOrigin: d.appOrigin });
   // #3346 — the phrase is the RECIPIENT's (a manager's chat shows the
   // manager's), added here at send time; the shared renderer never sees it.
-  const [phrase] = await d.state.phraseMarksOf([{ wallet: recipient, chatId }]);
+  const [phrase] = await d.state.phraseMarksOf([{ wallet: recipient, chatId, chainId: m.chainId }]);
   return channelResult(await d.send(chatId, phraseCopy.mark(locale, [phrase ?? null], text)));
 }
 

@@ -626,21 +626,35 @@ export interface TelegramUnlinkOutcome {
 
 // ─── The alert phrase (#3346) ────────────────────────────────────────────
 
-/** Whether the wallet has an alert phrase, and since when (unix seconds).
- *  The service never returns the phrase itself. `unknown` when it could not
- *  be asked. */
-export type AlertPhraseStatus = { kind: 'set'; setAt: number } | { kind: 'none' } | { kind: 'unknown' };
+/** Where a phrase applies: the wallet's on every network (set with the
+ *  wallet's own key) or this network's own (set by a contract wallet's
+ *  approval, which speaks for the network it is on only). */
+export type AlertPhraseScope = 'all' | 'network';
 
-export async function fetchAlertPhraseStatus(wallet: string): Promise<AlertPhraseStatus> {
+/** Whether the wallet has an alert phrase on `chainId`, since when (unix
+ *  seconds) and where it applies. The service never returns the phrase
+ *  itself. `unknown` when it could not be asked. */
+export type AlertPhraseStatus =
+  | { kind: 'set'; setAt: number; scope: AlertPhraseScope | null }
+  | { kind: 'none' }
+  | { kind: 'unknown' };
+
+function phraseScopeOf(v: unknown): AlertPhraseScope | null {
+  return v === 'all' || v === 'network' ? v : null;
+}
+
+export async function fetchAlertPhraseStatus(wallet: string, chainId: number): Promise<AlertPhraseStatus> {
   const origin = agentOrigin();
   if (!origin) return { kind: 'unknown' };
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${origin}/telegram/phrase?wallet=${encodeURIComponent(wallet)}`, { signal: ctrl.signal });
+    const res = await fetch(`${origin}/telegram/phrase?wallet=${encodeURIComponent(wallet)}&chainId=${chainId}`, {
+      signal: ctrl.signal,
+    });
     if (!res.ok) return { kind: 'unknown' };
     const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    if (data?.set === true && typeof data.setAt === 'number') return { kind: 'set', setAt: data.setAt };
+    if (data?.set === true && typeof data.setAt === 'number') return { kind: 'set', setAt: data.setAt, scope: phraseScopeOf(data.scope) };
     if (data?.set === false) return { kind: 'none' };
     return { kind: 'unknown' };
   } catch {
@@ -651,9 +665,13 @@ export async function fetchAlertPhraseStatus(wallet: string): Promise<AlertPhras
 }
 
 /** What setting the phrase did. `set` says whether a group chat is linked
- *  too (a group is never shown the phrase); `no-private-chat` means a
- *  private chat must be linked first, and nothing changed. */
-export type AlertPhraseOutcome = { kind: 'set'; groupLinked: boolean } | { kind: 'no-private-chat' };
+ *  too (a group is never shown the phrase) and where the phrase applies (the
+ *  service decides from how the wallet signed; null from a service that does
+ *  not say); `no-private-chat` means a private chat must be linked first
+ *  (on this network, for a contract wallet), and nothing changed. */
+export type AlertPhraseOutcome =
+  | { kind: 'set'; groupLinked: boolean; scope: AlertPhraseScope | null }
+  | { kind: 'no-private-chat' };
 
 /** The rule a typed phrase breaks, or null. The same rule the service
  *  applies: a phrase is never cleaned, only accepted or refused. */
@@ -691,7 +709,7 @@ export async function setAlertPhrase(
   const res = await signAndSendAlertRequest(req, signMessage, post, { phrase });
   if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat' };
   if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `setting the alert phrase failed (${res.status})`);
-  return { kind: 'set', groupLinked: res.data?.groupLinked === true };
+  return { kind: 'set', groupLinked: res.data?.groupLinked === true, scope: phraseScopeOf(res.data?.scope) };
 }
 
 /** Whether `phrase` is the one a waiting set request signed for. */
@@ -700,13 +718,14 @@ export function pendingPhraseMatches(pending: PendingAlertRequest, phrase: strin
   return typeof fingerprint === 'string' && alertPhraseFingerprint(pending.requestKey, phrase) === fingerprint;
 }
 
-/** Remove the wallet's alert phrase (its own signed text). */
+/** Remove the wallet's alert phrase (its own signed text). Returns where
+ *  the removal applied (null from a service that does not say). */
 export async function clearAlertPhrase(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
   resume?: PendingAlertRequest,
-): Promise<void> {
+): Promise<AlertPhraseScope | null> {
   const req =
     resume?.kind === 'clear-phrase'
       ? resume
@@ -715,4 +734,5 @@ export async function clearAlertPhrase(
         );
   const res = await signAndSendAlertRequest(req, signMessage, post);
   if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `removing the alert phrase failed (${res.status})`);
+  return phraseScopeOf(res.data?.scope);
 }
