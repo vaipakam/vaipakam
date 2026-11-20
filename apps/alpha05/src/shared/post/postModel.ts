@@ -413,6 +413,9 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     // #3621 — this app posts no lender "either" offers.
     lifecycleFlex: 0,
     integrator,
+    linkKind: 0, // #3635 A — no market link
+    linkMarginBps: 0,
+    rateFarFromAverageAcknowledged: false, // #3713
   } as const;
 }
 

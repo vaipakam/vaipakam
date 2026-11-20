@@ -79,7 +79,10 @@ contract RetiredAccountAuthorityTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false,
-                lifecycleFlex: 0
+                lifecycleFlex: 0,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -154,7 +157,10 @@ contract RetiredAccountAuthorityTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

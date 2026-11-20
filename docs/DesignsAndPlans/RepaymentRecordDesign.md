@@ -48,7 +48,7 @@ For an address, on each network, and as a total with the per-network lines benea
 | First loan | the date of the first loan this address held |
 | Held from the start | how many of the closed loans this address also opened, and how many it took over later |
 
-- **No amounts in money terms are ranked or compared.** Totals are per token, in the token's own units, with a numeraire value beside them only where the indexer already holds the price at the event.
+- **No amounts in money terms are ranked or compared.** Totals are per token, in the token's own units, with a numeraire value beside them only where the indexer already holds the price at the event. (Settled with the builder on 2026-11-19: it holds no price at each event, so no money value is shown. A total is never valued at today's price.)
 - **Internal records are left out:** the vehicle loans a lender's sale creates, which the platform's own view already marks.
 - **A loan is counted for the address that held the borrower position when it closed.** Someone who takes over a nearly finished loan and repays it has repaid a loan, and the "held from the start" line shows it was taken over.
 - **A payment by someone else** (a guarantor's borrower, `FeaturesOverExistingPartsDesign.md` section 2) is the holder's loan repaid. The record does not name payers.
@@ -70,13 +70,14 @@ The words credit, score, rating, trust, reputation, grade and worthiness are not
 - **A lender reviewing a fill, and a lender whose slot or offer was filled:** the same line for the counterparty.
 - **The address's own page,** with a link the owner can share.
 - **A filter in the app's request list:** "has repaid at least N loans". It is a filter on what the lender sees. It is not a condition on any offer and the chain does not enforce it.
-- **The public data feed:** one read per address, with the block and the derivation's version.
+- **The public data feed:** one read per address, with the block and the derivation's version. It is the only read in the feed that takes an address. The feed has no route that lists, ranks, searches or filters addresses by their record, and every answer carries the statements of 4.2 and the number of loans it could not classify.
 
 ### 4.4 The derivation
 
 - The indexer builds the record from events it already handles: the loan's opening, the terminal events (repaid, defaulted, liquidated, the refinance and preclose closings, the exit run), the periodic settlement events, the per-loan interest-paid and interest-undelivered events, the fee events and the position transfers.
 - **Timing is read from time, never from the late fee.** A late fee is a share of the principal still open, so on a loan paid down to a very small remainder it rounds to zero, and a late repayment would then count as on time. The loan's due date also moves with a platform pause and with a sequencer outage, by the chain's own clock, so the indexer does not rebuild it from the loan's start and length. The full repayment's event therefore states the due date the chain measured the late fee from, and the record compares the repayment's time with it. Settled with the builder on 2026-11-19: the `LoanRepaid` event gains `lateFeeFrom`, the moment the chain's loan clock starts the late fee, read at the repayment. That event has one emit site for every full repayment. A repayment is on time when its block time is not after `lateFeeFrom`. It is built with #3779, which already changes the repayment events. On a deployment whose event does not state it, a repayment with a late fee is counted as late, one made no later than the loan's original due date is counted as on time, and any other is left unclassified and counted as such.
 - A figure that cannot be derived for a loan is left out of the count and the record says how many loans it could not classify. It never guesses a class.
+- **Fees paid are read from one statement.** The events of 2026-11-19 do not state a loan's fees: no event names the initiation fee, and the treasury's share of interest is stated on some routes only. Settled with the builder that day: the fee is stated once, where every fee passes. The platform's fee step names the loan a fee belongs to in the event that already states the treasury's part and the reserve's part, on every route, so the record sums those parts per loan and no route can be missed. An event at the initiation charge with a field on the interest event was considered and not chosen: it would state the treasury's share in two places, one of which does not measure what arrived. Until that is built, the record says that fees paid are not stated; it never shows a zero for them.
 - A fresh Diamond on a network starts a new record on that network, as every indexed figure does. The record states the date its history begins.
 - The derivation's document lists each figure, the events it reads, and the cases it leaves out. A change to the derivation raises its version.
 
@@ -116,3 +117,5 @@ Build the record in the indexer and the app, as a count of facts with its limits
 1. Any figure of 4.1 that the current events cannot classify without a guess, with the event that would settle it.
 2. Whether the one-line summary on a request is read with the request or fetched after it.
 3. How far back the numeraire value beside a total can be stated from prices the indexer already holds.
+
+Settled on 2026-11-19: item 1, fees paid (4.4) and the repayment's timing (`lateFeeFrom`, 4.4); item 2, the one-line summary is its own cached read made after the request, a request never waits on it or is hidden for it, and a line that could not be read says so; item 3, no money value (4.1).

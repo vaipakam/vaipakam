@@ -41,12 +41,12 @@ contract TxDeadlineEntryTest is SetupTest {
         if (i == 0) OfferCreateFacet(d).createOffer(cp, validUntil);
         else if (i == 1) OfferCreateFacet(d).createOfferWithPermit(cp, permit, "", validUntil);
         else if (i == 2) OfferMutateFacet(d).setOfferAmount(1, 1, 1, validUntil);
-        else if (i == 3) OfferMutateFacet(d).setOfferRate(1, 1, 1, validUntil);
+        else if (i == 3) OfferMutateFacet(d).setOfferRate(1, 1, 1, 0, 0, false, validUntil);
         else if (i == 4) OfferMutateFacet(d).setOfferCollateral(1, 1, 1, validUntil);
         else if (i == 5) OfferMutateFacet(d).modifyOffer(1, mp, validUntil);
         else if (i == 6) {
             LenderIntentFacet(d).setLenderIntent(
-                address(1), address(2), 0, 1, 1, 1, 1, 1, false, 0, false, true, validUntil
+                address(1), address(2), 0, 1, 1, 1, 1, 1, false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), validUntil
             );
         } else if (i == 7) SwapToRepayFacet(d).swapToRepayFull(1, calls, 1, validUntil);
         else if (i == 8) SwapToRepayPartialFacet(d).swapToRepayPartial(1, 1, calls, validUntil);
@@ -55,7 +55,7 @@ contract TxDeadlineEntryTest is SetupTest {
         } else if (i == 10) {
             EarlyWithdrawalDirectFacet(d).sellLoanViaBuyOffer(1, 2, 0, type(uint256).max, validUntil);
         } else if (i == 11) {
-            PrecloseOffsetFacet(d).offsetWithNewOffer(1, 1, 1, address(1), 1, true, address(0), validUntil);
+            PrecloseOffsetFacet(d).offsetWithNewOffer(1, 1, 1, address(1), 1, true, address(0), false, validUntil);
         } else {
             PrecloseFacet(d).transferObligationViaOffer(1, 2, validUntil);
         }

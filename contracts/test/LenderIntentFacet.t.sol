@@ -57,7 +57,7 @@ contract LenderIntentFacetTest is SetupTest {
     ) internal {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             lendAsset, collAsset, 0, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays,
-            minFill, requiresKeeperAuth, 0, false, consent, type(uint64).max
+            minFill, requiresKeeperAuth, 0, false, consent, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
     }
 

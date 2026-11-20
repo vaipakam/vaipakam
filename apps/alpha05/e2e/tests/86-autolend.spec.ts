@@ -200,7 +200,7 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   // An Auto-lend already set up and funded with 0.5 WETH, as the setup flow does.
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, await txDeadline(sc)]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
   const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0]);
   const allowance = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] });
@@ -284,7 +284,7 @@ test('on Positions a lender changes the limits, stops keeping money set aside, a
   await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, await txDeadline(sc)]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
   const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0]);
   const stored = () => sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq, 0]);

@@ -104,6 +104,7 @@ export const ACCEPT_TERMS_TYPES = {
     // contract reads it only when the acceptor is the borrower. Last, as in
     // `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH`.
     { name: 'integrator', type: 'address' },
+    { name: 'rateFarFromAverageAcknowledged', type: 'bool' },
   ],
 } as const;
 
@@ -145,6 +146,9 @@ export interface AcceptTerms {
   acceptorAllowFullDowngrade: boolean;
   // #3682 — the integrator a borrower acceptor names (zero = none).
   integrator: Address;
+  // #3713 — the acceptor confirmed taking a rate outside the warning band
+  // around the term average (needed only when the loan's rate is outside it).
+  rateFarFromAverageAcknowledged: boolean;
 }
 
 export interface AcceptTermsPayload {
@@ -532,6 +536,9 @@ export function useAcceptTermsSigning() {
         // review screen's control (absent ⇒ non-Full).
         ...fullTariff,
         integrator: NO_INTEGRATOR,
+        // #3713 — not asked on this screen yet: a rate outside the band is
+        // refused by name and the review shows why.
+        rateFarFromAverageAcknowledged: false,
       };
 
       // #2728 — a leg that reads illiquid NOW but was not shown as illiquid
@@ -895,6 +902,9 @@ export function useSignedOfferAcceptTermsSigning() {
         // #1355 — the taker's Full VPFI tariff opt-in (absent ⇒ non-Full).
         ...fullTariff,
         integrator: NO_INTEGRATOR,
+        // #3713 — not asked on this screen yet: a rate outside the band is
+        // refused by name and the review shows why.
+        rateFarFromAverageAcknowledged: false,
       };
 
       // #2725 — the confirm showed every term this signs.

@@ -72,11 +72,15 @@
  * baseline, the ratchet and its follow-up card are all unnecessary: this gates
  * at zero from its first run.
  *
- * SCOPE IS `docs/ops/` ON PURPOSE. That is where a stale path costs a person
- * real time, and it is the slice that has actually been cleaned. The wider doc
- * set still holds ~137 stale citations in design docs and closed to-do entries;
- * widening this scope is the completion criterion of #1462, not a thing to do
- * by loosening the gate.
+ * TWO SCOPES. Every citation — links and paths shown as code — is gated in
+ * `docs/ops/`, where a stale path costs a person real time. LINKS alone are
+ * gated across every living document under `docs/` (#3548): a link tells the
+ * reader to follow it, so a dead one is wrong wherever it sits, while a path
+ * shown as code in a design doc or a closed to-do entry can be a true record
+ * of what was built or removed. The historical record (shipped release notes,
+ * `docs/OlderDocs/`) is outside both, because it must not be rewritten
+ * (#1462). #3548 fixed the 75 dead links the wider scope found rather than
+ * freezing them.
  *
  * WHAT IT CANNOT SEE: a path that exists but is the WRONG one, a stale name in
  * a citation form the loose extractor misses, and any reference outside a code
@@ -91,6 +95,17 @@ import { citations, scopedDocs, trackedFiles } from './docs-citations.mjs';
 
 /** Documents the gate covers. See "SCOPE IS `docs/ops/`" above. */
 const GATED = ['docs/ops/'];
+/**
+ * Documents whose LINKS are gated (#3548). A link is a navigational claim
+ * ("follow this to the file"), so a dead one is a defect in any living
+ * document. A path shown as code in a design doc or a to-do entry can be a
+ * historical mention of what the plan built or removed, so only `docs/ops/`
+ * also gates code-span citations. `scopedDocs` already leaves out the
+ * historical record (shipped release notes, older docs), which must not be
+ * rewritten (#1462), and a link into the private `docs/internal/` resolves
+ * to a committed-ignored path, which rule (4) acquits.
+ */
+const LINK_GATED = ['docs/'];
 
 /**
  * Directories that were REMOVED or renamed. A citation of one is wrong wherever
@@ -305,8 +320,11 @@ function committedIgnored(paths) {
 
 const findings = [];
 const missing = [];
-for (const file of scopedDocs(GATED)) {
+const fullyGated = new Set(scopedDocs(GATED));
+for (const file of scopedDocs(LINK_GATED)) {
+  const linksOnly = !fullyGated.has(file);
   for (const { tok, src, n, line, link, whole } of citations(file)) {
+    if (linksOnly && !link) continue;
     const removed = removedDirHit(tok, file, link);
     if (removed) {
       findings.push({ file, n, tok, line, why: removed[1] });
@@ -332,7 +350,7 @@ findings.sort((a, b) => a.file.localeCompare(b.file) || a.n - b.n);
 
 if (findings.length === 0) {
   console.log(
-    `docs path gate: OK — every cited path exists, and no removed-directory citations, in ${GATED.join(', ')}.`,
+    `docs path gate: OK — every cited path exists, and no removed-directory citations, in ${GATED.join(', ')}; every link resolves in ${LINK_GATED.join(', ')}.`,
   );
   process.exit(0);
 }

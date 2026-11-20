@@ -7,6 +7,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
+import {OfferMatchFacet} from "./OfferMatchFacet.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
@@ -23,11 +24,10 @@ import {LibIntentFill} from "../libraries/LibIntentFill.sol";
  *         cross-facet call), so the three fill gates could not inline there.
  *         This entry is the one the capacity design names for the solver,
  *         backstop and adapter routes, so it is the clean host for its gate.
- *         The execution core (`LibOfferMatchExecute.executeMatch`) is shared
- *         with `matchOffers` / `matchSignedOffer` as ONE library inlined by
- *         both facets — one source, two hosts; it is an INTERNAL call, so
- *         `msg.sender` (the solver / LIF recipient) is preserved exactly as
- *         before. Same storage, same Diamond, same selector: callers change
+ *         The execution core runs through `OfferMatchFacet.matchCoreInternal`
+ *         (#3635 A: inlined here it put this facet over EIP-170 once the rate
+ *         link joined the core), with the solver named as the matcher, so the
+ *         match share still goes to `msg.sender` (the solver / LIF recipient). Same storage, same Diamond, same selector: callers change
  *         nothing. The testnets route `matchIntent` to the old host until their
  *         refresh replaces it onto this facet (`RefreshAllFacetsInPlace` cuts it
  *         as a Replace); no mainnet exists yet.
@@ -128,10 +128,9 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
             intent.minRateBps, cp.durationDays, cp.useFullTermInterest, cp.allowsPartialRepay
         );
 
-        // Shared core (lender direction; borrower is the counterparty).
-        // `msg.sender` (the solver) is preserved as the matcher because this is
-        // an INTERNAL call.
-        loanId = LibOfferMatchExecute.executeMatch(sliceOfferId, counterpartyOfferId, 0);
+        // Shared core (lender direction; borrower is the counterparty), hosted
+        // once on OfferMatchFacet; the solver is named as the matcher.
+        loanId = OfferMatchFacet(address(this)).matchCoreInternal(sliceOfferId, counterpartyOfferId, 0, msg.sender);
         // #1219 — one fill, charged to the actor the route names (direct solver,
         // the adapter's bound operator, or the outer initiator's free tier — see
         // `LibServiceCapacity.routeActor`), LAST, so a refused charge reverts the

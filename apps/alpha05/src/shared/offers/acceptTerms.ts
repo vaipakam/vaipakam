@@ -62,6 +62,7 @@ export const ACCEPT_TERMS_TYPES = {
     { name: 'acceptorMaxCStar', type: 'uint256' },
     { name: 'acceptorAllowFullDowngrade', type: 'bool' },
     { name: 'integrator', type: 'address' },
+    { name: 'rateFarFromAverageAcknowledged', type: 'bool' },
   ],
 } as const;
 
@@ -149,6 +150,9 @@ export type AcceptTermsMessage = {
   /** The integrator named for a fee share (#3682): the one a kit link
    *  carried (#3773) and the reader kept, else none. */
   integrator: Hex;
+  /** #3713 — the taker confirmed a rate outside the warning band around the
+   *  term average; this app does not ask yet, so a rate outside is refused. */
+  rateFarFromAverageAcknowledged: boolean;
 };
 
 /** A direct offer's key: the offer id, ABI-encoded and hashed. */
@@ -230,6 +234,7 @@ export function buildAcceptTerms(o: StoredOffer, ctx: AcceptContext): AcceptTerm
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
     integrator: ctx.integrator ?? ZERO_ADDRESS,
+    rateFarFromAverageAcknowledged: false,
   };
 }
 

@@ -73,6 +73,8 @@ export const ACCEPT_TERMS_FIELD_SOURCE = {
   acceptorAllowFullDowngrade: 'acceptor',
   // #3682 — the acceptor's own choice of door; this app names none.
   integrator: 'acceptor',
+  // #3713 — the acceptor's confirmation of a rate far from the term average.
+  rateFarFromAverageAcknowledged: 'acceptor',
   // `as const` keeps each entry's literal kind (so `ReviewedKey` can select
   // on it); `satisfies` still makes the table exhaustive over the signed
   // struct and refuses a key it does not have.

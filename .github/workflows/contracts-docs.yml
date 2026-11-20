@@ -39,15 +39,18 @@ concurrency:
   group: contracts-docs-pages-deploy
   cancel-in-progress: false
 
+# Least privilege per job (#3548): only `deploy` may write to Pages or mint
+# an OIDC token; `build` reads the Pages site config and nothing more.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   build:
     name: Build docs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read # configure-pages reads the site's settings
     # forge doc runs self-contained under the `quick` profile (#1493):
     # src-only solc pass + mdbook render, ~2 min / ~1.5 GB measured.
     # No forge cache — the doc build never read one, and sharing the
@@ -58,6 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry
@@ -149,6 +153,9 @@ jobs:
     name: Deploy to Pages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write # publish the site
+      id-token: write # deploy-pages proves the run's identity to Pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

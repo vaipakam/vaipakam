@@ -141,6 +141,15 @@ contract OfferCreateFacet is
         //    the platform's alert can name the door the user came through. On a
         //    lender's offer it is attribution only and earns no share.
         address integrator;
+        // ── #3635 A — the market link on the rate limit (0 / 0 = none).
+        uint8 linkKind;
+        int16 linkMarginBps;
+        // ── #3719 / #3713 — the warnings the contract derived at creation:
+        //    bit 1 the checked rate (a lender's floor, a borrower's ceiling)
+        //    is far above the term average, bit 2 far below. Bit 0 is
+        //    reserved for the collateral-concentration warning, which only
+        //    the loan-opened event carries. Never a caller input.
+        uint8 warnings;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient

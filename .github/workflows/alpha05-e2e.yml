@@ -88,6 +88,7 @@ jobs:
       - name: Checkout (with submodules — the fixture compiles the contracts)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry (forge + anvil)
@@ -153,7 +154,10 @@ jobs:
         run: pnpm --filter @vaipakam/alpha05 run e2e:typecheck
 
       - name: Run e2e (${{ matrix.project }}, shard ${{ matrix.shard }}/3)
-        run: pnpm --filter @vaipakam/alpha05 run e2e --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
+        env:
+          E2E_PROJECT: ${{ matrix.project }}
+          SHARD: ${{ matrix.shard }}
+        run: pnpm --filter @vaipakam/alpha05 run e2e --project="${E2E_PROJECT}" --shard="${SHARD}/3"
 
       - name: Upload traces on failure
         if: failure()
@@ -183,6 +187,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Every shard passed
+        env:
+          E2E_RESULT: ${{ needs.e2e.result }}
         run: |
-          echo "desktop and phone, every shard: ${{ needs.e2e.result }}"
-          test "${{ needs.e2e.result }}" = "success"
+          echo "desktop and phone, every shard: ${E2E_RESULT}"
+          test "${E2E_RESULT}" = "success"

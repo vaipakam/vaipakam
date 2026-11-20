@@ -196,7 +196,7 @@ needers; everything else looked correct in a quick scan.
 ## Locale display flags (LanguagePicker visibility control)
 
 Two compile-time switches in
-[`frontend/src/i18n/localeConfig.ts`](../frontend/src/i18n/localeConfig.ts)
+[`frontend/src/i18n/localeConfig.ts`](../../apps/app/src/i18n/localeConfig.ts)
 control what the LanguagePicker dropdown advertises. Both are TypeScript
 constants — flip the value, rebuild, redeploy.
 
@@ -244,7 +244,7 @@ The picker reads `VISIBLE_LOCALES` (filtered list of entries with
 ## Placeholder locales (recognised but not translated)
 
 `SUPPORTED_LOCALES` in
-[`frontend/src/i18n/glossary.ts`](../frontend/src/i18n/glossary.ts)
+`frontend/src/i18n/glossary.ts`
 includes every locale code the URL router accepts. It is partitioned
 into two groups:
 

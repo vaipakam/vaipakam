@@ -272,6 +272,8 @@ export interface DeploymentFacets {
   integratorFacet?: HexAddress;
   standingOfferCheckFacet?: HexAddress;
   referralFacet?: HexAddress;
+  /** #3635 A / #3713 — the rate link and the warning band. */
+  rateLinkFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */
@@ -325,6 +327,11 @@ export interface Deployment {
    *  reads, over the guard's storage. Fixed in the guard's code: a new
    *  reader means a new guard. Recorded so the pair is visible together. */
   priceGuardReader?: HexAddress;
+  /** #3337 part 1 — the RateReference: the rate reference per series, read
+   *  through the registry's `RATE_REFERENCE` pointer (read the pointer, not
+   *  this key, to find the reference in force). Optional until each chain's
+   *  next fresh deploy writes it. */
+  rateReference?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;

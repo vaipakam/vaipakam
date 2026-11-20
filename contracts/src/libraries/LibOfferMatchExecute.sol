@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibTiming} from "./LibTiming.sol";
+import {RateLinkFacet} from "../facets/RateLinkFacet.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
@@ -260,6 +261,14 @@ library LibOfferMatchExecute {
             if (mr.errorCode == LibOfferMatch.MatchError.RateNoOverlap) {
                 revert RateNoOverlap();
             }
+            // #3635 A — a maker's linked rate limit cannot be read now
+            // (`RateLinkFacet.RateLinkUnavailable`, refusal 1 or 2).
+            if (mr.errorCode == LibOfferMatch.MatchError.ReferenceUnavailable) {
+                revert RateLinkFacet.RateLinkUnavailable(1);
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.ReferenceUnusual) {
+                revert RateLinkFacet.RateLinkUnavailable(2);
+            }
             if (mr.errorCode == LibOfferMatch.MatchError.CollateralBelowRequired) {
                 revert CollateralBelowRequired();
             }
@@ -377,6 +386,7 @@ library LibOfferMatchExecute {
         LibVaipakam.MatchOverride storage mo = s.matchOverride;
         mo.amount = mr.matchAmount;
         mo.rateBps = mr.matchRateBps;
+        mo.rateFromLink = mr.rateFromLink; // #3635 A
         mo.collateralAmount = mr.reqCollateral;
         mo.counterparty = s.offers[lenderOfferId].creator;
         mo.matcher = matcher;
