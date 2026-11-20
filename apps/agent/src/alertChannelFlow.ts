@@ -100,8 +100,18 @@ async function notifyOldChat(
     return false;
   }
   await deps.state.markNotified(ids, deps.now);
-  // The new chat is not linked yet, so it is not shown the phrase (#3346).
-  if (newChat) await deps.send(newChat.chatId, channelCopy.moveIncoming(newChat.locale, entries, when));
+  // The new chat is led by the phrase it was already told for this wallet,
+  // when it is linked on another network; a chat never told sees none (#3346).
+  if (newChat) {
+    await sendMarked(
+      deps,
+      newChat.chatId,
+      wallet,
+      chains.map((c) => c.chainId),
+      newChat.locale,
+      channelCopy.moveIncoming(newChat.locale, entries, when),
+    );
+  }
   return true;
 }
 

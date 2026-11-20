@@ -570,6 +570,23 @@ describe('the alert phrase in channel messages (#3346)', () => {
     expect(store.phraseMarksOf([{ wallet: W, chatId: '77', chainId: 84532 }])).toEqual([null]);
   });
 
+  it('a protected move to a chat already told on another network leads its notice with that phrase', async () => {
+    const { store, state } = harness();
+    store.recordChatType('42', true, 0);
+    store.recordChatType('77', true, 0);
+    link(store, 84532, '42');
+    link(store, 421614, '77');
+    store.setPhrase(W, null, 'blue heron', 1, 1);
+    const open = reader({ 84532: { enabled: false, delaySeconds: 0 }, 421614: { enabled: false, delaySeconds: 0 } });
+    await sendPhraseNotices(deps(state, open).d);
+    // Move protected 84532 from 42 to 77, which knows the phrase already.
+    const { d, sent } = deps(state, reader({ 84532: { enabled: true, delaySeconds: 2 * DAY }, 421614: { enabled: false, delaySeconds: 0 } }));
+    expect(await requestRelink(d, W, 84532, '77', 'en')).toBe('pending');
+    const toNew = sent.filter((m) => m.chat === '77');
+    expect(toNew).toHaveLength(1);
+    expect(toNew[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
+  });
+
   it('a group chat is never shown the phrase', async () => {
     const { store, state } = harness();
     store.recordChatType('42', true, 0);
