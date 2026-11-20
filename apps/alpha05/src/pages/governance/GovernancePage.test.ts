@@ -69,7 +69,7 @@ describe('GovernanceView', () => {
     expect(out).toContain('Nothing is queued on Base Sepolia.');
     expect(out).toContain('Read at block 123456');
     expect(out).toContain(
-      'A change queued now waits at least 7 days. Only lifting a pause, or an urgent fix the pause wallet has approved by its id, may wait 2 days instead.',
+      'A change queued now waits at least 7 days. Each change below shows its own wait. Only lifting a pause, or an urgent fix the pause wallet approved by id, may wait 2 days instead.',
     );
   });
 
