@@ -16,6 +16,7 @@ import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
+import { giftTransferred } from './giveLog';
 import { giveReceipt } from './giveReceipt';
 import { checkReceiver, giveBlockers, giveChangedBetween, readGiveReview, transferRefusal, type GiveReview, type ReceiverProblem } from './giveReview';
 
@@ -150,17 +151,24 @@ function GiveLoanFlow({ loanId, chain, own, meta, receiver, onClose }: GiveLoanP
       return sendWrite(config, { address: nft, abi: NFT, functionName: 'safeTransferFrom', args, chainId: chain.chainId, account });
     },
     unwind: async () => null,
-    measure: async (_receipt, at): Promise<LegOutcome[]> => {
+    // The gift is read from its own transaction's transfer log; who holds
+    // the token at the end of the block is said apart, since the receiver
+    // may already have passed it on.
+    measure: async (receipt, at): Promise<LegOutcome[]> => {
       if (!review) return [];
       const label = format('give.legMoved', { id: loanId.toString() });
+      if (!giftTransferred(receipt.logs, nft, account, review.receiver, review.tokenId)) return [{ status: 'not-done', label, reason: text('give.notMoved') }];
+      const legs: LegOutcome[] = [{ status: 'done', label }];
+      // A fact read after the gift, never a condition of it: a token the
+      // receiver already passed on is said, and a read that fails adds
+      // nothing, since the gift itself is settled by the log above.
       try {
         const holder = await at.read((c, b) => readLiveHolderOrNull(c, diamond, review.tokenId, b.blockNumber));
-        return holder !== null && holder.toLowerCase() === review.receiver.toLowerCase()
-          ? [{ status: 'done', label }]
-          : [{ status: 'not-done', label, reason: text('give.notMoved') }];
-      } catch (e) {
-        return [{ status: 'unknown', label, reason: refusalFromError(e).reason }];
+        if (holder !== null && holder.toLowerCase() !== review.receiver.toLowerCase()) legs.push({ status: 'done', label: format('give.heldAfterOther', { holder }) });
+      } catch {
+        /* the gift's outcome stands on its log */
       }
+      return legs;
     },
     release: async () => null,
   });
