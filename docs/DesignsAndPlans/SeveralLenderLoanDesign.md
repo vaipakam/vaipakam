@@ -57,7 +57,7 @@ That makes the build two steps, and the first is worth having on its own:
 ## 5. Opening
 
 - **An instant borrow** opens one loan with one part per source it fills from, in place of one loan per source. Each source is still checked by its own rules (a slot's rate, term, loan-to-value, health and exposure limits, its lending balance), a refusing source is still skipped and reported, and the borrow still reverts below the borrower's stated least. Collateral is one amount for the loan.
-- **A rate auction's settle** keeps the auction's own rules (`RateAuctionDesign.md`, 4.5): anyone settles bids a few at a time until the end time, and a bid that cannot open is skipped, reported and may be tried again. Each settling transaction opens one loan, with one part per bid it settles, each at its own bid rate, and never more parts than rule 9 allows. Bids settled by a later transaction start at a different time, so they open another loan (rule 10). An auction therefore ends with one loan per settling transaction, not one per winning bid and not one for the whole auction. Its admission limits, its retry and its end time do not change.
+- **A rate auction's settle** keeps the auction's own rules (`RateAuctionDesign.md`, 4.5): anyone settles bids a few at a time until the end time, and a bid that cannot open is skipped, reported and may be tried again. Each settling transaction opens one loan, with one part per bid it settles, every part at the auction's one clearing rate (`RateAuctionDesign.md`, 4.4), and never more parts than rule 9 allows. A bid below the clearing step is paid the clearing rate, as today; a part never carries the rate a bidder offered. Bids settled by a later transaction start at a different time, so they open another loan (rule 10). An auction therefore ends with one loan per settling transaction, not one per winning bid and not one for the whole auction. Its admission limits, its retry and its end time do not change.
 - **A borrow request filled from several sources in one transaction** opens one loan with a part per source.
 - **Adding a part later** to an open loan is not offered. A later fill or a later borrow starts at a different time, so it is a new loan (rule 10), and it may join the same borrowing.
 
@@ -65,7 +65,7 @@ That makes the build two steps, and the first is worth having on its own:
 
 ## 6. The rate
 
-Each part keeps its source's own rate, as each loan does today. The borrower pays the sum, and the loan shows the weighted average.
+Each part carries the rate its loan would carry today: a slot's or an offer's own rate in an instant borrow, and the one clearing rate in an auction, where every part's rate is therefore the same. The borrower pays the sum, and the loan shows the weighted average.
 
 - **Fixed rates.** Each part accrues its own interest, on its own principal outstanding, at its own rate, in its own interest record, exactly as a loan does today. Nothing is divided by a weight: the interest the loan owes is the sum of what the parts owe, and a payment of interest goes to each part by what that part is owed (rule 3).
 - **Floating rates.** A part's rate is the reference plus that part's margin, accrued the same way on its own principal.
@@ -151,7 +151,7 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 9. **A partial liquidation with parts at different rates** books each part alone, leaves each part's principal as its own loan's would be, and the next repayment, top-up and sale still satisfy tests 1 and 5.
 10. **A claim after a failed sale** by one part's holder separates that part and finalises only its loan; the other parts stay in the fallback state and the borrower can still cure them.
 11. **At the borrowing's bound**, a loan with N parts counts as N; separating a part is never refused by the bound, and an add or a gather that would pass it is refused as today.
-12. **An auction settled over several transactions** opens one loan per transaction, each inside the bound on parts; a bid skipped in one transaction and settled in a later one is a part of the later loan.
+12. **An auction settled over several transactions** opens one loan per transaction, each inside the bound on parts and every part at the clearing rate, whatever rate its bid offered; a bid skipped in one transaction and settled in a later one is a part of the later loan.
 
 ## 14. Open items for the builder to raise, not decide silently
 
