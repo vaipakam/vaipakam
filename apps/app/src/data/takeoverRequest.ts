@@ -20,7 +20,15 @@
  *   - at least the loan's collateral;
  *   - a term that ends no later than the loan's due date. That bound
  *     moves with time, so a request is usable only until its term no
- *     longer fits: the request's own expiry is set to that moment.
+ *     longer fits: the request's own expiry is set to that moment;
+ *   - a term no longer than the platform's longest offer term
+ *     (`maxOfferDurationDays`);
+ *   - a usable window: the borrower can use a request only once the
+ *     platform's minimum offer age has passed (`getMinTermsAgeSec`), so
+ *     the expiry must leave at least {@link TAKEOVER_MIN_USABLE_SEC} after
+ *     that wait;
+ *   - a rate outside the warning band around the term average carries
+ *     the requester's own acknowledgement, or posting is refused.
  *
  * Scope: ERC-20 lending with ERC-20 collateral. An NFT-collateral loan
  * needs the same token kind and a chosen token, and a rental is priced
@@ -51,12 +59,29 @@ export type TakeoverScopeRefusal = 'not-active' | 'rental' | 'nft-collateral' | 
 
 const DAY = 86_400n;
 
-/** The longest whole-day term a request can carry now: the days left
- *  before the loan's due date (`maturity`, the loan clock's effective
- *  one), rounded down, so the request's term never ends after it. */
-export function maxTakeoverDays(maturity: bigint, chainNow: bigint): number {
-  if (maturity <= chainNow) return 0;
-  return Number((maturity - chainNow) / DAY);
+/** The shortest time a request stays usable once the minimum offer age has
+ *  passed: one hour, so the borrower has a real chance to use it. */
+export const TAKEOVER_MIN_USABLE_SEC = 3_600n;
+
+/** The platform settings a request's term is bounded by, read from the
+ *  Diamond (never assumed). */
+export interface TakeoverLimits {
+  /** The longest term any offer may carry (`maxOfferDurationDays`). */
+  maxOfferDurationDays: number;
+  /** How long after posting a request can first be used (`getMinTermsAgeSec`). */
+  minTermsAgeSec: bigint;
+}
+
+/** The longest whole-day term a request can carry now. Its expiry
+ *  ({@link takeoverRequestExpiry}) must leave the minimum offer age plus
+ *  {@link TAKEOVER_MIN_USABLE_SEC} from now, so the term ends that much
+ *  before the loan's due date (`maturity`, the loan clock's effective one),
+ *  rounded down to whole days, and is never longer than the platform's
+ *  longest offer term. */
+export function maxTakeoverDays(maturity: bigint, chainNow: bigint, limits: TakeoverLimits): number {
+  const room = maturity - chainNow - limits.minTermsAgeSec - TAKEOVER_MIN_USABLE_SEC;
+  if (room < DAY) return 0;
+  return Math.min(Number(room / DAY), limits.maxOfferDurationDays);
 }
 
 /** The last moment a request with this term can be used: after it,
@@ -70,11 +95,12 @@ export function takeoverScope(
   loan: TakeoverSourceLoan,
   maturity: bigint,
   chainNow: bigint,
+  limits: TakeoverLimits,
 ): TakeoverScopeRefusal | null {
   if (loan.status !== 0) return 'not-active';
   if (loan.assetType !== AssetType.ERC20) return 'rental';
   if (loan.collateralAssetType !== AssetType.ERC20) return 'nft-collateral';
-  if (maxTakeoverDays(maturity, chainNow) < 1) return 'no-term-left';
+  if (maxTakeoverDays(maturity, chainNow, limits) < 1) return 'no-term-left';
   return null;
 }
 
@@ -87,6 +113,9 @@ export interface TakeoverTerms {
   /** The request's own expiry, from {@link takeoverRequestExpiry}. */
   expiresAt: bigint;
   consent: boolean;
+  /** The requester confirmed a rate outside the warning band around the
+   *  term average (`RateLinkFacet.rateWarnings`). Needed only then. */
+  rateFarAcknowledged: boolean;
 }
 
 /** Why the entered terms cannot make a usable request, or null. */
@@ -97,11 +126,12 @@ export function checkTakeoverTerms(
   terms: Pick<TakeoverTerms, 'rateBps' | 'durationDays' | 'collateralAmount'>,
   maturity: bigint,
   chainNow: bigint,
+  limits: TakeoverLimits,
 ): TakeoverTermsRefusal | null {
   if (!Number.isInteger(terms.rateBps) || terms.rateBps < 0 || terms.rateBps > MAX_INTEREST_BPS) {
     return 'rate';
   }
-  const maxDays = maxTakeoverDays(maturity, chainNow);
+  const maxDays = maxTakeoverDays(maturity, chainNow, limits);
   if (!Number.isInteger(terms.durationDays) || terms.durationDays < 1 || terms.durationDays > maxDays) {
     return 'duration';
   }
@@ -155,6 +185,6 @@ export function toTakeoverOfferPayload(loan: TakeoverSourceLoan, terms: Takeover
     integrator: ZERO_ADDRESS,
     linkKind: 0,
     linkMarginBps: 0,
-    rateFarFromAverageAcknowledged: false,
+    rateFarFromAverageAcknowledged: terms.rateFarAcknowledged,
   };
 }

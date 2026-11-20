@@ -16,6 +16,11 @@
  * rate is the requester's own, and the request's expiry is the last moment
  * its term still ends by the loan's due date.
  *
+ * The term is bounded by the platform's longest offer term and leaves the
+ * minimum offer age plus an hour before the request expires, both read
+ * from the Diamond. A rate outside the warning band around the term
+ * average is shown as such, and the requester confirms it or changes it.
+ *
  * Scope: ERC-20 lending with ERC-20 collateral (see the data module); the
  * card says so for any other loan instead of offering a request that
  * could not be built.
@@ -32,6 +37,7 @@ import { ensureAllowance, type TokenMeta } from '../contracts/erc20';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readTxValidUntil } from '../contracts/txDeadline';
 import { loanEndTimeOf, readLoanLive, type LoanLive } from '../contracts/loanLive';
+import { readRateBandLive, readTakeoverLimitsLive } from '../contracts/takeoverRequestReads';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
   checkTakeoverTerms,
@@ -109,6 +115,7 @@ export function TakeoverRequestFlow({
   const [rateInput, setRateInput] = useState('');
   const [durationInput, setDurationInput] = useState('');
   const [collateralInput, setCollateralInput] = useState('');
+  const [rateFarAck, setRateFarAck] = useState(false);
 
   // The loan as the chain has it, read only once the visitor opens the
   // form (a page visit by itself costs no reads).
@@ -117,19 +124,21 @@ export function TakeoverRequestFlow({
     enabled: open && Boolean(publicClient && walletChain),
     staleTime: 30_000,
     queryFn: async () => {
-      const [live, block] = await Promise.all([
+      const [live, block, limits] = await Promise.all([
         readLoanLive(publicClient!, walletChain!.diamondAddress, row.loanId),
         publicClient!.getBlock({ blockTag: 'latest' }),
+        readTakeoverLimitsLive(publicClient!, walletChain!.diamondAddress),
       ]);
-      return { live, chainNow: block.timestamp };
+      return { live, chainNow: block.timestamp, limits };
     },
   });
   const live = liveQuery.data?.live;
+  const limits = liveQuery.data?.limits;
   const chainNow = liveQuery.data?.chainNow ?? 0n;
   const source = live ? sourceOf(live, row) : null;
   const maturity = live ? loanEndTimeOf(live, chainNow) : 0n;
-  const scope = source ? takeoverScope(source, maturity, chainNow) : null;
-  const maxDays = live ? maxTakeoverDays(maturity, chainNow) : 0;
+  const scope = source && limits ? takeoverScope(source, maturity, chainNow, limits) : null;
+  const maxDays = live && limits ? maxTakeoverDays(maturity, chainNow, limits) : 0;
 
   const pSym = principalMeta.symbol;
   const pDec = principalMeta.decimals;
@@ -148,16 +157,31 @@ export function TakeoverRequestFlow({
   const durationDays = /^\d+$/.test(durationInput) ? parseInt(durationInput, 10) : null;
   const collateralAmount = cDec === undefined ? null : exactUnitsOrNull(collateralInput, cDec);
   const termsRefusal: TakeoverTermsRefusal | 'incomplete' | null =
-    !source || rateBps === null || durationDays === null || collateralAmount === null
+    !source || !limits || rateBps === null || durationDays === null || collateralAmount === null
       ? 'incomplete'
-      : checkTakeoverTerms(source, { rateBps, durationDays, collateralAmount }, maturity, chainNow);
+      : checkTakeoverTerms(source, { rateBps, durationDays, collateralAmount }, maturity, chainNow, limits);
   const expiresAt =
     durationDays !== null && durationDays >= 1 ? takeoverRequestExpiry(maturity, durationDays) : null;
+
+  // Where the entered rate sits against the warning band for the entered
+  // term: the same check posting applies. Read once the terms are complete.
+  const bandQuery = useQuery({
+    queryKey: ['takeoverRequestRateBand', walletChain?.chainId, live?.principalAsset, durationDays, rateBps],
+    enabled: termsRefusal === null && Boolean(publicClient && walletChain && live),
+    staleTime: 30_000,
+    queryFn: () =>
+      readRateBandLive(publicClient!, walletChain!.diamondAddress, live!.principalAsset, durationDays!, rateBps!),
+  });
+  const band = termsRefusal === null ? bandQuery.data : undefined;
+  // The terms are ready to review only once the band is known, and a rate
+  // outside it is confirmed.
+  const bandReady = band !== undefined && (!band.far || rateFarAck);
 
   // Consent covers exactly what was reviewed.
   const consent = useReviewConsent([
     row.loanId,
     rateBps,
+    rateFarAck,
     durationDays,
     collateralAmount,
     expiresAt,
@@ -169,6 +193,8 @@ export function TakeoverRequestFlow({
 
   function setTerm(setter: (v: string) => void, value: string) {
     setter(value);
+    // A confirmation covers the rate and term it was given for.
+    setRateFarAck(false);
     setConfirmOpen(false);
   }
 
@@ -185,22 +211,40 @@ export function TakeoverRequestFlow({
       await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address);
       // Re-read the loan and judge the reviewed terms against it now: the
       // collateral it holds, its status and its due date can all move.
-      const [fresh, block] = await Promise.all([
+      // The platform's term bounds and the rate band are read again too.
+      const [fresh, block, freshLimits] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         publicClient.getBlock({ blockTag: 'latest' }),
+        readTakeoverLimitsLive(publicClient, walletChain.diamondAddress),
       ]);
       const freshSource = sourceOf(fresh, row);
       const freshMaturity = loanEndTimeOf(fresh, block.timestamp);
-      const freshScope = takeoverScope(freshSource, freshMaturity, block.timestamp);
+      const freshScope = takeoverScope(freshSource, freshMaturity, block.timestamp, freshLimits);
       if (freshScope) throw new Error(scopeText(freshScope));
       const freshExpiry = takeoverRequestExpiry(freshMaturity, durationDays);
       if (
-        checkTakeoverTerms(freshSource, { rateBps, durationDays, collateralAmount }, freshMaturity, block.timestamp) ||
+        checkTakeoverTerms(
+          freshSource,
+          { rateBps, durationDays, collateralAmount },
+          freshMaturity,
+          block.timestamp,
+          freshLimits,
+        ) ||
         fresh.principal !== live?.principal ||
-        freshExpiry !== expiresAt ||
-        freshExpiry <= block.timestamp
+        freshExpiry !== expiresAt
       ) {
         void queryClient.invalidateQueries({ queryKey: ['takeoverRequestLoan'] });
+        throw new Error(copy.match.termsChanged);
+      }
+      const freshBand = await readRateBandLive(
+        publicClient,
+        walletChain.diamondAddress,
+        freshSource.principalAsset,
+        durationDays,
+        rateBps,
+      );
+      if (freshBand.far && !rateFarAck) {
+        void queryClient.invalidateQueries({ queryKey: ['takeoverRequestRateBand'] });
         throw new Error(copy.match.termsChanged);
       }
       const payload = toTakeoverOfferPayload(freshSource, {
@@ -209,6 +253,8 @@ export function TakeoverRequestFlow({
         collateralAmount,
         expiresAt: freshExpiry,
         consent: true,
+        // Sent only for a rate the band check flags, and only as confirmed.
+        rateFarAcknowledged: freshBand.far && rateFarAck,
       });
       // Refuse before the approval: this page is exempt from the Terms
       // gate so a borrower can repay, but posting a request is not an exit.
@@ -275,7 +321,7 @@ export function TakeoverRequestFlow({
         <div className="banner banner-info" role="status">
           <span className="banner-body">{scopeText(scope)}</span>
         </div>
-      ) : !collateralMeta ? (
+      ) : !collateralMeta || !limits ? (
         <p className="muted">{copy.takeoverRequest.reading}</p>
       ) : (
         <div>
@@ -333,6 +379,33 @@ export function TakeoverRequestFlow({
           {expiresAt !== null && termsRefusal === null ? (
             <p className="muted">{copy.takeoverRequest.usableUntil(formatDateTime(Number(expiresAt)))}</p>
           ) : null}
+          {termsRefusal === null && bandQuery.isError ? (
+            <p className="field-hint" role="alert" style={{ color: 'var(--danger)' }}>
+              {copy.takeoverRequest.rateBandUnavailable}
+            </p>
+          ) : null}
+          {band?.far ? (
+            <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
+              <span className="banner-body">
+                {(band.above ? copy.takeoverRequest.rateFarAbove : copy.takeoverRequest.rateFarBelow)(
+                  formatBpsAsPercent(band.averageBps),
+                  String(durationDays ?? ''),
+                )}
+              </span>
+              <label className="cluster" style={{ marginTop: 8, alignItems: 'flex-start' }}>
+                <input
+                  type="checkbox"
+                  checked={rateFarAck}
+                  onChange={(e) => {
+                    setRateFarAck(e.target.checked);
+                    setConfirmOpen(false);
+                  }}
+                  style={{ marginTop: 4 }}
+                />
+                <span>{copy.takeoverRequest.rateFarAck}</span>
+              </label>
+            </div>
+          ) : null}
           <p className="muted">
             {copy.takeoverRequest.waitNote} {copy.takeoverRequest.keepsSettings}
           </p>
@@ -341,7 +414,7 @@ export function TakeoverRequestFlow({
               type="button"
               className="btn btn-secondary"
               style={{ marginTop: 12 }}
-              disabled={busy || !walletReady || termsRefusal !== null || flowDisabled('post-offer')}
+              disabled={busy || !walletReady || termsRefusal !== null || !bandReady || flowDisabled('post-offer')}
               onClick={() => setConfirmOpen(true)}
             >
               {copy.takeoverRequest.action}
@@ -363,7 +436,9 @@ export function TakeoverRequestFlow({
                 confirmLabel={copy.takeoverRequest.confirm}
                 onBack={() => setConfirmOpen(false)}
                 onConfirm={() => void submit()}
-                disabled={!walletReady || !consent.given || termsRefusal !== null || flowDisabled('post-offer')}
+                disabled={
+                  !walletReady || !consent.given || termsRefusal !== null || !bandReady || flowDisabled('post-offer')
+                }
                 data={{
                   youReceive: copy.takeoverRequest.receiptReceive,
                   youLock: copy.takeoverRequest.receiptLock(yourCollateralStr),

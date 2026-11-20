@@ -2033,7 +2033,8 @@ const copySource = {
     notActive: 'This loan is no longer open, so it can’t be taken over.',
     rental: 'Requests for rentals can’t be posted here yet.',
     nftCollateral: 'This loan is secured by an NFT. Requests for it can’t be posted here yet.',
-    noTermLeft: 'Less than a day is left before this loan’s due date, so a request could not be used.',
+    noTermLeft:
+      'Too little time is left before this loan’s due date. A request needs a term of at least a day, and must stay usable for at least an hour after the borrower’s waiting period.',
     factPrincipal: tmpl('Debt you would take on: {{amount}}', ['amount']),
     factRate: tmpl('The loan’s current yearly rate: {{rate}}', ['rate']),
     factDue: tmpl('The loan’s due date: {{date}}', ['date']),
@@ -2042,7 +2043,10 @@ const copySource = {
     durationLabel: 'Term (days)',
     collateralLabel: tmpl('Collateral you lock ({{symbol}})', ['symbol']),
     rateRange: 'Enter a yearly rate from 0% to 100%.',
-    durationRange: tmpl('Enter a whole number of days from 1 to {{max}}. The term must end by the loan’s due date.', ['max']),
+    durationRange: tmpl(
+      'Enter a whole number of days from 1 to {{max}}. The term must end by the loan’s due date, leave the borrower time to use the request, and be no longer than the platform allows.',
+      ['max'],
+    ),
     collateralMin: tmpl('Lock at least {{min}}, the collateral securing the loan now.', ['min']),
     rateNote:
       'The loan carries your rate after the handover. If it is below the loan’s current rate, the borrower pays the lender the difference when handing over. The borrower decides whether to use your request.',
@@ -2050,6 +2054,16 @@ const copySource = {
       'Your request can be used until {{date}}. After that its term would end after the loan’s due date, so it can no longer be used.',
       ['date'],
     ),
+    rateBandUnavailable: 'We couldn’t check your rate against the average for this term. Try again in a moment.',
+    rateFarAbove: tmpl(
+      'Your rate is well above the average rate on the platform for a {{days}}-day term ({{average}} a year).',
+      ['average', 'days'],
+    ),
+    rateFarBelow: tmpl(
+      'Your rate is well below the average rate on the platform for a {{days}}-day term ({{average}} a year).',
+      ['average', 'days'],
+    ),
+    rateFarAck: 'I confirm this rate. Without this, the request can’t be posted.',
     waitNote: 'The borrower can use it only after a short waiting period the platform sets.',
     keepsSettings:
       'The loan keeps its own repayment settings (payment schedule, partial repayment and interest rules).',
