@@ -47,6 +47,8 @@ import { LegalGate } from './LegalGate';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
 import { SeoMeta } from './SeoMeta';
+import { ClosedNetworkBanner } from './ClosedNetworkBanner';
+import { isOpeningRoute } from '../lib/closedNetworkRoutes';
 // UX2-008 — SanctionsBanner is the shell's ONLY eager Diamond-ABI
 // consumer (it reads the on-chain sanctions oracle). Loading it lazily
 // keeps the ~761 kB contract-ABI chunk off a DISCONNECTED first paint
@@ -55,6 +57,11 @@ import { SeoMeta } from './SeoMeta';
 // connection-gated, so a beat's delay before it can appear is
 // invisible — while a connected user (who needs the ABI for reads
 // anyway) pulls the chunk as before.
+// #3858 — the closed-network view reads the Diamond, so it is a lazy chunk
+// like the routes it stands in for.
+const ClosedNetworkView = lazy(() =>
+  import('./ClosedNetworkView').then((m) => ({ default: m.ClosedNetworkView })),
+);
 const SanctionsBanner = lazy(() =>
   import('./SanctionsBanner').then((m) => ({ default: m.SanctionsBanner })),
 );
@@ -198,6 +205,12 @@ export function AppShell() {
 
   // On phones the "More" tab fronts every destination without a tab of
   // its own — highlight it on those pages so the user is never "nowhere".
+  // #3858 — on a Closed network every screen that opens a position is
+  // replaced by the closed view. It is rendered OUTSIDE the Terms gate: it
+  // offers only exits, which the write gate never refuses, and a holder who
+  // has not accepted new Terms must still be able to take their money out.
+  const closedView = readChain.closed && isOpeningRoute(pathname);
+
   const moreIsActive = [
     '/rent',
     '/claims',
@@ -316,6 +329,7 @@ export function AppShell() {
 
         <main className="shell-main" id="main-content" tabIndex={-1} ref={mainRef}>
           <NetworkBanner />
+          <ClosedNetworkBanner />
           {/* UX2-008 — gate on connection, not just lazy render:
               `React.lazy` fetches the SanctionsBanner chunk (→ the ~761
               kB Diamond ABI) the moment it MOUNTS, so an unconditional
@@ -368,11 +382,17 @@ export function AppShell() {
               were not there. */}
           <div data-route-outlet="" style={{ display: 'contents' }}>
             <ErrorBoundary resetKey={pathname + search}>
-              <LegalGate>
+              {closedView ? (
                 <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
-                  <Outlet />
+                  <ClosedNetworkView />
                 </Suspense>
-              </LegalGate>
+              ) : (
+                <LegalGate>
+                  <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
+                    <Outlet />
+                  </Suspense>
+                </LegalGate>
+              )}
             </ErrorBoundary>
           </div>
         </main>

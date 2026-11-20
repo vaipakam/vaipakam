@@ -508,6 +508,28 @@
       "switchNetwork": "Cambiar de red",
       "switchToChain": "Cambiar a {{chain}}"
     },
+    "closedNetwork": {
+      "banner": "{{chain}} está cerrada. Ya no se pueden abrir nuevos préstamos, ofertas ni espacios de Auto-lend en ella. Retirar de tu bóveda, reclamar, cancelar una oferta y sacar capital de un espacio siguen disponibles, sin fecha de fin.",
+      "title": "Lo que aún tienes en {{chain}}",
+      "lede": "Todo lo que aparece en esta página se lee directamente de la red.",
+      "connectPrompt": "Conecta la billetera que tiene posiciones en esta red para ver lo que aún queda ahí.",
+      "vaultTitle": "Tu bóveda",
+      "vaultBody": "El saldo de tu bóveda sigue siendo tuyo. Abre tu bóveda para verlo y retirarlo.",
+      "openVault": "Abrir tu bóveda",
+      "claimsTitle": "Reclamaciones",
+      "claimsBody": "El dinero de los préstamos que han terminado se recoge en la página Reclamaciones.",
+      "openClaims": "Abrir Reclamaciones",
+      "offersTitle": "Tus ofertas abiertas",
+      "offersNone": "No tienes ofertas abiertas en esta red.",
+      "offerRow": "Oferta n.º {{id}}",
+      "cancelOffer": "Cancelar oferta",
+      "slotsTitle": "Capital en tus espacios de Auto-lend",
+      "slotsNone": "Ninguno de tus espacios de Auto-lend en esta red tiene capital.",
+      "slotRow": "{{amount}} {{symbol}} en el espacio {{slot}}",
+      "takeCapitalOut": "Sacar el capital",
+      "slotsMore": "Aquí se muestran los primeros {{shown}} de tus {{total}} espacios en esta red.",
+      "unavailable": "No se pudo leer de la red en este momento. Inténtalo de nuevo en un momento."
+    },
     "checks": {
       "sanctionsChecking": "Comprobando estado de cumplimiento…",
       "walletConnected": "Billetera conectada",

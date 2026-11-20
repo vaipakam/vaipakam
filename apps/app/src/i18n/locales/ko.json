@@ -508,6 +508,28 @@
       "switchNetwork": "네트워크 전환",
       "switchToChain": "{{chain}}로 전환"
     },
+    "closedNetwork": {
+      "banner": "{{chain}}이(가) 종료되었습니다. 이 네트워크에서는 더 이상 새 대출, 오퍼, Auto-lend 슬롯을 열 수 없습니다. 볼트 출금, 청구, 오퍼 취소, 슬롯 자본 인출은 종료일 없이 계속 이용할 수 있습니다.",
+      "title": "{{chain}}에 아직 보유한 것",
+      "lede": "이 페이지의 모든 내용은 네트워크에서 직접 읽어 옵니다.",
+      "connectPrompt": "이 네트워크에 포지션이 있는 지갑을 연결하면 아직 남아 있는 것을 볼 수 있습니다.",
+      "vaultTitle": "내 볼트",
+      "vaultBody": "볼트 잔액은 계속 회원님의 것입니다. 볼트를 열어 확인하고 출금하세요.",
+      "openVault": "볼트 열기",
+      "claimsTitle": "청구",
+      "claimsBody": "종료된 대출의 자금은 청구 페이지에서 받습니다.",
+      "openClaims": "청구 열기",
+      "offersTitle": "열려 있는 내 오퍼",
+      "offersNone": "이 네트워크에 열려 있는 오퍼가 없습니다.",
+      "offerRow": "오퍼 #{{id}}",
+      "cancelOffer": "오퍼 취소",
+      "slotsTitle": "Auto-lend 슬롯의 자본",
+      "slotsNone": "이 네트워크의 Auto-lend 슬롯 중 자본이 있는 슬롯이 없습니다.",
+      "slotRow": "슬롯 {{slot}}에 {{amount}} {{symbol}}",
+      "takeCapitalOut": "자본 인출",
+      "slotsMore": "이 네트워크의 슬롯 {{total}}개 중 처음 {{shown}}개를 보여 줍니다.",
+      "unavailable": "지금은 네트워크에서 읽을 수 없습니다. 잠시 후 다시 시도하세요."
+    },
     "checks": {
       "sanctionsChecking": "컴플라이언스 상태 확인 중…",
       "walletConnected": "월렛 연결됨",

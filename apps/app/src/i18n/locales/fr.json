@@ -508,6 +508,28 @@
       "switchNetwork": "Changer de réseau",
       "switchToChain": "Passer à {{chain}}"
     },
+    "closedNetwork": {
+      "banner": "{{chain}} est fermé. Il n’est plus possible d’y ouvrir de nouveaux prêts, offres ou emplacements Auto-lend. Retirer de votre coffre, réclamer, annuler une offre et retirer le capital d’un emplacement restent possibles, sans date de fin.",
+      "title": "Ce que vous détenez encore sur {{chain}}",
+      "lede": "Tout ce qui figure sur cette page est lu directement sur le réseau.",
+      "connectPrompt": "Connectez le portefeuille qui détient des positions sur ce réseau pour voir ce qui s’y trouve encore.",
+      "vaultTitle": "Votre coffre",
+      "vaultBody": "Le solde de votre coffre vous appartient. Ouvrez votre coffre pour le voir et retirer.",
+      "openVault": "Ouvrir votre coffre",
+      "claimsTitle": "Réclamations",
+      "claimsBody": "L’argent des prêts terminés se récupère sur la page Réclamations.",
+      "openClaims": "Ouvrir Réclamations",
+      "offersTitle": "Vos offres ouvertes",
+      "offersNone": "Vous n’avez aucune offre ouverte sur ce réseau.",
+      "offerRow": "Offre n° {{id}}",
+      "cancelOffer": "Annuler l’offre",
+      "slotsTitle": "Capital dans vos emplacements Auto-lend",
+      "slotsNone": "Aucun de vos emplacements Auto-lend sur ce réseau ne contient de capital.",
+      "slotRow": "{{amount}} {{symbol}} dans l’emplacement {{slot}}",
+      "takeCapitalOut": "Retirer le capital",
+      "slotsMore": "Cette liste montre les {{shown}} premiers de vos {{total}} emplacements sur ce réseau.",
+      "unavailable": "Impossible de lire ces données sur le réseau pour l’instant. Réessayez dans un instant."
+    },
     "checks": {
       "sanctionsChecking": "Vérification du statut de conformité…",
       "walletConnected": "Portefeuille connecté",

@@ -508,6 +508,28 @@
       "switchNetwork": "Netzwerk wechseln",
       "switchToChain": "Zu {{chain}} wechseln"
     },
+    "closedNetwork": {
+      "banner": "{{chain}} ist geschlossen. Neue Kredite, Angebote und Auto-lend-Plätze können dort nicht mehr eröffnet werden. Abhebungen aus Ihrem Tresor, Ansprüche, das Stornieren eines Angebots und das Entnehmen von Kapital aus einem Platz bleiben ohne Enddatum möglich.",
+      "title": "Was Sie auf {{chain}} noch halten",
+      "lede": "Alles auf dieser Seite wird direkt aus dem Netzwerk gelesen.",
+      "connectPrompt": "Verbinden Sie die Wallet mit Positionen in diesem Netzwerk, um zu sehen, was dort noch liegt.",
+      "vaultTitle": "Ihr Tresor",
+      "vaultBody": "Ihr Tresorguthaben gehört weiterhin Ihnen. Öffnen Sie Ihren Tresor, um es zu sehen und abzuheben.",
+      "openVault": "Tresor öffnen",
+      "claimsTitle": "Ansprüche",
+      "claimsBody": "Geld aus beendeten Krediten wird auf der Seite Ansprüche abgeholt.",
+      "openClaims": "Ansprüche öffnen",
+      "offersTitle": "Ihre offenen Angebote",
+      "offersNone": "Sie haben in diesem Netzwerk keine offenen Angebote.",
+      "offerRow": "Angebot Nr. {{id}}",
+      "cancelOffer": "Angebot stornieren",
+      "slotsTitle": "Kapital in Ihren Auto-lend-Plätzen",
+      "slotsNone": "Keiner Ihrer Auto-lend-Plätze in diesem Netzwerk enthält Kapital.",
+      "slotRow": "{{amount}} {{symbol}} in Platz {{slot}}",
+      "takeCapitalOut": "Kapital entnehmen",
+      "slotsMore": "Hier stehen die ersten {{shown}} Ihrer {{total}} Plätze in diesem Netzwerk.",
+      "unavailable": "Das konnte gerade nicht aus dem Netzwerk gelesen werden. Versuchen Sie es gleich noch einmal."
+    },
     "checks": {
       "sanctionsChecking": "Compliance-Status wird geprüft…",
       "walletConnected": "Wallet verbunden",

@@ -2019,3 +2019,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** Add a fork drive with no token registered when the VPFI surface next gets a spec: assert the banner, and that no tier row or explainer renders.
 
+## A Closed network (#3858)
+<a id="cov-closed-network"></a>
+
+**Journey.** A network is Closed when its deployment record carries `networkState: 'closed'` (written in a reviewed commit once the chain passes the Closed test, NetworkWindDownDesign section 7). On such a network the app replaces the guided start, borrow, lend, rent, the offer book, the marketplace and the faucet with the closed view. The view reads the wallet's open offers (`getUserActiveOffers`) and its Auto-lend slots (`getLenderIntentsByOwner`) straight from the Diamond, offers Cancel (`cancelOffer`) and Take capital out (`withdrawLenderIntentCapital`, now on the Terms exit list), and links to the vault and Claims pages for withdrawing and claiming. It sits outside the Terms gate because it offers only exits. Every screen on a Closed network shows a notice saying nothing new opens there and the ways out stay available with no end date.
+
+**Tier.** CI (unit): the route rule and the slot filter. The view itself is not yet driven.
+
+**Gap.** No network is Closed, and the fork fixture writes an open record. Add a fork drive that marks the fixture's record closed, then asserts the notice, the closed view on `/` and `/borrow`, that `/vault` and `/claims` still render, and that Cancel and Take capital out send.
+

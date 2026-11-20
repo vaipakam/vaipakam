@@ -508,6 +508,28 @@
       "switchNetwork": "ネットワークを切り替え",
       "switchToChain": "{{chain}} に切り替え"
     },
+    "closedNetwork": {
+      "banner": "{{chain}} はクローズされました。このネットワークでは新しいローン、オファー、Auto-lend スロットを開けません。保管庫からの引き出し、請求、オファーのキャンセル、スロットからの資金の引き出しは、期限なく引き続き利用できます。",
+      "title": "{{chain}} にまだ保有しているもの",
+      "lede": "このページの内容はすべてネットワークから直接読み取っています。",
+      "connectPrompt": "このネットワークでポジションを持つウォレットを接続すると、まだ残っているものを確認できます。",
+      "vaultTitle": "あなたの保管庫",
+      "vaultBody": "保管庫の残高は引き続きあなたのものです。保管庫を開いて確認し、引き出してください。",
+      "openVault": "保管庫を開く",
+      "claimsTitle": "請求",
+      "claimsBody": "終了したローンの資金は請求ページで受け取ります。",
+      "openClaims": "請求を開く",
+      "offersTitle": "公開中のオファー",
+      "offersNone": "このネットワークに公開中のオファーはありません。",
+      "offerRow": "オファー #{{id}}",
+      "cancelOffer": "オファーをキャンセル",
+      "slotsTitle": "Auto-lend スロット内の資金",
+      "slotsNone": "このネットワークの Auto-lend スロットに資金はありません。",
+      "slotRow": "スロット {{slot}} に {{amount}} {{symbol}}",
+      "takeCapitalOut": "資金を引き出す",
+      "slotsMore": "このネットワークにある {{total}} 個のスロットのうち、最初の {{shown}} 個を表示しています。",
+      "unavailable": "現在ネットワークから読み取れませんでした。しばらくしてからもう一度お試しください。"
+    },
     "checks": {
       "sanctionsChecking": "コンプライアンス状態を確認中…",
       "walletConnected": "ウォレット接続済み",

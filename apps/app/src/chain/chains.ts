@@ -10,7 +10,7 @@
  * This intentionally carries far less than apps/defi's ChainConfig —
  * app adds fields when a page needs them, not before.
  */
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { getDeployment, isClosedNetwork } from '@vaipakam/contracts/deployments';
 import { positionNftSurface, type PositionNftSurface } from '@vaipakam/lib/positionNft';
 import { isMainnetChain, rpcEndpointsFor, wsUrlFor, type RpcEndpoint } from '../lib/endpoints';
 
@@ -97,6 +97,10 @@ export interface SupportedChain {
    *  without `positionNFT` (#3321). */
   positionNft: PositionNftSurface;
   deployBlock: number;
+  /** #3858 — the deployment record says this network is Closed: nothing
+   *  can be opened on it, and the app serves the closed view in place of
+   *  every screen that opens a position. Its ways out stay available. */
+  closed: boolean;
 }
 
 /** Every chain with a live Diamond, in display order. */
@@ -122,6 +126,7 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
         diamondAddress: deployment.diamond as `0x${string}`,
         positionNft: positionNftSurface(deployment),
         deployBlock: deployment.deployBlock ?? 0,
+        closed: isClosedNetwork(deployment),
       },
     ];
   },

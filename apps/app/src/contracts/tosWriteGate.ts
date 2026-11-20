@@ -108,6 +108,9 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // to a standing commitment they are no longer allowed to manage.
   'cancelOffer',
   'cancelSignedOffer',
+  // Taking un-lent capital back out of an Auto-lend slot (#3858): the
+  // owner's own balance, the way out the closed-network view offers.
+  'withdrawLenderIntentCapital',
   'teardownStaleSaleListing',
   // Topping up collateral is defensive, not new business. Refusing it
   // while a position drifts toward liquidation would use a paperwork

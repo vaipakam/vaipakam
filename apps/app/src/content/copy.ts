@@ -1126,6 +1126,37 @@ const copySource = {
     switchToChain: tmpl(`Switch to {{chain}}`, ['chain']),
   },
 
+  // #3858 — a network whose deployment record says Closed. Facts only:
+  // no date, no claim that a balance is at risk, no pointer elsewhere.
+  closedNetwork: {
+    banner: tmpl(
+      `{{chain}} is closed. New loans, offers and Auto-lend slots can no longer be opened on it. Withdrawing from your vault, claiming, cancelling an offer and taking capital out of a slot stay available, with no end date.`,
+      ['chain'],
+    ),
+    title: tmpl(`What you still hold on {{chain}}`, ['chain']),
+    lede: 'Everything on this page is read from the network itself.',
+    connectPrompt: 'Connect the wallet that holds positions on this network to see what is still there.',
+    vaultTitle: 'Your vault',
+    vaultBody: 'Your vault balance stays yours. Open your vault to see it and withdraw.',
+    openVault: 'Open your vault',
+    claimsTitle: 'Claims',
+    claimsBody: 'Money from loans that have ended is collected on the Claims page.',
+    openClaims: 'Open Claims',
+    offersTitle: 'Your open offers',
+    offersNone: 'You have no open offers on this network.',
+    offerRow: tmpl(`Offer #{{id}}`, ['id']),
+    cancelOffer: 'Cancel offer',
+    slotsTitle: 'Capital in your Auto-lend slots',
+    slotsNone: 'None of your Auto-lend slots on this network holds capital.',
+    slotRow: tmpl(`{{amount}} {{symbol}} in slot {{slot}}`, ['amount', 'symbol', 'slot']),
+    takeCapitalOut: 'Take capital out',
+    slotsMore: tmpl(
+      `This lists the first {{shown}} of your {{total}} slots on this network.`,
+      ['shown', 'total'],
+    ),
+    unavailable: 'This could not be read from the network just now. Try again in a moment.',
+  },
+
   checks: {
     sanctionsChecking: 'Checking compliance status…',
     walletConnected: 'Wallet connected',

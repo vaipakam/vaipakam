@@ -508,6 +508,28 @@
       "switchNetwork": "切换网络",
       "switchToChain": "切换到 {{chain}}"
     },
+    "closedNetwork": {
+      "banner": "{{chain}} 已关闭。此网络上不能再开立新的贷款、报价或 Auto-lend 槽位。从金库提取、领取、取消报价以及从槽位取回资金仍然可用，没有截止日期。",
+      "title": "您在 {{chain}} 上仍持有的内容",
+      "lede": "本页所有内容均直接从网络读取。",
+      "connectPrompt": "连接在此网络上持有头寸的钱包，查看那里仍有哪些内容。",
+      "vaultTitle": "您的金库",
+      "vaultBody": "您的金库余额仍归您所有。打开金库即可查看并提取。",
+      "openVault": "打开您的金库",
+      "claimsTitle": "领取",
+      "claimsBody": "已结束贷款的资金在领取页面领取。",
+      "openClaims": "打开领取",
+      "offersTitle": "您的未成交报价",
+      "offersNone": "您在此网络上没有未成交的报价。",
+      "offerRow": "报价 #{{id}}",
+      "cancelOffer": "取消报价",
+      "slotsTitle": "您 Auto-lend 槽位中的资金",
+      "slotsNone": "您在此网络上的 Auto-lend 槽位中都没有资金。",
+      "slotRow": "槽位 {{slot}} 中有 {{amount}} {{symbol}}",
+      "takeCapitalOut": "取回资金",
+      "slotsMore": "此处列出您在此网络上 {{total}} 个槽位中的前 {{shown}} 个。",
+      "unavailable": "暂时无法从网络读取。请稍后再试。"
+    },
     "checks": {
       "sanctionsChecking": "正在检查合规状态…",
       "walletConnected": "钱包已连接",
