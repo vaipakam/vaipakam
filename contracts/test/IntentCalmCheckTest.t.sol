@@ -15,6 +15,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibOfferPriceGuard} from "../src/libraries/LibOfferPriceGuard.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -161,6 +162,23 @@ contract IntentCalmCheckTest is SetupTest {
         uint256 cp = _request(_collAt(0.5e8));
         mockOraclePrice(mockCollateralERC20, 0.5e8, 8);
         _expectNotCalm();
+        _fill(cp);
+    }
+
+    // ── #3844: a takeover offer is never an intent's counterparty ──────
+
+    /// A borrower offer that names the loan it takes over is consumed only by
+    /// that loan's handover. On an otherwise clear pair the preview names the
+    /// refusal and the fill reverts, so a matcher never spends gas on it.
+    function test_takeoverOffer_previewRefuses_andFillReverts() public {
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
+        uint256 cp = _request(_collAt(1e8));
+        assertTrue(_preview(cp).ok, "clear before the tag");
+        TestMutatorFacet(address(diamond)).setTakeoverOfferLoanRaw(cp, 7);
+        LibOfferMatch.IntentPreviewResult memory r = _preview(cp);
+        assertFalse(r.ok, "the preview refuses a takeover offer");
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.TakeoverOffer));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TakeoverOfferNotFillable.selector, cp));
         _fill(cp);
     }
 

@@ -219,7 +219,13 @@ library LibOfferMatch {
         // it. APPENDED.
         PairNoCheckpoint,
         PairNotCalm,
-        PairUnpriced
+        PairUnpriced,
+        // #3844 — the counterparty borrower offer is a takeover offer: it names
+        // the loan it takes over and is consumed only by that loan's
+        // obligation handover. `executeMatch` reverts
+        // `TakeoverOfferNotFillable` on it, so `matchIntent` reverts too.
+        // Checked beside `SaleVehicleTagged`. APPENDED.
+        TakeoverOffer
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -1108,6 +1114,11 @@ library LibOfferMatch {
         // after the intent body + slice-materialize guards, before the match core.
         if (s.saleOfferToLoanId[counterpartyOfferId] != 0) {
             return _intentFail(res, IntentError.SaleVehicleTagged);
+        }
+        // #3844 — mirror `executeMatch`'s takeover refusal: an offer that names
+        // the loan it takes over is consumed only by that loan's handover.
+        if (s.takeoverOfferLoan[counterpartyOfferId] != 0) {
+            return _intentFail(res, IntentError.TakeoverOffer);
         }
 
         // ── Every intent + slice-create guard cleared. Synthesize the single-
