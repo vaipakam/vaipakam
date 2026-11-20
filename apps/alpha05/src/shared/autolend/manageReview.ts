@@ -10,7 +10,7 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { judgeDryRun, type CreateVerdict } from '../post/postReview';
 import { tokenAcceptsApproval } from '../offers/reads';
-import { payoutRoute, type PayoutRoute } from '../protection/payout';
+import type { PayoutRoute } from '../protection/payout';
 import { routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
@@ -49,8 +49,10 @@ export async function readManageReview(own: OwnStateClient, diamond: Hex, draft:
           )
         ).length;
   const blocks = manageBlocks(draft, facts);
-  // The money comes from the wallet's own vault to the wallet.
-  const route = draft.kind !== 'add' && draft.amount > 0n ? payoutRoute(facts.protection, account, account) : null;
+  // Money taken back is released in the account's own vault as free
+  // balance, whatever its protected mode (the payout rule, owner decision
+  // 2026-11-19); the ordinary Withdraw then takes it to a wallet.
+  const route: PayoutRoute | null = draft.kind !== 'add' && draft.amount > 0n ? 'credit' : null;
   let verdict: CreateVerdict;
   if (approvalSteps > 0) {
     // Adding pulls from the wallet, which the protocol refuses until the
@@ -144,9 +146,7 @@ export function manageReceipt(r: ManageReview, meta: TokenMetaMap | null, copy: 
       consequences.push(text('autoLend.mLoseStopLoans'));
     }
     if (d.amount > 0n) {
-      // The wallet route is the only one paid at once; an unread mode stays
-      // unknown, never "your wallet, at once".
-      const where = r.route === 'wallet' ? text('autoLend.mToWallet') : r.route === null ? null : routedDestination(r.route, f.protection, copy);
+      const where = r.route === null ? null : routedDestination(r.route, f.protection, copy);
       rows.push({ label: text('autoLend.mRowTakeBack'), value: amount(d.amount), binding: true });
       rows.push({
         label: text('autoLend.mRowTo'),
