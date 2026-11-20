@@ -114,7 +114,7 @@
       },
       "vpfi": {
         "title": "VPFI फ़ीस छूट — Vaipakam",
-        "description": "Optional: protocol fees घटाने के लिए अपने vault में VPFI रखें। Lend, borrow या rent करने के लिए यह कभी required नहीं है।"
+        "description": "VPFI hold करने पर fee छूट रिवॉर्ड चरण के साथ शुरू होती है। जब तक प्लेटफ़ॉर्म टोकन इंस्टॉल नहीं होता, हर fee पूरी दर पर ली जाती है। Lend, borrow या rent करने के लिए कभी जरूरी नहीं।"
       },
       "nftVerifier": {
         "title": "Position NFT की जाँच — Vaipakam",
@@ -561,7 +561,7 @@
         },
         "vpfi": {
           "q": "क्या मुझे VPFI चाहिए?",
-          "a": "नहीं। VPFI optional है — vault में रखना eligible loans पर protocol fees घटा सकता है। यह network gas कभी कम नहीं करता, और borrow, lend या rent करने के लिए कभी जरूरी नहीं।"
+          "a": "नहीं। Borrow, lend या rent करने के लिए VPFI कभी जरूरी नहीं। प्लेटफ़ॉर्म टोकन रिवॉर्ड चरण के साथ आएगा। जब तक यह किसी नेटवर्क पर इंस्टॉल नहीं होता, वहां कोई fee छूट लागू नहीं होती और हर fee पूरी दर पर ली जाती है। इंस्टॉल होने के बाद, इसे vault में रखना eligible loans पर protocol fees घटा सकता है। यह network gas कभी कम नहीं करता।"
         },
         "modes": {
           "q": "Basic और Advanced mode में क्या फर्क है?",
@@ -2357,7 +2357,7 @@
       "withdrawWarning": "VPFI withdraw करने से future fee discounts घट सकते हैं।",
       "belowMinNote": "{{floor}} VPFI से कम hold करने पर fee discount नहीं मिलता।",
       "tierTableUnknown": "इस समय इस नेटवर्क से छूट के स्तर पढ़े नहीं जा सकते, इसलिए यहाँ कोई नहीं दिखाया गया है।",
-      "notOnThisChain": "VPFI deposits अभी {{chain}} पर available नहीं हैं। Vaipakam पर बाकी सब VPFI के बिना चलता है।",
+      "notInstalled": "प्लेटफ़ॉर्म टोकन {{chain}} पर इंस्टॉल नहीं है। यह रिवॉर्ड चरण के साथ, सभी नेटवर्क पर एक साथ आएगा। तब तक किसी पर भी fee छूट लागू नहीं होती, और हर fee पूरी दर पर ली जाती है। Vaipakam पर सब कुछ इसके बिना काम करता है।",
       "tokenChanged": "Review के बाद VPFI token configuration बदल गया। कुछ approve नहीं हुआ — updated numbers check करके फिर try करें।",
       "tokenCheckRetry": "अभी VPFI token confirm नहीं कर सके — कुछ approve नहीं हुआ। थोड़ी देर में try करें।",
       "addToWallet": "MetaMask में VPFI जोड़ें",
@@ -3107,7 +3107,7 @@
         "claimsSub": "Repayments, collateral और rewards collect करें",
         "offersSub": "इस network पर हर open offer browse करें",
         "vaultSub": "आपके assets कहाँ हैं — totals, locked और free",
-        "vpfiSub": "Optional — VPFI hold करके protocol fees घटाएं",
+        "vpfiSub": "Optional fee छूट, रिवॉर्ड चरण से शुरू",
         "activitySub": "Vaipakam पर आपके wallet ने जो कुछ किया",
         "riskAccessSub": "चुनें कि आपके सौदों की संपत्तियाँ कितनी जोखिम भरी हो सकती हैं",
         "helpSub": "Plain-language answers और build info",
@@ -3295,6 +3295,8 @@
       "flagsHeading": "फ़ीचर फ़्लैग",
       "partialFill": "ऑर्डर मिलान (आंशिक पूर्ति)",
       "tiersHeading": "VPFI छूट स्तर",
+      "tiersNotInstalled": "प्लेटफ़ॉर्म टोकन इस नेटवर्क पर इंस्टॉल नहीं है, इसलिए इनमें से कोई स्तर लागू नहीं होता: हर fee पूरी दर पर ली जाती है।",
+      "tiersInstallUnknown": "हम जांच नहीं सके कि प्लेटफ़ॉर्म टोकन इस नेटवर्क पर इंस्टॉल है या नहीं, इसलिए हम नहीं कह सकते कि इनमें से कोई स्तर लागू होता है।",
       "tiers": "स्तर",
       "tierThreshold": "स्तर {{n}} की सीमा",
       "tierValue": "{{amount}} VPFI → {{discount}} छूट",
