@@ -60,11 +60,10 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   const { page, flags } = await launchWallet('lender');
   await openPair(page, tliq);
 
-  // One question, two answers; the one-time offer is the default.
+  // One question, two answers; Auto-lend is pre-selected (#3761).
   const choice = page.getByTestId('lend-choice');
   await expect(choice).toHaveAttribute('data-autolend', 'open', { timeout: 60_000 });
-  await expect(page.getByTestId('lend-choice-once')).toBeChecked();
-  await page.getByTestId('lend-choice-keep').check();
+  await expect(page.getByTestId('lend-choice-keep')).toBeChecked();
   await page.getByTestId('lend-offer-open').click();
 
   const form = page.getByTestId('autolend-form');
@@ -107,6 +106,9 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   // as a claim instead.
   await expect(receipt).toContainText('comes back to you as a claim instead of being lent again');
   await expect(receipt).toContainText('take back money that is not lent at any time while it is not paused');
+  // The pause for a moving price starts on; the test chain has no hourly price checks yet.
+  await expect(receipt).toContainText('Lending pauses while the collateral price is moving fast');
+  await expect(receipt).toContainText('fills start after two hourly price checks');
   await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);
 
@@ -198,7 +200,7 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   // An Auto-lend already set up and funded with 0.5 WETH, as the setup flow does.
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, await txDeadline(sc)]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
   const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0]);
   const allowance = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] });
@@ -282,7 +284,7 @@ test('on Positions a lender changes the limits, stops keeping money set aside, a
   await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, await txDeadline(sc)]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
   const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0]);
   const stored = () => sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq, 0]);

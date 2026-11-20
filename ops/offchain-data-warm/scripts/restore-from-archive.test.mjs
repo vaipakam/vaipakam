@@ -15,7 +15,7 @@ import {
   openSync, readFileSync, statSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { NO_COLLECTION, canonicalOrderJson, signedOfferColumns } from '../../../packages/lib/src/signedOfferWire.mjs';
+import { NO_COLLECTION, NO_RATE_LINK, canonicalOrderJson, signedOfferColumns } from '../../../packages/lib/src/signedOfferWire.mjs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -478,6 +478,7 @@ function signedOrder(over = {}) {
     allowedTaker: `0x${'0'.repeat(40)}`, coSigner: `0x${'0'.repeat(40)}`,
     signer: `0x${'c'.repeat(40)}`, nonce: '0', deadline: '0',
     ...NO_COLLECTION,
+    ...NO_RATE_LINK,
     ...over,
   };
 }
@@ -804,7 +805,7 @@ test('legal rows must match the writer column shapes exactly (r11)', () => {
   const holdsWith = (rows) =>
     tableFixture(
       'diag_legal_holds',
-      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note'],
+      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note', 'created_at', 'updated_at'],
       rows,
     );
   const auditWith = (rows) =>
@@ -814,7 +815,7 @@ test('legal rows must match the writer column shapes exactly (r11)', () => {
       rows,
     );
   const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
-  const goodHold = { wallet_hash: hash, legal_doc_ref: doc, hold_reason: 'Court order', disclosure_allowed: 0, disclosure_note: null };
+  const goodHold = { wallet_hash: hash, legal_doc_ref: doc, hold_reason: 'Court order', disclosure_allowed: 0, disclosure_note: null, created_at: 100, updated_at: 100 };
   const goodPlace = { id: 1, at: 100, action: 'place', wallet_hash: hash, admin_wallet: admin, legal_doc_ref: doc, detail: 'Court order' };
 
   // Canonical rows pass.
@@ -860,6 +861,69 @@ test('legal rows must match the writer column shapes exactly (r11)', () => {
   // hold_reason on the register itself must be non-empty too.
   const guttedReason = invalidLegalRowShapes(arch(holdsWith([{ ...goodHold, hold_reason: '' }]), auditWith([goodPlace])));
   assert.match(guttedReason[0].problem, /hold_reason/);
+});
+
+test('legal timestamps, ids, ordering and every set-disclosure detail match the writer (#1489)', () => {
+  const hash = 'a'.repeat(64);
+  const admin = `0x${'b'.repeat(40)}`;
+  const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const holdsWith = (rows) =>
+    tableFixture(
+      'diag_legal_holds',
+      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note', 'created_at', 'updated_at'],
+      rows,
+    );
+  const auditWith = (rows) =>
+    tableFixture(
+      'diag_legal_hold_audit',
+      ['id', 'at', 'action', 'wallet_hash', 'admin_wallet', 'legal_doc_ref', 'detail'],
+      rows,
+    );
+  const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
+  const goodHold = { wallet_hash: hash, legal_doc_ref: doc, hold_reason: 'Court order', disclosure_allowed: 1, disclosure_note: 'Kept by law', created_at: 100, updated_at: 300 };
+  const place = { id: 1, at: 100, action: 'place', wallet_hash: hash, admin_wallet: admin, legal_doc_ref: doc, detail: 'Court order' };
+  const disc = (id, at, detail) => ({ id, at, action: 'set-disclosure', wallet_hash: hash, admin_wallet: admin, legal_doc_ref: null, detail });
+  const good = [place, disc(2, 200, 'disclosure_allowed=0; note='), disc(3, 300, 'disclosure_allowed=1; note=Kept by law')];
+  const shapes = (holds, audit) => invalidLegalRowShapes(arch(holdsWith(holds), auditWith(audit)));
+
+  // The canonical history passes, including a superseded disclosure row.
+  assert.deepEqual(shapes([goodHold], good), []);
+
+  // Hold timestamps: positive integers, created_at not after updated_at.
+  for (const bad of [null, 0, -5, 1.5, '100']) {
+    const p = shapes([{ ...goodHold, created_at: bad }], good);
+    assert.equal(p.length, 1, JSON.stringify(bad));
+    assert.match(p[0].problem, /created_at/);
+  }
+  const inverted = shapes([{ ...goodHold, created_at: 400 }], good);
+  assert.equal(inverted.length, 1);
+  assert.match(inverted[0].problem, /after updated_at/);
+
+  // Audit id / at shapes.
+  for (const bad of [null, 0, 2.5, '2']) {
+    assert.match(shapes([goodHold], [place, { ...good[1], id: bad }, good[2]])[0].problem, /^id /, JSON.stringify(bad));
+    assert.match(shapes([goodHold], [place, { ...good[1], at: bad }, good[2]])[0].problem, /^at /, JSON.stringify(bad));
+  }
+
+  // Duplicate ids.
+  const dup = shapes([goodHold], [place, good[1], { ...good[2], id: 2 }]);
+  assert.equal(dup.length, 1);
+  assert.match(dup[0].problem, /repeats/);
+
+  // A tampered `at` that would reorder the replay: id 3 dated before id 2.
+  const reordered = shapes([goodHold], [place, good[1], { ...good[2], at: 150 }]);
+  assert.equal(reordered.length, 1);
+  assert.match(reordered[0].problem, /earlier than/);
+  // Equal timestamps are fine: actions in the same second keep id order.
+  assert.deepEqual(shapes([goodHold], [place, good[1], { ...good[2], at: 200 }]), []);
+
+  // A gutted SUPERSEDED set-disclosure is caught even though the latest
+  // one is well formed.
+  for (const bad of ['', null, 'disclosure_allowed=yes; note=', 'note=x']) {
+    const p = shapes([goodHold], [place, disc(2, 200, bad), good[2]]);
+    assert.equal(p.length, 1, JSON.stringify(bad));
+    assert.match(p[0].problem, /set-disclosure/);
+  }
 });
 
 test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {

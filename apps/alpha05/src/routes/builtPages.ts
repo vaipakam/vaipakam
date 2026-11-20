@@ -28,6 +28,8 @@ const ConsolePage = lazy(() => import('../pages/console/ConsolePage').then((m) =
 /** Analytics is a public page most sessions never open, so it loads with
  *  the route too. */
 const AnalyticsPage = lazy(() => import('../pages/analytics/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
+/** Observed rates is a public page reached from Analytics; it loads with the route. */
+const RatesPage = lazy(() => import('../pages/rates/RatesPage').then((m) => ({ default: m.RatesPage })));
 
 /** The page each BUILT route renders, by page-map path. A route not listed
  *  keeps its honest placeholder; `pageMap.test.ts` holds this map and the
@@ -55,4 +57,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/analytics': AnalyticsPage,
   '/risks': RisksPage,
   '/wallet-keys': WalletKeysPage,
+  '/rates': RatesPage,
 };

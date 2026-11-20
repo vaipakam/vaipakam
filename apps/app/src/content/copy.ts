@@ -162,7 +162,7 @@ const copySource = {
     vpfi: {
       title: 'VPFI fee discounts — Vaipakam',
       description:
-        'Optional: hold VPFI in your vault to reduce protocol fees. Never required to lend, borrow, or rent.',
+        'Fee discounts for holding VPFI start with the rewards phase. Until the platform token is installed, every fee is charged at its full rate. Never required to lend, borrow, or rent.',
     },
     nftVerifier: {
       title: 'Position NFT verifier — Vaipakam',
@@ -1198,7 +1198,7 @@ const copySource = {
       },
       vpfi: {
         q: 'Do I need VPFI?',
-        a: 'No. VPFI is optional — holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas, and you never need it to borrow, lend, or rent.',
+        a: 'No. You never need VPFI to borrow, lend, or rent. The platform token arrives with the rewards phase. Until it is installed on a network, no fee discount applies there and every fee is charged at its full rate. Once it is installed, holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas.',
       },
       modes: {
         q: 'What’s the difference between Basic and Advanced mode?',
@@ -6175,8 +6175,11 @@ const copySource = {
     // would read as this network's live tiers.
     tierTableUnknown:
       'The discount tiers can’t be read from this network right now, so none are shown here.',
-    notOnThisChain: tmpl(
-      `VPFI deposits aren’t available on {{chain}} yet. Everything else on Vaipakam works without VPFI.`,
+    // Owner decision 2026-11-20: the platform token arrives with the
+    // rewards phase, installed on every network together, so no network
+    // has it at launch and every fee is charged at its full rate.
+    notInstalled: tmpl(
+      `The platform token is not installed on {{chain}}. It arrives with the rewards phase, on every network together. Until then no fee discount applies to anyone, and every fee is charged at its full rate. Everything on Vaipakam works without it.`,
       ['chain'],
     ),
     tokenChanged:
@@ -6342,6 +6345,15 @@ const copySource = {
       // preview does not say which, so the copy names both cases.
       termsNotAccepted:
         'This offer can’t be taken right now: one side has not accepted the Terms of Service in force on this network. If it’s you, accept the Terms and try again. If it’s the offer’s creator, the offer can be taken once they accept. Nothing was sent.',
+      // #3635 A — a rate-linked offer: its link cannot be used now (the
+      // reference is unreadable for the term, or the market is unusual for a
+      // term over 30 days), or the linked bound crossed its typed limit.
+      rateReferenceUnavailable:
+        'This offer’s rate follows the market reference, and that reference can’t be read for this loan’s term right now, so the offer can’t be taken. It may clear later. Nothing was sent.',
+      rateReferenceUnusual:
+        'This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.',
+      rateRangeEmpty:
+        'This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6868,6 +6880,7 @@ const copySource = {
       InterestPaymentAttemptFailed: 'Interest payment from reserve did not go through',
       IntentCalmCheckSet: 'Auto-lend price check changed',
       LenderIntentIntegratorNamed: 'Auto-lend integrator named',
+      LenderIntentRateTermsSet: 'Auto-lend rate link set',
       IntegratorShareSettled: 'Integrator fee share settled',
       ReferralShareSettled: 'Referral fee share settled',
       InviterBound: 'Invitation accepted',
@@ -7441,7 +7454,7 @@ const copySource = {
       claimsSub: 'Collect repayments, collateral, and rewards',
       offersSub: 'Browse every open offer on this network',
       vaultSub: 'Where your assets sit — totals, locked, and free',
-      vpfiSub: 'Optional — reduce protocol fees by holding VPFI',
+      vpfiSub: 'Optional fee discounts, which start with the rewards phase',
       activitySub: 'Everything your wallet has done on Vaipakam',
       riskAccessSub: 'Choose how risky the assets in your deals may be',
       helpSub: 'Plain-language answers and build info',
@@ -8183,6 +8196,13 @@ const copySource = {
        rather than calling the reference currency "not set". */
     numeraireDefault: tmpl('{{symbol}} (never changed, so the protocol’s default)', ['symbol']),
     tiersHeading: 'VPFI discount tiers',
+    // Shown when this network reports no platform token: the configured
+    // tiers exist as settings, but the fee path applies none of them.
+    tiersNotInstalled:
+      'The platform token is not installed on this network, so none of these tiers applies: every fee is charged at its full rate.',
+    // The token read failed: whether any tier applies is not known.
+    tiersInstallUnknown:
+      'We couldn’t check whether the platform token is installed on this network, so we can’t say whether any of these tiers applies.',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
     // `{{amount}}` arrives in VPFI TOKEN units — `exactAmountString`

@@ -1,7 +1,7 @@
 # Rate auction: design
 
 **Status:** owner asked for this design on 2026-11-19. Card #3758. Reviewed by the security thread on 2026-11-19: build it, with the changes recorded in section 12. Design first, no code yet. Built before the pre-audit refactor and audited in phases, as the owner decided for every feature that touches the loan paths. Reaches a chain by fresh deploy.
-**Related:** `InstantMarketDesign.md` (#3656, whose single-fill step and group label this reuses), `IdleLiquidityMatchingDesign.md` and `AutoLendLendUntilDesign.md` (Auto-lend slots), `TermAverageAndLinkGuardsDesign.md` (the warning band, #3713), `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`, `FeeLevelsDesign.md`, `IntegratorFeeShareDesign.md`, `ReferralFeeShareDesign.md`.
+**Related:** `InstantMarketDesign.md` (#3656, whose single-fill step this reuses), `BorrowingDesign.md` (#3808, the borrowing the auction's loans share), `IdleLiquidityMatchingDesign.md` and `AutoLendLendUntilDesign.md` (Auto-lend slots), `TermAverageAndLinkGuardsDesign.md` (the warning band, #3713), `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`, `FeeLevelsDesign.md`, `IntegratorFeeShareDesign.md`, `ReferralFeeShareDesign.md`.
 **Base:** the code named below was read on the batch branch of #3743 (`claude/project-thread-ijafuu` at `a067c7bae`), where the instant market is built (`InstantMarketFacet`, `InstantFillFacet`, `LibIntentFill`, `LibOfferMatchExecute`, `LibEncumbrance`, `LibTiming`). Main does not have that code yet.
 
 ## 1. Why
@@ -20,7 +20,7 @@ A borrower opens an auction for an amount, a term and a collateral, with the hig
 Four things stay as they are everywhere on the platform:
 
 - **Every user's funds stay in their own vault.** A bid's funds are held in the bidder's vault until its loan opens or the bid is released. The borrower's collateral is held in the borrower's vault. Nothing rests in the Diamond.
-- **Every loan is between one lender and one borrower**, with its own collateral, its own health factor and its own liquidation. The auction's loans share a group label and nothing else.
+- **Every loan is between one lender and one borrower**, with its own collateral, its own health factor and its own liquidation. The auction's loans share a borrowing (`BorrowingDesign.md`): one record with the borrower's reserve and settings for them. They share no debt, no collateral and no loss.
 - **The platform sets no rate.** The rate that fills is always one of the lenders' own bid rates and is never above the borrower's stated limit. The contract applies a stated rule to stated bids and takes no input from whoever calls the close.
 - **Every loan opens through the one shared loan-opening step**, so every existing check runs for it.
 
@@ -110,7 +110,7 @@ After the close anyone may settle bids, a few at a time, until the auction's **e
 - **Principal** moves from the bidder's vault to the borrower's vault as free balance, less the fee, as every loan's principal does. Taking it to a wallet is the separate withdrawal, under the account's own policy.
 - **Collateral** for the loan is its amount times the collateral for each unit borrowed, rounded down, moved from the auction's lien to the loan's own lien in the borrower's vault.
 - **The term** runs from the moment each loan opens. The loans of one auction can therefore fall due minutes apart.
-- **The group.** The loans share a group label, the one instant-market loans use, so the group helpers (repay, add collateral, withdraw surplus) and the one-position view work for them.
+- **The borrowing.** Amended 2026-11-19 (#3808): the loans share a borrowing, the record instant-market loans use, so the one reserve, the one set of settings, the actions on a borrowing (repay, add collateral, withdraw surplus) and the borrowing's one-line view work for them. The first loan settled opens the borrowing and the rest join it. A borrowing has a cap on open loans (`BorrowingDesign.md` section 4), and the auction's bound on its number of loans must fit it; that is an open item for the builder (section 16 there, item 5).
 - **One bid that cannot open is skipped and reported** with its reason, and the rest go on. It may be tried again until the end time.
 - The remainder of a bid filled in part is released in the same step.
 
@@ -174,11 +174,11 @@ The feature is a **rate auction**, its outcome an **auction result** or **the ra
 | --- | --- |
 | New facet for the borrower's and the bidder's entries | Open, cancel, add collateral, bid, improve, the settings, the views and previews. A new facet, not added to one near its size limit. |
 | New facet for close, settle and release | The match core is most of its size, as with the instant fill. Refreshed together with the first. |
-| Shared loan-opening step | Accepts a bid as the source of a lender part and an auction as the source of a borrower part, at a stated rate; stamps the group label. |
+| Shared loan-opening step | Accepts a bid as the source of a lender part and an auction as the source of a borrower part, at a stated rate. The settle writes the loan's borrowing. |
 | Liens | Two new kinds in the one encumbrance ledger: the auction's collateral and a bid's funds. A slot bid moves capital between the slot's lien and the bid's lien. |
 | Lender intent | The auction consent with its two limits; funds held in auctions count toward the slot's exposure. |
 | Views | An auction with its ladder totals; a page of bids as lean rows; what a close would do now; whether a bid would be accepted, where it would stand, and why not. |
-| Events | Opened, cancelled, collateral added, bid placed, bid improved, closing time moved, closed (rate, amount to fill, total bid) or lapsed, loan opened (with the group), bid released (with the reason), ended. |
+| Events | Opened, cancelled, collateral added, bid placed, bid improved, closing time moved, closed (rate, amount to fill, total bid) or lapsed, loan opened (with the borrowing), bid released (with the reason), ended. |
 | Keeper | Passes for close, settle, release and slot bids, and alerts to the borrower (first bid, covered, result, collateral near the rule) and to bidders (no longer inside the fill, result, loan opened or funds released). New passes ship disarmed. |
 | Permissionless-steps ledger, indexer, app | Rows for the open steps; auction and bid indexing; the screens of 4.8; wording per section 6. |
 
@@ -196,7 +196,7 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 8. Close, part covered at or above the least amount: every bid fills at the highest bid's rate.
 9. Close below the least amount: lapsed, and everything can be released.
 10. The close takes no input, cannot run before the closing time, and gives the same result whoever calls it.
-11. Settle: each loan carries the one rate, its share of collateral and the group label; principal arrives in the borrower's vault less the fee; the term runs from the loan's own opening; any order of settling gives the same loans.
+11. Settle: each loan carries the one rate, its share of collateral and the borrowing; principal arrives in the borrower's vault less the fee; the term runs from the loan's own opening; any order of settling gives the same loans.
 12. Every loan-opening refusal applies to each loan; a refused bid is skipped and reported, the rest open, and it can be tried again.
 13. A fall in the collateral's price inside the cushion does not stop the loans; a fall beyond it stops them until collateral is added; an addition raises the collateral of loans not yet opened only.
 14. A share at the clearing step below the smallest loan is not filled and is released.
@@ -255,13 +255,13 @@ The security thread reviewed this design before it merged. Its verdict: build it
 
 1. Whether a bidder may name a registered integrator, and which one a loan carries when both sides name one.
 2. The exact construction of the ladder for a highest rate that is not a multiple of the step size.
-3. Whether the group label's storage and helpers, named for the instant market, are renamed for both uses or kept.
+3. Whether the group label's storage and helpers, named for the instant market, are renamed for both uses or kept. Settled 2026-11-19: the label is replaced by the borrowing (`BorrowingDesign.md`).
 4. Which of the origination checks a party can trip by their own later act, beyond those named in section 5. Each one found is either taken when the auction opens or the bid is placed, or reported to the design thread.
 
 Settled with the builder on 2026-11-19:
 
 1. **Integrator.** A bidder names none. The integrator the borrower names at the open goes on every loan the auction opens, credited from each loan's initiation fee, as on an offer filled by a match.
 2. **The ladder.** The step size is the smallest whole number of basis points that keeps the ladder at 256 steps or fewer. The steps run down from the highest rate, which is exactly the top step. No 0% step is offered, and no step below the lowest rate the platform admits on an offer. The ladder is fixed at the open and a bid names its step.
-3. **The group label** has one neutral name, used by the auction and the instant market alike.
+3. **The group label** has one neutral name, used by the auction and the instant market alike. Since 2026-11-19 that is the borrowing.
 4. **Risk access.** Each party's standing is recorded when it commits, the borrower's at the open and the bidder's at the bid: the effective tier, and for the pair its strict-mode acknowledgement and any pair consent. Settle tests the pair's requirement as it stands then against that recorded standing. Lowering a tier, switching strict mode on or withdrawing a consent afterwards changes nothing for loans the party is already bound to, and a new risk-terms version published in between does not stop the loan. A pair that has itself become riskier still stops it.
 5. **The concentration cap** is read at settle, as at every origination, and is not recorded at the open. A figure recorded at the open would let several auctions each keep a cap their combined collateral no longer earns, and counting an auction's collateral as pledged from the open would let an auction that pays no fee move the cap for every borrower of that asset. The open refuses an auction that would not pass the cap at that moment; a loan that fails it at settle is skipped, reported and tried again until the end time.

@@ -91,6 +91,9 @@ export function AnalyticsView({
         )}
       </FormField>
       {body}
+      <p className="tier-b">
+        <Link to={`/rates?chain=${chain.chainId}`}>{text('analytics.toRates')}</Link>
+      </p>
     </main>
   );
 }

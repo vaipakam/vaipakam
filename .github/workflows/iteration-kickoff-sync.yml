@@ -75,6 +75,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Compute iteration label
         id: iter
@@ -245,9 +247,14 @@ jobs:
           ITERATION_FIELD_ID: PVTIF_lAHOEGh46c4BXvX7zhS6MgI
           SPRINT_FIELD_ID: PVTIF_lAHOEGh46c4BXvX7zhS6okI
         run: |
+          # The GraphQL queries below name their variables ($owner, $num, …)
+          # inside single quotes on purpose: gh passes them as query
+          # variables, and the shell must not expand them (hence the
+          # SC2016 directive on each query).
           set -euo pipefail
 
           # 1. Resolve the issue's GraphQL node id.
+          # shellcheck disable=SC2016
           ISSUE_NODE_ID=$(gh api graphql \
             -f query='
               query($owner: String!, $repo: String!, $num: Int!) {
@@ -256,7 +263,7 @@ jobs:
                 }
               }' \
             -f owner="${GITHUB_REPOSITORY_OWNER}" \
-            -f repo="${GITHUB_REPOSITORY#${GITHUB_REPOSITORY_OWNER}/}" \
+            -f repo="${GITHUB_REPOSITORY#"${GITHUB_REPOSITORY_OWNER}"/}" \
             -F num="${ISSUE_NUMBER}" \
             --jq .data.repository.issue.id)
           echo "Issue node id: ${ISSUE_NODE_ID}"
@@ -267,6 +274,7 @@ jobs:
           #    auto-add workflow: both calls reach the same
           #    `addProjectV2ItemById` mutation which is exact-duplicate
           #    aware.
+          # shellcheck disable=SC2016
           ITEM_ID=$(gh api graphql \
             -f query='
               mutation($projectId: ID!, $contentId: ID!) {
@@ -281,6 +289,7 @@ jobs:
 
           # 3. Read the Iteration + Sprint field configurations so we
           #    can pick which iteration covers today.
+          # shellcheck disable=SC2016
           FIELDS_JSON=$(gh api graphql \
             -f query='
               query($owner: String!, $num: Int!) {
@@ -381,6 +390,7 @@ jobs:
               echo "::warning::No ${label} iteration covers $(date -u +%F) — skipping ${label} assignment for issue #${ISSUE_NUMBER}; will ping maintainer on the card."
               return 0
             fi
+            # shellcheck disable=SC2016
             gh api graphql \
               -f query='
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {

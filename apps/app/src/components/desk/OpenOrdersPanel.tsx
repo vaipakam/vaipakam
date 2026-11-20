@@ -229,11 +229,17 @@ function AmendForm({
         interestRateBpsMax: BigInt(rateMax),
         collateralAmount: collateral,
         collateralAmountMax: collateralMax,
+        // #3635 A — the offer's market link, carried unchanged.
+        linkKind: source.data?.linkKind ?? 0,
+        linkMarginBps: source.data?.linkMarginBps ?? 0,
+        // #3713 — not asked here yet: an amend that moves the checked rate
+        // outside the band is refused by name; one that leaves it needs none.
+        rateFarFromAverageAcknowledged: false,
       };
     } catch {
       return null;
     }
-  }, [fields, malformed, lendDec, collDec]);
+  }, [fields, malformed, lendDec, collDec, source.data]);
 
   const src = source.data;
   // Contract-locked single-value shapes (Codex #1134 round-3): a

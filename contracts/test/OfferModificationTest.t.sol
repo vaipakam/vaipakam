@@ -71,7 +71,10 @@ contract OfferModificationTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -108,7 +111,10 @@ contract OfferModificationTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -131,7 +137,7 @@ contract OfferModificationTest is SetupTest {
     function testSetOfferRateHappyPath() public {
         uint256 id = _createLender();
         vm.prank(lender);
-        _mutate().setOfferRate(id, 700, 900, type(uint64).max);
+        _mutate().setOfferRate(id, 700, 900, 0, 0, false, type(uint64).max);
 
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.interestRateBps, 700, "floor updated");
@@ -142,21 +148,21 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.InvalidRateRange.selector);
-        _mutate().setOfferRate(id, 900, 700, type(uint64).max); // max < min
+        _mutate().setOfferRate(id, 900, 700, 0, 0, false, type(uint64).max); // max < min
     }
 
     function testSetOfferRateRevertsAboveCeiling() public {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.InterestRateAboveCeiling.selector);
-        _mutate().setOfferRate(id, 0, LibVaipakam.MAX_INTEREST_BPS + 1, type(uint64).max);
+        _mutate().setOfferRate(id, 0, LibVaipakam.MAX_INTEREST_BPS + 1, 0, 0, false, type(uint64).max);
     }
 
     function testSetOfferRateRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
-        _mutate().setOfferRate(id, 700, 900, type(uint64).max);
+        _mutate().setOfferRate(id, 700, 900, 0, 0, false, type(uint64).max);
     }
 
     // ─── setOfferAmount — Lender ERC-20 (delta in lendingAsset) ─────
@@ -373,7 +379,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 600,
                 interestRateBpsMax: 800,
                 collateralAmount: 6000 ether,
-                collateralAmountMax: 6000 ether  // lender single-value
+                collateralAmountMax: 6000 ether,  // lender single-value
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -415,7 +424,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 600,
                 interestRateBpsMax: 700,
                 collateralAmount: 4000 ether,
-                collateralAmountMax: 7000 ether   // grow by 2000
+                collateralAmountMax: 7000 ether,   // grow by 2000
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -447,7 +459,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 500,
                 interestRateBpsMax: 500,
                 collateralAmount: 5000 ether,
-                collateralAmountMax: 5000 ether
+                collateralAmountMax: 5000 ether,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -476,7 +491,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 900,
                 interestRateBpsMax: 700, // invalid
                 collateralAmount: 5000 ether,
-                collateralAmountMax: 5000 ether
+                collateralAmountMax: 5000 ether,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -532,7 +550,10 @@ contract OfferModificationTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -550,7 +571,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
                 collateralAmount: 0,    // unchanged
-                collateralAmountMax: 0         // unchanged
+                collateralAmountMax: 0,         // unchanged
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -595,7 +619,10 @@ contract OfferModificationTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -610,7 +637,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
                 collateralAmount: 2 ether,    // changed!
-                collateralAmountMax: 2 ether  // changed!
+                collateralAmountMax: 2 ether,  // changed!
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -699,7 +729,10 @@ contract OfferModificationTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -739,7 +772,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
                 collateralAmount: 0,
-                collateralAmountMax: 0
+                collateralAmountMax: 0,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -806,7 +842,10 @@ contract OfferModificationTest is SetupTest {
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
                 collateralAmount: 1 ether,
-                collateralAmountMax: 1 ether
+                collateralAmountMax: 1 ether,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -825,7 +864,7 @@ contract OfferModificationTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(ProfileFacet.SanctionedAddress.selector, lender)
         );
-        _mutate().setOfferRate(id, 600, 800, type(uint64).max);
+        _mutate().setOfferRate(id, 600, 800, 0, 0, false, type(uint64).max);
     }
 
     // ─── Test fake-oracle plumbing for sanctions test ──────────────

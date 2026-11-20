@@ -136,6 +136,7 @@ contract PauseGatingTest is SetupTest {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
         PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             0, 0, 0, address(0), 0, false, address(0),
+            false,
             type(uint64).max
         );
     }

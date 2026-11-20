@@ -10,6 +10,7 @@
 import { erc20Abi, type Abi, type PublicClient } from 'viem';
 import {
   MetricsFacetABI,
+  ReadyBalanceFacetABI,
   OfferCancelFacetABI,
   OfferPreviewFacetABI,
   OracleFacetABI,
@@ -25,6 +26,7 @@ import type { StoredOffer } from './acceptTerms';
 type Hex = `0x${string}`;
 
 export const METRICS = MetricsFacetABI as Abi;
+export const READY_BALANCE = ReadyBalanceFacetABI as Abi;
 export const OFFER_CANCEL = OfferCancelFacetABI as Abi;
 export const OFFER_PREVIEW = OfferPreviewFacetABI as Abi;
 export const ORACLE = OracleFacetABI as Abi;
@@ -94,6 +96,11 @@ export const ACCEPT_ERRORS = [
   // #3734 — the taker or the offer's maker is not current on this
   // network's Terms of Service; the preview does not say which.
   'TermsNotAccepted',
+  // #3635 A — a rate-linked offer whose link cannot be used now, or whose
+  // linked bound crossed its typed opposite bound.
+  'RateReferenceUnavailable',
+  'RateReferenceUnusual',
+  'RateRangeEmpty',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

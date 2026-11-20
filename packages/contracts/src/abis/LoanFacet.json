@@ -293,6 +293,11 @@
             "name": "lifPaidDays",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "rateFromLink",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -528,6 +533,16 @@
             "name": "integrator",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "warnings",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "rateFromLink",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

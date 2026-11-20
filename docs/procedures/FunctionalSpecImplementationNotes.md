@@ -189,7 +189,7 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/TreasuryMintVPFITest.t.sol](../../contracts/test/TreasuryMintVPFITest.t.sol) — VPFI mint for treasury-funded flows.
 - [contracts/test/VaultFactoryFacetTest.t.sol](../../contracts/test/VaultFactoryFacetTest.t.sol) — per-user vault proxy creation, mandatory upgrade gating (a mandatory version above the current one refused, the change announced, and a user's own upgrade clearing a reachable one), the implementation contract refusing initialization, versioned upgrade event.
 - [contracts/test/deploy/DeployAdminGuardTest.t.sol](../../contracts/test/deploy/DeployAdminGuardTest.t.sol) — the deploy refuses a zero admin, an admin that is not the supplied admin key's address, and, on a production chain, an admin equal to the deployer, before anything is deployed.
-- [contracts/test/VaultRecoveryTest.t.sol](../../contracts/test/VaultRecoveryTest.t.sol) — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
+- contracts/test/VaultRecoveryTest.t.sol — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
 - [contracts/test/VaipakamNFTFacetTest.t.sol](../../contracts/test/VaipakamNFTFacetTest.t.sol) — position NFT mint / update / burn lifecycle.
 - [contracts/test/MetricsFacetTest.t.sol](../../contracts/test/MetricsFacetTest.t.sol) — read-only analytics getters.
 - [contracts/test/AccessControlFacetTest.t.sol](../../contracts/test/AccessControlFacetTest.t.sol) — role grants / revocations / emergency revoke.

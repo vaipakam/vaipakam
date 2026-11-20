@@ -88,6 +88,11 @@ export const ACCEPT_ERROR_NAMES = [
   'CollectionParent',
   // #3734 — the taker or the offer's maker is not current on the Terms.
   'TermsNotAccepted',
+  // #3635 A — a rate-linked offer whose link cannot be used now, or whose
+  // linked bound crossed its typed opposite bound.
+  'RateReferenceUnavailable',
+  'RateReferenceUnusual',
+  'RateRangeEmpty',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -157,6 +162,9 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   SignedOfferCoSignatureInvalid: null,
   CollectionParent: 'collectionParent',
   TermsNotAccepted: 'termsNotAccepted',
+  RateReferenceUnavailable: 'rateReferenceUnavailable',
+  RateReferenceUnusual: 'rateReferenceUnusual',
+  RateRangeEmpty: 'rateRangeEmpty',
 };
 
 /**

@@ -738,6 +738,8 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Protected vault port (depository vault).** The contract no longer pays recovered tokens to the wallet. `recoverStuckERC20` became `adoptUntracked`, which credits the declared amount to the vault's tracked balance; the tokens then leave by an ordinary withdrawal, so a protected account's payout delay applies to them like any other balance. The page signs the new `AdoptionAcknowledgment` typed data (domain "Vault Adoption", with the asset kind and token id) and reads `getTrackedHolding` before and after. `tests/27-recover.spec.ts` now asserts the tracked balance rose rather than the wallet balance, and looks for the "Sign & add to vault" button and the "Tokens added to your vault" result. The sanctions branch reads `VaultBannedFromAdoption`. The declaration text changed, so every locale's reading aid was retranslated against the new hash.
 
+**Token label rule.** The symbol the token reports is cleaned by the shared `@vaipakam/lib/tokenLabel` rule (controls and format characters removed, one line, 20 code points), the same rule the statements and feed exports use. Its hostile-name cases are unit tests in `packages/lib/src/tokenLabel.test.ts`; no spec drives a hostile token through this page.
+
 <a id="cov-recovery-declaration-reading-aid-1563-the-eip"></a>
 
 ## Recovery declaration reading aid (#1563) — the EIP-712 declaration the user signs on `/recover` is contract-fixed English (its keccak256 must equal the vault facet's `RECOVERY_ACK_TEXT_HASH`), so the signed bytes cannot be translated.
@@ -2007,4 +2009,13 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 **Tier.** Unit: `src/contracts/useTosNotice.test.ts` covers the decision (nothing on a failed read or no terms, small, material for a new version and for a raise of the minimum, quiet after an early accept) and the final-week rule.
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
+
+## No platform token, no discount (owner decision 2026-11-20)
+<a id="cov-no-platform-token-no-discount"></a>
+
+**Journey.** The platform token arrives with the rewards phase, installed on every network together, so no network has it at launch and the fee path gives no hold discount to anyone. When the Diamond reports no token (`getVPFIToken` is the zero address), `/vpfi` shows one banner saying so and that every fee is charged at its full rate. It no longer shows the discount explainer, the tier table or a button to switch to another network, since no other network has a discount to offer either. A failed read still shows the couldn't-check state. The protocol console keeps the configured tier settings (they are real settings) and adds a line under them saying none applies while the token is not installed. The Help answer, the More menu line and the page's search description now say discounts start with the rewards phase.
+
+**Tier.** Live (gap row). The change is copy plus a branch on the snapshot's existing `registered` field; the fork tier deploys a token, so a spec would need a token-less Diamond.
+
+**Gap.** Add a fork drive with no token registered when the VPFI surface next gets a spec: assert the banner, and that no tier row or explainer renders.
 

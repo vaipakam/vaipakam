@@ -23,6 +23,17 @@
 # described the allowlist for two rounds after it was removed, which is the
 # documentation-drift defect this session merged #1926 to fix.
 #
+# USAGE: load_env_file FILE [--fill-gaps]
+#
+# By default a name the operator exported is REPLACED by the file's value, the
+# rule the three deploy wrappers were written against. `--fill-gaps` keeps a
+# non-empty exported value and takes the file's only where the environment has
+# none: the rule `redeploy-testnet-inplace.sh` has always had ("explicit
+# environment wins", Codex #1182), which it implemented with its own reader
+# until #1939 moved it here. Every refusal below applies in both modes: the
+# mode decides which of two acceptable values wins, never whether a refused
+# name is let through.
+#
 load_env_file() {
   # FAIL CLOSED: a wrapper that never took the baseline gets no import at all,
   # rather than an import with the wrapper-owned rule silently disabled.
@@ -32,9 +43,16 @@ load_env_file() {
     echo "       statement of the calling script, before any assignment." >&2
     return 1
   fi
-  local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
+  local __lenv_file="$1" __lenv_fill=0 __lenv_line __lenv_name __lenv_value __lenv_no=0
   local __lenv_q __lenv_rest __lenv_i __lenv_decl
   local __lenv_names=() __lenv_vals=()
+
+  case "${2-}" in
+    '') : ;;
+    --fill-gaps) __lenv_fill=1 ;;
+    *) echo "Error: load_env_file: unknown option (expected --fill-gaps)." >&2
+       return 1 ;;
+  esac
 
   [ -f "$__lenv_file" ] || { echo "Error: $__lenv_file not found." >&2; return 1; }
 
@@ -295,7 +313,12 @@ load_env_file() {
 
   __lenv_i=0
   while [ "$__lenv_i" -lt "${#__lenv_names[@]}" ]; do
-    export "${__lenv_names[$__lenv_i]}=${__lenv_vals[$__lenv_i]}"
+    # Every name still here is either unset or inherited as exported (the
+    # checks above refuse anything else), so under --fill-gaps a non-empty
+    # value is the operator's own and is kept.
+    if [ "$__lenv_fill" -eq 0 ] || [ -z "${!__lenv_names[$__lenv_i]:-}" ]; then
+      export "${__lenv_names[$__lenv_i]}=${__lenv_vals[$__lenv_i]}"
+    fi
     __lenv_i=$((__lenv_i + 1))
   done
 }

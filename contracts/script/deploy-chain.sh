@@ -128,8 +128,8 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #     TREASURY_ADDRESS, VPFI_OWNER, VPFI_TREASURY, VPFI_INITIAL_MINTER,
 #     <CHAIN>_RPC_URL for the target chain, and the CCIP_ROUTER_* /
 #     CCIP_RMN_PROXY_* entries for the target chain). The script
-#     `set -a` sources `.env` before any forge call so per-chain env
-#     vars surface.
+#     reads `.env` as data (lib/load-env.sh, #1938) before any forge
+#     call so per-chain env vars surface; it never sources it.
 #   - Workspace install: `pnpm install` at the monorepo root has been
 #     run, so apps/{app,www,keeper,indexer,agent} all have their
 #     `node_modules` symlink chains in place. The script does NOT

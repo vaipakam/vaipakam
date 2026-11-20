@@ -28,6 +28,7 @@ import {
   SIGNED_OFFER_FIELDS,
   SIGNED_OFFER_FIELD_NAMES as SIGNED_OFFER_WIRE_FIELD_NAMES,
   NO_COLLECTION,
+  NO_RATE_LINK,
   placementProblem,
   type SignedOfferPlacement,
   type SignedOrderWire,
@@ -246,6 +247,7 @@ export function wireFromCreatePayload(
     // The app signs ordinary orders only; collection offers are posted
     // on-chain (#3328).
     ...NO_COLLECTION,
+    ...NO_RATE_LINK,
   };
 }
 

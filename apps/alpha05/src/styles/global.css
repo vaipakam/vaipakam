@@ -868,6 +868,19 @@ dd.value-unknown > .icon {
   background: var(--surface-sunken);
   overflow-wrap: anywhere;
 }
+/* #3763 — a review's titled statements (what "no end date" means here,
+   how funds come back): plain text under a small heading. */
+.receipt-section {
+  margin: 12px 0 8px;
+  overflow-wrap: anywhere;
+}
+.receipt-section h4 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.receipt-section p {
+  margin: 0 0 6px;
+}
 .legs {
   list-style: none;
   padding: 0;
@@ -2417,4 +2430,82 @@ a.btn {
   margin-top: 4px;
   min-width: 20px;
   min-height: 20px;
+}
+/* #3751: observed rates. The two halves stack on a phone and sit side by
+   side from 720px; every figure wears the text tokens. */
+.rates-pickers {
+  display: grid;
+  gap: 8px;
+}
+.rates-halves {
+  display: grid;
+  gap: 16px;
+  margin: 12px 0;
+}
+.rates-half {
+  min-width: 0;
+}
+.rates-term-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rates-figure {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+.rates-figure.rates-withheld {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.rates-parts,
+.rates-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  margin: 6px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.rates-parts dt,
+.rates-rule dt {
+  color: var(--text-muted);
+}
+.rates-parts dd,
+.rates-rule dd {
+  margin: 0;
+  text-align: end;
+}
+.rates-rule > div {
+  display: contents;
+}
+.rates-how {
+  margin: 12px 0;
+}
+.rates-history-table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.rates-history-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.rates-history-table th,
+.rates-history-table td {
+  text-align: start;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+@media (min-width: 720px) {
+  .rates-pickers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rates-halves {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

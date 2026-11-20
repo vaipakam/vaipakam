@@ -231,16 +231,24 @@ under `.timelock`, which the handover reads.
 
 ```bash
 cd contracts
-set -a; source .env; set +a
+bash script/with-env.sh '
 forge script script/DeployTimelock.s.sol \
-    --rpc-url $ETHEREUM_RPC_URL \
+    --rpc-url "$ETHEREUM_RPC_URL" \
     --broadcast \
     --slow
+'
 ```
+
+`with-env.sh` reads `.env` as data, never executing it, then runs the quoted
+commands with those settings (#1939). Keep the single quotes: they make the
+settings expand after the load, not in your own shell before it. Never
+`source .env` instead: that executes the file in a shell that holds the deploy
+keys.
 
 Verify the resulting Timelock on-chain:
 
 ```bash
+bash script/with-env.sh '
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
 
 # The governance Safe proposes
@@ -255,6 +263,7 @@ cast call $TIMELOCK "MIN_DELAY_FLOOR()(uint256)" --rpc-url $ETHEREUM_RPC_URL
 cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
     0x0000000000000000000000000000000000000000000000000000000000000000 \
     $(cast wallet address $DEPLOYER_PRIVATE_KEY) --rpc-url $ETHEREUM_RPC_URL
+'
 ```
 
 ---
@@ -276,21 +285,24 @@ canceller.
 
 ```bash
 cd contracts
-set -a; source .env; set +a
+bash script/with-env.sh '
 CHAIN_SLUG=ethereum forge script script/Handover.s.sol \
-    --rpc-url $ETHEREUM_RPC_URL \
+    --rpc-url "$ETHEREUM_RPC_URL" \
     --broadcast \
     --slow
+'
 ```
 
 After the script completes, the admin EOA cannot make any admin-gated
 call. Test it explicitly — this must revert with a missing-role error:
 
 ```bash
+bash script/with-env.sh '
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
 cast send $DIAMOND "pause()" \
     --rpc-url $ETHEREUM_RPC_URL \
     --private-key $ADMIN_PRIVATE_KEY
+'
 ```
 
 If it does NOT revert, the handover did not complete — do not proceed.
@@ -309,7 +321,10 @@ has the exact calls.
 
 ### F.2 Verify final role distribution
 
+From `contracts/`:
+
 ```bash
+bash script/with-env.sh '
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
 GOV_SAFE=$EMERGENCY_REVOKER_ADDRESS
@@ -326,7 +341,9 @@ for role in DEFAULT_ADMIN_ROLE ADMIN_ROLE UNPAUSER_ROLE KYC_ADMIN_ROLE \
     echo "  $who: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH ${!who} --rpc-url $ETHEREUM_RPC_URL)"
   done
 done
-cast call $DIAMOND "owner()(address)" --rpc-url $ETHEREUM_RPC_URL   # must be $TIMELOCK
+cast call $DIAMOND "owner()(address)" --rpc-url $ETHEREUM_RPC_URL   # must be the Timelock
+echo "  Timelock: $TIMELOCK"
+'
 ```
 
 Expected end-state:

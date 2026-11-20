@@ -1761,6 +1761,11 @@ library LibVaipakam {
         // pro-rata requests, including ones allowing partial repayment
         // ({LibIntentTerms.lifecycleVerdict}). Appended.
         bool acceptsProRata;
+        // #3635 A / #3713 — the slot's market link on its rate floor, as on
+        // `Offer.linkKind` / `Offer.linkMarginBps`: the effective floor is
+        // the higher of `minRateBps` and the linked rate. Appended.
+        uint8 linkKind;
+        int16 linkMarginBps;
     }
 
     /// @notice #3626 — how many standing intents one owner may hold on one
@@ -2032,6 +2037,26 @@ library LibVaipakam {
         // matcher nor an accepting lender can set or change it. On a lender's
         // offer it is attribution only (#3719) and earns no share.
         address integrator;
+        // #3635 A / #3713 — the market link on the offer's rate limit
+        // ({Offer.linkKind} / {Offer.linkMarginBps}). 0 / 0 = none.
+        uint8 linkKind;
+        int16 linkMarginBps;
+        // #3713 section 6.4 — the creator confirmed a fixed rate outside the
+        // warning band around the term average. Needed only when the checked
+        // rate (a lender's floor, a borrower's ceiling) is outside the band;
+        // never stored. On a signed offer it is part of what is signed.
+        bool rateFarFromAverageAcknowledged;
+    }
+
+    /// @notice #3635 A / #3713 — the rate terms of an intent slot write
+    ///         ({LenderIntentFacet.setLenderIntent}): the market link on the
+    ///         slot's floor and the creator's acknowledgement of a floor
+    ///         outside the warning band. Grouped so the setter's argument
+    ///         list stays within the stack.
+    struct IntentRateTerms {
+        uint8 linkKind;
+        int16 linkMarginBps;
+        bool rateFarFromAverageAcknowledged;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -2058,6 +2083,13 @@ library LibVaipakam {
         uint256 interestRateBpsMax;
         uint256 collateralAmount;
         uint256 collateralAmountMax;
+        // #3635 A — the market link on the rate limit; a change of either
+        // is a change of the rate cluster.
+        uint8 linkKind;
+        int16 linkMarginBps;
+        // #3713 section 6.4 — acknowledgement of a checked rate outside the
+        // warning band; asked only when the edit changes the checked rate.
+        bool rateFarFromAverageAcknowledged;
     }
 
     /**
@@ -2310,6 +2342,16 @@ library LibVaipakam {
         // on a lender's offer it is attribution only (#3719). Set only by
         // `OfferCreateFacet`.
         address integrator;
+        // #3635 A / #3713 — the maker's market link on its rate limit
+        // (`IRateReference.LinkKind`: 0 none, 1 the averaged reference, 2 the
+        // term average) and its signed margin in basis points (may be
+        // negative). The link only ever TIGHTENS the typed bound: a lender's
+        // floor becomes the higher of `interestRateBps` and the linked rate,
+        // a borrower's ceiling the lower of `interestRateBpsMax` and it.
+        // ERC-20 lending offers only (never a rental, a sale offer or a
+        // refinance request). A change of either is a change of terms. Appended.
+        uint8 linkKind;
+        int16 linkMarginBps;
     }
 
     /**
@@ -2636,6 +2678,11 @@ library LibVaipakam {
         // and such a loan pays none on extension either.
         uint64 lifTermOrigin;
         uint32 lifPaidDays;
+        // #3635 A — true when either maker's rate bound came from a market
+        // link when this loan opened (`MarketLinkedRateLimitsDesign.md` 4.4):
+        // its rate is partly a copy of the reference, so figures built from
+        // the platform's own loans leave it out. Set once at origination.
+        bool rateFromLink;
     }
 
     /**
@@ -8981,6 +9028,17 @@ library LibVaipakam {
         ///      `isAggregatorAdapter` (the adapter's principal is fixed at its
         ///      initialize, so the two cannot drift). Appended — append-only.
         mapping(address => address) adapterPrincipal;
+        // #3635 A / #3713 — transients of a signed direct accept, read only
+        // while `acceptAckActive` (so never cleared): the acceptor's signed
+        // rate, which on a rate-linked offer is the limit the effective
+        // endpoint must not pass, and the band acknowledgement.
+        uint256 acceptAckRateLimitBps;
+        bool acceptAckRateFarAck;
+        // #3635 A / #3713 — set by `InstantFillFacet.fillInstant` around one
+        // fill and cleared after it: the fill is a taker step, so its actual
+        // rate is band-checked with the request's acknowledgement.
+        bool instantTakerActive;
+        bool instantRateFarAck; // Appended — append-only.
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -10700,6 +10758,9 @@ library LibVaipakam {
         // there), distinct from msg.sender on the matchOffers path.
         address matcher;
         bool active;
+        // #3635 A — a maker's market link set the bound the match rate came
+        // from; LoanFacet records it as `Loan.rateFromLink`.
+        bool rateFromLink;
     }
 
 
