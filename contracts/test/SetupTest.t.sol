@@ -60,6 +60,7 @@ import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
@@ -700,7 +701,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1317,8 +1318,14 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getReferralFacetSelectors()
         });
-        // The backstop's Role B (absorb) governance, split off BackstopFacet.
+        // #3635 A / #3713 — the rate link and the warning band.
         cuts[137] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RateLinkFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRateLinkFacetSelectors()
+        });
+        // The backstop's Role B (absorb) governance, split off BackstopFacet.
+        cuts[138] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getBackstopAbsorbFacetSelectors()

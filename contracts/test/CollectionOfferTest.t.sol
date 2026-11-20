@@ -444,6 +444,6 @@ contract CollectionOfferTest is SetupTest {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 2);
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.CollectionParentNotFillable.selector, id));
-        OfferMutateFacet(address(diamond)).setOfferRate(id, 600, 600, uint64(block.timestamp + 1 hours));
+        OfferMutateFacet(address(diamond)).setOfferRate(id, 600, 600, 0, 0, false, uint64(block.timestamp + 1 hours));
     }
 }

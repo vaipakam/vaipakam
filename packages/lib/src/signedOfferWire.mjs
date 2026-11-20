@@ -1,7 +1,7 @@
 /**
  * A signed offer as the platform stores it (#1131, #1481).
  *
- * The maker signs a 46-field `SignedOffer` struct (EIP-712, struct order
+ * The maker signs a 49-field `SignedOffer` struct (EIP-712, struct order
  * exactly as `LibSignedOffer.SignedOffer` declares it). The indexer keeps
  * that order as `order_json` — the payload a taker replays on chain — beside
  * the market columns the book filters and sorts on, which are copies of
@@ -25,7 +25,7 @@
  * the indexer's `signedOfferEip712.ts`.
  */
 
-/** The 46 fields, in struct order, with their EIP-712 types. Field order is
+/** The 49 fields, in struct order, with their EIP-712 types. Field order is
  *  load-bearing: it fixes the typehash and so every signature and order hash.
  *  The indexer's typehash test pins this list to the type string it reads
  *  from `LibSignedOffer.sol`. */
@@ -86,6 +86,12 @@ export const SIGNED_OFFER_FIELDS = Object.freeze([
   { name: 'exclusionsHash', type: 'bytes32' },
   { name: 'loans', type: 'uint16' },
   { name: 'startTime', type: 'uint64' },
+  // #3635 A, #3713 — the maker's market link on its rate limit (kind 0 = none;
+  // the margin in basis points, may be negative) and its acknowledgement of a
+  // rate far from the term average. A link only tightens the typed limit.
+  { name: 'linkKind', type: 'uint8' },
+  { name: 'linkMarginBps', type: 'int16' },
+  { name: 'rateFarFromAverageAcknowledged', type: 'bool' },
 ].map((f) => Object.freeze(f)));
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
@@ -106,15 +112,26 @@ export const NO_COLLECTION = Object.freeze({
   startTime: '0',
 });
 
-/** The 46 field names in struct order. */
+/** #3635 A, #3713 — the rate-link fields of an order with no market link and
+ *  no far-from-average acknowledgement. Builders spread it into the orders
+ *  they sign unless the maker set a link or acknowledged the band. */
+export const NO_RATE_LINK = Object.freeze({
+  linkKind: '0',
+  linkMarginBps: '0',
+  rateFarFromAverageAcknowledged: false,
+});
+
+/** The 49 field names in struct order. */
 export const SIGNED_OFFER_FIELD_NAMES = Object.freeze(SIGNED_OFFER_FIELDS.map((f) => f.name));
 
 /** The stored wire form of each EIP-712 type: an address lowercased, a bool
  *  as a JSON boolean, a bytes32 as lowercase 0x-64-hex, a uint as a canonical
- *  decimal string (no sign, no leading zero) within its width. */
+ *  decimal string (no sign, no leading zero) within its width, an int the
+ *  same with an optional leading minus (never "-0") within its range. */
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 const DEC = /^(0|[1-9][0-9]*)$/;
+const SDEC = /^(0|-?[1-9][0-9]*)$/;
 
 function wireValueProblem(type, value) {
   if (type === 'address') return typeof value === 'string' && ADDRESS.test(value) ? null : 'a lowercase address';
@@ -125,10 +142,17 @@ function wireValueProblem(type, value) {
     if (typeof value !== 'string' || !DEC.test(value)) return 'a canonical decimal string';
     return BigInt(value) < 1n << BigInt(width[1]) ? null : `within ${type}`;
   }
+  const signed = /^int(\d+)$/.exec(type);
+  if (signed) {
+    if (typeof value !== 'string' || !SDEC.test(value)) return 'a canonical signed decimal string';
+    const half = 1n << (BigInt(signed[1]) - 1n);
+    const v = BigInt(value);
+    return v >= -half && v < half ? null : `within ${type}`;
+  }
   return `a known type (${type})`;
 }
 
-/** The canonical `order_json`: the 46 fields in struct order. Stable key
+/** The canonical `order_json`: the 49 fields in struct order. Stable key
  *  order makes the same order serialize to the same bytes, so two copies are
  *  comparable as strings. The order must already be in wire form. */
 export function canonicalOrderJson(order) {
@@ -139,7 +163,7 @@ export function canonicalOrderJson(order) {
 
 /**
  * Read a stored `order_json`. Returns `{ order }` only when the text is the
- * canonical serialization of an object carrying exactly the 46 fields, each
+ * canonical serialization of an object carrying exactly the 49 fields, each
  * in its wire form; otherwise `{ error }`, naming the first problem.
  */
 export function parseStoredOrderJson(json) {

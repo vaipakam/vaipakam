@@ -23,6 +23,8 @@ const intent = (over: Partial<IntentRecord> = {}): IntentRecord => ({
   termsSetAt: NOW - DAY,
   lendUntil: 0n,
   acceptsProRata: false,
+  linkKind: 0,
+  linkMarginBps: 0,
   ...over,
 });
 const facts = (over: Partial<ManageFacts> = {}): ManageFacts => ({

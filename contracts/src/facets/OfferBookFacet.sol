@@ -13,6 +13,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 
 /**
  * @title OfferBookFacet
@@ -49,8 +50,12 @@ contract OfferBookFacet is IVaipakamErrors {
      * @param offerId The offer just created.
      * @param route   How the creation reached `OfferCreateFacet`; it decides
      *                which bounds apply (see {LibOfferAdmission.enforceBounds}).
+     * @param rateFarFromAverageAcknowledged The creator's acknowledgement of a
+     *                checked rate outside the warning band (#3713 section 6.4).
      */
-    function openOfferOnBook(uint256 offerId, LibOfferAdmission.Route route) external {
+    function openOfferOnBook(uint256 offerId, LibOfferAdmission.Route route, bool rateFarFromAverageAcknowledged)
+        external
+    {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
@@ -62,9 +67,14 @@ contract OfferBookFacet is IVaipakamErrors {
         if (!s.saleVehicleCreate) LibTerms.requireCurrent(offer.creator);
         LibOfferAdmission.enforceLifecycleFlex(offer, route);
         LibOfferAdmission.enforceBounds(offer, route);
+        // #3635 A / #3713 — the rate terms, through their one host: a link the
+        // offer may not carry is refused, and a checked rate outside the
+        // warning band needs the creator's acknowledgement. The mask is what
+        // `OfferCreatedDetails` states.
+        uint8 warnings = RateLinkFacet(address(this)).admitOfferRate(offerId, rateFarFromAverageAcknowledged, true);
         LibMetricsHooks.onOfferCreated(offer);
         emit OfferCreateFacet.OfferCreated(offerId, offer.creator, offer.offerType);
-        _emitOfferCreatedDetails(offerId, offer);
+        _emitOfferCreatedDetails(offerId, offer, warnings);
         // #3358 — a price-move guard the creator armed earlier in this
         // transaction (`OfferPriceGuardFacet.armOfferPriceGuard`) is recorded
         // here, with the prices at posting, so the offer is never on the book
@@ -147,7 +157,7 @@ contract OfferBookFacet is IVaipakamErrors {
     /// @dev Emits `OfferCreatedDetails`. Moved verbatim from
     ///      `OfferCreateFacet` (#3242); populated field by field on a memory
     ///      struct to stay clear of viaIR's stack limit at the emit site.
-    function _emitOfferCreatedDetails(uint256 offerId, LibVaipakam.Offer storage offer) private {
+    function _emitOfferCreatedDetails(uint256 offerId, LibVaipakam.Offer storage offer, uint8 warnings) private {
         OfferCreateFacet.OfferCreatedFields memory f;
         f.offerType = offer.offerType;
         f.assetType = offer.assetType;
@@ -204,6 +214,9 @@ contract OfferBookFacet is IVaipakamErrors {
         f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
         f.lifecycleFlex = offer.lifecycleFlex;
         f.integrator = offer.integrator;
+        f.linkKind = offer.linkKind;
+        f.linkMarginBps = offer.linkMarginBps;
+        f.warnings = warnings;
 
         emit OfferCreateFacet.OfferCreatedDetails(offerId, offer.creator, offer.lendingAsset, f);
     }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
 import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -339,7 +340,7 @@ contract WorkflowComplianceAndRejection is Test {
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
-        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestRateLinkCut.withRateLinkHost(LibTestTermsCut.withTermsHost(cuts)); // #3734, #3635 A
         cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
@@ -460,7 +461,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -525,7 +529,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -576,7 +583,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -630,7 +640,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -679,7 +692,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -741,7 +757,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -798,7 +817,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -853,7 +875,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -909,7 +934,10 @@ contract WorkflowComplianceAndRejection is Test {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Aon,
                 refinanceTargetLoanId: nftLoanId,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

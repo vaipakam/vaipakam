@@ -82,9 +82,14 @@ export interface EditOfferRecord {
   parallelSaleOrderHash: Hex;
   refinanceTargetLoanId: bigint;
   backstopEligibleAfter: bigint;
+  /** #3635 A — the offer's market link on its rate limit (0 = none) and its
+   *  margin. An edit carries them unchanged: this app sets no link. */
+  linkKind: number;
+  linkMarginBps: number;
 }
 
-/** The six figures `modifyOffer` takes. */
+/** The figures `modifyOffer` takes, with the offer's rate link carried
+ *  unchanged (#3635 A). */
 export interface EditTerms {
   amount: bigint;
   amountMax: bigint;
@@ -92,6 +97,8 @@ export interface EditTerms {
   interestRateBpsMax: bigint;
   collateralAmount: bigint;
   collateralAmountMax: bigint;
+  linkKind: number;
+  linkMarginBps: number;
 }
 
 export function currentTerms(o: EditOfferRecord): EditTerms {
@@ -102,6 +109,8 @@ export function currentTerms(o: EditOfferRecord): EditTerms {
     interestRateBpsMax: o.interestRateBpsMax,
     collateralAmount: o.collateralAmount,
     collateralAmountMax: o.collateralAmountMax,
+    linkKind: o.linkKind,
+    linkMarginBps: o.linkMarginBps,
   };
 }
 
@@ -250,6 +259,8 @@ export function recordFrom(raw: Raw): EditOfferRecord {
     parallelSaleOrderHash: raw.parallelSaleOrderHash as Hex,
     refinanceTargetLoanId: raw.refinanceTargetLoanId as bigint,
     backstopEligibleAfter: BigInt(raw.backstopEligibleAfter as bigint | number),
+    linkKind: Number(raw.linkKind ?? 0),
+    linkMarginBps: Number(raw.linkMarginBps ?? 0),
   };
 }
 
@@ -325,7 +336,10 @@ export function editBlockers(r: Pick<EditReview, 'facts' | 'terms' | 'move' | 'b
 
 /** The call's arguments, with a deadline read from the chain now. */
 export async function modifyArgs(c: PublicClient, offerId: bigint, t: EditTerms) {
-  return [offerId, t, await chainValidUntil(c)] as const;
+  // #3713 — this app does not ask for the far-from-average confirmation yet,
+  // so an edit that moves the checked rate outside the band is refused by
+  // name (`RateFarFromTermAverage`); an edit that leaves it needs none.
+  return [offerId, { ...t, rateFarFromAverageAcknowledged: false }, await chainValidUntil(c)] as const;
 }
 
 export async function readEditReview(own: OwnStateClient, diamond: Hex, offerId: bigint, terms: EditTerms, identity: string, copy: Copy): Promise<EditReview> {
@@ -521,6 +535,8 @@ export function measureEdit(r: EditReview, logs: readonly Log[], diamond: Hex, v
     interestRateBpsMax: a.interestRateBpsMax as bigint,
     collateralAmount: a.collateralAmount as bigint,
     collateralAmountMax: a.collateralAmountMax as bigint,
+    linkKind: Number(a.linkKind ?? 0),
+    linkMarginBps: Number(a.linkMarginBps ?? 0),
   };
   const legs: LegOutcome[] = [termsKey(recorded) === termsKey(r.terms) ? { status: 'done', label } : { status: 'not-done', label, reason: text('offerEdit.recordedOther') }];
   const m = r.move;

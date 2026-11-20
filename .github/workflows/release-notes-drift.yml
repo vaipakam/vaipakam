@@ -53,6 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Check for release-note + functional-spec updates
@@ -121,9 +122,10 @@ jobs:
       # solely because the check was red on arrival; the platform is pre-live,
       # so the ~45 operator-facing citations were fixed instead of frozen.
       #
-      # Scope is `docs/ops/` — where a stale path costs a person real time and
-      # where the cleanup has actually happened. Widening it to the design
-      # docs is #1462's completion criterion, not a knob to turn here.
+      # Scope: every citation in `docs/ops/`, where a stale path costs a
+      # person real time, and every LINK in the other living docs (#3548).
+      # Shipped release notes and `docs/OlderDocs/` are history and are not
+      # rewritten. The script's header has the reasoning.
       #
       # Two rules: a citation of a REMOVED directory (closed-world, may read
       # the words inside command text) and a cited path that DOES NOT EXIST
@@ -143,7 +145,7 @@ jobs:
       - name: Install the markdown gates' parsers
         run: pnpm install --frozen-lockfile --filter @vaipakam/lib
 
-      - name: Docs path gate (removed directories, cited paths exist)
+      - name: Docs path gate (removed directories, cited paths and links exist)
         run: |
           set -euo pipefail
           # Fixtures first, as for the other gates: each pins a case #1467's

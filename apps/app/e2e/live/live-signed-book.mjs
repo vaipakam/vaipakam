@@ -392,7 +392,7 @@ function wireToStruct(o) {
   for (const { name, type } of SIGNED_OFFER_FIELDS) {
     const v = o[name];
     if (type === 'bool' || type === 'address' || type === 'bytes32') out[name] = v;
-    else if (type === 'uint8' || type === 'uint16' || type === 'uint32') out[name] = Number(v);
+    else if (type === 'uint8' || type === 'uint16' || type === 'uint32' || type === 'int16') out[name] = Number(v);
     else out[name] = BigInt(v);
   }
   return out;

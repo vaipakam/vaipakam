@@ -96,6 +96,11 @@ export const ACCEPT_ERRORS = [
   // #3734 — the taker or the offer's maker is not current on this
   // network's Terms of Service; the preview does not say which.
   'TermsNotAccepted',
+  // #3635 A — a rate-linked offer whose link cannot be used now, or whose
+  // linked bound crossed its typed opposite bound.
+  'RateReferenceUnavailable',
+  'RateReferenceUnusual',
+  'RateRangeEmpty',
   // #3744 — the wallet holding the offer's position token (the creator
   // side, once the token moved) is flagged by the sanctions screen.
   'SanctionedOfferHolder',

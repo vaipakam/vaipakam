@@ -134,6 +134,32 @@ library LibVaultProtectionStorage {
         ///      0 = none. Appended.
         uint64 positionMoveAt;
         uint64 positionMoveEpoch;
+        /// @dev #3756 — the recovery claim (`RecoveryClaimDesign.md`): whether
+        ///      the recovery address may ask for the account, and the wait
+        ///      between its request and the earliest run (both in force).
+        ///      Off by default. Appended.
+        bool claimAllowed;
+        uint32 claimWait;
+        /// @dev #3756 — a pending switch-on or shortening of the wait: the
+        ///      wait it sets (0 = none), when it comes into force and the
+        ///      epoch it was asked in (a lock, a replacement or a clawback
+        ///      drops it). A switch-off and a lengthening apply at once and
+        ///      are never pending.
+        uint32 pendingClaimWait;
+        uint64 pendingClaimAt;
+        uint64 pendingClaimEpoch;
+        /// @dev #3756 — the open claim: the recovery address that asked, when,
+        ///      the earliest run, the lapse (the run window's end) and the
+        ///      epoch it was asked in. `claimRequestedAt == 0` = none. Its
+        ///      dates never move once asked.
+        address claimBy;
+        uint64 claimRequestedAt;
+        uint64 claimRunnableAt;
+        uint64 claimLapsesAt;
+        uint64 claimEpoch;
+        /// @dev #3756 — no new request before this time (30 days after a
+        ///      claim was cancelled or dropped; a lapse starts none).
+        uint64 claimPauseUntil;
     }
 
     /// @notice #3246 part 2 — THE rule for the recovery address in force:
@@ -179,6 +205,36 @@ library LibVaultProtectionStorage {
     function positionMovePending(Layout storage l) internal view returns (uint64) {
         uint64 at = l.positionMoveAt;
         return at != 0 && l.positionMoveEpoch == l.epoch ? at : 0;
+    }
+
+    /// @notice #3756 — the recovery-claim setting in force: a pending
+    ///         switch-on or shortening counts from its time on, while its
+    ///         epoch is the record's current one.
+    function claimSetting(Layout storage l) internal view returns (bool allowed, uint32 wait) {
+        uint32 w = l.pendingClaimWait;
+        if (w != 0 && l.pendingClaimEpoch == l.epoch && block.timestamp >= l.pendingClaimAt) return (true, w);
+        return (l.claimAllowed, l.claimWait);
+    }
+
+    /// @notice #3756 — a pending switch-on or shortening still waiting: the
+    ///         wait it sets and when it comes into force (0, 0 = none).
+    function claimSettingPending(Layout storage l) internal view returns (uint32 wait, uint64 at) {
+        uint32 w = l.pendingClaimWait;
+        if (w != 0 && l.pendingClaimEpoch == l.epoch && block.timestamp < l.pendingClaimAt) {
+            return (w, l.pendingClaimAt);
+        }
+        return (0, 0);
+    }
+
+    /// @notice #3756 — the open claim's request time, or 0. A claim counts
+    ///         only while its epoch is the record's current one, until it
+    ///         lapses, and while the address that asked is still the recovery
+    ///         address in force: a lapsed claim, or one asked by an address a
+    ///         change has since replaced, is void (RecoveryClaimDesign 4.5).
+    function claimOpen(Layout storage l) internal view returns (uint64) {
+        uint64 at = l.claimRequestedAt;
+        return at != 0 && l.claimEpoch == l.epoch && block.timestamp <= l.claimLapsesAt
+            && l.claimBy == recoveryInForce(l) ? at : 0;
     }
 
     function layout() internal pure returns (Layout storage l) {

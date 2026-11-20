@@ -19,6 +19,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -100,7 +101,10 @@ contract IntegratorShareTest is SetupTest {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -255,6 +259,7 @@ contract IntegratorShareTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, 100_000 ether, 300, 6600, 90, 100 ether, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         );
     }
@@ -297,18 +302,24 @@ contract IntegratorShareTest is SetupTest {
         reg.nameLenderIntentIntegrator(lender, mockERC20, mockCollateralERC20, 0, unknown);
     }
 
-    /// #3682 / #3685 — the loans-opened-with-a-warning counter is not
-    /// connected until the loan warnings mask exists. This fails as soon as
-    /// LoanInitiatedDetails carries a `warnings` field, so the counter is
-    /// connected (and this test replaced by one that opens a warned loan
-    /// and sees the counter move) in the same change.
-    function test_warningCounter_connectedWhenTheMaskExists() public view {
-        string memory abiJson = vm.readFile("out/LoanFacet.sol/LoanFacet.json");
-        assertEq(
-            vm.indexOf(abiJson, '"name":"warnings"'),
-            type(uint256).max,
-            "#3685 mask exists: connect IntegratorEntry.loansWarned and replace this test"
+    /// #3719 / #3713 — a loan that opens with a non-empty warnings mask (its
+    /// rate far from the term average) counts on its integrator's public
+    /// record; an unwarned one does not. The mask comes from the rate-link
+    /// host, mocked here so the counter is tested apart from the reference.
+    function test_warnedLoan_countsOnTheIntegrator() public {
+        _register(integ, payout, 0, "Acme");
+        _acceptVia(_lenderOffer(), integ);
+        assertEq(reg.getIntegrator(integ).loansWarned, 0, "an unwarned loan is not counted as warned");
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RateLinkFacet.loanRateWarnings.selector),
+            abi.encode(uint8(1 << 1))
         );
+        _acceptVia(_lenderOffer(), integ);
+        vm.clearMockedCalls();
+        assertEq(reg.getIntegrator(integ).loansBrought, 2);
+        assertEq(reg.getIntegrator(integ).loansWarned, 1, "the warned loan is counted");
     }
 
     function test_deliver_isDiamondOnly() public {

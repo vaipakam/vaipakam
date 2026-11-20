@@ -76,6 +76,25 @@ abstract contract VaultProtectionBase {
     ///         position tokens to the wallet that replaced it.
     uint8 public constant PURPOSE_POSITION_MOVE = 11;
 
+
+    /// @notice #3756 — why an open claim ended, as {RecoveryClaimEnded}
+    ///         reports it (internal, to keep {VaultProtection} small; the
+    ///         values are stated here and in the event's notes).
+    uint8 internal constant CLAIM_END_CANCEL = 0;
+    uint8 internal constant CLAIM_END_OWNER_CALL = 1;
+    uint8 internal constant CLAIM_END_SWITCHED_OFF = 2;
+    uint8 internal constant CLAIM_END_LOCK = 3;
+    uint8 internal constant CLAIM_END_REPLACEMENT = 4;
+    uint8 internal constant CLAIM_END_CLAWBACK = 5;
+    uint8 internal constant CLAIM_END_PROTECTION_OFF = 6;
+    /// @dev A change of recovery address came into force: the claim belonged
+    ///      to the address it replaced. Starts no pause, so the new address
+    ///      may ask at once (and waits the full wait).
+    uint8 internal constant CLAIM_END_RECOVERY_CHANGED = 7;
+    /// @notice #3756 — no new request for this long after a claim was
+    ///         cancelled or dropped (internal, like the end reasons).
+    uint32 internal constant CLAIM_PAUSE = 30 days;
+
     /// @notice #3246 part 2 — how long a CHANGE of the recovery address waits
     ///         (owner decision 2026-11-06). A first setting waits twice the
     ///         account's delay instead (twice {MIN_DELAY} while protected mode
@@ -159,6 +178,7 @@ abstract contract VaultProtectionBase {
     bytes32 public constant POSITION_MOVE_CANCEL_TYPEHASH =
         keccak256("PositionMoveCancel(uint64 at,uint256 nonce,uint64 expiry)");
 
+
     /// @notice How a key authorizes one write: `sig` empty means a direct call
     ///         from `key`; otherwise its EIP-712 / ERC-1271 signature.
     struct Auth {
@@ -229,6 +249,29 @@ abstract contract VaultProtectionBase {
     ///         position move.
     event PositionMoveDropped(address indexed account, uint64 readyAt);
 
+    /// @notice #3756 — the owner asked to switch the recovery claim on, or to
+    ///         shorten its wait; it comes into force at `at` unless it is
+    ///         cancelled or dropped first.
+    event RecoveryClaimSettingRequested(address indexed account, uint32 wait, uint64 at, address by);
+    /// @notice The recovery-claim setting in the record changed: a switch-off
+    ///         or a lengthening (at once), a pending change written once in
+    ///         force, or protected mode switched off (off).
+    event RecoveryClaimSettingChanged(address indexed account, bool allowed, uint32 wait);
+    /// @notice The owner or a signer cancelled the pending claim setting.
+    event RecoveryClaimSettingCancelled(address indexed account, uint64 at, address by);
+    /// @notice The recovery address asked for the account. The claim may run
+    ///         from `runnableAt` until `lapsesAt`; neither date ever moves.
+    event RecoveryClaimRequested(
+        address indexed account, address indexed recovery, uint64 requestedAt, uint64 runnableAt, uint64 lapsesAt
+    );
+    /// @notice The open claim asked at `requestedAt` ended without running:
+    ///         cancelled, or dropped (`reason`, a CLAIM_END_* value). `by` is
+    ///         the key that acted, 0 where the step names none. No new request
+    ///         is accepted before `newRequestAt`.
+    event RecoveryClaimEnded(
+        address indexed account, uint64 requestedAt, address by, uint8 reason, uint64 newRequestAt
+    );
+
     /// @notice #3719 — a role on the account changed: the owner (primary
     ///         wallet), a secondary signer, or the recovery nominee (a
     ///         replacement proposed, then cleared by its cancellation or
@@ -295,6 +338,22 @@ abstract contract VaultProtectionBase {
     /// @notice #3246 part 2 — moving positions to a replacing wallet needs a
     ///         completed replacement.
     error NotReplaced();
+    /// @notice #3756 — the claim's wait is outside 30 to 365 days.
+    error BadClaimWait(uint32 wait);
+    /// @notice The account does not allow a recovery claim.
+    error ClaimNotAllowed();
+    /// @notice A claim is already open.
+    error ClaimOpen();
+    /// @notice No claim is open.
+    error NoClaim();
+    /// @notice A new request waits until `until` after a cancellation or drop.
+    error ClaimPaused(uint64 until);
+    /// @notice Refused while a change of recovery address is pending.
+    error RecoveryChangePending();
+    /// @notice The key is not the recovery address in force.
+    error NotRecovery(address key);
+    /// @notice The setting asked for is the one already in force.
+    error ClaimSettingUnchanged();
 
     constructor() {
         SELF = address(this);
@@ -384,6 +443,18 @@ abstract contract VaultProtectionBase {
         l.recovery = p;
         _clearPendingRecovery(l);
         emit RecoveryAddressSet(_account(), previous, p);
+        // A claim is the requesting address's own: one asked by the address
+        // just replaced is void from the change on (`claimOpen`), and is
+        // cleared and reported here, starting no pause, so the new address
+        // may ask for itself at once (RecoveryClaimDesign 4.5).
+        if (l.claimRequestedAt != 0 && l.claimBy != p) {
+            uint64 at = l.claimRequestedAt;
+            // Live until this change: the claim's own epoch, not lapsed, and
+            // asked by the address now replaced.
+            bool live = l.claimEpoch == l.epoch && block.timestamp <= l.claimLapsesAt && l.claimBy == previous;
+            _clearClaim(l);
+            if (live) emit RecoveryClaimEnded(_account(), at, address(0), CLAIM_END_RECOVERY_CHANGED, l.claimPauseUntil);
+        }
     }
 
     function _clearPendingRecovery(P.Layout storage l) internal {
@@ -392,11 +463,65 @@ abstract contract VaultProtectionBase {
         l.pendingRecoveryEpoch = 0;
     }
 
+    // ─── #3756 internals — the recovery claim ───────────────────────────
+
+    /// @dev Write a pending claim setting that has come into force into the
+    ///      record; clear one from an earlier epoch (dropped).
+    function _settleClaimSetting(P.Layout storage l) internal {
+        uint32 w = l.pendingClaimWait;
+        if (w == 0) return;
+        if (l.pendingClaimEpoch != l.epoch) {
+            _clearPendingClaimSetting(l);
+            return;
+        }
+        if (block.timestamp < l.pendingClaimAt) return;
+        l.claimAllowed = true;
+        l.claimWait = w;
+        _clearPendingClaimSetting(l);
+        emit RecoveryClaimSettingChanged(_account(), true, w);
+    }
+
+    function _clearPendingClaimSetting(P.Layout storage l) internal {
+        l.pendingClaimWait = 0;
+        l.pendingClaimAt = 0;
+        l.pendingClaimEpoch = 0;
+    }
+
+    function _clearClaim(P.Layout storage l) internal {
+        l.claimBy = address(0);
+        l.claimRequestedAt = 0;
+        l.claimRunnableAt = 0;
+        l.claimLapsesAt = 0;
+        l.claimEpoch = 0;
+    }
+
+    /// @dev THE one way an open claim ends without running (4.4): a cancel,
+    ///      an owner's direct call, switching the claim off, an epoch advance
+    ///      (lock, replacement, clawback) and switching protected mode off.
+    ///      A live claim is cleared, the 30-day pause starts and the event is
+    ///      emitted; a lapsed or stale one is only cleared (a lapse starts no
+    ///      pause).
+    function _endClaim(P.Layout storage l, address by, uint8 reason) internal {
+        uint64 at = l.claimRequestedAt;
+        if (at == 0) return;
+        bool live = P.claimOpen(l) != 0;
+        _clearClaim(l);
+        if (!live) return;
+        uint64 until = uint64(block.timestamp) + CLAIM_PAUSE;
+        l.claimPauseUntil = until;
+        emit RecoveryClaimEnded(_account(), at, by, reason, until);
+    }
+
     /// @dev THE epoch advance (a lock, a replacement, a switch-off, a
     ///      clawback). A matured recovery address is never dropped (3.2): it
     ///      is written first; only a still-waiting one dies with the epoch.
-    function _advanceEpoch(P.Layout storage l) internal {
+    function _advanceEpoch(P.Layout storage l, address by, uint8 reason) internal {
         _settleRecovery(l);
+        // #3756 — a matured claim setting is written first, like the recovery
+        // address; a still-waiting one dies with the epoch. An open claim ends
+        // through the one helper, so the pause starts and the event names it.
+        _settleClaimSetting(l);
+        _endClaim(l, by, reason);
         address p = l.pendingRecovery;
         if (p != address(0)) {
             _clearPendingRecovery(l);
@@ -452,6 +577,12 @@ abstract contract VaultProtectionBase {
     function _authorize(Auth calldata auth, uint8 purpose, bytes32 structHash) internal {
         if (auth.sig.length == 0) {
             if (msg.sender != auth.key) revert BadSignature(auth.key);
+            // #3756 4.4 — a write the owner's key sends itself shows the key is
+            // held now, which an open claim asserts is no longer true: it ends
+            // the claim. A signature someone else submits never does (it shows
+            // only that the key was held when it was signed).
+            P.Layout storage l = P.layout();
+            if (l.claimRequestedAt != 0 && auth.key == _owner()) _endClaim(l, auth.key, CLAIM_END_OWNER_CALL);
             return;
         }
         if (block.timestamp > auth.expiry) revert SignatureExpired(auth.expiry);
@@ -497,8 +628,8 @@ abstract contract VaultProtectionBase {
 
     /// @dev Every pending change dies: a new epoch, and the setting requests
     ///      that loosen (a pending lowering, a switch-off) are cleared.
-    function _dropPending(P.Layout storage l) internal {
-        _advanceEpoch(l);
+    function _dropPending(P.Layout storage l, address by, uint8 reason) internal {
+        _advanceEpoch(l, by, reason);
         l.pendingDelayAt = 0;
         l.pendingDisableAt = 0;
     }
@@ -584,8 +715,16 @@ abstract contract VaultProtectionBase {
         l.pendingDelayAt = 0;
         l.pendingUnlockAt = 0;
         l.pendingDisableAt = 0;
+        // #3756 4.1 — switching protected mode off switches the claim off and
+        // ends an open one; switching it on again leaves it off.
+        _endClaim(l, address(0), CLAIM_END_PROTECTION_OFF);
+        bool claimWasOn = l.claimAllowed || l.pendingClaimWait != 0;
+        l.claimAllowed = false;
+        l.claimWait = 0;
+        _clearPendingClaimSetting(l);
+        if (claimWasOn) emit RecoveryClaimSettingChanged(_account(), false, 0);
         // #3246 part 2 — the recovery address in force is kept (ruling 7,
         // 2026-11-18); a pending one is dropped with every other change.
-        _advanceEpoch(l);
+        _advanceEpoch(l, address(0), CLAIM_END_PROTECTION_OFF);
     }
 }

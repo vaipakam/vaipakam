@@ -16,6 +16,7 @@ import {OfferMaterializeFacet} from "../facets/OfferMaterializeFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {MarketLedgerFacet} from "../facets/MarketLedgerFacet.sol";
 import {OfferPriceGuardFacet} from "../facets/OfferPriceGuardFacet.sol";
+import {RateLinkFacet} from "../facets/RateLinkFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -63,6 +64,24 @@ library LibIntentFill {
     error LenderIntentCollateralUnresolvable();
 
     /// @dev The slot exists and its terms have stood the minimum age (#3443).
+    /// @notice A slot's effective floor for a loan of `termDays` on
+    ///         `asset`: its typed floor, or with a market link (#3635 A) the
+    ///         higher of that and the linked rate. Refused by name while the
+    ///         link cannot be used. The one rule every slot admission prices
+    ///         by (instant fill, takeover).
+    function slotFloor(LibVaipakam.LenderIntent memory intent, address asset, uint256 termDays)
+        internal
+        view
+        returns (uint256 rateBps)
+    {
+        rateBps = intent.minRateBps;
+        if (intent.linkKind != 0) {
+            rateBps = RateLinkFacet(address(this)).linkedFloor(
+                asset, termDays, intent.linkKind, intent.linkMarginBps, rateBps
+            );
+        }
+    }
+
     function requireSlotLive(LibVaipakam.LenderIntent memory intent, address lender) internal view {
         // The standing-intent fill switch stops every route that draws a
         // slot's capital (a match, an instant borrow, a takeover), here, once.
@@ -161,6 +180,17 @@ library LibIntentFill {
         // repayment shape, already checked against the slot in {admitFill}.
         p.useFullTermInterest = useFullTermInterest;
         p.allowsPartialRepay = allowsPartialRepay;
+        {
+            // #3635 A — the slice carries the slot's market link, so the
+            // match core reads the slot's effective floor for this fill's
+            // term. The band was checked on the slot's floor when the slot
+            // was set; the slice is that write, not a new one.
+            LibVaipakam.LenderIntent storage intent =
+                LibVaipakam.storageSlot().lenderIntent[lender][lendingAsset][collateralAsset][slot];
+            p.linkKind = intent.linkKind;
+            p.linkMarginBps = intent.linkMarginBps;
+            p.rateFarFromAverageAcknowledged = true;
+        }
         sliceOfferId = materialize(p, lender);
     }
 

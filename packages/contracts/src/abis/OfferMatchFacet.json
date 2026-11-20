@@ -14,6 +14,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "borrowerCollFloor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "matcher",
         "type": "address",
         "internalType": "address"
@@ -107,6 +112,11 @@
             "name": "lenderRemainingPostMatch",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "rateFromLink",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -355,6 +365,17 @@
     "type": "error",
     "name": "PriceReadOutOfGas",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RateLinkUnavailable",
+    "inputs": [
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

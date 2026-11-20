@@ -481,6 +481,9 @@ export function expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor })
         useFullTermInterest: loan.useFullTermInterest,
         lifecycleFlex: 0, // #3621
         integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
+        linkKind: 0, // #3635 A — no market link
+        linkMarginBps: 0,
+        rateFarFromAverageAcknowledged: false, // #3713
       },
       validUntil: afterAnchor('transaction deadline', anchor, TX_DEADLINE_SEC),
     },
@@ -577,6 +580,7 @@ export function expectedAcceptTerms({
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
     integrator: '0x0000000000000000000000000000000000000000', // #3682
+    rateFarFromAverageAcknowledged: false, // #3713
   };
 }
 

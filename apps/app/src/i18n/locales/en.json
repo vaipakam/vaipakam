@@ -3025,6 +3025,9 @@
         "termsTooFresh": "This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.",
         "collectionParent": "This is a collection offer. It lends against one token of a collection per loan, and it can be taken only through the protocol’s collection-offer fill, which this app does not offer yet, not by accepting it directly. Nothing was sent.",
         "termsNotAccepted": "This offer can’t be taken right now: one side has not accepted the Terms of Service in force on this network. If it’s you, accept the Terms and try again. If it’s the offer’s creator, the offer can be taken once they accept. Nothing was sent.",
+        "rateReferenceUnavailable": "This offer’s rate follows the market reference, and that reference can’t be read for this loan’s term right now, so the offer can’t be taken. It may clear later. Nothing was sent.",
+        "rateReferenceUnusual": "This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.",
+        "rateRangeEmpty": "This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.",
         "unknown": "The protocol won’t accept this offer right now. Nothing was sent — refresh and try again, or check back shortly."
       },
       "walletConnectFirst": "Connect a wallet on a supported network first.",
@@ -3377,6 +3380,7 @@
         "InterestPaymentAttemptFailed": "Interest payment from reserve did not go through",
         "IntentCalmCheckSet": "Auto-lend price check changed",
         "LenderIntentIntegratorNamed": "Auto-lend integrator named",
+        "LenderIntentRateTermsSet": "Auto-lend rate link set",
         "IntegratorShareSettled": "Integrator fee share settled",
         "ReferralShareSettled": "Referral fee share settled",
         "InviterBound": "Invitation accepted",

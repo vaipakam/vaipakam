@@ -264,9 +264,6 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             if (!consent.takeover) revert InstantTakeoverNotOffered();
             LibTiming.requireIntentAged(incoming, consent.setAt);
         }
-        if (loan.interestRateBps < intent.minRateBps) {
-            revert InstantTakeoverRateBelowSlot(loan.interestRateBps, intent.minRateBps);
-        }
         LibIntentTerms.Lifecycle verdict =
             LibIntentTerms.lifecycleVerdict(intent.acceptsProRata, false, loan.allowsPartialRepay);
         if (verdict == LibIntentTerms.Lifecycle.FullTermRequired) revert LibIntentFill.LenderIntentFullTermRequired();
@@ -279,6 +276,12 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
                 maturity > block.timestamp + uint256(intent.maxDurationDays) * 1 days
                     || (intent.lendUntil != 0 && maturity > intent.lendUntil)
             ) revert InstantTakeoverTermPastSlot(maturity);
+            // #3635 A — the slot's effective floor for the term the loan has
+            // left, as if it were opened now: a linked slot reads its linked
+            // rate, and refuses by name while the link cannot be used.
+            uint256 left = maturity > block.timestamp ? maturity - block.timestamp : 0;
+            uint256 floorBps = LibIntentFill.slotFloor(intent, loan.principalAsset, (left + 1 days - 1) / 1 days);
+            if (loan.interestRateBps < floorBps) revert InstantTakeoverRateBelowSlot(loan.interestRateBps, floorBps);
         }
         // The same calm-price check every other fill of a lender intent slot
         // runs (on unless the slot's owner switched it off).

@@ -53,7 +53,7 @@ contract IntentCalmCheckTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, 10 * PRINCIPAL, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, 100 ether, false, 0, false, true, type(uint64).max
+            MAX_DURATION, 100 ether, false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20);
         ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
@@ -104,7 +104,10 @@ contract IntentCalmCheckTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

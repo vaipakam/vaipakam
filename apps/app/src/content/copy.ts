@@ -6344,6 +6344,15 @@ const copySource = {
       // preview does not say which, so the copy names both cases.
       termsNotAccepted:
         'This offer can’t be taken right now: one side has not accepted the Terms of Service in force on this network. If it’s you, accept the Terms and try again. If it’s the offer’s creator, the offer can be taken once they accept. Nothing was sent.',
+      // #3635 A — a rate-linked offer: its link cannot be used now (the
+      // reference is unreadable for the term, or the market is unusual for a
+      // term over 30 days), or the linked bound crossed its typed limit.
+      rateReferenceUnavailable:
+        'This offer’s rate follows the market reference, and that reference can’t be read for this loan’s term right now, so the offer can’t be taken. It may clear later. Nothing was sent.',
+      rateReferenceUnusual:
+        'This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.',
+      rateRangeEmpty:
+        'This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6870,6 +6879,7 @@ const copySource = {
       InterestPaymentAttemptFailed: 'Interest payment from reserve did not go through',
       IntentCalmCheckSet: 'Auto-lend price check changed',
       LenderIntentIntegratorNamed: 'Auto-lend integrator named',
+      LenderIntentRateTermsSet: 'Auto-lend rate link set',
       IntegratorShareSettled: 'Integrator fee share settled',
       ReferralShareSettled: 'Referral fee share settled',
       InviterBound: 'Invitation accepted',

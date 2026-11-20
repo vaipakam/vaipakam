@@ -53,7 +53,7 @@ abstract contract MarketLedgerBase is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, coll, slot, maxExposure, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, MIN_FILL, false, 0, proRata, true, type(uint64).max
+            MAX_DURATION, MIN_FILL, false, 0, proRata, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
     }
 
@@ -110,7 +110,10 @@ abstract contract MarketLedgerBase is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: !partialRepay
+                useFullTermInterest: !partialRepay,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -141,7 +144,7 @@ abstract contract MarketLedgerBase is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, slot, maxExposure, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION, MIN_FILL, false, lendUntil, false, true, type(uint64).max
+            MAX_DURATION, MIN_FILL, false, lendUntil, false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
     }
 

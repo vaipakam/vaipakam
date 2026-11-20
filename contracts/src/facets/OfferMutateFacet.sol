@@ -16,6 +16,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 import {OfferBookFacet} from "./OfferBookFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -101,6 +102,13 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // #3719 — the integrator named at creation (address(0) = none),
         // restated so a modified offer still names its door.
         address integrator,
+        // #3635 A — the market link on the rate limit after the edit.
+        uint8 linkKind,
+        int16 linkMarginBps,
+        // #3719 / #3713 — the warnings the offer's checked rate (a lender's
+        // floor, a borrower's ceiling) carries after the edit: bit 1 far
+        // above the term average, bit 2 far below. Never a caller input.
+        uint8 warnings,
         // #3744 — who changed it: the holder of the offer's token (or its
         // manager); `creator` stays the offer's identity.
         address by
@@ -219,7 +227,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         _settleAmountDelta(offerId, offer, oldAmount, oldAmountMax, newAmount, newAmountMax);
 
-        _emitModified(offerId, offer);
+        _emitModified(offerId, offer, RateLinkFacet(address(this)).admitOfferRate(offerId, true, false));
     }
 
     /**
@@ -231,6 +239,14 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *         OfferAlreadyAccepted, InvalidRateRange,
      *         InterestRateAboveCeiling, SanctionedAddress, plus
      *         per-asset pause reverts.
+     *         #3635 A / #3713 — also sets the market link on the rate
+     *         limit, and refuses a new checked rate (a lender's floor, a
+     *         borrower's ceiling) outside the warning band unless
+     *         `rateFarFromAverageAcknowledged` is set. An edit that leaves
+     *         the checked rate unchanged asks for no new flag.
+     * @param  linkKind   The link (`IRateReference.LinkKind`; 0 none).
+     * @param  linkMarginBps The link's signed margin; 0 without a link.
+     * @param  rateFarFromAverageAcknowledged The creator's acknowledgement.
      * @param  validUntil The caller's MANDATORY transaction deadline,
      *         as {setOfferAmount}.
      */
@@ -238,6 +254,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 offerId,
         uint256 newRateBps,
         uint256 newRateBpsMax,
+        uint8 linkKind,
+        int16 linkMarginBps,
+        bool rateFarFromAverageAcknowledged,
         uint64 validUntil
     ) external nonReentrant whenNotPaused {
         LibTiming.requireDeadline(validUntil);
@@ -245,11 +264,14 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
         _assertRateInvariants(newRateBps, newRateBpsMax);
+        (, uint256 oldChecked) = RateLinkFacet(address(this)).offerCheckedRate(offerId);
 
         offer.interestRateBps = newRateBps;
         offer.interestRateBpsMax = newRateBpsMax;
+        offer.linkKind = linkKind;
+        offer.linkMarginBps = linkMarginBps;
 
-        _emitModified(offerId, offer);
+        _emitModified(offerId, offer, _admitRate(offerId, oldChecked, rateFarFromAverageAcknowledged, true));
     }
 
     /**
@@ -302,7 +324,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             newCollateralAmountMax
         );
 
-        _emitModified(offerId, offer);
+        _emitModified(offerId, offer, RateLinkFacet(address(this)).admitOfferRate(offerId, true, false));
     }
 
     /**
@@ -358,7 +380,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             params.amount != oldAmount || params.amountMax != oldAmountMax;
         bool rateChanged =
             params.interestRateBps != oldRateBps
-            || params.interestRateBpsMax != oldRateBpsMax;
+            || params.interestRateBpsMax != oldRateBpsMax
+            || params.linkKind != offer.linkKind
+            || params.linkMarginBps != offer.linkMarginBps;
+        (, uint256 oldChecked) = RateLinkFacet(address(this)).offerCheckedRate(offerId);
         bool collateralChanged =
             params.collateralAmount != oldCollateralAmount
             || params.collateralAmountMax != oldCollateralAmountMax;
@@ -400,6 +425,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (rateChanged) {
             offer.interestRateBps = params.interestRateBps;
             offer.interestRateBpsMax = params.interestRateBpsMax;
+            offer.linkKind = params.linkKind;
+            offer.linkMarginBps = params.linkMarginBps;
         }
         if (collateralChanged) {
             offer.collateralAmount = params.collateralAmount;
@@ -431,7 +458,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             );
         }
 
-        _emitModified(offerId, offer);
+        _emitModified(
+            offerId, offer, _admitRate(offerId, oldChecked, params.rateFarFromAverageAcknowledged, rateChanged)
+        );
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -918,10 +947,28 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         return prepayAmount + buffer;
     }
 
+    /// @dev #3635 A / #3713 — admits the offer's rate terms after an edit
+    ///      through their one host: the link when this edit wrote it, and
+    ///      the band check on the checked rate, which asks for the
+    ///      acknowledgement only when the edit changed that rate. Returns the
+    ///      warnings mask `OfferModified` states.
+    function _admitRate(uint256 offerId, uint256 oldChecked, bool acknowledged, bool linkWritten)
+        private
+        view
+        returns (uint8)
+    {
+        (, uint256 newChecked) = RateLinkFacet(address(this)).offerCheckedRate(offerId);
+        return RateLinkFacet(address(this)).admitOfferRate(
+            offerId, acknowledged || newChecked == oldChecked, linkWritten
+        );
+    }
+
     /// @dev Emit the post-image snapshot in a single helper so the
     ///      three per-setter entries + the combined `modifyOffer` all
     ///      lay down identical events. Indexers filter by topic0.
-    function _emitModified(uint256 offerId, LibVaipakam.Offer storage offer) private {
+    ///      `warnings` is the mask the offer's checked rate carries after
+    ///      the edit.
+    function _emitModified(uint256 offerId, LibVaipakam.Offer storage offer, uint8 warnings) private {
         // #2737 — every mutator changes the offer's economics (amount, rate
         // or collateral), so a standing backstop opt-in no longer describes
         // the offer that would be filled: the borrower could opt a small offer
@@ -949,6 +996,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.collateralAmount,
             offer.collateralAmountMax,
             offer.integrator,
+            offer.linkKind,
+            offer.linkMarginBps,
+            warnings,
             msg.sender
         );
     }

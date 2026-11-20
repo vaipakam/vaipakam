@@ -78,6 +78,7 @@ contract LenderIntentCapitalTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         );
         LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
@@ -172,7 +173,10 @@ contract LenderIntentCapitalTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -856,6 +860,7 @@ contract LenderIntentCapitalTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockCollateralERC20, mockERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         ); // pair B: (mockCollateralERC20, mockERC20)
         (, uint256 total) = _byOwner(lender);
@@ -871,6 +876,7 @@ contract LenderIntentCapitalTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockCollateralERC20, mockERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         );
         (

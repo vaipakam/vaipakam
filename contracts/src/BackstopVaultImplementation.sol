@@ -38,6 +38,7 @@ interface IBackstopDiamond {
         uint64 lendUntil,
         bool acceptsProRata,
         bool riskAndTermsConsent,
+        LibVaipakam.IntentRateTerms calldata rate,
         uint64 validUntil
     ) external;
 
@@ -164,6 +165,11 @@ contract BackstopVaultImplementation is
             0, // lendUntil — none: a protocol-run intent lends without an end date (#3618)
             false, // acceptsProRata — full-term only, the committed-interest deal (#3619)
             true, // riskAndTermsConsent
+            // #3635 A / #3713 — no market link; the floor is set by
+            // governance (or the adapter's principal at setup), which already
+            // chose it, so it carries the band acknowledgement. The
+            // warnings mask still states where it sits.
+            LibVaipakam.IntentRateTerms({linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: true}),
             uint64(block.timestamp) // validUntil — in-transaction, no queue to wait in (#3412)
         );
     }

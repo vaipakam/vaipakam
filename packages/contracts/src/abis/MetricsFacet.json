@@ -1059,6 +1059,11 @@
             "name": "lifPaidDays",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "rateFromLink",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

@@ -2423,6 +2423,9 @@
         "termsTooFresh": "Esta oferta se publicó o cambió hace unos segundos, y una oferta solo puede aceptarse cuando sus condiciones llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
         "collectionParent": "Esta es una oferta de colección. Presta contra un token de una colección por préstamo, y solo puede tomarse mediante la ejecución de ofertas de colección del protocolo, que esta app aún no ofrece, no aceptándola directamente. No se ha enviado nada.",
         "termsNotAccepted": "Esta oferta no se puede aceptar ahora: una de las partes no ha aceptado los Términos de servicio vigentes en esta red. Si eres tú, acepta los Términos e inténtalo de nuevo. Si es quien creó la oferta, podrá aceptarse en cuanto los acepte. No se envió nada.",
+        "rateReferenceUnavailable": "La tasa de esta oferta sigue la referencia del mercado, y esa referencia no se puede leer ahora para el plazo de este préstamo, así que la oferta no se puede aceptar. Puede resolverse más tarde. No se envió nada.",
+        "rateReferenceUnusual": "La tasa de esta oferta sigue la referencia del mercado, y el mercado está inusual ahora, así que no se puede aceptar una oferta a más de 30 días. Puede resolverse más tarde. No se envió nada.",
+        "rateRangeEmpty": "La tasa de esta oferta sigue la referencia del mercado, que ha superado el límite de tasa propio de la oferta, así que ahora no hay ninguna tasa aceptable. Puede resolverse más tarde. No se envió nada.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
       },
       "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre la página de Inicio y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente.",
@@ -2753,6 +2756,7 @@
         "InterestPaymentAttemptFailed": "El pago de intereses desde la reserva no se completó",
         "IntentCalmCheckSet": "Comprobación de precio de Auto-lend cambiada",
         "LenderIntentIntegratorNamed": "Integrador de Auto-lend indicado",
+        "LenderIntentRateTermsSet": "Vínculo de tasa de Auto-lend definido",
         "IntegratorShareSettled": "Parte de la comisión del integrador liquidada",
         "ReferralShareSettled": "Parte de la comisión por referido liquidada",
         "InviterBound": "Invitación aceptada",

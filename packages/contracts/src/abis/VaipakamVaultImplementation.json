@@ -1018,6 +1018,59 @@
   },
   {
     "type": "function",
+    "name": "protectionRecoveryClaim",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "allowed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "wait",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pendingWait",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pendingAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "claimBy",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requestedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "runnableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lapsesAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "pauseUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "protectionSignersEmptied",
     "inputs": [],
     "outputs": [

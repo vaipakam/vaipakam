@@ -1,7 +1,7 @@
 # Stage 3 — Operator Worker split (`ops/hf-watcher` → `apps/{agent,indexer,keeper}`)
 
 **Status:** approved 2026-05-08, plan-only (PR1); execution PRs 2-5 follow
-**Companion doc:** [`LabsExtractionPlan.md`](./LabsExtractionPlan.md) — Stage 4
+**Companion doc:** `LabsExtractionPlan.md` — Stage 4
 covers the customer-facing apps split (defi + labs); this doc covers the
 operator-facing Worker split.
 
@@ -72,7 +72,7 @@ Plus shared infrastructure that every concern reuses:
 | Diagnostic record helpers | `diagRecord.ts` | 385 |
 | Typed `Env` shape (D1 + KV + cron bindings) | `env.ts` | 169 |
 
-Worker entry: [`ops/hf-watcher/src/index.ts`](../../ops/hf-watcher/src/index.ts) (495 LOC) wires all five concerns into one `scheduled()` cron + one `fetch()` HTTP handler.
+Worker entry: `ops/hf-watcher/src/index.ts` (495 LOC) wires all five concerns into one `scheduled()` cron + one `fetch()` HTTP handler.
 
 ## 3. Target structure
 

@@ -53,6 +53,8 @@ const NONE: IntentRecord = {
   termsSetAt: 0n,
   lendUntil: 0n,
   acceptsProRata: false,
+  linkKind: 0,
+  linkMarginBps: 0,
 };
 const RECORD: IntentRecord = {
   ...NONE,
@@ -194,7 +196,7 @@ describe('the setup call', () => {
     expect(steps.map((s) => s.allowFailure)).toEqual([false, false]);
     const set = decodeFunctionData({ abi: INTENT, data: steps[0]!.callData });
     expect(set.functionName).toBe('setLenderIntent');
-    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, 99n]);
+    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, 99n]);
     const fund = decodeFunctionData({ abi: INTENT, data: steps[1]!.callData });
     expect(fund).toEqual({ functionName: 'fundLenderIntent', args: [USDC, WETH, 0, 1000n * E6] });
     // The batch ABI names the steps' errors, so a step's revert decodes.
@@ -233,6 +235,12 @@ describe('a change of an Auto-lend', () => {
     expect(call.args[3]).toBe(2000n * E6);
     expect(call.args[8]).toBe(false);
     expect(setupCall(change(), 200n * E6, 99n, { ...RECORD, requiresKeeperAuth: true }).args[8]).toBe(true);
+  });
+
+  it('keeps a recorded market link, so a change never drops the slot\'s linked floor', () => {
+    const linked = setupCall(change(), 200n * E6, 99n, { ...RECORD, linkKind: 1, linkMarginBps: 100 });
+    expect(linked.args[12]).toEqual({ linkKind: 1, linkMarginBps: 100, rateFarFromAverageAcknowledged: false });
+    expect(setupCall(change(), 200n * E6, 99n, RECORD).args[12]).toEqual({ linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false });
   });
 
   it('adds money in the same batch when an amount is typed', () => {

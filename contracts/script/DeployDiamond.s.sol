@@ -81,6 +81,7 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -168,6 +169,7 @@ import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
 import {PriceGuardDeployment} from "./lib/PriceGuardDeployment.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {RateReference} from "../src/oracle/reference/RateReference.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
@@ -182,6 +184,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @notice #3272 — the PriceGuard built in step 5c-ii, and the feed
     ///         registry it reads (recorded only when this run created it).
     address public priceGuard;
+    /// @notice #3337 part 1 — the RateReference built with the registry.
+    address public rateReference;
     address public feedRegistry;
     bool internal feedRegistryCreated;
     /// @dev #3272 — the inputs {setPriceGuardInputs} names.
@@ -631,6 +635,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
         // #3722 — the referral binding, settings, quote and payment.
         ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
+        // #3635 A / #3713 — the one host of the rate link and the warning band.
+        RateLinkFacet rateLinkFacet = RateLinkFacet(ArtifactDeploy.deploy(type(RateLinkFacet).name));
         // Role B (absorb) governance, split off BackstopFacet for EIP-170.
         BackstopAbsorbFacet backstopAbsorbFacet =
             BackstopAbsorbFacet(ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name));
@@ -680,7 +686,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](137);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -824,7 +830,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[133] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
         cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
-        cuts[136] = _buildCut(address(backstopAbsorbFacet), _getBackstopAbsorbFacetSelectors());
+        cuts[136] = _buildCut(address(rateLinkFacet), _getRateLinkSelectors());
+        cuts[137] = _buildCut(address(backstopAbsorbFacet), _getBackstopAbsorbFacetSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1481,6 +1488,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeVaultRecovery(vaultRecovery);
         Deployments.writePriceGuard(priceGuard);
         Deployments.writePriceGuardReader(PriceGuard(priceGuard).READER());
+        Deployments.writeRateReference(rateReference);
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
@@ -1607,6 +1615,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("integratorFacet", address(integratorFacet));
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("referralFacet", address(referralFacet));
+        Deployments.writeFacet("rateLinkFacet", address(rateLinkFacet));
         Deployments.writeFacet("backstopAbsorbFacet", address(backstopAbsorbFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
@@ -1791,12 +1800,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     function _deployProtocolRegistry(address admin) internal {
         _deployPriceGuard(admin);
+        _deployRateReference(admin);
         // #3569 — the treasury is not a registry pointer: it is the vault
         // code's immutable TREASURY, written nowhere else.
-        bytes32[] memory keys = new bytes32[](1);
-        address[] memory values = new address[](1);
+        bytes32[] memory keys = new bytes32[](2);
+        address[] memory values = new address[](2);
         keys[0] = RegistryKeys.PRICE_GUARD;
         values[0] = priceGuard;
+        // #3337 part 1 — RATE_REFERENCE: the rate reference the Diamond reads
+        // for market-linked rate limits and the warning band. Born with no
+        // series; each asset's series is proposed by its owner and opens
+        // after the reference's own delay (a separate configure step).
+        keys[1] = RegistryKeys.RATE_REFERENCE;
+        values[1] = rateReference;
         protocolRegistry = ArtifactDeploy.deploy(
             type(ProtocolRegistry).name,
             abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
@@ -1813,6 +1829,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         require(
             IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.PRICE_GUARD) == priceGuard,
             "DeployDiamond: the protocol registry does not name the price guard"
+        );
+    }
+
+    /// @dev #3337 part 1 — the standalone rate reference, owned by the admin
+    ///      (also its first guardian, who may only mute a source). Its change
+    ///      delay is 7 days on a production chain and 0 on a testnet, which
+    ///      the reference itself allows only on a listed testnet.
+    function _deployRateReference(address admin) internal {
+        uint64 delay_ = Deployments.requiresProductionGovernance() ? uint64(7 days) : uint64(0);
+        rateReference = ArtifactDeploy.deploy(
+            type(RateReference).name, abi.encode(admin, admin, diamond, delay_)
         );
     }
 
@@ -2454,6 +2481,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `ReferralFacet` (#3722) — the referral binding,
     ///      its settings and views, the fee quote and the isolated payment.
+    /// @dev Selectors for `RateLinkFacet` (#3635 A, #3713) — the linked
+    ///      bound, the warning band check and the link admission every offer,
+    ///      intent, match and accept path self-calls.
+    function _getRateLinkSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](15);
+        s[0] = RateLinkFacet.getRateReference.selector;
+        s[1] = RateLinkFacet.rateLinkBound.selector;
+        s[2] = RateLinkFacet.offerRateBounds.selector;
+        s[3] = RateLinkFacet.rateWarnings.selector;
+        s[4] = RateLinkFacet.checkRateWrite.selector;
+        s[5] = RateLinkFacet.offerCheckedRate.selector;
+        s[6] = RateLinkFacet.admitOfferRate.selector;
+        s[7] = RateLinkFacet.originationRate.selector;
+        s[8] = RateLinkFacet.loanRateWarnings.selector;
+        s[9] = RateLinkFacet.requireLinkAdmissible.selector;
+        s[10] = bytes4(keccak256("WARN_FAR_ABOVE()"));
+        s[11] = bytes4(keccak256("WARN_FAR_BELOW()"));
+        s[12] = RateLinkFacet.matchRate.selector;
+        s[13] = RateLinkFacet.linkedFloor.selector;
+        s[14] = RateLinkFacet.effectiveRateBounds.selector;
+    }
+
     function _getReferralSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](8);
         s[0] = ReferralFacet.bindInviter.selector;

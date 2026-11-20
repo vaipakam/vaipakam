@@ -338,6 +338,9 @@ FACETS=(
   "IntegratorFacet"
   "StandingOfferCheckFacet"
   "ReferralFacet"
+  # #3635 A / #3713 — the rate link and the warning band (bound, band check,
+  # link admission); the app previews the band and the linked bound with it.
+  "RateLinkFacet"
   # The backstop's Role B (absorb) governance, split off BackstopFacet (EIP-170).
   "BackstopAbsorbFacet"
   "SwapToRepayFacet"
@@ -467,6 +470,10 @@ FACETS=(
   # source the Diamond and every vault read; the governance page reads its
   # pending config changes and the indexer decodes its events.
   "PriceGuard"
+  # #3337 part 1 / #3713 — the RateReference (standalone; NOT a diamond
+  # facet). The rate reference per series, its averages, the term average
+  # and the band; the rate-curve page and the indexer read it.
+  "RateReference"
   # #3379 B2 — the vault code (standalone; NOT a diamond facet). Every user
   # vault runs it; the app reads its protected record and its owner from it
   # and sends protected-mode writes to it (`protect`).

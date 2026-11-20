@@ -38,6 +38,7 @@ contract LenderIntentAdmissionTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             lendAsset, collAsset, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
             MAX_DURATION_DAYS, minFill, false, 0, false, true,
+            LibVaipakam.IntentRateTerms(0, 0, false),
             type(uint64).max
         );
     }
