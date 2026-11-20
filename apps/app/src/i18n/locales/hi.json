@@ -2401,6 +2401,7 @@
         "alreadyAccepted": "यह offer कोई और पहले ही ले चुका है। कुछ भी send नहीं हुआ — refresh करके देखें कि क्या अब भी खुला है।",
         "flaggedAcceptor": "आपका wallet compliance-flagged है, इसलिए नई positions blocked हैं। मौजूदा loans अब भी repay या close किए जा सकते हैं।",
         "flaggedCreator": "जिस wallet ने यह offer बनाया है वह compliance-flagged है, इसलिए इसे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",
+        "flaggedHolder": "जिस wallet के पास इस offer का position token है वह compliance-flagged है, इसलिए इसे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",
         "assetPaused": "इस offer का एक asset अभी protocol द्वारा paused है, इसलिए transaction reject हो जाता। कुछ भी send नहीं हुआ।",
         "countryBlocked": "इस deployment के trading rules इन दोनों wallets को आपस में trade करने की अनुमति नहीं देते। कुछ भी send नहीं हुआ।",
         "consentRequired": "जिस wallet ने यह offer बनाया है उसने protocol द्वारा ज़रूरी risk-and-terms agreement record नहीं किया है, इसलिए इसे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",

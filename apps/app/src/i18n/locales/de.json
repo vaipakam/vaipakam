@@ -2401,6 +2401,7 @@
         "alreadyAccepted": "Jemand hat dieses Angebot bereits angenommen. Es wurde nichts gesendet — aktualisieren Sie, um zu sehen, was noch offen ist.",
         "flaggedAcceptor": "Ihre Wallet ist compliance-markiert, daher sind neue Positionen gesperrt. Bestehende Kredite können weiterhin zurückgezahlt oder geschlossen werden.",
         "flaggedCreator": "Die Wallet, die dieses Angebot erstellt hat, ist compliance-markiert, daher kann es nicht angenommen werden. Es wurde nichts gesendet.",
+        "flaggedHolder": "Die Wallet, die den Positionstoken dieses Angebots hält, ist compliance-markiert, daher kann es nicht angenommen werden. Es wurde nichts gesendet.",
         "assetPaused": "Einer der Vermögenswerte dieses Angebots ist derzeit vom Protokoll pausiert, die Transaktion würde also abgelehnt. Es wurde nichts gesendet.",
         "countryBlocked": "Die Handelsregeln dieses Deployments erlauben diesen beiden Wallets nicht, miteinander zu handeln. Es wurde nichts gesendet.",
         "consentRequired": "Die Wallet, die dieses Angebot erstellt hat, hat die vom Protokoll geforderte Risiko- und Bedingungszustimmung nicht hinterlegt, daher kann es nicht angenommen werden. Es wurde nichts gesendet.",

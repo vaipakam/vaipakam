@@ -88,6 +88,8 @@ export const ACCEPT_ERROR_NAMES = [
   'CollectionParent',
   // #3734 — the taker or the offer's maker is not current on the Terms.
   'TermsNotAccepted',
+  // #3805 — whoever holds the offer's position token now is flagged.
+  'SanctionedOfferHolder',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -157,6 +159,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   SignedOfferCoSignatureInvalid: null,
   CollectionParent: 'collectionParent',
   TermsNotAccepted: 'termsNotAccepted',
+  SanctionedOfferHolder: 'flaggedHolder',
 };
 
 /**
