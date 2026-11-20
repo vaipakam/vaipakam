@@ -96,6 +96,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   BorrowerFundsClaimed: { label: 'Collateral claimed', category: 'loan-close', priority: 92 },
   OffsetCompleted: { label: 'Loan offset', category: 'loan-close', priority: 80 },
   OffsetOfferCreated: { label: 'Offset offer created', category: 'offer', priority: 50 },
+  TakeoverOfferPosted: { label: 'Takeover offer posted', category: 'offer', priority: 50 },
   LoanSold: { label: 'Loan sold', category: 'loan-modify', priority: 80 },
   LoanSaleCompleted: { label: 'Loan sale completed', category: 'loan-modify', priority: 82 },
   LoanSaleOfferLinked: { label: 'Loan listed for sale', category: 'loan-modify', priority: 60 },

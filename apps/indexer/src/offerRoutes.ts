@@ -133,6 +133,10 @@ export interface OfferRow {
   // NULL = not known; `undefined` = a database before 0085.
   vehicle_loan_id?: number | null;
   created_log_index?: number | null;
+  // 0117 (#3845) — the loan a takeover offer names; 0 = an ordinary offer.
+  // `undefined` = a database before 0117 (read as 0: no takeover offer can
+  // exist on a chain the old build indexed).
+  takeover_loan_id?: number;
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
@@ -187,6 +191,9 @@ function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<st
     isOffsetVehicle: row.is_offset_vehicle === 1,
     // #2528 — null means UNKNOWN (not read yet), never "not a refinance".
     refinanceTargetLoanId: row.refinance_target_loan_id ?? null,
+    // #3845 — the loan this offer was posted to take over, or null for an
+    // ordinary offer. Only that loan's obligation handover can consume it.
+    takeoverLoanId: row.takeover_loan_id ? row.takeover_loan_id : null,
     // #3205 — for an offer bound to a loan position (a lender-sale vehicle,
     // an offset vehicle, a refinance request): its kind, side, loan and
     // whether that side's position NFT moved since the offer opened. A moved
@@ -274,6 +281,7 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
            COUNT(*) as n
          FROM offers
           WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+            AND takeover_loan_id = 0
           GROUP BY 1`,
       )
         // Bind order follows the SQL text, not the clause order you'd say
@@ -501,7 +509,8 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
 /**
  * GET /offers/active?chainId=8453&limit=50&before=<offer_id>
  *     [&lendingAsset=0x..&collateralAsset=0x..&durationDays=30]
- *     [&excludeExpired=1&excludeSaleVehicles=1&excludeOffsetVehicles=1]
+ *     [&excludeExpired=1&excludeSaleVehicles=1&excludeOffsetVehicles=1
+ *      &excludeTakeoverOffers=1]
  * Returns the page of active offers. Newest-first.
  *
  * Rate Desk (#1129) — the optional market params scope the page to one
@@ -514,10 +523,11 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
  * lazily on-chain, so a lapsed offer's row can still read status='active');
  * `excludeSaleVehicles=1` drops lender-sale bookkeeping offers;
  * `excludeOffsetVehicles=1` drops Preclose Option-3 offset bookkeeping
- * offers (Codex #1134 round-5 P2) — all opt-in flags (round-3 convention),
+ * offers (Codex #1134 round-5 P2); `excludeTakeoverOffers=1` drops offers
+ * posted for one named loan's handover (#3845) — all opt-in flags (round-3 convention),
  * mirroring /loans/recent's excludeSaleVehicles, so existing consumers of
  * the unfiltered feed keep byte-identical behaviour. The desk's fallback
- * book passes all three so non-book rows can't eat its bounded page-walk
+ * book passes all of them so non-book rows can't eat its bounded page-walk
  * budget.
  */
 export async function handleOffersActive(req: Request, env: Env): Promise<Response> {
@@ -533,6 +543,8 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   const excludeOffsetVehicles =
     url.searchParams.get('excludeOffsetVehicles') === '1';
+  const excludeTakeoverOffers =
+    url.searchParams.get('excludeTakeoverOffers') === '1';
   const notServed = chainNotServed(env, chainId);
   if (notServed) return notServed;
   try {
@@ -564,6 +576,11 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
     }
     if (excludeOffsetVehicles) {
       conds.push('is_offset_vehicle = 0');
+    }
+    if (excludeTakeoverOffers) {
+      // #3845 — an offer posted for one named loan's handover; never
+      // fillable from the book.
+      conds.push('takeover_loan_id = 0');
     }
     const stmt = env.DB.prepare(
       `SELECT * FROM offers

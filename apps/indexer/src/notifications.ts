@@ -257,6 +257,7 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
     'per-offer creator Full VPFI tariff opt-in (#1347) — the creator’s own pre-acceptance config action, not a counterparty-facing event (dark until the fee-entitlement master switch arms)',
   LoanKeeperEnabled: 'per-loan keeper authorization — own config action',
   OffsetOfferCreated: 'own action — offset offer creation',
+  TakeoverOfferPosted: 'own action — the creator posted an offer for a named loan\'s handover (#3845)',
   LoanSaleOfferLinked: 'internal linkage breadcrumb — no user meaning',
   CollateralAdded: 'own action — the borrower topped up their own collateral',
   LoanFallbackPending: 'transient — status stays active through the fallback episode',

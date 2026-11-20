@@ -101,7 +101,7 @@ const TOUCHED_MARKETS = `
       FROM offers
      WHERE chain_id = ?1 AND status = 'active'
        AND asset_type = 0 AND collateral_asset_type = 0
-       AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+       AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0 AND takeover_loan_id = 0
        AND expires_at > ?2 AND expires_at <= ?3
     UNION ALL
     SELECT lending_asset, collateral_asset, duration_days
@@ -138,7 +138,7 @@ function recomputeSql(scope: string): string {
         FROM offers
        WHERE chain_id = ?1 AND status = 'active'
          AND asset_type = 0 AND collateral_asset_type = 0
-         AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+         AND is_stub = 0 AND is_sale_vehicle = 0 AND is_offset_vehicle = 0 AND takeover_loan_id = 0
          AND (expires_at = 0 OR expires_at > ?3)
          AND (lending_asset, collateral_asset, duration_days) IN (${scope})
        GROUP BY lending_asset, collateral_asset, duration_days

@@ -43,6 +43,7 @@ CREATE TABLE offers (
   is_stub           INTEGER NOT NULL DEFAULT 0,
   is_sale_vehicle   INTEGER NOT NULL DEFAULT 0,
   is_offset_vehicle INTEGER NOT NULL DEFAULT 0,
+  takeover_loan_id INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chain_id, offer_id)
 );`;
 
@@ -66,14 +67,15 @@ function insert(
     isStub?: boolean;
     saleVehicle?: boolean;
     offsetVehicle?: boolean;
+    takeoverLoanId?: number;
     chainId?: number;
   },
 ): void {
   h.db
     .prepare(
       `INSERT INTO offers
-         (chain_id, offer_id, status, expires_at, is_stub, is_sale_vehicle, is_offset_vehicle)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (chain_id, offer_id, status, expires_at, is_stub, is_sale_vehicle, is_offset_vehicle, takeover_loan_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       o.chainId ?? CHAIN_ID,
@@ -83,6 +85,7 @@ function insert(
       o.isStub ? 1 : 0,
       o.saleVehicle ? 1 : 0,
       o.offsetVehicle ? 1 : 0,
+      o.takeoverLoanId ?? 0,
     );
 }
 
@@ -123,6 +126,16 @@ describe('GET /offers/stats — bucket classification', () => {
     const s = await stats(h);
     expect(s.active).toBe(1);
     expect(s.expired).toBe(0);
+  });
+
+  it('does not count an offer posted to take over a named loan (#3845)', async () => {
+    // Only that loan's obligation handover can consume it, so it is not
+    // book liquidity, like the sale and offset vehicles.
+    const h = fresh();
+    insert(h, { status: 'active', takeoverLoanId: 7 });
+    insert(h, { status: 'active' });
+    const s = await stats(h);
+    expect(s.active).toBe(1);
   });
 
   it('does not count an unhealed stub as an open offer', async () => {

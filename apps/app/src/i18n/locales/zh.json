@@ -2425,6 +2425,7 @@
         "rateReferenceUnavailable": "此报价的利率跟随市场参考利率，目前无法读取该贷款期限的参考利率，因此无法接受此报价。稍后可能恢复。未发送任何内容。",
         "rateReferenceUnusual": "此报价的利率跟随市场参考利率，目前市场处于异常状态，因此期限超过 30 天的报价无法接受。稍后可能恢复。未发送任何内容。",
         "rateRangeEmpty": "此报价的利率跟随市场参考利率，参考利率已越过报价自身的利率限制，因此目前没有可接受的利率。稍后可能恢复。未发送任何内容。",
+        "takeoverOffer": "此请求仅用于接手指定的贷款，因此无法被接受或撮合。未发送任何内容。",
         "unknown": "协议目前不接受这笔报价。未发送任何内容 — 请刷新重试，或稍后再来查看。"
       },
       "termsNotAccepted": "执行此操作前，你需要先接受 Vaipakam 的条款。打开首页，系统会询问你一次；还款、领取和提取在任何情况下都可继续使用。",
@@ -2670,6 +2671,7 @@
         "BorrowerFundsClaimed": "抵押品已领取",
         "OffsetCompleted": "贷款已抵消",
         "OffsetOfferCreated": "抵消报价已创建",
+        "TakeoverOfferPosted": "接手报价已发布",
         "LoanSold": "贷款已售出",
         "LoanSaleCompleted": "贷款出售已完成",
         "LoanSaleOfferLinked": "贷款已挂牌出售",

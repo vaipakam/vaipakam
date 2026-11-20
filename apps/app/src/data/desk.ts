@@ -140,6 +140,38 @@ export async function readLinkedOfferIds(
   );
 }
 
+/** Offer ids among `rows` that were posted to take over ONE named loan
+ *  (#3845, `getTakeoverOfferLoan != 0`). Only that loan's obligation
+ *  handover consumes such an offer; accept and match refuse it, so it is
+ *  never quotable borrow demand. Only borrower rows can be one, so only
+ *  they are probed. Kept apart from {@link readLinkedOfferIds} on purpose:
+ *  the Open orders panel hides linked vehicles, and a takeover offer is
+ *  its creator's own order to see and cancel. A read that fails (a Diamond
+ *  without the view, or a dropped call) leaves its row in: the accept
+ *  preview then states the refusal by name. */
+export async function readTakeoverOfferIds(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  rows: readonly IndexedOffer[],
+): Promise<Set<number>> {
+  const borrowerRows = rows.filter((r) => r.offerType === 1);
+  const loanIds = await Promise.all(
+    borrowerRows.map((r) =>
+      (
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getTakeoverOfferLoan',
+          args: [BigInt(r.offerId)],
+        }) as Promise<bigint>
+      ).catch(() => 0n),
+    ),
+  );
+  return new Set(
+    borrowerRows.filter((_, i) => loanIds[i] !== 0n).map((r) => r.offerId),
+  );
+}
+
 export interface DeskBook {
   /** Live rows for the pair. Chain-sourced books carry EVERY tenor
    *  (the ladder slices to the selected tenor; the full set drives
@@ -223,13 +255,14 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
           // book load (see readLinkedOfferIds). The indexer fallback
           // below filters both on the worker's `isSaleVehicle` /
           // `isOffsetVehicle` flags (migrations 0029 + 0031).
-          const linkedIds = await readLinkedOfferIds(
-            publicClient,
-            readChain.diamondAddress,
-            active,
-          );
+          const [linkedIds, takeoverIds] = await Promise.all([
+            readLinkedOfferIds(publicClient, readChain.diamondAddress, active),
+            readTakeoverOfferIds(publicClient, readChain.diamondAddress, active),
+          ]);
           return {
-            rows: active.filter((r) => !linkedIds.has(r.offerId)),
+            rows: active.filter(
+              (r) => !linkedIds.has(r.offerId) && !takeoverIds.has(r.offerId),
+            ),
             source: 'chain',
           };
         } catch {
@@ -260,6 +293,7 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
           excludeExpired: true,
           excludeSaleVehicles: true,
           excludeOffsetVehicles: true,
+          excludeTakeoverOffers: true,
         });
         if (page === null) return null;
         // Belt-and-suspenders client-side filters (an older worker
@@ -279,6 +313,9 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
             (o) =>
               o.isSaleVehicle !== true &&
               o.isOffsetVehicle !== true &&
+              // #3845 — an older worker omits the field; the accept
+              // preview then names the refusal.
+              !(o.takeoverLoanId != null && o.takeoverLoanId !== 0) &&
               o.lendingAsset.toLowerCase() === wantLending &&
               o.collateralAsset.toLowerCase() === wantCollateral &&
               o.durationDays === durationDays,

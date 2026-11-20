@@ -58,6 +58,7 @@ CREATE TABLE offers (
   is_stub               INTEGER NOT NULL DEFAULT 0,
   is_sale_vehicle       INTEGER NOT NULL DEFAULT 0,
   is_offset_vehicle     INTEGER NOT NULL DEFAULT 0,
+  takeover_loan_id      INTEGER NOT NULL DEFAULT 0,
   updated_at            INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chain_id, offer_id)
 );`;

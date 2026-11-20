@@ -3027,6 +3027,7 @@
         "rateReferenceUnavailable": "This offer’s rate follows the market reference, and that reference can’t be read for this loan’s term right now, so the offer can’t be taken. It may clear later. Nothing was sent.",
         "rateReferenceUnusual": "This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.",
         "rateRangeEmpty": "This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.",
+        "takeoverOffer": "This request is reserved for taking over a named loan, so it can’t be accepted or matched. Nothing was sent.",
         "unknown": "The protocol won’t accept this offer right now. Nothing was sent — refresh and try again, or check back shortly."
       },
       "walletConnectFirst": "Connect a wallet on a supported network first.",
@@ -3293,6 +3294,7 @@
         "BorrowerFundsClaimed": "Collateral claimed",
         "OffsetCompleted": "Loan offset",
         "OffsetOfferCreated": "Offset offer created",
+        "TakeoverOfferPosted": "Takeover offer posted",
         "LoanSold": "Loan sold",
         "LoanSaleCompleted": "Loan sale completed",
         "LoanSaleOfferLinked": "Loan listed for sale",

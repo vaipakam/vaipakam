@@ -6351,6 +6351,8 @@ const copySource = {
         'This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.',
       rateRangeEmpty:
         'This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.',
+      takeoverOffer:
+        'This request is reserved for taking over a named loan, so it can’t be accepted or matched. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6791,6 +6793,7 @@ const copySource = {
       BorrowerFundsClaimed: 'Collateral claimed',
       OffsetCompleted: 'Loan offset',
       OffsetOfferCreated: 'Offset offer created',
+      TakeoverOfferPosted: 'Takeover offer posted',
       LoanSold: 'Loan sold',
       LoanSaleCompleted: 'Loan sale completed',
       LoanSaleOfferLinked: 'Loan listed for sale',

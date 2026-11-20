@@ -93,6 +93,9 @@ export const ACCEPT_ERROR_NAMES = [
   'RateReferenceUnavailable',
   'RateReferenceUnusual',
   'RateRangeEmpty',
+  // #3844 — an offer posted for one named loan's obligation handover; only
+  // that handover consumes it.
+  'TakeoverOffer',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -165,6 +168,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   RateReferenceUnavailable: 'rateReferenceUnavailable',
   RateReferenceUnusual: 'rateReferenceUnusual',
   RateRangeEmpty: 'rateRangeEmpty',
+  TakeoverOffer: 'takeoverOffer',
 };
 
 /**

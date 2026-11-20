@@ -2425,6 +2425,7 @@
         "rateReferenceUnavailable": "La tasa de esta oferta sigue la referencia del mercado, y esa referencia no se puede leer ahora para el plazo de este préstamo, así que la oferta no se puede aceptar. Puede resolverse más tarde. No se envió nada.",
         "rateReferenceUnusual": "La tasa de esta oferta sigue la referencia del mercado, y el mercado está inusual ahora, así que no se puede aceptar una oferta a más de 30 días. Puede resolverse más tarde. No se envió nada.",
         "rateRangeEmpty": "La tasa de esta oferta sigue la referencia del mercado, que ha superado el límite de tasa propio de la oferta, así que ahora no hay ninguna tasa aceptable. Puede resolverse más tarde. No se envió nada.",
+        "takeoverOffer": "Esta solicitud está reservada para asumir un préstamo concreto, así que no se puede aceptar ni emparejar. No se envió nada.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
       },
       "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre la página de Inicio y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente.",
@@ -2670,6 +2671,7 @@
         "BorrowerFundsClaimed": "Garantía reclamada",
         "OffsetCompleted": "Préstamo compensado",
         "OffsetOfferCreated": "Oferta de compensación creada",
+        "TakeoverOfferPosted": "Oferta de asunción publicada",
         "LoanSold": "Préstamo vendido",
         "LoanSaleCompleted": "Venta de préstamo completada",
         "LoanSaleOfferLinked": "Préstamo listado para venta",
