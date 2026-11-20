@@ -64,6 +64,14 @@ contract OfferCreateFacet is
     using SafeERC20 for IERC20;
     using Strings for uint256;
 
+    /// @notice #3844 — `offerId` was posted by `creator` to take over the
+    ///         obligation of `loanId`. Only that loan's obligation handover
+    ///         can consume it; it is never accepted or matched into a new
+    ///         loan, and its maker receives no principal when it is consumed.
+    ///         Emitted after the offer's creation events.
+    /// @custom:event-category state-change/offer-mutation
+    event TakeoverOfferPosted(uint256 indexed loanId, uint256 indexed offerId, address indexed creator);
+
     /// @notice Emitted when a new offer is created.
     /// @param offerId The unique ID of the created offer.
     /// @param creator The address of the user creating the offer.
@@ -266,6 +274,10 @@ contract OfferCreateFacet is
     ///         field). The validator in `LibAutoRefinanceCheck`
     ///         covers the Borrower-side semantic checks.
     error InvalidRefinanceTarget();
+    /// @notice #3844 — {createTakeoverOffer} needs an Active `loanId` and a
+    ///         borrower offer that is neither refinance-tagged nor a
+    ///         parallel-sale offer.
+    error InvalidTakeoverOffer(uint256 loanId);
     /// Findings 00025 — `params.durationDays > MAX_OFFER_DURATION_DAYS`.
     /// Surfaces `(provided, cap)` so the UI / SDK can show the gap.
     error OfferDurationExceedsCap(uint256 provided, uint256 cap);
@@ -359,6 +371,66 @@ contract OfferCreateFacet is
         (offerId, ) = LibOfferCreate.setup(msg.sender, params);
         _pullCreatorAssetsClassic(offerId, msg.sender, params);
         LibOfferCreate.finish(msg.sender, offerId, params, LibOfferAdmission.Route.UserPosted);
+    }
+
+    /**
+     * @notice #3844 — post a borrower offer to take over `loanId`'s
+     *         obligation (Preclose Option 2). The offer is an ordinary
+     *         borrower offer in every other respect (the creator's collateral
+     *         is pulled into their vault, the book bounds and the Terms rule
+     *         apply), and it records the loan it names.
+     * @dev    An obligation handover consumes ONLY an offer that names the
+     *         loan being handed over (`PrecloseFacet.transferObligationViaOffer`
+     *         refuses any other), because taking over a loan's debt pays the
+     *         incoming borrower no principal: the creator must agree to that
+     *         for a named loan, never through an ordinary borrow request. For
+     *         the same reason an offer that names a loan never opens a new
+     *         loan: accept, match and their previews refuse it
+     *         ({IVaipakamErrors.TakeoverOfferNotFillable}). Classic asset pull
+     *         only (no Permit2 variant). The loan's own terms (assets, term,
+     *         collateral floor, principal range) are checked when the handover
+     *         consumes the offer, against the loan as it stands then.
+     * @param loanId     The Active loan whose obligation the creator offers to
+     *                   take over.
+     * @param params     A Borrower offer; not refinance-tagged and not a
+     *                   parallel-sale offer.
+     * @param validUntil The caller's MANDATORY transaction deadline, exactly
+     *                   as {createOffer}.
+     * @return offerId   The created offer's id.
+     */
+    function createTakeoverOffer(
+        uint256 loanId,
+        LibVaipakam.CreateOfferParams calldata params,
+        uint64 validUntil
+    ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        LibTiming.requireDeadline(validUntil);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // `Active` is the enum's zero value, so an unused id reads Active:
+        // the stored id is what says the loan exists.
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loanId == 0 || loan.id != loanId || loan.status != LibVaipakam.LoanStatus.Active) {
+            revert InvalidTakeoverOffer(loanId);
+        }
+        if (
+            params.offerType != LibVaipakam.OfferType.Borrower ||
+            params.refinanceTargetLoanId != 0 ||
+            params.allowsParallelSale
+        ) revert InvalidTakeoverOffer(loanId);
+        (offerId, ) = LibOfferCreate.setup(msg.sender, params);
+        s.takeoverOfferLoan[offerId] = loanId;
+        _pullCreatorAssetsClassic(offerId, msg.sender, params);
+        LibOfferCreate.finish(msg.sender, offerId, params, LibOfferAdmission.Route.UserPosted);
+        emit TakeoverOfferPosted(loanId, offerId, msg.sender);
+    }
+
+    /// @notice #3844 — the loan whose obligation `offerId` was posted to take
+    ///         over, or 0 for any other offer. A non-zero answer is the
+    ///         creator's own record that this offer takes on an existing debt:
+    ///         its maker receives NO principal when the handover consumes it,
+    ///         and the offer never opens a new loan. A review screen states
+    ///         that from this record, never from the route.
+    function getTakeoverOfferLoan(uint256 offerId) external view returns (uint256 loanId) {
+        return LibVaipakam.storageSlot().takeoverOfferLoan[offerId];
     }
 
     /// @notice Cross-facet entry used exclusively by

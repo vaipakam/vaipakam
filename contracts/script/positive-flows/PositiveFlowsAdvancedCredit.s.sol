@@ -738,7 +738,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
         // (HANDOVER_DURATION_DAYS), collateralAmount >= l1.collateralAmount.
         vm.startBroadcast(benKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben), type(uint64).max);
+        uint256 benOfferId = OfferCreateFacet(diamond).createTakeoverOffer(loanL1, _borrowerOfferTakeoverFor(ben), type(uint64).max);
         vm.stopBroadcast();
         console.log("Ben's takeover offer:", benOfferId);
         _keep(LOAN, loanL1);

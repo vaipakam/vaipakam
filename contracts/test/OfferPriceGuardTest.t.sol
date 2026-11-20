@@ -473,7 +473,8 @@ contract OfferPriceGuardTest is SetupTest {
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _lenderOffer());
         address incoming = _provisionFundedActor("guard-incoming", mockCollateralERC20, PLEDGED * 2);
         vm.prank(incoming);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            loanId,
             _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500),
             type(uint64).max
         );

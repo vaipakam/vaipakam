@@ -460,7 +460,8 @@ contract ForcedSalePeriodicTest is SetupTest {
     function _incomingBorrowerOffer() internal returns (address incoming, uint256 offerId) {
         incoming = _provisionFundedActor("incoming-borrower", mockCollateralERC20, 10_000 ether);
         vm.prank(incoming);
-        offerId = OfferCreateFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            LOAN,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,

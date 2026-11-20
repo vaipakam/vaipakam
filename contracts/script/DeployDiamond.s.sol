@@ -2162,7 +2162,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      `_getOfferSelectors()` seven entries are partitioned across
     ///      the two getters below; selector VALUES are unchanged.
     function _getOfferCreateSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](7);
         s[0] = OfferCreateFacet.createOffer.selector;
         s[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -2174,6 +2174,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[3] = OfferCreateFacet.createOfferInternal.selector;
         // #3328 — the collection offer's parent, posted for its lender.
         s[4] = OfferCreateFacet.createCollectionParent.selector;
+        // #3844 — a borrower offer naming the loan whose obligation it takes
+        // over, and the read of that record.
+        s[5] = OfferCreateFacet.createTakeoverOffer.selector;
+        s[6] = OfferCreateFacet.getTakeoverOfferLoan.selector;
     }
 
     /// @dev Selectors for `OfferMaterializeFacet` (#3328, split off

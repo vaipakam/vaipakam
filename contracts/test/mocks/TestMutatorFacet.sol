@@ -56,6 +56,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offers[offerId] = data;
     }
 
+    /// @notice #3844 test-only — record `offerId` as posted to take over
+    ///         `loanId` (what `OfferCreateFacet.createTakeoverOffer` writes),
+    ///         for suites that build the incoming offer by hand.
+    function setTakeoverOfferLoanRaw(uint256 offerId, uint256 loanId) external {
+        LibVaipakam.storageSlot().takeoverOfferLoan[offerId] = loanId;
+    }
+
     /// @notice #1144 test-only — pin the `offerId → loanId` link so an
     ///         offer-keyed parallel-sale scaffold can exercise the accepted-offer
     ///         (Scenario B) branch of `syncPrepaySaleOffer`, which resolves the

@@ -636,6 +636,14 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (offer.offerType != LibVaipakam.OfferType.Borrower || offer.accepted)
             revert InvalidOfferTerms();
+        // #3844 — the incoming borrower takes over a debt and is paid no
+        // principal, so they must have agreed to it for THIS loan: only an
+        // offer posted through `OfferCreateFacet.createTakeoverOffer` naming
+        // `loanId` may be consumed. An ordinary borrow request, or one posted
+        // for another loan, is refused before any state change.
+        if (s.takeoverOfferLoan[borrowerOfferId] != loanId) {
+            revert TakeoverOfferNotForLoan(loanId, borrowerOfferId);
+        }
         // #1773 — GTT expiry. This path reads the incoming borrower's standing
         // offer straight from storage rather than hopping through
         // `OfferAcceptFacet._acceptOffer`, so it inherits none of that entry's

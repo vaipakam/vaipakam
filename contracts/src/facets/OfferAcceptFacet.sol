@@ -817,6 +817,9 @@ contract OfferAcceptFacet is
         if (s.collectionOffer[offerId].set.kind != LibVaipakam.CollateralSetKind.None) {
             revert CollectionParentNotFillable(offerId);
         }
+        // #3844 — an offer posted to take over a loan's obligation is consumed
+        // only by that loan's handover, never opened into a new loan.
+        if (s.takeoverOfferLoan[offerId] != 0) revert TakeoverOfferNotFillable(offerId);
         // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
         // > 0 but not yet dust-closed, so accepted == false) is a
         // matchOffers-managed entity: the matcher consumes its remaining
@@ -2030,7 +2033,13 @@ contract OfferAcceptFacet is
         // #3635 A — the linked bound crosses the offer's unlinked opposite
         // bound, so no rate is acceptable now (`RateLinkFacet.RateRangeEmpty`).
         // APPENDED.
-        RateRangeEmpty
+        RateRangeEmpty,
+        // #3844 — the offer was posted to take over a loan's obligation
+        // (`OfferCreateFacet.createTakeoverOffer`); only that loan's handover
+        // consumes it, so `_acceptOffer` reverts `TakeoverOfferNotFillable`.
+        // Ordered where `_acceptOffer` orders it, beside the collection-parent
+        // refusal. APPENDED.
+        TakeoverOffer
     }
 
     /// @notice Projection of the loan that would land if the supplied

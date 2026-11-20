@@ -1855,4 +1855,15 @@ interface IVaipakamErrors {
     ///         `matchCollectionOffer`), one token at a time; it cannot be
     ///         accepted, matched, edited or sold into directly.
     error CollectionParentNotFillable(uint256 offerId);
+    /// @notice #3844 — `offerId` was posted to take over a loan's obligation
+    ///         (`OfferCreateFacet.createTakeoverOffer`). Only that loan's
+    ///         obligation handover consumes it; it cannot be accepted or
+    ///         matched into a new loan.
+    error TakeoverOfferNotFillable(uint256 offerId);
+    /// @notice #3844 — an obligation handover of `loanId` named `offerId`,
+    ///         which was not posted to take over that loan (an ordinary
+    ///         borrow request, or one posted for another loan). The incoming
+    ///         borrower agrees to a handover only by posting an offer that
+    ///         names the loan.
+    error TakeoverOfferNotForLoan(uint256 loanId, uint256 offerId);
 }

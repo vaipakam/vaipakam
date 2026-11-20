@@ -151,7 +151,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](251); // #3649 +setFeeFloorsRaw (was 250); #3538 +setFallbackGate (was 249); #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](252); // #3844 +setTakeoverOfferLoanRaw (was 251); #3649 +setFeeFloorsRaw (was 250); #3538 +setFallbackGate (was 249); #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -433,6 +433,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
+        // #3844 — tag an offer as a takeover offer for a loan.
+        selectors[n++] = TestMutatorFacet.setTakeoverOfferLoanRaw.selector;
         // #1503 item 25 — raw read of the position-token → loan reverse index.
         selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
         selectors[n++] = TestMutatorFacet.getOfferIdByPositionTokenIdRaw.selector;
@@ -613,7 +615,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](7);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -622,6 +624,9 @@ contract HelperTest {
         // (Option 3 offset flow) — address(this)-only gating.
         selectors[3] = OfferCreateFacet.createOfferInternal.selector;
         selectors[4] = OfferCreateFacet.createCollectionParent.selector;
+        // #3844 — the takeover offer and its record.
+        selectors[5] = OfferCreateFacet.createTakeoverOffer.selector;
+        selectors[6] = OfferCreateFacet.getTakeoverOfferLoan.selector;
         return selectors;
     }
 

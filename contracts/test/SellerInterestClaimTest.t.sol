@@ -471,7 +471,7 @@ contract SellerInterestClaimTest is SetupTest {
 
         address incoming = _provisionFundedActor("incoming-borrower", mockCollateralERC20, COLLATERAL * 2);
         vm.prank(incoming);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_params(LibVaipakam.OfferType.Borrower, 40), type(uint64).max);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createTakeoverOffer(loanId, _params(LibVaipakam.OfferType.Borrower, 40), type(uint64).max);
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443

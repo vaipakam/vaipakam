@@ -265,6 +265,10 @@ contract OfferPreviewFacet {
             preview.errorCode = OfferAcceptFacet.AcceptError.CollectionParent;
             return preview;
         }
+        if (s.takeoverOfferLoan[offerId] != 0) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.TakeoverOffer;
+            return preview;
+        }
         // T-407-C (#566) — a partially-filled offer must advance via
         // `matchOffers`, not `acceptOffer`. Order matches `_acceptOffer`.
         if (offer.amountFilled > 0) {

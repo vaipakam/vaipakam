@@ -231,6 +231,11 @@ library LibOfferMatchExecute {
         if (s.collectionOffer[lenderOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
             revert IVaipakamErrors.CollectionParentNotFillable(lenderOfferId);
         }
+        // #3844 — a borrower offer posted to take over a loan's obligation is
+        // consumed only by that loan's handover, never matched into a new loan.
+        if (s.takeoverOfferLoan[borrowerOfferId] != 0) {
+            revert IVaipakamErrors.TakeoverOfferNotFillable(borrowerOfferId);
+        }
         {
             uint256 bRefiTarget =
                 s.offers[borrowerOfferId].refinanceTargetLoanId;

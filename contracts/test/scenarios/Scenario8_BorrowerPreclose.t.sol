@@ -400,7 +400,8 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // newBorrower creates a Borrower offer (matching loan terms)
         vm.prank(newBorrower);
-        uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,

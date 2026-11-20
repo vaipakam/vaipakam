@@ -685,8 +685,8 @@ contract ReferralShareTest is SetupTest {
         vm.prank(incoming);
         IERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
         vm.prank(incoming);
-        offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 30), type(uint64).max
+        offerId = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            loanId, _params(LibVaipakam.OfferType.Borrower, 30), type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), offerId);
         ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);

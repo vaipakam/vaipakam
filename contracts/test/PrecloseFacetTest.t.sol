@@ -719,7 +719,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300);
 
         vm.prank(newBorrower);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -767,7 +768,8 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 20 days); // 10 days remaining
 
         vm.prank(newBorrower);
-        uint256 longOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 longOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -813,7 +815,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationRevertsInsufficientCollateral() public {
         vm.prank(newBorrower);
-        uint256 lowCollOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 lowCollOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -859,7 +862,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationRevertsWrongPrincipalAmount() public {
         vm.prank(newBorrower);
-        uint256 wrongAmtOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 wrongAmtOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -906,7 +910,8 @@ contract PrecloseFacetTest is Test {
     function testTransferObligationRevertsInvalidNewBorrowerSelf() public {
         // Create offer where creator == msg.sender (borrower)
         vm.prank(borrower);
-        uint256 selfOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 selfOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -955,7 +960,8 @@ contract PrecloseFacetTest is Test {
     ///      isolate the guard rather than any other term.
     function _createNewBorrowerOffer(uint64 expiresAt_) private returns (uint256) {
         vm.prank(newBorrower);
-        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1063,7 +1069,8 @@ contract PrecloseFacetTest is Test {
     ///      position is not handed to a new borrower.
     function test_r6_holderLockedBorrower_obligationHandoverIsRefused() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1111,7 +1118,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationSuccess() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1175,7 +1183,8 @@ contract PrecloseFacetTest is Test {
     ///      obligation over: the collateral returns to its own vault.
     function testTransferObligation_NftProtectedBorrowerHandsOver() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1239,7 +1248,8 @@ contract PrecloseFacetTest is Test {
     /// @dev #3339 — a locked protected vault still holds its positions.
     function testTransferObligation_LockedProtectedBorrowerRefused() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1310,7 +1320,8 @@ contract PrecloseFacetTest is Test {
         );
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1423,7 +1434,8 @@ contract PrecloseFacetTest is Test {
     ///      Success`'s `validOffer`. Created while the gate is OFF.
     function _benOffer() internal returns (uint256 offerId) {
         vm.prank(newBorrower);
-        offerId = OfferCreateFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1549,7 +1561,8 @@ contract PrecloseFacetTest is Test {
     ///         offer-collateral hand-off, so no cross-facet mocks needed.
     function testTransferObligationRevertsPartiallyFilledOffer() public {
         vm.prank(newBorrower);
-        uint256 partialOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 partialOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1603,7 +1616,8 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 5 days);
 
         vm.prank(newBorrower);
-        uint256 highRateOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 highRateOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1658,7 +1672,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationNoShortfallLowerRate() public {
         vm.prank(newBorrower);
-        uint256 lowRateOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 lowRateOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -1716,7 +1731,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationCollateralReleaseFails() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2366,7 +2382,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300);
 
         vm.prank(newBorrower);
-        uint256 badCollOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 badCollOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2414,7 +2431,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationBurnOldBorrowerNFTFails() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2465,7 +2483,8 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationMintNewBorrowerNFTFails() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2550,7 +2569,8 @@ contract PrecloseFacetTest is Test {
         // passing behavior: leave loan.collateralAssetType as ERC20 (the ERC721-branch mocks below are
         // unused but kept to avoid drift from the original intent).
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2610,7 +2630,8 @@ contract PrecloseFacetTest is Test {
     function testTransferObligationERC1155Collateral() public {
         // NOTE: same caveat as testTransferObligationERC721Collateral — original slot write was a no-op.
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2673,7 +2694,8 @@ contract PrecloseFacetTest is Test {
         _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2744,7 +2766,8 @@ contract PrecloseFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2824,7 +2847,8 @@ contract PrecloseFacetTest is Test {
 
         // Incoming borrower offer created at the default 5% buffer snapshot.
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -2920,7 +2944,8 @@ contract PrecloseFacetTest is Test {
         // full remaining term so there is NO term shortfall — this test isolates
         // the elapsed-rent catch-up. (The shortfall is covered separately below.)
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3005,7 +3030,8 @@ contract PrecloseFacetTest is Test {
         _setupActiveLoanAsPricedRental(perDay, fullPrepay);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             _borrowerErc20Offer(perDay, 20),
             type(uint64).max
         );
@@ -3056,7 +3082,8 @@ contract PrecloseFacetTest is Test {
 
         // Full-remaining-term offer → no shortfall, no rent due.
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             _borrowerErc20Offer(perDay, 30),
             type(uint64).max
         );
@@ -3092,7 +3119,8 @@ contract PrecloseFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             _borrowerErc20Offer(perDay, 20),
             type(uint64).max
         );
@@ -3135,7 +3163,8 @@ contract PrecloseFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             _borrowerErc20Offer(perDay, 23),
             type(uint64).max
         );
@@ -3177,7 +3206,8 @@ contract PrecloseFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             _borrowerErc20Offer(perDay, 23),
             type(uint64).max
         );
@@ -3297,7 +3327,8 @@ contract PrecloseFacetTest is Test {
     ///      (loanBase + 20: prepayAsset[20B] | riskAndTermsConsentFromBoth[1B] | collateralAssetType[1B]).
     function testTransferObligationRevertsWrongCollateralAssetType() public {
         vm.prank(newBorrower);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3357,7 +3388,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300);
 
         vm.prank(newBorrower);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 badOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3406,7 +3438,8 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers "Update lender NFT failed" in transferObligationViaOffer.
     function testTransferObligationUpdateLenderNFTFails() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3463,7 +3496,8 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers "Burn offer NFT failed" in transferObligationViaOffer.
     function testTransferObligationBurnOfferNFTFails() public {
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3689,7 +3723,8 @@ contract PrecloseFacetTest is Test {
 
         // Create a valid borrower offer from newBorrower
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3744,7 +3779,8 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 10 days);
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,
@@ -3814,7 +3850,8 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 10 days); // accrue interest → lenderShare > 0
 
         vm.prank(newBorrower);
-        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createTakeoverOffer(
+            activeLoanId,
             LibVaipakam.CreateOfferParams({
                 integrator: address(0),
                 lifecycleFlex: 0,

@@ -1443,8 +1443,13 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
         LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
 
+        // #3844 — a refinance request does not name the loan as one to take
+        // over, so the handover refuses it at the takeover check, ahead of the
+        // #576 refusal (which stays as defence in depth).
         vm.prank(borrower);
-        vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TakeoverOfferNotForLoan.selector, otherLoanId, taggedOfferId)
+        );
         PrecloseFacet(address(diamond)).transferObligationViaOffer(
             otherLoanId, taggedOfferId,
             type(uint64).max

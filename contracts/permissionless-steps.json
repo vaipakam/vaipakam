@@ -248,6 +248,10 @@
       "class": "user",
       "why": "the offer creator's own offer"
     },
+    "OfferCreateFacet.createTakeoverOffer(uint256,struct:LibVaipakam.CreateOfferParams,uint64)": {
+      "class": "user",
+      "why": "the creator posts its own borrower offer, with its own collateral, naming the loan whose obligation it offers to take over; it serves the creator alone, so no keeper is owed"
+    },
     "OfferCreateFacet.getUserVault(address)": {
       "class": "user",
       "why": "creates or returns a user's own vault; no step waits on it"

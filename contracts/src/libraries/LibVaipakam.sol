@@ -9039,6 +9039,14 @@ library LibVaipakam {
         // rate is band-checked with the request's acknowledgement.
         bool instantTakerActive;
         bool instantRateFarAck; // Appended — append-only.
+        /// @dev #3844 — per borrower offer, the loan whose obligation it was
+        ///      posted to take over (0 = an ordinary request). Written once, by
+        ///      `OfferCreateFacet.createTakeoverOffer`, inside the creation
+        ///      transaction. An obligation handover consumes only an offer
+        ///      that names the loan it hands over, and an offer that names a
+        ///      loan is refused by every route that would open a new loan from
+        ///      it (accept, match and their previews). Appended — append-only.
+        mapping(uint256 => uint256) takeoverOfferLoan;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

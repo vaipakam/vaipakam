@@ -125,7 +125,11 @@ library LibOfferMatch {
         // (`ReferenceUnusual`). `matchOffers` reverts
         // `RateLinkUnavailable(refusal)`. Transient. Appended.
         ReferenceUnavailable,
-        ReferenceUnusual
+        ReferenceUnusual,
+        // #3844 — the borrower offer was posted to take over a loan's
+        // obligation; only that loan's handover consumes it, so `matchOffers`
+        // reverts `TakeoverOfferNotFillable`. Appended.
+        TakeoverOffer
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -403,6 +407,10 @@ library LibOfferMatch {
         }
         if (s.collectionOffer[lenderOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
             r.errorCode = MatchError.CollectionParent;
+            return r;
+        }
+        if (s.takeoverOfferLoan[borrowerOfferId] != 0) {
+            r.errorCode = MatchError.TakeoverOffer;
             return r;
         }
         // Delegate to the struct-based core so the identical match-admission
