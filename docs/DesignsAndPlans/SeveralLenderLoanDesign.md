@@ -24,28 +24,28 @@ That reason holds against a loan where the lenders hold an undivided interest in
 
 **A lender** holds its own part, with its own position token, at its own rate. Its money goes from its own vault to the borrower's vault when the loan opens. Every payment the loan makes reaches the lender's own vault in the same transaction. It may sell its position token to anyone at any time. If it wants anything that concerns it alone (to leave by a takeover, to give notice, to take an advance on the position), its part is separated and the existing route runs on a loan of its own.
 
-**Neither side** gains or loses money by the parts being stored together, compared with the same loans stored apart and acted on at the same moments. Section 3, rule 7 states this, and section 12 states the two places where the moment itself differs.
+**Neither side** gains or loses money by the parts being stored together, compared with the same loans stored apart and acted on at the same moments. Section 3, rule 7 states this, and section 12 states the places where the moment itself differs.
 
 ## 3. The rules
 
 1. **No common place.** Each lender's money moves from that lender's vault to the borrower's vault at opening. The collateral stays in the borrower's vault under the loan's hold. Every amount the loan pays a lender lands in that lender's own vault in the transaction that pays it. Nothing waits in the platform's contracts or in any holding that belongs to more than one user.
-2. **A part is a stated amount.** A part has its own principal, its own rate, and its own collateral amount: the loan's collateral times the part's principal over the loan's principal. The figure is exact at every moment by that rule, with a fixed rounding rule (section 4), so the question "which collateral secures this lender" always has one answer in units.
-3. **Strict proportion.** Every step on the loan reaches every part in proportion: principal by each part's principal, interest by each part's own interest owed. No step may pay, reduce, extend, close or forgive one part and not the others. The only way to treat one part differently is to separate it first (rule 5).
-4. **Each part is booked as its own loan.** A forced sale divides its proceeds among the parts by their collateral, and then each part is booked exactly as a loan of its own would be: its lender whole first, then the rest for the borrower. One part's surplus never pays another part's shortfall, and one part's shortfall never reduces another part's payment.
-5. **Any part can be separated.** One step turns a part into an ordinary loan with one lender: it takes its principal, its interest record, its collateral amount and the same start, term, due date and fee terms. The health figure of both loans is the same as before, because the ratio is the same. It may be called by the holder of that part's position token, by the holder of the borrower position, and by the platform's own steps that need it (rule 6). Separation moves no money and changes no one's entitlement. It is not an opening step: it commits no one's money or consent, so it asks neither the Terms rule nor a closing network's rule (`NetworkWindDownDesign.md`).
-6. **An action for one lender acts on a loan of one lender.** A takeover at face value, a notice to leave, an advance on the lender position, the backstop's purchase after a failed sale, and a part that will not continue at the due date each separate the part in the same transaction and then run the existing route unchanged. Selling the position token needs no separation.
-7. **Equal to the separate loans.** For any sequence of steps, each lender and the borrower end with what separate loans, opened with collateral in proportion and acted on at the same moments, would have given them. This is a tested property, not an intention (section 13).
+2. **A part is a stated amount.** A part stores its own principal, its own rate, its own interest record and its own collateral amount. At opening its collateral is the loan's collateral times its principal over the loan's principal, by the rounding rule of section 4. After that every change is made to the part's own stored figures by rule 3, never derived again from a weight, and the parts' figures always sum to the loan's. So the question "which collateral secures this lender" always has one answer in units.
+3. **Every step reaches every part, by that part's own figures.** A payment by the borrower pays interest first and then principal, as on a loan today: the interest goes to each part by its own interest owed, and the principal by each part's principal outstanding. Collateral that is added, withdrawn or taken for a sale is divided by the collateral each part holds, so a part's fraction of the loan's collateral stays what it was at opening for as long as the same parts are in the loan. A sale's proceeds divide by the collateral sold from each part, and each part is then booked alone (rule 4). The parts' principals may therefore move apart after a sale, because each part's own interest is paid first out of its own proceeds; that is what a loan of its own would have done. No step may pay, reduce, extend, close or forgive one part and not the others. The only way to treat one part differently is to separate it first (rule 5).
+4. **Each part is booked as its own loan.** A forced sale takes its collateral from each part by the collateral that part holds, divides the proceeds the same way, and then each part is booked exactly as a loan of its own would be: its own interest and principal, its lender whole first, then the rest for the borrower. One part's surplus never pays another part's shortfall, and one part's shortfall never reduces another part's payment.
+5. **Any part can be separated.** One step turns a part into an ordinary loan with one lender: it takes its stored principal, its interest record, its collateral amount and the same start, term, due date and fee terms. The two loans' debt and collateral sum to the original's. Each loan then has its own health figure, from its own figures. The original's figure lies between the two, and how far apart they can be is stated in section 12. It works while the loan is open, including in the fallback state, where the part takes its own slice of the record made at entry and of the collateral held under it. It may be called by the holder of that part's position token, by the holder of the borrower position, and by the platform's own steps that need it (rule 6). Separation moves no money and changes no one's entitlement. It is not an opening step: it commits no one's money or consent, so it asks neither the Terms rule nor a closing network's rule (`NetworkWindDownDesign.md`).
+6. **An action for one lender acts on a loan of one lender.** A takeover at face value, a notice to leave, an advance on the lender position, a lender's claim after a failed sale, the backstop's purchase after a failed sale, and a part that will not continue at the due date each separate the part in the same transaction and then run the existing route unchanged. Selling the position token needs no separation.
+7. **Equal to the separate loans.** For any sequence of steps, each lender and the borrower end with what separate loans would have given them, when those loans are opened with collateral in proportion and each step is applied to each of them at the same moment in the amount rule 3 gives its part. This is a tested property, not an intention (section 13).
 8. **One lender cannot hold up anyone else.** A part whose payment cannot be delivered (the token refuses that lender's vault) is parked for that part alone, as a refused payment is parked today. A lender the sanctions list flags is paid into its own vault, where the amount stays locked, as today. In both cases the borrower's step completes and every other part is paid in full.
-9. **A bounded number of parts.** The most parts a loan may have is set per network from the measured cost of the costliest step that walks the parts, so that step stays inside 80% of the network's limit on one transaction. Governance may set it lower, never higher.
-10. **Same terms or not the same loan.** Parts have the same lending asset, collateral asset, start, term, due date, interest basis and fee terms. A source whose terms differ in any of these opens its own loan, as today.
+9. **A bounded number of parts.** The most parts a loan may have is set per network from the measured cost of the costliest step that walks the parts, so that step stays inside 80% of the network's limit on one transaction. Governance may set it lower, never higher. A loan with N parts counts as N toward the bound on a borrowing's list (`BorrowingDesign.md`, section 4) from the moment it opens, because a step that walks a borrowing walks every part, and so that separating a part always has room on that list.
+10. **Same terms or not the same loan.** Parts have the same lending asset, collateral asset, start, term, due date, interest basis and fee terms. A source whose terms differ in any of these opens its own loan, as today. A loan with more than one part has token collateral that can be stated as an amount per part; a loan secured by a single item, such as an NFT, has one part.
 
 ## 4. The record
 
-- **One loan record**, as today, with the loan's totals: principal, collateral, the weighted rate, the clock.
-- **A list of parts**, each with: the lender position token, the principal weight, the rate, and where it came from (an Auto-lend slot, a lender offer, an auction bid).
+- **One loan record**, as today, with the loan's totals: principal, collateral, the clock. The loan's rate is a shown figure, worked out from the parts.
+- **A list of parts**, each with: the lender position token, its principal outstanding, its collateral amount, its rate, and where it came from (an Auto-lend slot, a lender offer, an auction bid).
 - **Per part, what is per lender today:** the interest record (what the holder has earned and been paid, and a seller's claim after a sale), what is held for the lender, the lender's claim after the loan ends, the fee discount recorded when the holder entered, the sanctions marker, the slot's live principal in the market ledger, and the reward record.
 - **A loan with one lender is a loan with one part.** There is one code path, not two. An NFT rental, and any loan a direct accept or a match opens, has one part.
-- **Rounding.** A division among parts rounds each part down and gives the remainder, which is less than one unit per part, to the last part in the stored order. The same rule is used for collateral and for every payment, so the parts always sum to the total.
+- **Rounding.** A division among parts rounds each part down. The remainder, which is less than one unit per part, is handed out one unit at a time in the stored order, passing over a part that has already reached the most that kind of amount allows it: what it is owed for a payment, what it holds for collateral taken. The amount divided never exceeds the sum of those limits, so the remainder always finds room. An amount with no such limit (collateral added, a sale's proceeds) is handed out in the stored order without passing over any part. No part is ever paid more than it is owed or debited more than it holds, and the parts always sum to the total. The same rule is used for collateral and for every payment.
 
 **The seam.** Today about 60 contract files read a loan's lender or its position token, 10 places write what is held for the lender and 16 places write the lender's final claim (counted on `main`, 2026-11-20). This design does not teach each of them about parts. It puts one library between the loan and its lender side. A payer hands that library a kind of payment (principal, interest, a late fee, sale proceeds, collateral in kind) and an amount, and the library divides it, applies each part's own fee discount, delivers to each part's vault and keeps each part's records. A reader asks it who holds a part. Nothing outside it knows whether a loan has one part or eight.
 
@@ -67,8 +67,8 @@ That makes the build two steps, and the first is worth having on its own:
 
 Each part keeps its source's own rate, as each loan does today. The borrower pays the sum, and the loan shows the weighted average.
 
-- **Fixed rates.** Interest owed divides among the parts by principal times rate, a weight fixed when the loan opens. Because every principal change is in proportion (rule 3), the weights never move.
-- **Floating rates.** A part's rate is the reference plus that part's margin. Interest divides in two streams: the reference stream by principal, the margin stream by principal times margin. Both weights are fixed at opening.
+- **Fixed rates.** Each part accrues its own interest, on its own principal outstanding, at its own rate, in its own interest record, exactly as a loan does today. Nothing is divided by a weight: the interest the loan owes is the sum of what the parts owe, and a payment of interest goes to each part by what that part is owed (rule 3).
+- **Floating rates.** A part's rate is the reference plus that part's margin, accrued the same way on its own principal.
 - **One rate for every lender** (the highest minimum among them) was considered and is not proposed: the borrower would pay more than today and the cheaper lenders would be paid above what they asked.
 
 ## 7. Steps on the loan
@@ -78,12 +78,12 @@ Each of these runs once on the loan and reaches the parts through the seam.
 | Step | With parts |
 | --- | --- |
 | Full repayment | Each part receives its principal and its own interest in its own vault. The loan ends. |
-| Partial repayment | Principal reduces every part in proportion. The borrower who wants to repay one lender first separates that part (rule 5) and repays that loan. |
+| Partial repayment | Interest first, to each part by its own interest owed; then principal, to each part by its principal outstanding. The borrower who wants to repay one lender first separates that part (rule 5) and repays that loan. |
 | Interest payment, periodic settlement | Divided by interest owed. |
-| Adding collateral, withdrawing surplus collateral | The loan's amount changes, and so each part's stated amount changes in proportion. |
-| Health-factor liquidation, partial liquidation, the time-based default, the periodic forced sale | One test on the loan, one sale. Proceeds divide by collateral, and each part is booked as its own loan (rule 4), with its own handling fee, its own part of the bonus and its own extra held for the borrower. |
-| A failed sale (the fallback state) | The record made at entry is made per part. Each part's holder claims its own slice, in kind or with its own fresh sale attempt. The first claim makes the fallback final for the loan, as the lender's claim does today, and the borrower's cure ends there. |
-| Internal match | The loan is one leg. What the leg receives divides among the parts. |
+| Adding collateral, withdrawing surplus collateral | Divided by the collateral each part holds, so each part's fraction of the collateral stays what it was. |
+| Health-factor liquidation, partial liquidation, the time-based default, the periodic forced sale | One test on the loan's totals, one sale. The collateral sold is taken from each part by the collateral it holds, the proceeds divide the same way, and each part is booked as its own loan (rule 4), with its own handling fee, its own part of the bonus and its own extra held for the borrower. After a partial liquidation the parts' principals may have moved apart (rule 3); each part's figures are its own. |
+| A failed sale (the fallback state) | The record made at entry is made per part. A part's holder who claims, in kind or with its own fresh sale attempt, separates that part first (rule 6), so the claim makes the fallback final for that lender's loan only. The parts not yet claimed stay in the fallback state on the original loan, and the borrower can still cure them, as the borrower of separate loans could. |
+| Internal match | The loan is one leg. What the leg receives divides among the parts as a sale's proceeds do. |
 | Early close by the borrower, refinance | The amount due divides as a repayment does. |
 | Sell and repay before liquidation, repay from collateral at the due date | The borrower's own repayment from a sale: one sale, then as a full or partial repayment. |
 | Extension in place, renewal, "continue with another lender" | Each part continues by its own consent. A part that will not continue is separated in the same step and comes due on its own loan, where the borrower's due-date plan acts on it. The rest extend as one loan. |
@@ -94,7 +94,7 @@ Each of these runs once on the loan and reaches the parts through the seam.
 | --- | --- |
 | Collect what is held for it | A claim for its part. Nothing else moves. |
 | Sell its position | Transfer or sale of its own position token. The part's interest record handles the seller's earned interest as today. No separation. |
-| Leave by a takeover at face value, give notice to leave, take an advance on the position, ask the backstop to buy after a failed sale | The part is separated in the same transaction, then the existing route runs on the new loan. |
+| Leave by a takeover at face value, give notice to leave, take an advance on the position, claim after a failed sale, ask the backstop to buy after a failed sale | The part is separated in the same transaction, then the existing route runs on the new loan. |
 | Claim after the loan ends | Its own claim, its own position token burned. The loan is settled when the last part and the borrower have claimed. |
 
 Separation is why none of these routes has to be rebuilt per part. The cost is the gas of making one loan record, paid by whoever asks, and only when asked.
@@ -109,7 +109,7 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 
 | Work | Effect |
 | --- | --- |
-| The borrowing (#3808) | Still wanted: it is the home for settings and reserves, and for loans a borrower gathers that were opened at different times or that were separated. An instant borrow would open one loan in it instead of several. The joint close-out (its section 9) matters much less, because loans that fall together would be one loan. |
+| The borrowing (#3808) | Still wanted: it is the home for settings and reserves, and for loans a borrower gathers that were opened at different times or that were separated. An instant borrow would open one loan in it instead of several. Its bound on the stored list counts parts, not loans (rule 9), so a separated part's loan joins the same borrowing without passing the bound. The joint close-out (its section 9) matters much less, because loans that fall together would be one loan. |
 | A loan made from terms in the same call (#3851) | Still needed. It is the opening path this design builds on. |
 | Loans that store once what is identical (the lighter alternative) | Replaced by this design, which stores it once by having one loan. |
 | The lending balance (#3811) | Unchanged. A part draws from its lender's lending balance as a loan does. |
@@ -118,7 +118,7 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 | Takeover, notice to leave, the advance on a lender position, the backstop's purchase | Unchanged routes, reached through separation. |
 | The due-date plan (#3785) and standing instructions (#3681) | Unchanged for the borrower. The renewal step handles a part that will not continue by separating it. |
 | The shortfall reserve | Reads a part's shortfall as it reads a loan's. |
-| A dated end for a fallback (#3865) | Applies per loan; with parts, it finishes every part not yet claimed. |
+| A dated end for a fallback (#3865) | Applies per loan; with parts, it finishes every part still in the loan, which are the parts not yet claimed. |
 | Indexer, apps, keeper | A loan lists its parts. Lender views are per part. The keeper gains the separation pass. |
 
 ## 11. What it costs
@@ -131,7 +131,8 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 
 ## 12. Limits, stated
 
-- **One health figure.** A loan is tested on its totals. Alone, a part at a higher rate would have crossed its own level slightly sooner, and one at a lower rate slightly later. The gap is the rate difference times the time elapsed, on the debt: for a difference of 1% a year, after 30 days, 0.08% of the debt.
+- **One health figure, until a part is separated.** A loan is tested on its totals. Alone, a part at a higher rate would have crossed its own level slightly sooner, and one at a lower rate slightly later. The gap comes only from interest that accrued at different rates and was not yet paid: the rate difference times the time elapsed, on the debt. For a difference of 1% a year, after 30 days, that is 0.08% of the debt. An interest payment closes it. A partial sale does not widen it in amount, but leaves it standing as a difference in principal.
+- **A separated part has its own health figure.** It is the figure a loan of its own would have had at that moment, so it may be slightly below the loan's for a part at a higher rate and slightly above for the rest, by the gap just stated. A part separated when the loan was just above its liquidation level may itself be just below it, and can then be liquidated on its own. Separation does not create that position: it is where the separate loan would already have stood (rule 7).
 - **One sale.** A larger sale moves the price more than a small one. A part may recover slightly less than its loan would have recovered sold alone and first. The same limit is stated for the joint close-out in `BorrowingDesign.md` section 9, and the same answer applies: each part is checked against its own floor, and a part can be separated beforehand by its holder.
 - **A lender does not choose the other lenders.** Nothing passes between them, no one's result depends on another's part (rule 4), and any holder can separate at any time.
 - **A lender cannot wait while others are liquidated,** unless it separated beforehand. On a loan of its own it could not wait either: liquidation is open to anyone.
@@ -139,19 +140,22 @@ Separation is why none of these routes has to be rebuilt per part. The cost is t
 
 ## 13. Tests
 
-1. **Equality.** For generated sequences of steps (repay in part and in full, pay interest, add and withdraw collateral, liquidate in part and in full, default, fail a sale and claim, extend), a loan with N parts and N separate loans opened with collateral in proportion end with the same amount for every lender, the borrower and the treasury, to the rounding rule of section 4.
-2. **Separation is neutral.** Separating any part at any point of such a sequence changes no one's final amount and no health figure.
+1. **Equality.** For generated sequences of steps (repay in part and in full, pay interest, add and withdraw collateral, liquidate in part and in full, default, fail a sale and claim, extend), with parts at different rates, a loan with N parts and N separate loans opened with collateral in proportion, each given every step at the same moment in the amount rule 3 gives its part, end with the same amount for every lender, the borrower and the treasury, to the rounding rule of section 4.
+2. **Separation moves nothing.** Separating any part at any point of such a sequence, in any state including the fallback state, moves no money; the two loans' principal, interest owed and collateral sum to the original's; and the original's health figure lies between the two loans' figures. Applying the rest of the sequence to both loans changes no one's final amount.
 3. **Isolation.** With one part's vault refusing the token, and with one part's holder flagged, every step completes for the borrower and for every other part; the refused or locked amount is exactly that part's.
 4. **Booking by part.** In a sale that leaves one part short and another with a surplus, the surplus goes to the borrower and the short part stays short.
-5. **Sums.** After every step the parts' principal, collateral and interest owed sum to the loan's.
+5. **Sums and limits.** After every step the parts' principal, collateral and interest owed sum to the loan's. No division pays a part more than it is owed or takes more collateral than it holds, including for parts of very unequal size (principals of 100, 100 and 1 with a repayment of 200).
 6. **The seam, step 1.** Every existing test passes unchanged with one part.
 7. **Bound.** At the bound on parts, the costliest step is inside 80% of each network's limit, measured on the CI toolchain.
 8. **A sale of one position token** moves that part's records and no other's.
+9. **A partial liquidation with parts at different rates** books each part alone, leaves each part's principal as its own loan's would be, and the next repayment, top-up and sale still satisfy tests 1 and 5.
+10. **A claim after a failed sale** by one part's holder separates that part and finalises only its loan; the other parts stay in the fallback state and the borrower can still cure them.
+11. **At the borrowing's bound**, a loan with N parts counts as N; separating a part is never refused by the bound, and an add or a gather that would pass it is refused as today.
 
 ## 14. Open items for the builder to raise, not decide silently
 
 1. Whether the position token of a separated part keeps its id (bound to the new loan) or is replaced.
-2. The borrower position on separation: a second token for the new loan, held by the same holder, in the same borrowing.
+2. The borrower position on separation: a second token for the new loan, held by the same holder, in the same borrowing. The bound on the borrowing's list already counts the part (rule 9), so the new loan takes the place its part held. A holder with no borrowing gets a loan with none, as any loan today.
 3. Where the seam library's one runtime copy lives, given the facets near their size limit.
 4. The reward record and the fee discount at entry, per part.
 5. The guard that only named steps may write a loan's start and term: separation copies them and must be named there.
