@@ -3490,6 +3490,10 @@
         "LenderIntentCapitalWithdrawn": "Capital withdrawn from a standing lending intent",
         "LenderIntentCancelled": "Standing lending intent cancelled",
         "LenderIntentPrioritySet": "Priority routing setting updated",
+        "LendingBalanceAdded": "Added to Auto-lend balance",
+        "LendingBalanceSet": "Auto-lend balance updated",
+        "LendingBalanceWithdrawn": "Withdrawn from Auto-lend balance",
+        "SlotLedgerSet": "Amount an Auto-lend slot has lent updated",
         "PerkPurchased": "Perk bought with VPFI",
         "PerkCreditConsumed": "Perk credit used",
         "RewardEntryHorizonStamped": "Reward claim window started",
@@ -4170,8 +4174,6 @@
     }
   },
   "contractError": {
-    "InstantSourceRepeated": "This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again.",
-    "IntentCapitalInsufficient": "The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent.",
     "MaxLendingAboveCeiling": "Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again.",
     "MinCollateralBelowFloor": "The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.",
     "FunctionDisabled": "This feature is currently turned off by protocol governance. Please try again later.",
@@ -4232,6 +4234,8 @@
     "NotCreatorOrNotExpired": "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls.",
     "CancelCooldownActive": "5-minute cancel cooldown is in effect for unfilled offers. The countdown on the row shows when the offer becomes cancellable.",
     "SelfTradeForbidden": "Self-trade not allowed — the lender and borrower addresses are the same. Match against a counterparty's offer instead.",
+    "InstantSourceRepeated": "This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again.",
+    "IntentCapitalInsufficient": "The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent.",
     "AonRequiresFullFill": "This offer is All-or-Nothing — the matcher would only land a partial fill, which violates the offer terms. Match the full size or skip the pair.",
     "AonRequiresSingleValueAmount": "All-or-Nothing offers require single-value amount (min equal to max). Adjust the range so both ends match.",
     "IocRequiresExpiry": "Immediate-or-Cancel offers require an expiry window. Set a deadline before publishing.",
