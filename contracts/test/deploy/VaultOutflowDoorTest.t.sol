@@ -32,7 +32,6 @@ contract VaultOutflowDoorTest is Test, DiamondFacetNames {
 
     function test_onlyThePolicyHostReachesTheVaultDoors() public view {
         string[140] memory facets = cutFacetNames();
-        string[140] memory facets = cutFacetNames();
         bytes4[3] memory doors = _doors();
         bool hostCallsEach = true;
         for (uint256 i; i < facets.length; ++i) {
