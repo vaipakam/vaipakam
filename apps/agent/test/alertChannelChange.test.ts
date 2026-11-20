@@ -38,7 +38,6 @@ const PORT_METHODS = [
   'applyChange',
   'pruneClosed',
   'phraseMarksOf',
-  'queueChatNotice',
   'chatNoticeSent',
   'dueChatNotices',
   'duePhraseNotices',

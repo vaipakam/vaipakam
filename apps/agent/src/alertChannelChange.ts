@@ -163,7 +163,6 @@ export interface TelegramStatePort {
   pruneClosed(now: number): Promise<void>;
   // #3346 — the alert phrase (see `telegramState/store.ts`).
   phraseMarksOf(items: { wallet: string; chatId: string; chainId: number }[]): Promise<(string | null)[]>;
-  queueChatNotice(chatId: string, wallet: string, chainId: number, kind: 'unlink' | 'replace' | 'added', phrase: string | null, now: number): Promise<number>;
   chatNoticeSent(id: number, accepted: boolean, now: number): Promise<void>;
   dueChatNotices(
     retryBefore: number,
@@ -173,8 +172,8 @@ export interface TelegramStatePort {
   duePhraseNotices(
     retryBefore: number,
     limit: number,
-  ): Promise<{ wallet: string; chatId: string; chainId: number; told: string | null; target: string | null; createdAt: number; chainIds: number[] }[]>;
-  phraseNoticeSent(wallet: string, chatId: string, chainId: number, createdAt: number, accepted: boolean, now: number): Promise<void>;
+  ): Promise<{ id: number; wallet: string; chatId: string; chainId: number; told: (string | null)[]; target: string | null; chainIds: number[] }[]>;
+  phraseNoticeSent(wallet: string, chatId: string, chainId: number, id: number, accepted: boolean, now: number): Promise<void>;
 }
 
 /** The locale of each (wallet, chain), in input order ('en' when none). */

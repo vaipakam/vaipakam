@@ -48,6 +48,9 @@ interface Props {
   onSettled: () => void;
   /** True while another of the card's requests is running. */
   cardBusy: boolean;
+  /** Told when this section's own request starts and ends, so the card's
+   *  other signed requests wait for it (they share one pending slot). */
+  onBusyChange: (busy: boolean) => void;
 }
 
 /** The refusal copy for a phrase rule. */
@@ -64,7 +67,7 @@ function problemText(problem: NonNullable<ReturnType<typeof alertPhraseProblem>>
   }
 }
 
-export function AlertPhraseSection({ address, chainId, signMessage, resume, onSettled, cardBusy }: Props) {
+export function AlertPhraseSection({ address, chainId, signMessage, resume, onSettled, cardBusy, onBusyChange }: Props) {
   const queryClient = useQueryClient();
   const statusKey = ['alertPhraseStatus', address.toLowerCase(), chainId];
   const status = useQuery({ queryKey: statusKey, queryFn: () => fetchAlertPhraseStatus(address, chainId), staleTime: 30_000 });
@@ -81,6 +84,7 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
 
   async function run(work: () => Promise<void>) {
     setBusy(true);
+    onBusyChange(true);
     setError(null);
     setNotice(null);
     try {
@@ -89,6 +93,9 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      onBusyChange(false);
+      // A kept removal may be finished again after a failed attempt.
+      finished.current = null;
       onSettled();
       void queryClient.invalidateQueries({ queryKey: statusKey });
     }
@@ -121,7 +128,8 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
     });
   }
 
-  // A kept removal is finished as it was made, once per request.
+  // A kept removal is finished as it was made, once per attempt: the guard
+  // holds only while that attempt runs, so a failed one can be retried.
   const finished = useRef<string | null>(null);
   useEffect(() => {
     if (resume?.kind === 'clear-phrase' && finished.current !== resume.requestKey) {

@@ -135,20 +135,32 @@ function chatNoticeText(n: ChatNotice): string {
 }
 
 /**
+ * #3346 — the ops that queue `notices`, one per (chat, network), to go in
+ * the same commit as the change they report: a notice exists exactly when
+ * its change does, so a failure after the commit cannot leave a chat
+ * untold, and a commit that writes nothing queues nothing.
+ */
+function chatNoticeOps(notices: readonly ChatNotice[]): ChannelOp[] {
+  return notices.flatMap((n) =>
+    n.chainIds.map((chainId, i) => ({ op: 'chatNotice', chatId: n.chatId, chainId, kind: n.kind, phrase: n.phrases[i] ?? null }) as const),
+  );
+}
+
+/**
  * #3346 — tell chats about a change that took effect at once (an unprotected
  * account's unlink or move, or another chat linked for the wallet): nothing
- * told them beforehand. Each is recorded, tried once now, and retried by the
- * tick for up to an hour; the record (and the chat id in it) goes once it is
- * accepted or dropped. The change stands either way.
+ * told them beforehand. The commit that made the change queued each notice
+ * ({@link chatNoticeOps}); `noticeIds` are its ids, in op order. Each is
+ * tried once now and retried by the tick for up to an hour; the record (and
+ * the chat id in it) goes once it is accepted or dropped. The change stands
+ * either way.
  */
-async function tellChats(deps: ChannelDeps, notices: readonly ChatNotice[]): Promise<void> {
+async function tellChats(deps: ChannelDeps, notices: readonly ChatNotice[], noticeIds: readonly number[]): Promise<void> {
+  let next = 0;
   for (const n of notices) {
-    if (n.chainIds.length === 0) continue;
-    const ids: number[] = [];
-    for (const chainId of n.chainIds) {
-      ids.push(await deps.state.queueChatNotice(n.chatId, n.wallet, chainId, n.kind, n.phrases[n.chainIds.indexOf(chainId)] ?? null, deps.now));
-    }
-    if (!deps.send) continue;
+    const ids = noticeIds.slice(next, next + n.chainIds.length);
+    next += n.chainIds.length;
+    if (ids.length === 0 || !deps.send) continue;
     const accepted = (await deps.send(n.chatId, chatNoticeText(n))) === 'accepted';
     for (const id of ids) await deps.state.chatNoticeSent(id, accepted, deps.now);
   }
@@ -226,6 +238,18 @@ export async function requestUnlink(
     if (delays === null) return { kind: 'unknown' };
     const waiting = rows.filter((r) => delays.get(r.chainId) != null);
     const open = rows.filter((r) => delays.get(r.chainId) == null);
+    // #3346 — what each chat cleared at once was told of the phrase, read
+    // before the commit makes it forget. The rows cleared at once had no
+    // earlier notice, so each chat is told it no longer gets them.
+    const marks = await marksOf(deps, w, open.map((r) => ({ chatId: r.chatId, chainId: r.chainId })));
+    const notices: ChatNotice[] = [...groupBy(open, (r) => r.chatId).values()].map((list) => ({
+      chatId: list[0]!.chatId,
+      kind: 'unlink' as const,
+      wallet: w,
+      chainIds: list.map((r) => r.chainId),
+      locale: list[0]!.locale,
+      phrases: list.map((r) => marks.get(markKey(r.chatId, r.chainId)) ?? null),
+    }));
     const ops: ChannelOp[] = [
       // A request with nothing waiting closes every pending change in its
       // scope, as the immediate unlink always did.
@@ -243,10 +267,8 @@ export async function requestUnlink(
           }) as const,
       ),
       { op: 'revokeCodes', chainId },
+      ...chatNoticeOps(notices),
     ];
-    // #3346 — what each chat cleared at once was told of the phrase, read
-    // before the commit makes it forget.
-    const marks = await marksOf(deps, w, open.map((r) => ({ chatId: r.chatId, chainId: r.chainId })));
     const result = await deps.state.commit(w, chainId, observed, ops, deps.now, { issuedAt, scope: chainId });
     // A later-signed request was already applied: nothing was written.
     if (!result.ok && result.superseded) return { kind: 'superseded' };
@@ -262,19 +284,8 @@ export async function requestUnlink(
         for (const r of list) told.add(r.chainId);
       }
     }
-    // #3346 — the rows cleared at once had no earlier notice, so tell each
-    // chat now that it no longer gets them. Best effort: the unlink stands.
-    await tellChats(
-      deps,
-      [...groupBy(open, (r) => r.chatId).values()].map((list) => ({
-        chatId: list[0]!.chatId,
-        kind: 'unlink' as const,
-        wallet: w,
-        chainIds: list.map((r) => r.chainId),
-        locale: list[0]!.locale,
-        phrases: list.map((r) => marks.get(markKey(r.chatId, r.chainId)) ?? null),
-      })),
-    );
+    // Best effort: the unlink stands, and the tick retries.
+    await tellChats(deps, notices, result.noticeIds);
     for (const r of open) await deps.pushChange?.(w, r.chainId);
     const pending = waiting.map((r) => ({
       chain_id: r.chainId,
@@ -324,18 +335,17 @@ async function decideRelink(
 ): Promise<'linked' | 'pending' | 'unknown' | 'moved'> {
   const { observed, rows } = await linkedRows(deps.state, deps.locales, w, chainId);
   /** Link now if the row is still exactly `observed`; 'moved' when it moved. */
-  const immediate = async (): Promise<'linked' | 'moved'> => {
+  const immediate = async (notices: readonly ChatNotice[] = []): Promise<'linked' | 'moved'> => {
     const r = await deps.state.commit(
       w,
       chainId,
       observed,
-      [
-        { op: 'supersede', chainId },
-        { op: 'link', chainId, chatId: newChatId },
-      ],
+      [{ op: 'supersede', chainId }, { op: 'link', chainId, chatId: newChatId }, ...chatNoticeOps(notices)],
       deps.now,
     );
-    return r.ok ? 'linked' : 'moved';
+    if (!r.ok) return 'moved';
+    await tellChats(deps, notices, r.noticeIds);
+    return 'linked';
   };
   const [current] = rows;
   /** Link now and (#3346) tell the chats that were not asked: the chat this
@@ -349,8 +359,6 @@ async function decideRelink(
       w,
       [...(current ? [current.chatId] : []), ...others.map((r) => r.chatId)].map((chatId) => ({ chatId, chainId })),
     );
-    const outcome = await immediate();
-    if (outcome !== 'linked') return outcome;
     const notices: ChatNotice[] = [];
     if (current) {
       notices.push({ chatId: current.chatId, kind: 'replace', wallet: w, chainIds: [chainId], locale: current.locale, phrases: [marks.get(markKey(current.chatId, chainId)) ?? null] });
@@ -358,7 +366,8 @@ async function decideRelink(
     for (const list of groupBy(others, (r) => r.chatId).values()) {
       notices.push({ chatId: list[0]!.chatId, kind: 'added', wallet: w, chainIds: [chainId], locale: list[0]!.locale, phrases: [marks.get(markKey(list[0]!.chatId, chainId)) ?? null] });
     }
-    await tellChats(deps, notices);
+    const outcome = await immediate(notices);
+    if (outcome !== 'linked') return outcome;
     await deps.pushChange?.(w, chainId);
     return outcome;
   };
@@ -518,8 +527,8 @@ export async function sendPhraseNotices(deps: ChannelDeps): Promise<void> {
       if (p?.enabled) protectedAccount = true;
     }
     const entries = n.chainIds.map((chainId) => ({ walletShort: shortWallet(n.wallet), chainId }));
-    const text = phraseCopy.mark(locale, [n.told], phraseCopy.changed(locale, entries, n.target, protectedAccount));
+    const text = phraseCopy.mark(locale, n.told, phraseCopy.changed(locale, entries, n.target, protectedAccount));
     const accepted = (await deps.send(n.chatId, text)) === 'accepted';
-    await deps.state.phraseNoticeSent(n.wallet, n.chatId, n.chainId, n.createdAt, accepted, deps.now);
+    await deps.state.phraseNoticeSent(n.wallet, n.chatId, n.chainId, n.id, accepted, deps.now);
   }
 }

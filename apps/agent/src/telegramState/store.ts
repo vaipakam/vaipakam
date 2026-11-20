@@ -76,12 +76,16 @@ export type ChannelOp =
   /** Revoke the handshake codes of one chain, or of every chain (null). */
   | { op: 'revokeCodes'; chainId: number | null }
   /** Link `chatId` to one chain. */
-  | { op: 'link'; chainId: number; chatId: string };
+  | { op: 'link'; chainId: number; chatId: string }
+  /** #3346 — queue a notice to `chatId` about a change this commit makes at
+   *  once, so the notice exists exactly when the change does. */
+  | { op: 'chatNotice'; chatId: string; chainId: number; kind: 'unlink' | 'replace' | 'added'; phrase: string | null };
 
 /** What {@link TelegramStateStore.commit} did: nothing (the rows in scope
  *  moved after the caller read them), or every op, with the id of each
- *  pending change it recorded, in op order. */
-export type CommitResult = { ok: false; superseded?: true } | { ok: true; ids: number[] };
+ *  pending change it recorded (`ids`) and of each chat notice it queued
+ *  (`noticeIds`), in op order. */
+export type CommitResult = { ok: false; superseded?: true } | { ok: true; ids: number[]; noticeIds: number[] };
 
 /**
  * #3836 — the signed request a write carries, for the newest-first order
@@ -244,13 +248,14 @@ const SCHEMA: readonly string[] = [
      PRIMARY KEY (wallet, chat_id, chain_id)
    );
    CREATE TABLE IF NOT EXISTS phrase_notices (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
      wallet     TEXT NOT NULL,
      chat_id    TEXT NOT NULL,
      chain_id   INTEGER NOT NULL,
      target     TEXT,
      created_at INTEGER NOT NULL,
      attempt_at INTEGER,
-     PRIMARY KEY (wallet, chat_id, chain_id)
+     UNIQUE (wallet, chat_id, chain_id)
    );
    CREATE INDEX IF NOT EXISTS idx_phrase_notices_attempt ON phrase_notices (attempt_at);
    CREATE TABLE IF NOT EXISTS chat_types (
@@ -565,9 +570,12 @@ export class TelegramStateStore {
         now,
       );
       for (const chatId of privateChats) {
+        // A replaced notice is deleted and a new one inserted, so the new
+        // one has a new id (AUTOINCREMENT never reuses one): the answer to
+        // a send of the replaced notice can never close this one.
+        this.sql.exec(`DELETE FROM phrase_notices WHERE wallet = ? AND chat_id = ? AND chain_id = ?`, w, chatId, c);
         this.sql.exec(
-          `INSERT INTO phrase_notices (wallet, chat_id, chain_id, target, created_at, attempt_at) VALUES (?, ?, ?, ?, ?, NULL)
-           ON CONFLICT (wallet, chat_id, chain_id) DO UPDATE SET target = excluded.target, created_at = excluded.created_at, attempt_at = NULL`,
+          `INSERT INTO phrase_notices (wallet, chat_id, chain_id, target, created_at, attempt_at) VALUES (?, ?, ?, ?, ?, NULL)`,
           w,
           chatId,
           c,
@@ -582,25 +590,27 @@ export class TelegramStateStore {
   /** Phrase notices to send: never tried, or last tried before
    *  `retryBefore`, least recently tried first. Each names the networks it
    *  covers (`chainIds`: the one network of a network's phrase, else every
-   *  network the chat is linked on for the wallet), the phrase the chat was
-   *  last told there (`told`) and the one it is to be told (`target`). */
+   *  network the chat is linked on for the wallet that has no phrase of its
+   *  own), what the chat was last told on each of them (`told`, in
+   *  `chainIds` order) and the phrase it is to be told (`target`). `id`
+   *  names this revision of the notice for {@link phraseNoticeSent}. */
   duePhraseNotices(
     retryBefore: number,
     limit: number,
   ): {
+    id: number;
     wallet: string;
     chatId: string;
     chainId: number;
-    told: string | null;
+    told: (string | null)[];
     target: string | null;
-    createdAt: number;
     chainIds: number[];
   }[] {
     const rows = this.sql
-      .exec<{ wallet: string; chat_id: string; chain_id: number; target: string | null; created_at: number }>(
-        `SELECT wallet, chat_id, chain_id, target, created_at FROM phrase_notices
+      .exec<{ id: number; wallet: string; chat_id: string; chain_id: number; target: string | null }>(
+        `SELECT id, wallet, chat_id, chain_id, target FROM phrase_notices
           WHERE attempt_at IS NULL OR attempt_at < ?
-          ORDER BY COALESCE(attempt_at, 0), created_at
+          ORDER BY COALESCE(attempt_at, 0), id
           LIMIT ?`,
         retryBefore,
         limit,
@@ -616,61 +626,51 @@ export class TelegramStateStore {
         )
         .toArray()
         .map((x) => Number(x.chain_id));
-      const chainIds = c === 0 ? linked : linked.filter((x) => x === c);
+      // The wallet-wide phrase does not cover a network that set its own
+      // phrase after it: that network's phrase stays in force there.
+      const own = new Set(
+        this.sql
+          .exec<{ chain_id: number }>(`SELECT chain_id FROM alert_phrases WHERE wallet = ? AND chain_id <> 0`, r.wallet)
+          .toArray()
+          .map((x) => Number(x.chain_id)),
+      );
+      const chainIds = c === 0 ? linked.filter((x) => !own.has(x)) : linked.filter((x) => x === c);
       return {
+        id: Number(r.id),
         wallet: r.wallet,
         chatId: String(r.chat_id),
         chainId: c,
-        // What the chat was told on these networks: for the wallet-wide
-        // phrase, the wallet-wide record (a network's own is replaced too).
-        told: c === 0 ? this.toldExact(r.wallet, String(r.chat_id), 0) : this.toldFor(r.wallet, String(r.chat_id), c),
+        // What the chat was last told on each network the notice covers,
+        // the same phrase its other messages there lead with.
+        told: chainIds.map((x) => this.toldFor(r.wallet, String(r.chat_id), x)),
         target: r.target === null ? null : String(r.target),
-        createdAt: Number(r.created_at),
         chainIds,
       };
     });
   }
 
-  private toldExact(w: string, chatId: string, chainId: number): string | null {
-    const row = this.sql
-      .exec<{ phrase: string | null }>(
-        `SELECT phrase FROM phrase_told WHERE wallet = ? AND chat_id = ? AND chain_id = ?`,
-        w,
-        chatId,
-        chainId,
-      )
-      .toArray()[0];
-    return row && row.phrase !== null && row.phrase !== undefined ? String(row.phrase) : null;
-  }
-
   /**
-   * The notice of `target` (made at `createdAt`) to `chatId`, for `chainId`
+   * The notice `id` of `target` to `chatId`, for `chainId`
    * (0: the wallet's phrase on every network), was sent: when Telegram
    * accepted it, the chat is told `target` and the notice closes; otherwise
    * the attempt is stamped for the retry. A notice replaced by a newer change
    * meanwhile is left for that change.
    */
-  phraseNoticeSent(wallet: string, chatId: string, chainId: number, createdAt: number, accepted: boolean, now: number): void {
+  phraseNoticeSent(wallet: string, chatId: string, chainId: number, id: number, accepted: boolean, now: number): void {
     const w = lower(wallet);
     this.tx(() => {
       const row = this.sql
         .exec<{ target: string | null }>(
-          `SELECT target FROM phrase_notices WHERE wallet = ? AND chat_id = ? AND chain_id = ? AND created_at = ?`,
+          `SELECT target FROM phrase_notices WHERE id = ? AND wallet = ? AND chat_id = ? AND chain_id = ?`,
+          id,
           w,
           chatId,
           chainId,
-          createdAt,
         )
         .toArray()[0];
       if (!row) return;
       if (!accepted) {
-        this.sql.exec(
-          `UPDATE phrase_notices SET attempt_at = ? WHERE wallet = ? AND chat_id = ? AND chain_id = ?`,
-          now,
-          w,
-          chatId,
-          chainId,
-        );
+        this.sql.exec(`UPDATE phrase_notices SET attempt_at = ? WHERE id = ?`, now, id);
         return;
       }
       if (chainId === 0) {
@@ -692,7 +692,7 @@ export class TelegramStateStore {
         row.target,
         now,
       );
-      this.sql.exec(`DELETE FROM phrase_notices WHERE wallet = ? AND chat_id = ? AND chain_id = ?`, w, chatId, chainId);
+      this.sql.exec(`DELETE FROM phrase_notices WHERE id = ?`, id);
     });
   }
 
@@ -717,7 +717,9 @@ export class TelegramStateStore {
    * stopped getting the alerts (`unlink`, `replace`) or another chat started
    * (`added`). `phrase` is what the chat was last told, captured now since
    * the chat may no longer be linked when it is sent. Kept only until it is
-   * sent, or for {@link CHAT_NOTICE_TTL_SECONDS}.
+   * sent, or for {@link CHAT_NOTICE_TTL_SECONDS}. Reached only through a
+   * `chatNotice` op of {@link commit}, so a notice is queued in the same
+   * transaction as the change it reports.
    */
   queueChatNotice(chatId: string, wallet: string, chainId: number, kind: 'unlink' | 'replace' | 'added', phrase: string | null, now: number): number {
     return Number(
@@ -813,8 +815,12 @@ export class TelegramStateStore {
       if (!sameRows(this.linkedRows(w, chainId), observed)) return { ok: false };
       if (order) this.raiseOrder(w, order);
       const ids: number[] = [];
+      const noticeIds: number[] = [];
       for (const o of ops) {
         switch (o.op) {
+          case 'chatNotice':
+            noticeIds.push(this.queueChatNotice(o.chatId, w, o.chainId, o.kind, o.phrase, now));
+            break;
           case 'supersede':
             this.supersede(w, o.chainId, now);
             break;
@@ -859,7 +865,7 @@ export class TelegramStateStore {
         }
       }
       this.forgetUnlinkedChats(w);
-      return { ok: true, ids };
+      return { ok: true, ids, noticeIds };
     });
   }
 

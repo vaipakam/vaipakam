@@ -102,11 +102,8 @@ export class TelegramState extends DurableObject {
   duePhraseNotices(retryBefore: number, limit: number): ReturnType<TelegramStateStore['duePhraseNotices']> {
     return this.store.duePhraseNotices(retryBefore, limit);
   }
-  phraseNoticeSent(wallet: string, chatId: string, chainId: number, createdAt: number, accepted: boolean, now: number): void {
-    this.store.phraseNoticeSent(wallet, chatId, chainId, createdAt, accepted, now);
-  }
-  queueChatNotice(chatId: string, wallet: string, chainId: number, kind: 'unlink' | 'replace' | 'added', phrase: string | null, now: number): number {
-    return this.store.queueChatNotice(chatId, wallet, chainId, kind, phrase, now);
+  phraseNoticeSent(wallet: string, chatId: string, chainId: number, id: number, accepted: boolean, now: number): void {
+    this.store.phraseNoticeSent(wallet, chatId, chainId, id, accepted, now);
   }
   chatNoticeSent(id: number, accepted: boolean, now: number): void {
     this.store.chatNoticeSent(id, accepted, now);

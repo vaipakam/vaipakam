@@ -76,6 +76,11 @@ export function AlertsCard() {
   const [prefs, setPrefs] = useState<AlertPrefs | null>(initial);
   const [link, setLink] = useState<TelegramLink | null>(null);
   const [busy, setBusy] = useState(false);
+  // The phrase section's own request (a signature, then the service's
+  // answer). Every signed request here shares one pending-request slot,
+  // so the card's controls wait for it too.
+  const [phraseBusy, setPhraseBusy] = useState(false);
+  const anyBusy = busy || phraseBusy;
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // #3836 — a request this browser started and the wallet has not answered
@@ -415,7 +420,7 @@ export function AlertsCard() {
                     type="button"
                     className="btn btn-primary"
                     onClick={() => finishPending(pending)}
-                    disabled={busy}
+                    disabled={anyBusy}
                   >
                     {copy.alerts.pendingFinish}
                   </button>
@@ -423,7 +428,7 @@ export function AlertsCard() {
                     type="button"
                     className="btn btn-ghost"
                     onClick={discardPending}
-                    disabled={busy}
+                    disabled={anyBusy}
                   >
                     {copy.alerts.pendingDiscard}
                   </button>
@@ -439,7 +444,7 @@ export function AlertsCard() {
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => void doUnlink()}
-                disabled={busy}
+                disabled={anyBusy}
               >
                 {copy.alerts.unlink}
               </button>
@@ -465,7 +470,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => void sendTest()}
-                  disabled={busy}
+                  disabled={anyBusy}
                 >
                   {busy
                     ? copy.alerts.testAlertSending
@@ -478,7 +483,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-ghost"
                   onClick={startOver}
-                  disabled={busy}
+                  disabled={anyBusy}
                 >
                   {copy.alerts.startOver}
                 </button>
@@ -496,7 +501,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-primary"
                   onClick={() => void startLink()}
-                  disabled={busy}
+                  disabled={anyBusy}
                   title={copy.alerts.linkSignNote}
                 >
                   {copy.alerts.linkButton}
@@ -517,7 +522,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => void doUnlink()}
-                  disabled={busy}
+                  disabled={anyBusy}
                   style={{ alignSelf: 'flex-start' }}
                 >
                   {copy.alerts.unlinkElsewhere}
@@ -539,13 +544,14 @@ export function AlertsCard() {
               refreshPending();
             }}
             cardBusy={busy}
+            onBusyChange={setPhraseBusy}
           />
 
           <label className="cluster" style={{ alignItems: 'flex-start' }}>
             <input
               type="checkbox"
               checked={prefs.repayDue}
-              disabled={busy}
+              disabled={anyBusy}
               onChange={(e) =>
                 void persist(
                   { ...prefs, repayDue: e.target.checked },
@@ -560,7 +566,7 @@ export function AlertsCard() {
             <input
               type="checkbox"
               checked={prefs.risky}
-              disabled={busy}
+              disabled={anyBusy}
               onChange={(e) =>
                 void persist(
                   { ...prefs, risky: e.target.checked },
@@ -587,7 +593,7 @@ export function AlertsCard() {
             <AdvancedBands
               key={scope}
               prefs={prefs}
-              busy={busy}
+              busy={anyBusy}
               onSave={(b) => void persist({ ...prefs, ...b }, { bandsChanged: true })}
             />
           ) : null}
@@ -604,7 +610,7 @@ export function AlertsCard() {
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={busy}
+                    disabled={anyBusy}
                     onClick={() => void persist({ ...prefs, pushEnabled: true })}
                   >
                     {copy.alerts.pushEnable}

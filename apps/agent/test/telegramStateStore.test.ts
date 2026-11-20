@@ -44,7 +44,7 @@ describe('telegram state store (#1722)', () => {
   it('commit writes only while the rows the caller read are unchanged', () => {
     const { store } = fresh();
     const linked = store.commit(W, 84532, [], [{ op: 'link', chainId: 84532, chatId: '7' }], 1);
-    expect(linked).toEqual({ ok: true, ids: [] });
+    expect(linked).toEqual({ ok: true, ids: [], noticeIds: [] });
     expect(store.linkedRows(W, null)).toEqual([{ chainId: 84532, chatId: '7' }]);
     // A stale read (the caller saw no rows) is refused, and nothing is written.
     expect(store.commit(W, 84532, [], [{ op: 'clear', chainId: 84532 }], 2)).toEqual({ ok: false });
@@ -249,7 +249,7 @@ describe('telegram state store (#1722)', () => {
     const mark = (store: TelegramStateStore, chatId: string, chainId: number) =>
       store.phraseMarksOf([{ wallet: W, chatId, chainId }])[0];
     const accept = (store: TelegramStateStore, at: number) => {
-      for (const n of store.duePhraseNotices(at, 50)) store.phraseNoticeSent(W, n.chatId, n.chainId, n.createdAt, true, at);
+      for (const n of store.duePhraseNotices(at, 50)) store.phraseNoticeSent(W, n.chatId, n.chainId, n.id, true, at);
     };
 
     it('is set only while a private chat is linked, and a group is reported', () => {
@@ -283,17 +283,17 @@ describe('telegram state store (#1722)', () => {
       store.setPhrase(W, null, 'blue heron', 10, 10);
       expect(mark(store, '7', 1)).toBeNull();
       const [n] = store.duePhraseNotices(100, 10);
-      expect(n).toMatchObject({ chatId: '7', chainId: 0, told: null, target: 'blue heron', chainIds: [1] });
-      store.phraseNoticeSent(W, '7', 0, n!.createdAt, false, 11);
+      expect(n).toMatchObject({ chatId: '7', chainId: 0, told: [null], target: 'blue heron', chainIds: [1] });
+      store.phraseNoticeSent(W, '7', 0, n!.id, false, 11);
       expect(mark(store, '7', 1)).toBeNull();
       // Retried only after the retry window.
       expect(store.duePhraseNotices(11, 10)).toEqual([]);
-      store.phraseNoticeSent(W, '7', 0, n!.createdAt, true, 12);
+      store.phraseNoticeSent(W, '7', 0, n!.id, true, 12);
       expect(mark(store, '7', 1)).toBe('blue heron');
       expect(store.duePhraseNotices(1000, 10)).toEqual([]);
       // A change states the phrase the chat was told and the new one.
       store.setPhrase(W, null, 'red kite', 30, 30);
-      expect(store.duePhraseNotices(1000, 10)[0]).toMatchObject({ told: 'blue heron', target: 'red kite' });
+      expect(store.duePhraseNotices(1000, 10)[0]).toMatchObject({ told: ['blue heron'], target: 'red kite' });
       expect(mark(store, '7', 1)).toBe('blue heron');
     });
 
@@ -326,7 +326,7 @@ describe('telegram state store (#1722)', () => {
       expect(store.setPhrase(W, 1, 'red kite', 20, 20)).toEqual({ kind: 'set', groupLinked: false, scope: 'network' });
       // Only the chat linked on A is told, and the notice names A alone.
       const due = store.duePhraseNotices(100, 10);
-      expect(due).toEqual([expect.objectContaining({ chatId: '7', chainId: 1, chainIds: [1], told: 'blue heron', target: 'red kite' })]);
+      expect(due).toEqual([expect.objectContaining({ chatId: '7', chainId: 1, chainIds: [1], told: ['blue heron'], target: 'red kite' })]);
       accept(store, 21);
       expect(mark(store, '7', 1)).toBe('red kite');
       expect(mark(store, '8', 2)).toBe('blue heron');
@@ -383,6 +383,20 @@ describe('telegram state store (#1722)', () => {
       const id2 = store.queueChatNotice('7', W, 1, 'added', 'blue heron', 5000);
       store.chatNoticeSent(id2, true, 5000);
       expect(store.dueChatNotices(9000, 5001, 10)).toEqual([]);
+    });
+
+    it('a chat notice is queued in the same commit as its change, or not at all', () => {
+      const { store } = fresh();
+      link(store, 1, '7');
+      const observed = store.linkedRows(W, 1);
+      const notice = { op: 'chatNotice', chatId: '7', chainId: 1, kind: 'unlink', phrase: null } as const;
+      const done = store.commit(W, 1, observed, [{ op: 'clear', chainId: 1 }, notice], 50);
+      expect(done).toMatchObject({ ok: true, ids: [] });
+      const ids = done.ok ? done.noticeIds : [];
+      expect(store.dueChatNotices(100, 100, 10).map((n) => n.id)).toEqual(ids);
+      // A commit on a stale read writes nothing, so it queues nothing.
+      expect(store.commit(W, 1, observed, [{ op: 'clear', chainId: 1 }, notice], 60)).toEqual({ ok: false });
+      expect(store.dueChatNotices(100, 100, 10)).toHaveLength(1);
     });
   });
 });
