@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   checkTakeoverTerms,
   maxTakeoverDays,
+  takeoverCadence,
+  takeoverExpiryAtHorizon,
   takeoverRequestExpiry,
   takeoverScope,
+  TAKEOVER_EXPIRY_HORIZON_SEC,
   toTakeoverOfferPayload,
   type TakeoverSourceLoan,
 } from './takeoverRequest';
@@ -25,6 +28,15 @@ const now = 1_800_000_000n;
 const limits = { maxOfferDurationDays: 365, minTermsAgeSec: 60n };
 // Ten days plus the minimum offer age and the hour a request stays usable.
 const maturity = now + 10n * DAY + 3_660n;
+const termsFor = (days: number) => ({
+  rateBps: 750,
+  durationDays: days,
+  collateralAmount: loan.collateralAmount,
+  expiresAt: takeoverRequestExpiry(maturity, days, now),
+  cadence: 0,
+  consent: true,
+  rateFarAcknowledged: false,
+});
 
 describe('takeover request rules (#3845)', () => {
   it('offers whole days that end by the due date', () => {
@@ -36,7 +48,7 @@ describe('takeover request rules (#3845)', () => {
   it('leaves the minimum offer age and an hour after it before the request expires', () => {
     // One second short of that room: the tenth day no longer fits.
     expect(maxTakeoverDays(maturity - 1n, now, limits)).toBe(9);
-    const exp = takeoverRequestExpiry(maturity, maxTakeoverDays(maturity, now, limits));
+    const exp = takeoverRequestExpiry(maturity, maxTakeoverDays(maturity, now, limits), now);
     expect(exp - now).toBe(limits.minTermsAgeSec + 3_600n);
     // A longer wait set by the platform shortens the longest term.
     expect(maxTakeoverDays(maturity, now, { ...limits, minTermsAgeSec: 61n })).toBe(9);
@@ -49,10 +61,36 @@ describe('takeover request rules (#3845)', () => {
   });
 
   it('expires the request when its term no longer fits', () => {
-    expect(takeoverRequestExpiry(maturity, 10)).toBe(now + 3_660n);
+    expect(takeoverRequestExpiry(maturity, 10, now)).toBe(now + 3_660n);
     // At the expiry, now + term lands exactly on the due date: still usable.
-    const exp = takeoverRequestExpiry(maturity, 4);
+    const exp = takeoverRequestExpiry(maturity, 4, now);
     expect(exp + 4n * DAY).toBe(maturity);
+  });
+
+  it('never expires a request more than a year after it is posted', () => {
+    const far = now + 800n * DAY;
+    expect(takeoverRequestExpiry(far, 30, now)).toBe(now + TAKEOVER_EXPIRY_HORIZON_SEC);
+    expect(takeoverExpiryAtHorizon(far, 30, now)).toBe(true);
+    expect(takeoverExpiryAtHorizon(maturity, 4, now)).toBe(false);
+  });
+
+  it('posts no schedule when admitted, else the coarsest admitted, else refuses', () => {
+    expect(takeoverCadence(() => true)).toBe(0);
+    expect(takeoverCadence((c) => c !== 0)).toBe(4);
+    expect(takeoverCadence((c) => c === 1 || c === 2)).toBe(2);
+    expect(takeoverCadence(() => false)).toBeNull();
+  });
+
+  it('refuses collateral below the loan-opening risk bounds', () => {
+    const ok = { rateBps: 800, durationDays: 10, collateralAmount: loan.collateralAmount };
+    const bounds = { floor: loan.collateralAmount, amountCap: loan.principal };
+    expect(checkTakeoverTerms(loan, ok, maturity, now, limits, bounds)).toBeNull();
+    expect(
+      checkTakeoverTerms(loan, ok, maturity, now, limits, { ...bounds, floor: loan.collateralAmount + 1n }),
+    ).toBe('collateral-floor');
+    expect(
+      checkTakeoverTerms(loan, ok, maturity, now, limits, { ...bounds, amountCap: loan.principal - 1n }),
+    ).toBe('collateral-floor');
   });
 
   it('scopes the form to ERC-20 loans with ERC-20 collateral and term left', () => {
@@ -79,7 +117,8 @@ describe('takeover request rules (#3845)', () => {
       rateBps: 750,
       durationDays: 7,
       collateralAmount: loan.collateralAmount + 1n,
-      expiresAt: takeoverRequestExpiry(maturity, 7),
+      expiresAt: takeoverRequestExpiry(maturity, 7, now),
+      cadence: 0,
       consent: true,
       rateFarAcknowledged: false,
     });
@@ -99,6 +138,8 @@ describe('takeover request rules (#3845)', () => {
     expect(p.expiresAt).toBe(maturity - 7n * DAY);
     expect(p.creatorRiskAndTermsConsent).toBe(true);
     expect(p.rateFarFromAverageAcknowledged).toBe(false);
+    expect(p.periodicInterestCadence).toBe(0);
+    expect(toTakeoverOfferPayload(loan, { ...termsFor(7), cadence: 1 }).periodicInterestCadence).toBe(1);
   });
 
   it('carries the requester\'s acknowledgement of a rate far from the term average', () => {
@@ -106,7 +147,8 @@ describe('takeover request rules (#3845)', () => {
       rateBps: 4_000,
       durationDays: 7,
       collateralAmount: loan.collateralAmount,
-      expiresAt: takeoverRequestExpiry(maturity, 7),
+      expiresAt: takeoverRequestExpiry(maturity, 7, now),
+      cadence: 0,
       consent: true,
       rateFarAcknowledged: true,
     });

@@ -37,11 +37,17 @@ import { ensureAllowance, type TokenMeta } from '../contracts/erc20';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readTxValidUntil } from '../contracts/txDeadline';
 import { loanEndTimeOf, readLoanLive, type LoanLive } from '../contracts/loanLive';
-import { readRateBandLive, readTakeoverLimitsLive } from '../contracts/takeoverRequestReads';
+import {
+  readRateBandLive,
+  readTakeoverCadenceLive,
+  readTakeoverLimitsLive,
+  readTakeoverRiskBoundsLive,
+} from '../contracts/takeoverRequestReads';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
   checkTakeoverTerms,
   maxTakeoverDays,
+  takeoverExpiryAtHorizon,
   takeoverRequestExpiry,
   takeoverScope,
   toTakeoverOfferPayload,
@@ -60,6 +66,7 @@ import {
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { cadenceLabel } from './CadencePicker';
 
 function sourceOf(live: LoanLive, row: IndexedLoan): TakeoverSourceLoan {
   return {
@@ -156,12 +163,50 @@ export function TakeoverRequestFlow({
   const rateBps = rateInput.trim() === '' ? null : percentToBps(rateInput.trim());
   const durationDays = /^\d+$/.test(durationInput) ? parseInt(durationInput, 10) : null;
   const collateralAmount = cDec === undefined ? null : exactUnitsOrNull(collateralInput, cDec);
-  const termsRefusal: TakeoverTermsRefusal | 'incomplete' | null =
+  const baseRefusal: TakeoverTermsRefusal | 'incomplete' | null =
     !source || !limits || rateBps === null || durationDays === null || collateralAmount === null
       ? 'incomplete'
       : checkTakeoverTerms(source, { rateBps, durationDays, collateralAmount }, maturity, chainNow, limits);
+
+  // The creation rules the form cannot work out alone, read from the chain
+  // once the basic terms hold: the loan-initiation risk bounds for the
+  // entered collateral, and the payment schedule creation admits for the
+  // entered term. Both are checked again before the approval.
+  const boundsQuery = useQuery({
+    queryKey: ['takeoverRequestBounds', walletChain?.chainId, row.loanId, live?.principal, collateralAmount?.toString()],
+    enabled: baseRefusal === null && Boolean(publicClient && walletChain && source),
+    staleTime: 30_000,
+    queryFn: () => readTakeoverRiskBoundsLive(publicClient!, walletChain!.diamondAddress, source!, collateralAmount!),
+  });
+  const cadenceQuery = useQuery({
+    queryKey: ['takeoverRequestCadence', walletChain?.chainId, row.loanId, live?.principal, durationDays],
+    enabled: baseRefusal === null && Boolean(publicClient && walletChain && source),
+    staleTime: 30_000,
+    queryFn: () => readTakeoverCadenceLive(publicClient!, walletChain!.diamondAddress, source!, durationDays!),
+  });
+  const bounds = baseRefusal === null ? boundsQuery.data : undefined;
+  const requestCadence = baseRefusal === null ? cadenceQuery.data : undefined;
+  const termsRefusal: TakeoverTermsRefusal | 'incomplete' | null =
+    baseRefusal !== null
+      ? baseRefusal
+      : bounds === undefined
+        ? 'incomplete'
+        : checkTakeoverTerms(
+            source!,
+            { rateBps: rateBps!, durationDays: durationDays!, collateralAmount: collateralAmount! },
+            maturity,
+            chainNow,
+            limits!,
+            bounds,
+          );
+  // The least collateral a request can lock: the loan's own, or the
+  // creation floor for its principal when that is higher.
+  const minCollateral =
+    live && bounds && bounds.floor > live.collateralAmount ? bounds.floor : live?.collateralAmount;
   const expiresAt =
-    durationDays !== null && durationDays >= 1 ? takeoverRequestExpiry(maturity, durationDays) : null;
+    durationDays !== null && durationDays >= 1 ? takeoverRequestExpiry(maturity, durationDays, chainNow) : null;
+  const expiryAtHorizon =
+    durationDays !== null && durationDays >= 1 ? takeoverExpiryAtHorizon(maturity, durationDays, chainNow) : false;
 
   // Where the entered rate sits against the warning band for the entered
   // term: the same check posting applies. Read once the terms are complete.
@@ -175,7 +220,8 @@ export function TakeoverRequestFlow({
   const band = termsRefusal === null ? bandQuery.data : undefined;
   // The terms are ready to review only once the band is known, and a rate
   // outside it is confirmed.
-  const bandReady = band !== undefined && (!band.far || rateFarAck);
+  const bandReady =
+    band !== undefined && (!band.far || rateFarAck) && requestCadence !== undefined && requestCadence !== null;
 
   // Consent covers exactly what was reviewed.
   const consent = useReviewConsent([
@@ -184,9 +230,15 @@ export function TakeoverRequestFlow({
     rateFarAck,
     durationDays,
     collateralAmount,
-    expiresAt,
+    // A one-year cap moves with the clock: the review covers the cap, not
+    // the second it was read at.
+    expiryAtHorizon ? 'horizon' : expiresAt,
+    requestCadence,
     live?.principal,
     live?.collateralAmount,
+    live?.periodicInterestCadence,
+    live?.useFullTermInterest,
+    live?.allowsPartialRepay,
     address,
     walletChain?.chainId,
   ]);
@@ -221,7 +273,12 @@ export function TakeoverRequestFlow({
       const freshMaturity = loanEndTimeOf(fresh, block.timestamp);
       const freshScope = takeoverScope(freshSource, freshMaturity, block.timestamp, freshLimits);
       if (freshScope) throw new Error(scopeText(freshScope));
-      const freshExpiry = takeoverRequestExpiry(freshMaturity, durationDays);
+      const freshExpiry = takeoverRequestExpiry(freshMaturity, durationDays, block.timestamp);
+      const freshAtHorizon = takeoverExpiryAtHorizon(freshMaturity, durationDays, block.timestamp);
+      const [freshBounds, freshCadence] = await Promise.all([
+        readTakeoverRiskBoundsLive(publicClient, walletChain.diamondAddress, freshSource, collateralAmount),
+        readTakeoverCadenceLive(publicClient, walletChain.diamondAddress, freshSource, durationDays),
+      ]);
       if (
         checkTakeoverTerms(
           freshSource,
@@ -229,10 +286,19 @@ export function TakeoverRequestFlow({
           freshMaturity,
           block.timestamp,
           freshLimits,
+          freshBounds,
         ) ||
+        freshCadence === null ||
+        freshCadence !== requestCadence ||
         fresh.principal !== live?.principal ||
-        freshExpiry !== expiresAt
+        fresh.periodicInterestCadence !== live?.periodicInterestCadence ||
+        fresh.useFullTermInterest !== live?.useFullTermInterest ||
+        fresh.allowsPartialRepay !== live?.allowsPartialRepay ||
+        freshAtHorizon !== expiryAtHorizon ||
+        (!freshAtHorizon && freshExpiry !== expiresAt)
       ) {
+        void queryClient.invalidateQueries({ queryKey: ['takeoverRequestBounds'] });
+        void queryClient.invalidateQueries({ queryKey: ['takeoverRequestCadence'] });
         void queryClient.invalidateQueries({ queryKey: ['takeoverRequestLoan'] });
         throw new Error(copy.match.termsChanged);
       }
@@ -252,6 +318,7 @@ export function TakeoverRequestFlow({
         durationDays,
         collateralAmount,
         expiresAt: freshExpiry,
+        cadence: freshCadence,
         consent: true,
         // Sent only for a rate the band check flags, and only as confirmed.
         rateFarAcknowledged: freshBand.far && rateFarAck,
@@ -297,6 +364,22 @@ export function TakeoverRequestFlow({
   const yourCollateralStr =
     collateralAmount !== null && cDec !== undefined ? `${formatTokenAmountExact(collateralAmount, cDec)} ${cSym}` : '';
   const rateStr = rateBps !== null ? formatBpsAsPercent(rateBps) : '';
+  const minCollateralStr =
+    minCollateral !== undefined && cDec !== undefined ? `${formatTokenAmountExact(minCollateral, cDec)} ${cSym}` : '';
+  const t = copy.takeoverRequest;
+  // The repayment settings the loan keeps after a handover, as the chain
+  // has them now.
+  const settingsStr = live
+    ? t.settings(
+        cadenceLabel(Number(live.periodicInterestCadence)),
+        live.useFullTermInterest ? t.fullTermYes : t.fullTermNo,
+        live.allowsPartialRepay ? t.partialYes : t.partialNo,
+      )
+    : '';
+  const usableStr =
+    expiresAt !== null
+      ? `${t.usableUntil(formatDateTime(Number(expiresAt)))}${expiryAtHorizon ? ` ${t.usableHorizon}` : ''}`
+      : '';
 
   return (
     <section className="card" data-testid="takeover-request">
@@ -375,10 +458,23 @@ export function TakeoverRequestFlow({
               {copy.takeoverRequest.collateralMin(loanCollateralStr)}
             </p>
           ) : null}
-          <p className="muted">{copy.takeoverRequest.rateNote}</p>
-          {expiresAt !== null && termsRefusal === null ? (
-            <p className="muted">{copy.takeoverRequest.usableUntil(formatDateTime(Number(expiresAt)))}</p>
+          {termsRefusal === 'collateral-floor' ? (
+            <p className="field-hint" role="alert" style={{ color: 'var(--danger)' }}>
+              {t.collateralFloor(minCollateralStr)}
+            </p>
           ) : null}
+          {baseRefusal === null && (boundsQuery.isError || cadenceQuery.isError) ? (
+            <p className="field-hint" role="alert" style={{ color: 'var(--danger)' }}>
+              {t.checkUnavailable}
+            </p>
+          ) : null}
+          {termsRefusal === null && requestCadence === null ? (
+            <p className="field-hint" role="alert" style={{ color: 'var(--danger)' }}>
+              {t.noSchedule}
+            </p>
+          ) : null}
+          <p className="muted">{copy.takeoverRequest.rateNote}</p>
+          {expiresAt !== null && termsRefusal === null ? <p className="muted">{usableStr}</p> : null}
           {termsRefusal === null && bandQuery.isError ? (
             <p className="field-hint" role="alert" style={{ color: 'var(--danger)' }}>
               {copy.takeoverRequest.rateBandUnavailable}
@@ -409,6 +505,7 @@ export function TakeoverRequestFlow({
           <p className="muted">
             {copy.takeoverRequest.waitNote} {copy.takeoverRequest.keepsSettings}
           </p>
+          {live ? <p className="muted">{settingsStr}</p> : null}
           {!confirmOpen ? (
             <button
               type="button"
@@ -442,10 +539,10 @@ export function TakeoverRequestFlow({
                 data={{
                   youReceive: copy.takeoverRequest.receiptReceive,
                   youLock: copy.takeoverRequest.receiptLock(yourCollateralStr),
-                  youMayOwe: copy.takeoverRequest.receiptOwe(principalStr, rateStr),
+                  youMayOwe: `${copy.takeoverRequest.receiptOwe(principalStr, rateStr)} ${settingsStr}`.trim(),
                   youCanLose: copy.takeoverRequest.receiptLose,
                   fees: copy.takeoverRequest.receiptFees,
-                  whenThisEnds: `${expiresAt !== null ? copy.takeoverRequest.usableUntil(formatDateTime(Number(expiresAt))) : ''} ${copy.takeoverRequest.receiptEnds}`.trim(),
+                  whenThisEnds: `${usableStr} ${copy.takeoverRequest.receiptEnds}`.trim(),
                 }}
               />
             </div>

@@ -59,6 +59,10 @@ export type TakeoverScopeRefusal = 'not-active' | 'rental' | 'nft-collateral' | 
 
 const DAY = 86_400n;
 
+/** The latest expiry any offer may carry: one year from posting
+ *  (`OfferExpiryAboveCap`). */
+export const TAKEOVER_EXPIRY_HORIZON_SEC = 365n * DAY;
+
 /** The shortest time a request stays usable once the minimum offer age has
  *  passed: one hour, so the borrower has a real chance to use it. */
 export const TAKEOVER_MIN_USABLE_SEC = 3_600n;
@@ -85,9 +89,45 @@ export function maxTakeoverDays(maturity: bigint, chainNow: bigint, limits: Take
 }
 
 /** The last moment a request with this term can be used: after it,
- *  `now + term` passes the due date and the handover refuses it. */
-export function takeoverRequestExpiry(maturity: bigint, durationDays: number): bigint {
-  return maturity - BigInt(durationDays) * DAY;
+ *  `now + term` passes the due date and the handover refuses it. An offer
+ *  may not expire more than a year after it is posted, so on a long loan
+ *  the request expires a year from now instead, and says so. */
+export function takeoverRequestExpiry(maturity: bigint, durationDays: number, chainNow: bigint): bigint {
+  const fit = maturity - BigInt(durationDays) * DAY;
+  const horizon = chainNow + TAKEOVER_EXPIRY_HORIZON_SEC;
+  return fit < horizon ? fit : horizon;
+}
+
+/** Whether the request's expiry was cut to the one-year horizon rather
+ *  than set by the loan's due date. */
+export function takeoverExpiryAtHorizon(maturity: bigint, durationDays: number, chainNow: bigint): boolean {
+  return maturity - BigInt(durationDays) * DAY > chainNow + TAKEOVER_EXPIRY_HORIZON_SEC;
+}
+
+/** The interest payment schedules, coarsest last (None, Monthly,
+ *  Quarterly, Semi-annual, Annual). */
+const CADENCE_PREFERENCE = [0, 4, 3, 2, 1] as const;
+
+/**
+ * The payment schedule the request is posted with. The loan keeps its own
+ * schedule after a handover, so this value only has to pass the creation
+ * rule (`LibCadenceAdmission`): None when it is admitted, else the
+ * coarsest one admitted (a term over a year with periodic interest needs
+ * at least Annual). Null when the rule admits none, so the form refuses
+ * rather than posting a request that would revert.
+ */
+export function takeoverCadence(admitted: (cadence: number) => boolean): number | null {
+  for (const c of CADENCE_PREFERENCE) if (admitted(c)) return c;
+  return null;
+}
+
+/** The smallest collateral that keeps the request inside the loan-opening
+ *  risk bounds (`initRiskBounds`) and at or above the loan's own. */
+export interface TakeoverRiskBounds {
+  /** The least collateral the bounds admit for the loan's principal. */
+  floor: bigint;
+  /** The largest principal the entered collateral backs. */
+  amountCap: bigint;
 }
 
 /** Whether this form can post a request for the loan. */
@@ -112,6 +152,8 @@ export interface TakeoverTerms {
   collateralAmount: bigint;
   /** The request's own expiry, from {@link takeoverRequestExpiry}. */
   expiresAt: bigint;
+  /** The schedule from {@link takeoverCadence}. */
+  cadence: number;
   consent: boolean;
   /** The requester confirmed a rate outside the warning band around the
    *  term average (`RateLinkFacet.rateWarnings`). Needed only then. */
@@ -119,7 +161,7 @@ export interface TakeoverTerms {
 }
 
 /** Why the entered terms cannot make a usable request, or null. */
-export type TakeoverTermsRefusal = 'rate' | 'duration' | 'collateral-short';
+export type TakeoverTermsRefusal = 'rate' | 'duration' | 'collateral-short' | 'collateral-floor';
 
 export function checkTakeoverTerms(
   loan: TakeoverSourceLoan,
@@ -127,6 +169,7 @@ export function checkTakeoverTerms(
   maturity: bigint,
   chainNow: bigint,
   limits: TakeoverLimits,
+  bounds?: TakeoverRiskBounds,
 ): TakeoverTermsRefusal | null {
   if (!Number.isInteger(terms.rateBps) || terms.rateBps < 0 || terms.rateBps > MAX_INTEREST_BPS) {
     return 'rate';
@@ -136,6 +179,9 @@ export function checkTakeoverTerms(
     return 'duration';
   }
   if (terms.collateralAmount < loan.collateralAmount) return 'collateral-short';
+  if (bounds && (terms.collateralAmount < bounds.floor || loan.principal > bounds.amountCap)) {
+    return 'collateral-floor';
+  }
   return null;
 }
 
@@ -144,10 +190,10 @@ export function checkTakeoverTerms(
  * loan's principal, all or nothing, at one rate (the rate the loan
  * carries after the handover is the request's own), with the loan's
  * assets repeated. The loan keeps its own repayment settings after a
- * handover (cadence, partial repayment, full-term interest), so the
- * request carries no payment cadence of its own; the two flags are
- * copied from the loan so the request reads the same as the loan it
- * names.
+ * handover (cadence, partial repayment, full-term interest). The two
+ * flags are copied from the loan so the request reads the same as the
+ * loan it names; the cadence is only the one the creation rule admits
+ * ({@link takeoverCadence}) and does not change the loan's.
  */
 export function toTakeoverOfferPayload(loan: TakeoverSourceLoan, terms: TakeoverTerms): CreateOfferPayload {
   return {
@@ -170,7 +216,7 @@ export function toTakeoverOfferPayload(loan: TakeoverSourceLoan, terms: Takeover
     amountMax: loan.principal,
     interestRateBpsMax: terms.rateBps,
     collateralAmountMax: terms.collateralAmount,
-    periodicInterestCadence: 0,
+    periodicInterestCadence: terms.cadence,
     // Refused by `createTakeoverOffer`.
     allowsParallelSale: false,
     // All or nothing: the handover refuses a partly filled offer.

@@ -96,7 +96,7 @@ export type CadenceAdmission =
   | { kind: 'unserved' }
   | { kind: 'known'; preview: CadencePreview };
 
-interface RawPreview {
+export interface RawPreview {
   periodicInterestEnabled: boolean;
   bothLegsQualify: boolean;
   annualFloorApplies: boolean;

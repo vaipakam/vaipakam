@@ -7,7 +7,12 @@
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { readLiveProtocolFees } from '../data/fees';
-import type { TakeoverLimits } from '../data/takeoverRequest';
+import {
+  takeoverCadence,
+  type TakeoverLimits,
+  type TakeoverRiskBounds,
+  type TakeoverSourceLoan,
+} from '../data/takeoverRequest';
 
 /** The longest offer term and the minimum offer age, as the Diamond has
  *  them now. */
@@ -55,4 +60,50 @@ export async function readRateBandLive(
     above: band.above,
     averageBps: Number(band.termAverage1e18 / 10n ** 14n),
   };
+}
+
+/** The loan-initiation risk bounds for the request (`initRiskBounds`, the
+ *  same bounds creation applies): the least collateral the loan's principal
+ *  needs, and the largest principal `collateralAmount` backs. Where the
+ *  bounds do not apply (a leg that is not a liquid ERC-20) the chain
+ *  answers a zero floor and no cap. */
+export async function readTakeoverRiskBoundsLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  loan: Pick<TakeoverSourceLoan, 'principalAsset' | 'collateralAsset' | 'principal'>,
+  collateralAmount: bigint,
+): Promise<TakeoverRiskBounds> {
+  const [floor, , amountCap] = (await publicClient.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'initRiskBounds',
+    args: [loan.principalAsset, loan.collateralAsset, loan.principal, collateralAmount],
+  })) as readonly [bigint, boolean, bigint];
+  return { floor, amountCap };
+}
+
+/** The payment schedule the request can be posted with
+ *  (`previewCadenceAdmission`, the rule creation applies), or null when the
+ *  chain admits none for this term. */
+export async function readTakeoverCadenceLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  loan: Pick<TakeoverSourceLoan, 'principalAsset' | 'assetType' | 'collateralAsset' | 'collateralAssetType' | 'principal'>,
+  durationDays: number,
+): Promise<number | null> {
+  const preview = (await publicClient.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'previewCadenceAdmission',
+    args: [
+      loan.principalAsset,
+      loan.principal,
+      loan.assetType,
+      loan.collateralAsset,
+      loan.collateralAssetType,
+      BigInt(durationDays),
+    ],
+  })) as { cadences: readonly { cadence: number; admitted: boolean }[] };
+  const admitted = new Set(preview.cadences.filter((c) => c.admitted).map((c) => Number(c.cadence)));
+  return takeoverCadence((c) => admitted.has(c));
 }
