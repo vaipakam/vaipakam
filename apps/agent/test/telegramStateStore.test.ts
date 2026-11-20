@@ -25,7 +25,7 @@ describe('telegram state store (#1722)', () => {
     new TelegramStateStore(h.sql, h.tx);
     new TelegramStateStore(h.sql, h.tx);
     const v = h.db.prepare('SELECT version FROM schema_version').all();
-    expect(v).toEqual([{ version: 2 }]);
+    expect(v).toEqual([{ version: 3 }]);
   });
 
   it('a handshake code is good once and not after it expires', () => {
@@ -44,7 +44,7 @@ describe('telegram state store (#1722)', () => {
   it('commit writes only while the rows the caller read are unchanged', () => {
     const { store } = fresh();
     const linked = store.commit(W, 84532, [], [{ op: 'link', chainId: 84532, chatId: '7' }], 1);
-    expect(linked).toEqual({ ok: true, ids: [] });
+    expect(linked).toEqual({ ok: true, ids: [], noticeIds: [] });
     expect(store.linkedRows(W, null)).toEqual([{ chainId: 84532, chatId: '7' }]);
     // A stale read (the caller saw no rows) is refused, and nothing is written.
     expect(store.commit(W, 84532, [], [{ op: 'clear', chainId: 84532 }], 2)).toEqual({ ok: false });
@@ -239,6 +239,179 @@ describe('telegram state store (#1722)', () => {
       store.pruneClosed(1_001 + ORDER_RETENTION_SECONDS);
       expect(db.prepare('SELECT COUNT(*) AS n FROM request_order_chain').all()).toEqual([{ n: 0 }]);
       expect(db.prepare('SELECT COUNT(*) AS n FROM request_order_wallet').all()).toEqual([{ n: 0 }]);
+    });
+  });
+
+  describe('the alert phrase (#3346)', () => {
+    const link = (store: TelegramStateStore, chainId: number, chatId: string, at = 1) =>
+      store.commit(W, chainId, store.linkedRows(W, chainId), [{ op: 'link', chainId, chatId }], at);
+
+    const mark = (store: TelegramStateStore, chatId: string, chainId: number) =>
+      store.phraseMarksOf([{ wallet: W, chatId, chainId }])[0];
+    const accept = (store: TelegramStateStore, at: number) => {
+      for (const n of store.duePhraseNotices(at, 50)) store.phraseNoticeSent(W, n.chatId, n.chainId, n.id, true, at);
+    };
+
+    it('is set only while a private chat is linked, and a group is reported', () => {
+      const { store } = fresh();
+      link(store, 1, '7');
+      // A chat never seen at a handshake counts as a group.
+      expect(store.setPhrase(W, null, 'blue heron', 10, 10)).toEqual({ kind: 'no-private-chat' });
+      store.recordChatType('7', true, 5);
+      link(store, 2, '-99');
+      store.recordChatType('-99', false, 5);
+      expect(store.setPhrase(W, null, 'blue heron', 10, 10)).toEqual({ kind: 'set', groupLinked: true, scope: 'all' });
+      expect(store.phraseStatus(W, 1)).toEqual({ set: true, setAt: 10, scope: 'all' });
+      // Only the private chat gets a notice; the group is never told.
+      expect(store.duePhraseNotices(100, 10).map((n) => n.chatId)).toEqual(['7']);
+    });
+
+    it('refuses a request signed before the newest applied, in its own order', () => {
+      const { store } = fresh();
+      store.recordChatType('7', true, 1);
+      link(store, 1, '7');
+      expect(store.setPhrase(W, null, 'blue heron', 20, 20).kind).toBe('set');
+      expect(store.setPhrase(W, null, null, 19, 21)).toEqual({ kind: 'superseded' });
+      expect(store.setPhrase(W, null, null, 20, 22).kind).toBe('set');
+      expect(store.phraseStatus(W, 1).set).toBe(false);
+    });
+
+    it('a chat shows the phrase only once Telegram accepted the notice', () => {
+      const { store } = fresh();
+      store.recordChatType('7', true, 1);
+      link(store, 1, '7');
+      store.setPhrase(W, null, 'blue heron', 10, 10);
+      expect(mark(store, '7', 1)).toBeNull();
+      const [n] = store.duePhraseNotices(100, 10);
+      expect(n).toMatchObject({ chatId: '7', chainId: 0, told: [null], target: 'blue heron', chainIds: [1] });
+      store.phraseNoticeSent(W, '7', 0, n!.id, false, 11);
+      expect(mark(store, '7', 1)).toBeNull();
+      // Retried only after the retry window.
+      expect(store.duePhraseNotices(11, 10)).toEqual([]);
+      store.phraseNoticeSent(W, '7', 0, n!.id, true, 12);
+      expect(mark(store, '7', 1)).toBe('blue heron');
+      expect(store.duePhraseNotices(1000, 10)).toEqual([]);
+      // A change states the phrase the chat was told and the new one.
+      store.setPhrase(W, null, 'red kite', 30, 30);
+      expect(store.duePhraseNotices(1000, 10)[0]).toMatchObject({ told: ['blue heron'], target: 'red kite' });
+      expect(mark(store, '7', 1)).toBe('blue heron');
+    });
+
+    it('a newly linked chat shows none, the same chat on another network shows it at once', () => {
+      const { store } = fresh();
+      store.recordChatType('7', true, 1);
+      store.recordChatType('8', true, 1);
+      link(store, 1, '7');
+      store.setPhrase(W, null, 'blue heron', 10, 10);
+      accept(store, 11);
+      link(store, 2, '7', 12);
+      expect(store.chatMarksOf([{ wallet: W, chainId: 2 }])).toEqual([{ chatId: '7', mark: 'blue heron' }]);
+      link(store, 2, '8', 13);
+      expect(mark(store, '8', 2)).toBeNull();
+      // A chat unlinked everywhere forgets what it was told.
+      store.commit(W, 1, store.linkedRows(W, 1), [{ op: 'clear', chainId: 1 }], 14);
+      store.commit(W, 2, store.linkedRows(W, 2), [{ op: 'link', chainId: 2, chatId: '7' }], 15);
+      expect(mark(store, '7', 2)).toBeNull();
+    });
+
+    it('retires a notice that no longer covers any network, so it never holds a batch place', () => {
+      const { store, db } = fresh();
+      store.recordChatType('7', true, 1);
+      link(store, 1, '7');
+      // The wallet-wide notice is still unsent when network 1 sets its own
+      // phrase: the wallet-wide one no longer covers any network of chat 7.
+      store.setPhrase(W, null, 'blue heron', 10, 10);
+      store.setPhrase(W, 1, 'red kite', 20, 20);
+      // A batch of one still reaches the network's notice.
+      expect(store.duePhraseNotices(100, 1)).toEqual([
+        expect.objectContaining({ chatId: '7', chainId: 1, chainIds: [1], target: 'red kite' }),
+      ]);
+      expect(db.prepare('SELECT chain_id FROM phrase_notices').all()).toEqual([{ chain_id: 1 }]);
+    });
+
+    it("a network's phrase leaves the other network and its chats untouched", () => {
+      const { store } = fresh();
+      store.recordChatType('7', true, 1);
+      store.recordChatType('8', true, 1);
+      link(store, 1, '7'); // network A
+      link(store, 2, '8'); // network B only
+      store.setPhrase(W, null, 'blue heron', 10, 10);
+      accept(store, 11);
+      // A contract wallet's approval on A sets A's own phrase.
+      expect(store.setPhrase(W, 1, 'red kite', 20, 20)).toEqual({ kind: 'set', groupLinked: false, scope: 'network' });
+      // Only the chat linked on A is told, and the notice names A alone.
+      const due = store.duePhraseNotices(100, 10);
+      expect(due).toEqual([expect.objectContaining({ chatId: '7', chainId: 1, chainIds: [1], told: ['blue heron'], target: 'red kite' })]);
+      accept(store, 21);
+      expect(mark(store, '7', 1)).toBe('red kite');
+      expect(mark(store, '8', 2)).toBe('blue heron');
+      expect(store.phraseStatus(W, 1)).toEqual({ set: true, setAt: 20, scope: 'network' });
+      expect(store.phraseStatus(W, 2)).toEqual({ set: true, setAt: 10, scope: 'all' });
+      // Removing A's phrase on A leaves B's.
+      store.setPhrase(W, 1, null, 30, 30);
+      accept(store, 31);
+      expect(mark(store, '7', 1)).toBeNull();
+      expect(mark(store, '8', 2)).toBe('blue heron');
+      expect(store.phraseStatus(W, 1).set).toBe(false);
+      expect(store.phraseStatus(W, 2).set).toBe(true);
+    });
+
+    it("a network's phrase needs a private chat on that network, and is ordered against both kinds", () => {
+      const { store } = fresh();
+      store.recordChatType('8', true, 1);
+      link(store, 2, '8');
+      expect(store.setPhrase(W, 1, 'red kite', 10, 10)).toEqual({ kind: 'no-private-chat' });
+      expect(store.setPhrase(W, null, 'blue heron', 20, 20).kind).toBe('set');
+      // Older than the wallet-wide request that covers this network.
+      expect(store.setPhrase(W, 2, 'red kite', 19, 21)).toEqual({ kind: 'superseded' });
+      expect(store.setPhrase(W, 2, 'red kite', 25, 25).kind).toBe('set');
+      // A wallet-wide request older than B's is refused too.
+      expect(store.setPhrase(W, null, null, 24, 26)).toEqual({ kind: 'superseded' });
+    });
+
+    it("a key-signed request replaces every network's own phrase", () => {
+      const { store } = fresh();
+      store.recordChatType('7', true, 1);
+      store.recordChatType('8', true, 1);
+      link(store, 1, '7');
+      link(store, 2, '8');
+      store.setPhrase(W, 1, 'red kite', 10, 10);
+      store.setPhrase(W, 2, 'grey owl', 11, 11);
+      accept(store, 12);
+      expect(mark(store, '7', 1)).toBe('red kite');
+      store.setPhrase(W, null, 'blue heron', 20, 20);
+      expect(store.phraseStatus(W, 1)).toEqual({ set: true, setAt: 20, scope: 'all' });
+      expect(store.phraseStatus(W, 2)).toEqual({ set: true, setAt: 20, scope: 'all' });
+      // Each chat keeps what it was told until it accepts the notice.
+      expect(mark(store, '8', 2)).toBe('grey owl');
+      accept(store, 21);
+      expect(mark(store, '7', 1)).toBe('blue heron');
+      expect(mark(store, '8', 2)).toBe('blue heron');
+    });
+
+    it('a chat notice is kept only until sent, or for an hour', () => {
+      const { store } = fresh();
+      const id = store.queueChatNotice('7', W, 1, 'unlink', null, 100);
+      store.chatNoticeSent(id, false, 100);
+      expect(store.dueChatNotices(200, 200, 10).map((n) => n.id)).toEqual([id]);
+      expect(store.dueChatNotices(200, 100 + 3601, 10)).toEqual([]);
+      const id2 = store.queueChatNotice('7', W, 1, 'added', 'blue heron', 5000);
+      store.chatNoticeSent(id2, true, 5000);
+      expect(store.dueChatNotices(9000, 5001, 10)).toEqual([]);
+    });
+
+    it('a chat notice is queued in the same commit as its change, or not at all', () => {
+      const { store } = fresh();
+      link(store, 1, '7');
+      const observed = store.linkedRows(W, 1);
+      const notice = { op: 'chatNotice', chatId: '7', chainId: 1, kind: 'unlink', phrase: null } as const;
+      const done = store.commit(W, 1, observed, [{ op: 'clear', chainId: 1 }, notice], 50);
+      expect(done).toMatchObject({ ok: true, ids: [] });
+      const ids = done.ok ? done.noticeIds : [];
+      expect(store.dueChatNotices(100, 100, 10).map((n) => n.id)).toEqual(ids);
+      // A commit on a stale read writes nothing, so it queues nothing.
+      expect(store.commit(W, 1, observed, [{ op: 'clear', chainId: 1 }, notice], 60)).toEqual({ ok: false });
+      expect(store.dueChatNotices(100, 100, 10)).toHaveLength(1);
     });
   });
 });

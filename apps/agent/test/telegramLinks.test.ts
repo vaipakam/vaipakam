@@ -76,7 +76,10 @@ describe('warnUnansweredLocks', () => {
     store.keeperPoll(DEP, NOW, 1);
     store.recordLockRequests('42', 1, NOW, NOW - 300, { [CHAIN]: DIAMOND });
     store.recordLockRequests('42', 2, NOW + 60, NOW - 300, { [CHAIN]: DIAMOND });
-    const state = { takeUnansweredLocks: async (...a: Parameters<TelegramStateStore['takeUnansweredLocks']>) => store.takeUnansweredLocks(...a) };
+    const state = {
+      takeUnansweredLocks: async (...a: Parameters<TelegramStateStore['takeUnansweredLocks']>) => store.takeUnansweredLocks(...a),
+      phraseMarksOf: async (...a: Parameters<TelegramStateStore['phraseMarksOf']>) => store.phraseMarksOf(...a),
+    };
     const sent: { chat: string; text: string }[] = [];
     const send = (o: TelegramOutcome = 'accepted') => async (chat: string, text: string) => {
       sent.push({ chat, text });

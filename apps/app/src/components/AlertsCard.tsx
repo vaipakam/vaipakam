@@ -59,6 +59,7 @@ import {
   pendingExpiresAt,
   type PendingAlertRequest,
 } from '../data/alertRequest';
+import { AlertPhraseSection } from './AlertPhraseSection';
 
 export function AlertsCard() {
   const { address } = useAccount();
@@ -75,6 +76,11 @@ export function AlertsCard() {
   const [prefs, setPrefs] = useState<AlertPrefs | null>(initial);
   const [link, setLink] = useState<TelegramLink | null>(null);
   const [busy, setBusy] = useState(false);
+  // The phrase section's own request (a signature, then the service's
+  // answer). Every signed request here shares one pending-request slot,
+  // so the card's controls wait for it too.
+  const [phraseBusy, setPhraseBusy] = useState(false);
+  const anyBusy = busy || phraseBusy;
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // #3836 — a request this browser started and the wallet has not answered
@@ -84,12 +90,16 @@ export function AlertsCard() {
     address ? loadPendingAlertRequest(chainId, address) : null,
   );
   const refreshPending = () => setPending(address ? loadPendingAlertRequest(chainId, address) : null);
+  // #3346 — a kept phrase request the owner chose to finish; the phrase
+  // section finishes it (a set needs the phrase typed again).
+  const [phraseResume, setPhraseResume] = useState<PendingAlertRequest | null>(null);
   // Re-derive when the wallet/chain changes (state init runs once).
   const [scope, setScope] = useState(`${chainId}:${address ?? ''}`);
   if (scope !== `${chainId}:${address ?? ''}`) {
     setScope(`${chainId}:${address ?? ''}`);
     setPrefs(address ? loadAlertPrefs(chainId, address) : null);
     setPending(address ? loadPendingAlertRequest(chainId, address) : null);
+    setPhraseResume(null);
     setLink(null);
     setNotice(null);
     setError(null);
@@ -348,6 +358,7 @@ export function AlertsCard() {
     if (req.kind === 'link') void startLink(req);
     else if (req.kind === 'unlink') void doUnlink(req);
     else if (req.kind === 'test-alert') void sendTest(req);
+    else if (req.kind === 'set-phrase' || req.kind === 'clear-phrase') setPhraseResume(req);
     else {
       const ctx = req.context as
         | { prefs?: AlertPrefs; dueDateChanged?: boolean; bandsChanged?: boolean }
@@ -364,6 +375,7 @@ export function AlertsCard() {
   function discardPending() {
     if (!address) return;
     clearPendingAlertRequest(chainId, address);
+    setPhraseResume(null);
     refreshPending();
   }
 
@@ -408,7 +420,7 @@ export function AlertsCard() {
                     type="button"
                     className="btn btn-primary"
                     onClick={() => finishPending(pending)}
-                    disabled={busy}
+                    disabled={anyBusy}
                   >
                     {copy.alerts.pendingFinish}
                   </button>
@@ -416,7 +428,7 @@ export function AlertsCard() {
                     type="button"
                     className="btn btn-ghost"
                     onClick={discardPending}
-                    disabled={busy}
+                    disabled={anyBusy}
                   >
                     {copy.alerts.pendingDiscard}
                   </button>
@@ -432,7 +444,7 @@ export function AlertsCard() {
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => void doUnlink()}
-                disabled={busy}
+                disabled={anyBusy}
               >
                 {copy.alerts.unlink}
               </button>
@@ -458,7 +470,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => void sendTest()}
-                  disabled={busy}
+                  disabled={anyBusy}
                 >
                   {busy
                     ? copy.alerts.testAlertSending
@@ -471,7 +483,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-ghost"
                   onClick={startOver}
-                  disabled={busy}
+                  disabled={anyBusy}
                 >
                   {copy.alerts.startOver}
                 </button>
@@ -489,7 +501,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-primary"
                   onClick={() => void startLink()}
-                  disabled={busy}
+                  disabled={anyBusy}
                   title={copy.alerts.linkSignNote}
                 >
                   {copy.alerts.linkButton}
@@ -510,7 +522,7 @@ export function AlertsCard() {
                   type="button"
                   className="btn btn-secondary"
                   onClick={() => void doUnlink()}
-                  disabled={busy}
+                  disabled={anyBusy}
                   style={{ alignSelf: 'flex-start' }}
                 >
                   {copy.alerts.unlinkElsewhere}
@@ -519,11 +531,27 @@ export function AlertsCard() {
             </div>
           )}
 
+          <AlertPhraseSection
+            // Per network and wallet: a switch starts empty, so the owner
+            // types the phrase again and nothing typed is carried over.
+            key={`${chainId}:${address}`}
+            address={address}
+            chainId={chainId}
+            signMessage={(message) => signMessageAsync({ message })}
+            resume={phraseResume}
+            onSettled={() => {
+              setPhraseResume(null);
+              refreshPending();
+            }}
+            cardBusy={busy}
+            onBusyChange={setPhraseBusy}
+          />
+
           <label className="cluster" style={{ alignItems: 'flex-start' }}>
             <input
               type="checkbox"
               checked={prefs.repayDue}
-              disabled={busy}
+              disabled={anyBusy}
               onChange={(e) =>
                 void persist(
                   { ...prefs, repayDue: e.target.checked },
@@ -538,7 +566,7 @@ export function AlertsCard() {
             <input
               type="checkbox"
               checked={prefs.risky}
-              disabled={busy}
+              disabled={anyBusy}
               onChange={(e) =>
                 void persist(
                   { ...prefs, risky: e.target.checked },
@@ -565,7 +593,7 @@ export function AlertsCard() {
             <AdvancedBands
               key={scope}
               prefs={prefs}
-              busy={busy}
+              busy={anyBusy}
               onSave={(b) => void persist({ ...prefs, ...b }, { bandsChanged: true })}
             />
           ) : null}
@@ -582,7 +610,7 @@ export function AlertsCard() {
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={busy}
+                    disabled={anyBusy}
                     onClick={() => void persist({ ...prefs, pushEnabled: true })}
                   >
                     {copy.alerts.pushEnable}
@@ -653,6 +681,10 @@ function pendingKindLabel(req: PendingAlertRequest): string {
       return copy.alerts.pendingKindUnlink;
     case 'test-alert':
       return copy.alerts.pendingKindTest;
+    case 'set-phrase':
+      return copy.alerts.pendingKindSetPhrase;
+    case 'clear-phrase':
+      return copy.alerts.pendingKindClearPhrase;
     default:
       return copy.alerts.pendingKindSave;
   }
