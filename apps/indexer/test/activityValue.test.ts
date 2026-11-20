@@ -274,7 +274,7 @@ describe('offer creation and cancellation', () => {
   it('a cancellation carries the cancelled offer’s terms', async () => {
     const h = createSqliteD1(migrations());
     const rows = await record(h, [
-      realLog('OfferCanceled', { offerId: 3n, creator: A1 }, 1, 0),
+      realLog('OfferCanceled', { offerId: 3n, creator: A1, by: A1 }, 1, 0),
       realLog(
         'OfferCanceledDetails',
         {
@@ -293,7 +293,7 @@ describe('offer creation and cancellation', () => {
     const h = createSqliteD1(migrations());
     seedOffer(h, 3, { lending_asset: WETH });
     const rows = await record(h, [
-      realLog('OfferModified', { offerId: 3n, creator: A1, amount: 40n, amountMax: 0n, interestRateBps: 1n, interestRateBpsMax: 0n, collateralAmount: 1n, collateralAmountMax: 0n, integrator: '0x0000000000000000000000000000000000000000', linkKind: 0, linkMarginBps: 0, warnings: 0 }, 1, 0),
+      realLog('OfferModified', { offerId: 3n, creator: A1, amount: 40n, amountMax: 0n, interestRateBps: 1n, interestRateBpsMax: 0n, collateralAmount: 1n, collateralAmountMax: 0n, integrator: '0x0000000000000000000000000000000000000000', linkKind: 0, linkMarginBps: 0, warnings: 0, by: A1 }, 1, 0),
     ]);
     expect(value(rows[0])).toEqual({ asset: WETH, assetType: 0, amount: '40', amountMax: null, tokenId: null, quantity: null });
   });
