@@ -57,4 +57,22 @@ describe('a signature an account wallet has not finished approving (#3770, #3836
       }, async () => {}),
     ).rejects.toThrow('moved');
   });
+
+  it('returns nothing when the wallet moved while the completing read was out', async () => {
+    let moved = false;
+    await expect(
+      awaitAccountSignature(
+        [
+          async () => {
+            moved = true;
+            return { kind: 'valid', signature: '0xabcd' };
+          },
+        ],
+        () => {
+          if (moved) throw new Error('moved');
+        },
+        async () => {},
+      ),
+    ).rejects.toThrow('moved');
+  });
 });

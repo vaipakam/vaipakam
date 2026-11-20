@@ -459,7 +459,7 @@ export async function saveAlertPrefs(
   };
   let res =
     opts.resume?.kind === 'save-settings'
-      ? await signAndSendAlertRequest(opts.resume, opts.signMessage, post)
+      ? await signAndSendAlertRequest(opts.resume, opts.signMessage, post, 'resume')
       : await attempt(true);
   // #2251 (Codex #2665 r1) — the agent refuses a NEW Push opt-in it cannot
   // honour by refusing the WHOLE save with a 409, so that an app bundle
@@ -531,7 +531,7 @@ export async function issueTelegramLink(
       : newAlertRequest('link', wallet, chainId, '/link/telegram', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildTelegramLinkMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `starting the Telegram link failed (${res.status})`);
   const code = res.data?.code;
   if (typeof code !== 'string' || !code) {
@@ -563,7 +563,7 @@ export async function sendTestTelegramAlert(
       : newAlertRequest('test-alert', wallet, chainId, '/telegram/test', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildTelegramTestMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   if (res.ok) return 'sent';
   // Only a body-tagged `not-linked` is the fumbled-handshake case. A
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
@@ -588,7 +588,7 @@ export async function unlinkTelegram(
       : newAlertRequest('unlink', wallet, chainId, '/unlink/telegram', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildTelegramUnlinkMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   // #3246 — the service could not check whether the wallet has protected
   // mode on, so it changed nothing (a failed read must never silence a
   // protected account's alerts).

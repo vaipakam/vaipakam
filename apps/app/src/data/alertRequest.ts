@@ -176,8 +176,9 @@ export interface AlertServiceAnswer {
 }
 
 /**
- * Ask the wallet to sign `req` and send it. The request is kept in this
- * browser before the wallet is asked, so a page closed while the owners
+ * Ask the wallet to sign `req` and send it. A new request (`how` = start)
+ * is kept in this browser before the wallet is asked; a kept one being
+ * finished (`resume`) is not written again, so a page closed while the owners
  * approve can still finish it. It is dropped once the service answers,
  * except when the service refused it before recording it (a busy or
  * unavailable limiter, or a signature check that could not run:
@@ -190,8 +191,12 @@ export async function signAndSendAlertRequest(
   req: PendingAlertRequest,
   signMessage: (message: string) => Promise<string>,
   send: (path: string, body: Record<string, unknown>) => Promise<AlertServiceAnswer>,
+  how: 'start' | 'resume' = 'start',
 ): Promise<AlertServiceAnswer> {
-  keep(req);
+  // Only a new request is written. Finishing one sends what is already
+  // kept and writes nothing: a stale card finishing an older request must
+  // not overwrite a newer one another tab started for the same wallet.
+  if (how === 'start') keep(req);
   let signature: string;
   try {
     signature = await signMessage(req.message);

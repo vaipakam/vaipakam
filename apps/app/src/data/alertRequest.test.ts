@@ -173,6 +173,35 @@ describe('a request that finishes drops only itself (#3836)', () => {
   });
 });
 
+describe('finishing an older request (#3836)', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('does not overwrite a newer request another tab started', async () => {
+    const older = linkRequest();
+    const newer = linkRequest(NOW + 60);
+    await signAndSendAlertRequest(older, async () => Promise.reject(new Error('waiting')), async () => answer(200)).catch(
+      () => {},
+    );
+    // Another tab starts a newer request for the same wallet and network.
+    await signAndSendAlertRequest(newer, async () => Promise.reject(new Error('waiting')), async () => answer(200)).catch(
+      () => {},
+    );
+    // A stale card still showing the older one finishes it.
+    let keptWhileAsked: string | undefined;
+    await signAndSendAlertRequest(
+      older,
+      async () => {
+        keptWhileAsked = loadPendingAlertRequest(CHAIN, WALLET, NOW + 60)?.requestKey;
+        return '0xsig';
+      },
+      async () => answer(409, 'request-superseded'),
+      'resume',
+    );
+    expect(keptWhileAsked).toBe(newer.requestKey);
+    expect(loadPendingAlertRequest(CHAIN, WALLET, NOW + 60)?.requestKey).toBe(newer.requestKey);
+  });
+});
+
 describe('the data-rights export (#3836)', () => {
   it('shows a pending request but withholds its key, saying so', async () => {
     const { inspectMyData, WITHHELD_REQUEST_KEY } = await import('../lib/dataRights');

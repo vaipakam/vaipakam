@@ -144,17 +144,21 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
   );
   const busy = entry.run.phase === 'signing' || entry.run.phase === 'sending';
 
-  /** Ask the wallet to sign `p` and send it. `p` is kept before the wallet
-   *  is asked and dropped once the service answers, except when the service
+  /** Ask the wallet to sign `p` and send it. A new `p` is kept before the
+   *  wallet is asked (a kept one being finished is not written again) and
+   *  dropped once the service answers, except when the service
    *  refused it before recording it (`alertRequestUnused`: a busy or
    *  unavailable limiter, or a check that could not run), so the same one
    *  may be sent again. A declined signature drops it; any other
    *  failure (a wallet that stopped waiting, a network error) keeps it, to
    *  be finished later. */
   const send = useCallback(
-    async (p: PendingAlert): Promise<AlertAnswer | null> => {
+    async (p: PendingAlert, how: 'start' | 'resume'): Promise<AlertAnswer | null> => {
       const { action } = p;
-      keepPending(chainId, wallet, p);
+      // Only a new request is written. Finishing one sends what is kept and
+      // writes nothing, so a stale card finishing an older request cannot
+      // overwrite a newer one another tab started for this wallet.
+      if (how === 'start') keepPending(chainId, wallet, p);
       setRun(identity, { run: { phase: 'signing', action }, pending: p });
       const drop = () => {
         clearPending(chainId, wallet, undefined, p.requestKey);
@@ -201,7 +205,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
     async (action: AlertAction): Promise<AlertAnswer | null> => {
       const now = runs.get(identity)?.run.phase;
       if (now === 'signing' || now === 'sending') return null;
-      return send({ action, issuedAt: nextIssuedAt(), requestKey: newRequestKey() });
+      return send({ action, issuedAt: nextIssuedAt(), requestKey: newRequestKey() }, 'start');
     },
     [send, identity],
   );
@@ -216,7 +220,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       setRun(identity, { pending: null });
       return null;
     }
-    return send(cur.pending);
+    return send(cur.pending, 'resume');
   }, [send, identity, chainId, wallet]);
 
   /** Forget the kept request. The wallet may still hold its approval; with

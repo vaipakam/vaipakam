@@ -100,8 +100,9 @@ export function gatewayRead(
 /**
  * Waits until a proposed account-wallet signature is complete, and returns
  * what the request signs with. Each round is preceded by `stillLive`, which
- * throws when the wallet or network moved (or the person gave up), so
- * nothing is signed for another identity. A read that fails does not end the
+ * throws when the wallet or network moved (or the person gave up), and it is
+ * asked again after a read that completes the signature, before it is
+ * returned, so nothing is signed for another identity. A read that fails does not end the
  * wait: the wallet's approvals are what complete it.
  */
 export async function awaitAccountSignature(
@@ -112,11 +113,18 @@ export async function awaitAccountSignature(
   for (;;) {
     stillLive();
     for (const read of reads) {
+      let r: AccountSignatureRead | null = null;
       try {
-        const r = await read();
-        if (r.kind === 'valid') return r.signature;
+        r = await read();
       } catch {
         // Unread this time.
+      }
+      if (r?.kind === 'valid') {
+        // The wallet or network may have moved while the read was out:
+        // check again before the signature is handed back, outside the
+        // catch above, so a move is never read as an unread round.
+        stillLive();
+        return r.signature;
       }
     }
     await pause();
