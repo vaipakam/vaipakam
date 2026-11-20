@@ -142,6 +142,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['OfferCanceled', ['by']],
   ['OfferModified', ['by']],
   ['OfferEscrowReturned', ['holder']],
+  ['OfferRefundHeld', ['holder']],
   ['OfferRefundCollected', ['holder']],
   ['OfferFullTariffConsentBy', ['by']],
   // #3358 — the maker's price-move guard set, changed or cleared on their offer.

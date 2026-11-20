@@ -119,11 +119,8 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     error NothingHeldForOfferToken(uint256 positionToken, address asset, uint256 tokenId);
 
     /// @notice #3744 — an offer's escrow went back to the holder of the
-    ///         offer's position token. `held` true: that holder could not be
-    ///         paid during a step someone else triggered, so the amount stays
-    ///         in the creator's vault, held for the token, until its holder
-    ///         collects it ({collectOfferRefund}); false: it is free balance
-    ///         in `holder`'s vault now.
+    ///         offer's position token: it is free balance in `holder`'s vault
+    ///         now.
     /// @custom:event-category state-change/vault-mutation
     event OfferEscrowReturned(
         uint256 indexed offerId,
@@ -131,8 +128,22 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         address indexed holder,
         address asset,
         uint256 tokenId,
-        uint256 amount,
-        bool held
+        uint256 amount
+    );
+
+    /// @notice #3744 — the holder of the offer's position token could not be
+    ///         paid during a step someone else triggered, so the offer's
+    ///         escrow stays in the creator's vault, held for the token, until
+    ///         its holder collects it ({collectOfferRefund}). Nothing has
+    ///         reached `holder` yet.
+    /// @custom:event-category state-change/vault-mutation
+    event OfferRefundHeld(
+        uint256 indexed offerId,
+        uint256 indexed positionToken,
+        address indexed holder,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
     );
 
     /// @notice #3744 — the holder of `positionToken` collected escrow held
@@ -200,7 +211,8 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             }
             if (holder != creator) LibSanctionedLock.endMoveOut(s);
         }
-        emit OfferEscrowReturned(offerId, token, holder, asset, tokenId, amount, held);
+        if (held) emit OfferRefundHeld(offerId, token, holder, asset, tokenId, amount);
+        else emit OfferEscrowReturned(offerId, token, holder, asset, tokenId, amount);
     }
 
     /**
