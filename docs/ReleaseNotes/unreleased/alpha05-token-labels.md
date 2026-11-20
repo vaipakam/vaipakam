@@ -1,4 +1,4 @@
-## alpha05 cleans every token name and symbol by the shared rule (PR #<n>)
+## alpha05 cleans every token name and symbol by the shared rule (PR #3870)
 
 A token's name and symbol are written by whoever deployed it, so a hostile
 token could carry a right-to-left override, an invisible character or a line

@@ -1,4 +1,4 @@
-## Thread — alpha05 says fees are at full rate while no platform token is installed (PR #<n>)
+## Thread — alpha05 says fees are at full rate while no platform token is installed (PR #3870)
 
 The platform token arrives with the rewards phase, on every network together, so at launch no network has it and no wallet has a holding discount. alpha05's fee screens now read whether the network reports a platform token and, where it does not, say that every fee is charged at its full rate instead of offering a discount setting or showing a tier.
 
