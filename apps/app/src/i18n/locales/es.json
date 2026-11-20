@@ -114,7 +114,7 @@
       },
       "vpfi": {
         "title": "Descuentos de comisiones VPFI — Vaipakam",
-        "description": "Opcional: mantén VPFI en tu vault para reducir comisiones del protocolo. Nunca es obligatorio para prestar, pedir prestado o alquilar."
+        "description": "Los descuentos en comisiones por mantener VPFI empiezan con la fase de recompensas. Hasta que el token de la plataforma esté instalado, cada comisión se cobra a su tarifa completa. Nunca es necesario para prestar, pedir prestado o alquilar."
       },
       "nftVerifier": {
         "title": "Verificador de NFT de posición — Vaipakam",
@@ -561,7 +561,7 @@
         },
         "vpfi": {
           "q": "¿Necesito VPFI?",
-          "a": "No. VPFI es opcional — mantenerlo en tu vault puede reducir comisiones del protocolo en préstamos elegibles. Nunca reduce el gas de red, y nunca lo necesitas para pedir prestado, prestar o alquilar."
+          "a": "No. Nunca necesitas VPFI para pedir prestado, prestar o alquilar. El token de la plataforma llega con la fase de recompensas. Hasta que esté instalado en una red, allí no se aplica ningún descuento en comisiones y cada comisión se cobra a su tarifa completa. Una vez instalado, mantenerlo en tu vault puede reducir comisiones del protocolo en préstamos elegibles. Nunca reduce el gas de red."
         },
         "modes": {
           "q": "¿Cuál es la diferencia entre modo Básico y Avanzado?",
@@ -2357,7 +2357,7 @@
       "withdrawWarning": "Retirar VPFI puede reducir descuentos de comisiones futuros.",
       "belowMinNote": "Mantener menos de {{floor}} VPFI no otorga descuento de comisiones.",
       "tierTableUnknown": "Los niveles de descuento no se pueden leer desde esta red en este momento, así que aquí no se muestra ninguno.",
-      "notOnThisChain": "Los depósitos VPFI aún no están disponibles en {{chain}}. Todo lo demás en Vaipakam funciona sin VPFI.",
+      "notInstalled": "El token de la plataforma no está instalado en {{chain}}. Llega con la fase de recompensas, en todas las redes a la vez. Hasta entonces no se aplica ningún descuento en comisiones a nadie, y cada comisión se cobra a su tarifa completa. Todo en Vaipakam funciona sin él.",
       "tokenChanged": "La configuración del token VPFI cambió desde que revisaste. No se aprobó nada — revisa los números actualizados e inténtalo de nuevo.",
       "tokenCheckRetry": "No pudimos confirmar el token VPFI ahora mismo — no se aprobó nada. Inténtalo de nuevo en un momento.",
       "addToWallet": "Añadir VPFI a MetaMask",
@@ -3107,7 +3107,7 @@
         "claimsSub": "Cobrar pagos, garantías y recompensas",
         "offersSub": "Explorar toda oferta abierta en esta red",
         "vaultSub": "Dónde están tus activos — totales, bloqueados y libres",
-        "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI",
+        "vpfiSub": "Descuentos opcionales en comisiones, desde la fase de recompensas",
         "activitySub": "Todo lo que tu billetera ha hecho en Vaipakam",
         "riskAccessSub": "Elige qué tan arriesgados pueden ser los activos de tus operaciones",
         "helpSub": "Respuestas en lenguaje claro e info de build",
@@ -3295,6 +3295,7 @@
       "flagsHeading": "Indicadores de función",
       "partialFill": "Emparejamiento de órdenes (ejecución parcial)",
       "tiersHeading": "Niveles de descuento VPFI",
+      "tiersNotInstalled": "El token de la plataforma no está instalado en esta red, así que no se aplica ninguno de estos niveles: cada comisión se cobra a su tarifa completa.",
       "tiers": "Niveles",
       "tierThreshold": "Umbral del nivel {{n}}",
       "tierValue": "{{amount}} VPFI → {{discount}} de descuento",

@@ -114,7 +114,7 @@
       },
       "vpfi": {
         "title": "Réductions de frais VPFI — Vaipakam",
-        "description": "Optionnel : conservez des VPFI dans votre vault pour réduire les frais du protocole. Jamais obligatoire pour prêter, emprunter ou louer."
+        "description": "Les remises sur les frais liées à la détention de VPFI commencent avec la phase de récompenses. Tant que le jeton de la plateforme n’est pas installé, chaque frais est facturé à son taux plein. Jamais requis pour prêter, emprunter ou louer."
       },
       "nftVerifier": {
         "title": "Vérificateur de NFT de position — Vaipakam",
@@ -561,7 +561,7 @@
         },
         "vpfi": {
           "q": "Ai-je besoin de VPFI ?",
-          "a": "Non. VPFI est optionnel — en détenir dans votre vault peut réduire les frais du protocole sur les prêts éligibles. Cela ne réduit jamais le gas réseau, et vous n’en avez jamais besoin pour emprunter, prêter ou louer."
+          "a": "Non. Vous n’avez jamais besoin de VPFI pour emprunter, prêter ou louer. Le jeton de la plateforme arrive avec la phase de récompenses. Tant qu’il n’est pas installé sur un réseau, aucune remise sur les frais ne s’y applique et chaque frais est facturé à son taux plein. Une fois installé, en détenir dans votre vault peut réduire les frais du protocole sur les prêts éligibles. Cela ne réduit jamais le gas réseau."
         },
         "modes": {
           "q": "Quelle est la différence entre les modes Basique et Avancé ?",
@@ -2357,7 +2357,7 @@
       "withdrawWarning": "Retirer des VPFI peut réduire les futures réductions de frais.",
       "belowMinNote": "Détenir moins de {{floor}} VPFI ne donne aucune réduction de frais.",
       "tierTableUnknown": "Les paliers de remise ne peuvent pas être lus depuis ce réseau pour le moment ; aucun n’est donc affiché ici.",
-      "notOnThisChain": "Les dépôts VPFI ne sont pas encore disponibles sur {{chain}}. Tout le reste sur Vaipakam fonctionne sans VPFI.",
+      "notInstalled": "Le jeton de la plateforme n’est pas installé sur {{chain}}. Il arrive avec la phase de récompenses, sur tous les réseaux en même temps. D’ici là, aucune remise sur les frais ne s’applique à personne, et chaque frais est facturé à son taux plein. Tout sur Vaipakam fonctionne sans lui.",
       "tokenChanged": "La configuration du token VPFI a changé depuis votre examen. Rien n'a été approuvé — vérifiez les chiffres mis à jour et réessayez.",
       "tokenCheckRetry": "Impossible de confirmer le token VPFI pour le moment — rien n'a été approuvé. Réessayez dans un instant.",
       "addToWallet": "Ajouter VPFI à MetaMask",
@@ -3107,7 +3107,7 @@
         "claimsSub": "Récupérer remboursements, garanties et récompenses",
         "offersSub": "Parcourir toutes les offres ouvertes sur ce réseau",
         "vaultSub": "Où se trouvent vos actifs — totaux, verrouillés et disponibles",
-        "vpfiSub": "Optionnel — réduire les frais du protocole en détenant VPFI",
+        "vpfiSub": "Remises optionnelles sur les frais, à partir de la phase de récompenses",
         "activitySub": "Tout ce que votre wallet a fait sur Vaipakam",
         "riskAccessSub": "Choisissez le niveau de risque des actifs de vos opérations",
         "helpSub": "Réponses en langage clair et infos de build",
@@ -3295,6 +3295,7 @@
       "flagsHeading": "Indicateurs de fonctionnalité",
       "partialFill": "Appariement des ordres (exécution partielle)",
       "tiersHeading": "Paliers de remise VPFI",
+      "tiersNotInstalled": "Le jeton de la plateforme n’est pas installé sur ce réseau, donc aucun de ces paliers ne s’applique : chaque frais est facturé à son taux plein.",
       "tiers": "Paliers",
       "tierThreshold": "Seuil du palier {{n}}",
       "tierValue": "{{amount}} VPFI → {{discount}} de réduction",

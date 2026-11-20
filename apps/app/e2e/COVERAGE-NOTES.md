@@ -2008,3 +2008,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## No platform token, no discount (owner decision 2026-11-20)
+<a id="cov-no-platform-token-no-discount"></a>
+
+**Journey.** The platform token arrives with the rewards phase, installed on every network together, so no network has it at launch and the fee path gives no hold discount to anyone. When the Diamond reports no token (`getVPFIToken` is the zero address), `/vpfi` shows one banner saying so and that every fee is charged at its full rate. It no longer shows the discount explainer, the tier table or a button to switch to another network, since no other network has a discount to offer either. A failed read still shows the couldn't-check state. The protocol console keeps the configured tier settings (they are real settings) and adds a line under them saying none applies while the token is not installed. The Help answer, the More menu line and the page's search description now say discounts start with the rewards phase.
+
+**Tier.** Live (gap row). The change is copy plus a branch on the snapshot's existing `registered` field; the fork tier deploys a token, so a spec would need a token-less Diamond.
+
+**Gap.** Add a fork drive with no token registered when the VPFI surface next gets a spec: assert the banner, and that no tier row or explainer renders.
+

@@ -114,7 +114,7 @@
       },
       "vpfi": {
         "title": "VPFI-Gebührenrabatte — Vaipakam",
-        "description": "Optional: Halten Sie VPFI in Ihrem Vault, um Protokollgebühren zu reduzieren. Zum Verleihen, Leihen oder Mieten ist VPFI nie erforderlich."
+        "description": "Gebührenrabatte für das Halten von VPFI beginnen mit der Belohnungsphase. Bis der Plattform-Token installiert ist, wird jede Gebühr zum vollen Satz berechnet. Nie erforderlich zum Leihen, Verleihen oder Mieten."
       },
       "nftVerifier": {
         "title": "Positions-NFT-Verifizierer — Vaipakam",
@@ -561,7 +561,7 @@
         },
         "vpfi": {
           "q": "Brauche ich VPFI?",
-          "a": "Nein. VPFI ist optional — VPFI im Vault zu halten kann Protokollgebühren auf berechtigte Kredite reduzieren. Netzwerk-Gas wird nie reduziert, und Sie brauchen es nie zum Leihen, Verleihen oder Mieten."
+          "a": "Nein. Sie brauchen VPFI nie zum Leihen, Verleihen oder Mieten. Der Plattform-Token kommt mit der Belohnungsphase. Bis er auf einem Netzwerk installiert ist, gilt dort kein Gebührenrabatt, und jede Gebühr wird zum vollen Satz berechnet. Sobald er installiert ist, kann VPFI im Vault Protokollgebühren auf berechtigte Kredite reduzieren. Netzwerk-Gas wird nie reduziert."
         },
         "modes": {
           "q": "Was ist der Unterschied zwischen einfachem und erweitertem Modus?",
@@ -2357,7 +2357,7 @@
       "withdrawWarning": "Das Abheben von VPFI kann künftige Gebührenrabatte senken.",
       "belowMinNote": "Das Halten von weniger als {{floor}} VPFI bringt keinen Gebührenrabatt.",
       "tierTableUnknown": "Die Rabattstufen können von diesem Netzwerk gerade nicht gelesen werden, daher wird hier keine angezeigt.",
-      "notOnThisChain": "VPFI-Einzahlungen sind auf {{chain}} noch nicht verfügbar. Alles andere auf Vaipakam funktioniert ohne VPFI.",
+      "notInstalled": "Der Plattform-Token ist auf {{chain}} nicht installiert. Er kommt mit der Belohnungsphase, auf allen Netzwerken gleichzeitig. Bis dahin gilt für niemanden ein Gebührenrabatt, und jede Gebühr wird zum vollen Satz berechnet. Alles auf Vaipakam funktioniert ohne ihn.",
       "tokenChanged": "Die VPFI-Token-Konfiguration hat sich seit Ihrer Prüfung geändert. Es wurde nichts freigegeben — bitte prüfen Sie die aktualisierten Zahlen und versuchen Sie es erneut.",
       "tokenCheckRetry": "Wir konnten den VPFI-Token gerade nicht bestätigen — es wurde nichts freigegeben. Bitte versuchen Sie es gleich noch einmal.",
       "addToWallet": "VPFI zu MetaMask hinzufügen",
@@ -3107,7 +3107,7 @@
         "claimsSub": "Rückzahlungen, Sicherheiten und Rewards abholen",
         "offersSub": "Alle offenen Angebote in diesem Netzwerk durchsuchen",
         "vaultSub": "Wo Ihre Assets liegen — gesamt, gesperrt und frei",
-        "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren",
+        "vpfiSub": "Optionale Gebührenrabatte, ab der Belohnungsphase",
         "activitySub": "Alles, was Ihre Wallet auf Vaipakam getan hat",
         "riskAccessSub": "Lege fest, wie riskant die Assets in deinen Geschäften sein dürfen",
         "helpSub": "Antworten in einfacher Sprache und Build-Infos",
@@ -3295,6 +3295,7 @@
       "flagsHeading": "Funktionsschalter",
       "partialFill": "Order-Matching (Teilausführung)",
       "tiersHeading": "VPFI-Rabattstufen",
+      "tiersNotInstalled": "Der Plattform-Token ist auf diesem Netzwerk nicht installiert, daher gilt keine dieser Stufen: Jede Gebühr wird zum vollen Satz berechnet.",
       "tiers": "Stufen",
       "tierThreshold": "Schwelle für Stufe {{n}}",
       "tierValue": "{{amount}} VPFI → {{discount}} Rabatt",
