@@ -63,6 +63,20 @@ describe('GET /assets/issuer-powers', () => {
     expect(body.assets[1].checks).toEqual([{ check: 'conduit_transfer', result: 'unknown', evidence: null, known: true }]);
   });
 
+  it('reads the run and its findings in one statement, so a refresh cannot split them', async () => {
+    const d1 = seeded().d1 as { prepare(sql: string): unknown };
+    let statements = 0;
+    const counting = {
+      prepare(sql: string) {
+        statements++;
+        return d1.prepare(sql);
+      },
+    };
+    const body = (await (await get(counting, '?chainId=1')).json()) as IssuerPowers;
+    expect(statements).toBe(1);
+    expect(body.assets[0].checks).toHaveLength(3);
+  });
+
   it('answers one asset, and names an unchecked one as not checked', async () => {
     const one = (await (await get(seeded().d1, `?chainId=1&address=${USDC.toUpperCase().replace('0X', '0x')}`)).json()) as IssuerPowers;
     expect(one.assets.map((a) => a.address)).toEqual([USDC]);

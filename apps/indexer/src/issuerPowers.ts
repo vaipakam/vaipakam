@@ -56,12 +56,11 @@ interface CheckRow {
   detail: string | null;
 }
 
-interface FindingRow {
-  address: string;
-  check_id: string;
-  result: string;
+/** A run row, with one of its findings or none (LEFT JOIN). */
+interface JoinedRow extends CheckRow {
+  check_id: string | null;
+  result: string | null;
   evidence: string | null;
-  checked_at: number;
 }
 
 export interface IssuerFinding {
@@ -107,41 +106,45 @@ export function parseAssetAddress(raw: string | null): string | undefined | null
 
 /** Read one chain's results, or one asset's. Throws when the tables cannot be read. */
 export async function readIssuerPowers(db: D1Like, chainId: number, address?: string): Promise<IssuerPowers> {
-  const where = address === undefined ? 'chain_id = ?' : 'chain_id = ? AND address = ?';
+  const where = address === undefined ? 'c.chain_id = ?' : 'c.chain_id = ? AND c.address = ?';
   const binds = address === undefined ? [chainId] : [chainId, address];
-  const [checks, findings] = await Promise.all([
-    db
-      .prepare(
-        `SELECT address, kind, checked_at, block_number, checker_version, complete, detail FROM asset_issuer_check WHERE ${where} ORDER BY address`,
-      )
-      .bind(...binds)
-      .all<CheckRow>(),
-    db
-      .prepare(`SELECT address, check_id, result, evidence, checked_at FROM asset_issuer_finding WHERE ${where} ORDER BY address, check_id`)
-      .bind(...binds)
-      .all<FindingRow>(),
-  ]);
+  // ONE statement, so the run row and its findings come from one snapshot:
+  // two separate reads could straddle a keeper refresh and pair the old row
+  // with the new findings (or the reverse). The join on `checked_at` keeps a
+  // finding only with the run that wrote it; the writer replaces both in one
+  // batch, so this is that run's whole list.
+  const rows = await db
+    .prepare(
+      `SELECT c.address, c.kind, c.checked_at, c.block_number, c.checker_version, c.complete, c.detail,
+              f.check_id, f.result, f.evidence
+         FROM asset_issuer_check c
+         LEFT JOIN asset_issuer_finding f
+           ON f.chain_id = c.chain_id AND f.address = c.address AND f.checked_at = c.checked_at
+        WHERE ${where}
+        ORDER BY c.address, f.check_id`,
+    )
+    .bind(...binds)
+    .all<JoinedRow>();
 
   const byAddress = new Map<string, IssuerPowersAsset>();
-  for (const r of checks.results ?? []) {
-    byAddress.set(r.address, {
-      address: r.address,
-      kind: r.kind,
-      checkedAt: r.checked_at,
-      blockNumber: r.block_number,
-      checkerVersion: r.checker_version,
-      complete: r.complete === 1,
-      detail: r.detail,
-      checks: [],
-    });
-  }
-  for (const f of findings.results ?? []) {
-    const asset = byAddress.get(f.address);
-    // The writer replaces an asset's findings in the same batch as its row,
-    // so a finding from another run (or one with no asset row) is not
-    // presented as part of this run.
-    if (!asset || f.checked_at !== asset.checkedAt) continue;
-    asset.checks.push({ check: f.check_id, result: f.result, evidence: f.evidence, known: isKnownIssuerCheck(f.check_id) });
+  for (const r of rows.results ?? []) {
+    let asset = byAddress.get(r.address);
+    if (!asset) {
+      asset = {
+        address: r.address,
+        kind: r.kind,
+        checkedAt: r.checked_at,
+        blockNumber: r.block_number,
+        checkerVersion: r.checker_version,
+        complete: r.complete === 1,
+        detail: r.detail,
+        checks: [],
+      };
+      byAddress.set(r.address, asset);
+    }
+    if (r.check_id !== null) {
+      asset.checks.push({ check: r.check_id, result: r.result as string, evidence: r.evidence, known: isKnownIssuerCheck(r.check_id) });
+    }
   }
 
   const notChecked = address !== undefined && !byAddress.has(address) ? [address] : [];
