@@ -712,9 +712,11 @@ considered are stated with it. The build notes for Stage B3 record the details t
   fewer liquidators); letting the receiving vault pull from the payer's wallet (a vault would then be paid by
   something that is neither a genuine vault nor its owner).
 - **The held-amount families.** Lender proceeds, amounts held for the lender and borrower proceeds become an amount
-  held for that side's position token. Seller interest (#1209) is held for the lender token the sale retired and
-  released to its holder, provided a retired token still has an owner; if it does not, the amount is keyed to the
-  seller's vault and the build notes say so. The parked refinance leg goes, because the payoff is paid vault to vault
+  held for that side's position token. Seller interest (#1209) is **not** one of these. It is a seller's
+  claim (§3.7.4): recorded for the seller that the sale terms name, paid only to that seller's vault and only up to
+  the claim. It is never held for a position token, so it does not follow the replacement record of §3.7.5. That
+  record moves what is held for the replaced token to the buyer's token, and a claim keyed to the token would hand
+  the seller's earned interest to the buyer. The parked refinance leg goes, because the payoff is paid vault to vault
   (§3.7.3). The fallback custody row stays under the collateral lien. The offer-token hold is the offer lien. The two
   loan reserves are reserve commitments. The intent-capital lien is the lending mandate. The claim-custody class
   retires into "held for a position".
