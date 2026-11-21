@@ -404,6 +404,31 @@ describe('telegram state store (#1722)', () => {
       expect(mark(store, '8', 2)).toBe('blue heron');
     });
 
+    it('a wallet-wide notice leaves a network with its own phrase on what it was last told', () => {
+      const { store } = fresh();
+      store.recordChatType('7', true, 1);
+      link(store, 1, '7');
+      link(store, 2, '7');
+      store.setPhrase(W, null, 'blue heron', 10, 10);
+      accept(store, 11);
+      // A new wallet-wide phrase is queued, then network 1 sets its own:
+      // the wallet-wide notice now covers network 2 alone.
+      store.setPhrase(W, null, 'green owl', 20, 20);
+      store.setPhrase(W, 1, 'red kite', 30, 30);
+      const due = store.duePhraseNotices(100, 10);
+      const wide = due.find((n) => n.chainId === 0)!;
+      expect(wide).toMatchObject({ chainIds: [2], target: 'green owl' });
+      store.phraseNoticeSent(W, '7', 0, wide.id, true, 31);
+      // Network 1 was never told 'green owl'; it keeps 'blue heron' until its
+      // own notice is accepted.
+      expect(mark(store, '7', 2)).toBe('green owl');
+      expect(mark(store, '7', 1)).toBe('blue heron');
+      const own = store.duePhraseNotices(100, 10).find((n) => n.chainId === 1)!;
+      expect(own).toMatchObject({ told: ['blue heron'], target: 'red kite' });
+      store.phraseNoticeSent(W, '7', 1, own.id, true, 32);
+      expect(mark(store, '7', 1)).toBe('red kite');
+    });
+
     it('a chat notice is kept only until sent, or for an hour', () => {
       const { store } = fresh();
       const id = store.queueChatNotice('7', W, 1, 'unlink', null, 100);

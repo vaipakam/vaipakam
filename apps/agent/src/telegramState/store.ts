@@ -705,6 +705,30 @@ export class TelegramStateStore {
         return;
       }
       if (chainId === 0) {
+        // A network that set its own phrase is not covered by this notice,
+        // but until now it may have read the wallet-wide record. Pin what it
+        // was last told on its own row first, so replacing the wallet-wide
+        // record below does not tell it a phrase it never received.
+        const prior = this.sql
+          .exec<{ phrase: string | null; told_at: number }>(
+            `SELECT phrase, told_at FROM phrase_told WHERE wallet = ? AND chat_id = ? AND chain_id = 0`,
+            w,
+            chatId,
+          )
+          .toArray()[0];
+        if (prior) {
+          this.sql.exec(
+            `INSERT INTO phrase_told (wallet, chat_id, chain_id, phrase, told_at)
+             SELECT l.wallet, l.chat_id, l.chain_id, ?, ? FROM links l
+              WHERE l.wallet = ? AND l.chat_id = ? AND l.chain_id <> 0
+                AND EXISTS (SELECT 1 FROM alert_phrases a WHERE a.wallet = l.wallet AND a.chain_id = l.chain_id)
+                AND NOT EXISTS (SELECT 1 FROM phrase_told t WHERE t.wallet = l.wallet AND t.chat_id = l.chat_id AND t.chain_id = l.chain_id)`,
+            prior.phrase,
+            prior.told_at,
+            w,
+            chatId,
+          );
+        }
         // Told the wallet-wide phrase: what the chat was told for a network
         // goes, except for a network that set its own phrase since.
         this.sql.exec(
