@@ -233,7 +233,7 @@ contract MeshBusMessenger is IRewardMessenger {
         RewardBroadcastV3 memory b = broadcasts[i];
         broadcastDeliveries[i] += 1;
         RewardReporterFacet(diamondOf[b.v2.destChainId])
-            .onRewardBroadcastV3Received(b);
+            .onRewardBroadcastV3Received(chainIdOf[baseDiamond], b);
     }
 
     /// @notice Deliver queued broadcast `i` to an ARBITRARY diamond — the
@@ -242,7 +242,9 @@ contract MeshBusMessenger is IRewardMessenger {
     ///         cross-wire.
     function deliverBroadcastTo(uint256 i, address diamond) external {
         broadcastDeliveries[i] += 1;
-        RewardReporterFacet(diamond).onRewardBroadcastV3Received(broadcasts[i]);
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            chainIdOf[baseDiamond], broadcasts[i]
+        );
     }
 
     // ─── Internals ─────────────────────────────────────────────────────────

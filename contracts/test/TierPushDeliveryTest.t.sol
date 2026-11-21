@@ -11,6 +11,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
@@ -360,6 +361,128 @@ contract TierPushDeliveryTest is SetupTest {
         _payRaise();
         assertEq(router.pendingCount(), 6, "raise delivered on both lanes");
         assertEq(pb.getProtocolBroadcastBudget(), budgetBefore, "caller-paid");
+    }
+
+    // ─── #1856: renewal of a steady tier ──────────────────────────────
+
+    /// @dev A steady holding's tier never changes, but a mirror retires its
+    ///      cached tier at its maximum age. Once the last commit and the last
+    ///      delivery are `TIER_PUSH_RENEWAL_AGE_SEC` old, a poke commits the
+    ///      same tuple again and every lane is owed it; the renewal keeps a
+    ///      discount alive, so only a paying caller delivers it.
+    function test1856_SteadyTier_RenewalOwedAfterAge_CallerPaid() public {
+        _reachTierOne();
+        (uint64 nonceBefore,,,,,) = pb.getTierPushStatus(user);
+        vm.warp(vm.getBlockTimestamp() + 15 days);
+        vm.prank(user);
+        VPFIDiscountFacet(address(diamond)).pokeMyTier();
+        (uint64 nonceAfter,,,,,) = pb.getTierPushStatus(user);
+        assertEq(nonceAfter, nonceBefore + 1, "the unchanged tuple was committed again");
+        assertTrue(_lane(MIRROR_A).owed, "lane A owed the renewal");
+        assertTrue(_lane(MIRROR_B).owed, "lane B owed the renewal");
+        assertFalse(_lane(MIRROR_A).budgetPays, "a renewal is never budget-paid");
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
+        uint256 sentBefore = router.pendingCount();
+        _payRaise();
+        assertEq(router.pendingCount(), sentBefore + 2, "renewal delivered on both lanes");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore, "caller-paid");
+        // The status view reports each lane's last send time, the renewal's.
+        assertEq(_lane(MIRROR_A).delivered.sentAt, uint40(block.timestamp), "lane A last sent now");
+        assertEq(_lane(MIRROR_B).delivered.sentAt, uint40(block.timestamp), "lane B last sent now");
+        // The renewal carries the tier resolved NOW (the commit re-resolves
+        // it), which for a steady holding is the tier it already had.
+        (, uint8 tierNow,,,,) = pb.getTierPushStatus(user);
+        assertEq(_lane(MIRROR_A).delivered.tier, tierNow, "renewed with the tier resolved now");
+        assertGt(tierNow, 0, "a non-zero tier is what renews");
+    }
+
+    /// @dev #1856 — the renewal is aged from the COMMIT and a lane from its
+    ///      last DELIVERY, so a lane delivered late must still be owed a
+    ///      renewal committed after that delivery. Sequence: tier 1 is
+    ///      committed at T0 but paid for and delivered only at T0 + 10 days;
+    ///      a poke at T0 + 15 days commits the renewal (the commit is 15 days
+    ///      old) while the lane's delivery is only 5 days old. The lane must
+    ///      be owed that renewal, not settled with no send, so the mirror's
+    ///      cache is refreshed well before its 30-day maximum age runs out.
+    function test1856_LateDelivery_RenewalInsideLaneWindow_StillOwed() public {
+        vm.warp(block.timestamp + 3 days + 1);
+        vm.prank(user);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(1);
+        uint256 t0 = vm.getBlockTimestamp();
+        assertTrue(_lane(MIRROR_A).owed, "tier 1 committed and owed at T0");
+
+        // Late delivery: the user pays only ten days after the commit.
+        vm.warp(t0 + 10 days);
+        _payRaise();
+        uint40 deliveredAt = _lane(MIRROR_A).delivered.sentAt;
+        assertEq(deliveredAt, uint40(t0 + 10 days), "delivered late");
+
+        // The commit is now renewal-aged; the lane's delivery is not.
+        vm.warp(t0 + 15 days);
+        (uint64 nonceBefore,,,,,) = pb.getTierPushStatus(user);
+        vm.prank(user);
+        VPFIDiscountFacet(address(diamond)).pokeMyTier();
+        (uint64 nonceAfter,,,,,) = pb.getTierPushStatus(user);
+        assertEq(nonceAfter, nonceBefore + 1, "the renewal was committed");
+        assertTrue(_lane(MIRROR_A).owed, "lane A still owed the renewal it was last sent before");
+        assertTrue(_lane(MIRROR_B).owed, "lane B still owed the renewal it was last sent before");
+        assertLt(_lane(MIRROR_A).delivered.nonce, nonceAfter, "the lane was not settled without a send");
+
+        // Paying delivers it, inside the mirror's maximum age.
+        uint256 sentBefore = router.pendingCount();
+        _payRaise();
+        assertEq(router.pendingCount(), sentBefore + 2, "renewal sent on both lanes");
+        uint40 renewedAt = _lane(MIRROR_A).delivered.sentAt;
+        assertEq(renewedAt, uint40(t0 + 15 days), "renewed at the poke");
+        assertLt(
+            uint256(renewedAt),
+            uint256(deliveredAt) + LibVaipakam.MIN_MIRROR_TIER_MAX_AGE_SEC,
+            "the mirror is refreshed before its cache's maximum age expires"
+        );
+    }
+
+    /// @dev #1856 — the renewal age is at most half the lowest maximum age a
+    ///      mirror may be configured with, so a steady holder can always
+    ///      renew before any mirror's backstop expires their cached tier.
+    function test1856_RenewalAge_AtMostHalfTheMirrorSetterMinimum() public {
+        assertLe(
+            uint256(LibVaipakam.TIER_PUSH_RENEWAL_AGE_SEC) * 2,
+            uint256(LibVaipakam.MIN_MIRROR_TIER_MAX_AGE_SEC),
+            "renewal age <= half the setter minimum"
+        );
+        assertEq(LibVaipakam.MIN_MIRROR_TIER_MAX_AGE_SEC, 30 days, "the setter minimum is 30 days");
+        // The setter enforces that same minimum.
+        vm.expectRevert();
+        ConfigFacet(address(diamond)).setMirrorTierMaxAgeSec(LibVaipakam.MIN_MIRROR_TIER_MAX_AGE_SEC - 1);
+        ConfigFacet(address(diamond)).setMirrorTierMaxAgeSec(LibVaipakam.MIN_MIRROR_TIER_MAX_AGE_SEC);
+    }
+
+    /// @dev Before the renewal age an unchanged tuple is no news: no commit,
+    ///      nothing owed.
+    function test1856_SteadyTier_NoRenewalBeforeAge() public {
+        _reachTierOne();
+        (uint64 nonceBefore,,,,,) = pb.getTierPushStatus(user);
+        vm.warp(vm.getBlockTimestamp() + 15 days - 1);
+        vm.prank(user);
+        VPFIDiscountFacet(address(diamond)).pokeMyTier();
+        (uint64 nonceAfter,,,,,) = pb.getTierPushStatus(user);
+        assertEq(nonceAfter, nonceBefore, "no commit inside the renewal age");
+        assertFalse(_lane(MIRROR_A).owed);
+        assertFalse(_lane(MIRROR_B).owed);
+    }
+
+    /// @dev Tier 0 needs no freshness on a mirror (it already reads as no
+    ///      discount), so an aged tier 0 commits nothing.
+    function test1856_TierZero_NeverRenewed() public {
+        _reachTierOne();
+        _unstakeAll();
+        (uint64 nonceBefore,,,,,) = pb.getTierPushStatus(user);
+        vm.warp(vm.getBlockTimestamp() + 40 days);
+        vm.prank(user);
+        VPFIDiscountFacet(address(diamond)).pokeMyTier();
+        (uint64 nonceAfter,,,,,) = pb.getTierPushStatus(user);
+        assertEq(nonceAfter, nonceBefore, "tier 0 is not renewed");
+        assertFalse(_lane(MIRROR_A).owed);
     }
 
     /// @dev A push under a new tier-table version reinstates a discount on a

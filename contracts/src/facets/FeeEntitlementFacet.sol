@@ -34,8 +34,9 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  */
 contract FeeEntitlementFacet is IVaipakamErrors {
     /// @notice #1347 — emitted once per loan at initiation with the resolved
-    ///         per-party modes, each Full party's absorbed tariff, and the
-    ///         notional `C*`. Auxiliary fee-accounting log — the recycle credit
+    ///         per-party modes, each Full party's absorbed tariff, the
+    ///         notional `C*` and the kept initiation fee the reward cap is
+    ///         bounded by (#3360). Auxiliary fee-accounting log — the recycle credit
     ///         itself is observable via `VpfiRecycled`, and the loan lifecycle
     ///         via `LoanInitiated`.
     /// @custom:event-category informational/fee-entitlement
@@ -45,7 +46,8 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint8 lenderMode,
         uint256 borrowerTariffPaid,
         uint256 lenderTariffPaid,
-        uint256 cStarOpen
+        uint256 cStarOpen,
+        uint256 keptFeeNumeraire18
     );
 
     /// @notice #1384 — emitted when a loan's fee entitlement is repriced on an
@@ -204,7 +206,8 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             uint32(offer.durationDays == 0 ? 1 : offer.durationDays),
             bPaid,
             lPaid,
-            cStar
+            cStar,
+            offer.lendingAsset
         );
     }
 
@@ -254,8 +257,9 @@ contract FeeEntitlementFacet is IVaipakamErrors {
 
     /// @dev #1353 (M2 PR-5c) — write `feeEntitlementByLoanId[loanId]` and emit
     ///      {FeeEntitlementStamped}. Snapshots the reward-cap haircut and caches
-    ///      the per-side lifetime reward ceiling AT OPEN, both priced off the
-    ///      notional `cStar` (0 ⇒ reward-ineligible loan ⇒ 0 cap). Stamping from
+    ///      the per-side lifetime reward ceiling AT OPEN, priced off the LOWER
+    ///      of the notional `cStar` and the kept initiation fee (#3360; either
+    ///      0 ⇒ 0 cap). Stamping from
     ///      the snapshot (not the live cfg) freezes an open loan's reward ceiling
     ///      against a later governance retune. Own frame: keeps the at-budget
     ///      `chargeFullTariff` viaIR path in bounds. Ships DARK — the cap is
@@ -269,9 +273,18 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint32 openDays,
         uint256 bPaid,
         uint256 lPaid,
-        uint256 cStar
+        uint256 cStar,
+        address lendingAsset
     ) private {
         uint16 haircutAtOpen = uint16(LibVaipakam.cfgRewardHaircutBps());
+        // #3360 — the cap never exceeds what the platform kept from this loan.
+        // The kept fee is the figure the charge recorded earlier in this same
+        // accept (the fee host's measured receipt), priced by the same
+        // conversion as the list fee behind `C*`. An unpriced or zero kept fee
+        // gives a zero cap: there is no floor.
+        uint256 keptFee = s.feeEntitlementByLoanId[loanId].keptFeeOpen;
+        (uint256 keptN18, bool keptOk) = LibFeeEntitlement.lifToNumeraire18(lendingAsset, keptFee);
+        if (!keptOk) keptN18 = 0;
         // #1353 (M2 PR-5c) — cache the per-side ceiling ½ × C* × (1 − m). Use
         // `Math.mulDiv` so an extreme `C*` (where `C* × (BPS − m)` would exceed
         // `uint256`) computes via the 512-bit intermediate instead of REVERTING
@@ -282,7 +295,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         // low-128-bit value that would UNDER-pay it (Codex #1371 r9).
         // `_loanSideRewardCapEff` trusts the cache, so a truncation would bind.
         uint256 capOpen256 = Math.mulDiv(
-            cStar,
+            cStar < keptN18 ? cStar : keptN18,
             LibVaipakam.BASIS_POINTS - haircutAtOpen,
             LibVaipakam.BASIS_POINTS
         ) / 2;
@@ -296,7 +309,9 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             cStarOpen: cStar,
             loanSideRewardCapOpen: capOpen256 > type(uint128).max
                 ? type(uint128).max
-                : uint128(capOpen256)
+                : uint128(capOpen256),
+            keptFeeOpen: keptFee,
+            keptFeeNumeraire18: keptN18
         });
 
         emit FeeEntitlementStamped(
@@ -305,7 +320,8 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             uint8(lMode),
             bPaid,
             lPaid,
-            cStar
+            cStar,
+            keptN18
         );
     }
 
@@ -367,6 +383,37 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         uint256 loanId
     ) external view returns (LibVaipakam.FeeEntitlement memory) {
         return LibVaipakam.storageSlot().feeEntitlementByLoanId[loanId];
+    }
+
+    /**
+     * @notice #3360 — the two figures a loan's reward cap was stamped from,
+     *         and which one binds. Each side's lifetime cap is half of the
+     *         lower of `C*` and the kept initiation fee (both in the numeraire,
+     *         1e18), after the haircut snapshotted at open.
+     * @param  loanId The loan to read.
+     * @return cStarOpen          The notional tariff `C*` at open.
+     * @return keptFeeNumeraire18 The initiation fee the platform kept from
+     *                            this loan, priced at open.
+     * @return capPerSideOpen     Each side's lifetime reward cap at open.
+     * @return keptFeeBinds       True when the kept fee is the lower figure
+     *                            (on a tie the two caps are equal).
+     */
+    function getLoanRewardCapBasis(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 cStarOpen,
+            uint256 keptFeeNumeraire18,
+            uint256 capPerSideOpen,
+            bool keptFeeBinds
+        )
+    {
+        LibVaipakam.FeeEntitlement storage fe =
+            LibVaipakam.storageSlot().feeEntitlementByLoanId[loanId];
+        cStarOpen = fe.cStarOpen;
+        keptFeeNumeraire18 = fe.keptFeeNumeraire18;
+        capPerSideOpen = fe.loanSideRewardCapOpen;
+        keptFeeBinds = keptFeeNumeraire18 < cStarOpen;
     }
 
     /**

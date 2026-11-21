@@ -144,6 +144,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
         if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
         if (freshShare + recycledShare == 0) revert InvalidAmount();
+        // #2204 — every kind is handled by name: a fully typed kind (4, 5)
+        // holds no untyped remainder and refuses; an unknown kind refuses.
+        (bool writesReceipt, bool untyped) = LibRewardCustody.packetKindTraits(p.kind);
+        if (!untyped) revert ReconciliationPacketTyped(packetHash, p.kind);
         // #1566 transport epochs PR 3b — a packet holding a transport epoch is
         // classifiable only once that epoch has been released: the batch's
         // remainder parked, with its acknowledgment recorded (§5c names that
@@ -159,7 +163,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // and is debited nothing: only the budget (d8) ingress opens a batch, at the
         // packet's own landing, so it never acquires one later.
         LibRewardCustody.takeFromReleasedRemainder(s, packetHash, freshShare + recycledShare);
-        if (p.kind <= LibRewardCustody.PACKET_KIND_COMPENSATION) {
+        if (writesReceipt) {
             LibVaipakam.StrandedRecovery storage sr =
                 s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];
             if (sr.amount != 0 || sr.held != 0) revert ReconciliationPacketReserved(packetHash, sr.amount);

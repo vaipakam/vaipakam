@@ -344,8 +344,13 @@ contract RewardReporterFacet is
     ///      gates (messenger-gated; the packet's embedded `destChainId` must
     ///      equal `block.chainid`, so a delayed delivery after a
     ///      destination-list edit can never apply another chain's figures
-    ///      here), plus the role gate (#1944: Mirror or Detached only).
-    function _broadcastIngressGates(uint256 destChainId)
+    ///      here), plus the role gate (#1944: Mirror or Detached only),
+    ///      plus the source-chain gate (#903): the packet must come from the
+    ///      Base this deployment answers to, by the same rule the tier path
+    ///      applies (`LibVaipakam.requireRewardBaseSource`), so a second
+    ///      Diamond wrongly flagged canonical and wired as a reward peer
+    ///      cannot install a day's denominators here first.
+    function _broadcastIngressGates(uint256 sourceChainId, uint256 destChainId)
         private
         view
         returns (LibVaipakam.Storage storage s)
@@ -369,6 +374,7 @@ contract RewardReporterFacet is
         if (role == LibVaipakam.RewardRole.Unconfigured || role == LibVaipakam.RewardRole.Canonical) {
             revert BroadcastRoleRefused(uint8(role));
         }
+        LibVaipakam.requireRewardBaseSource(s, sourceChainId, true);
     }
 
     /// @dev The apply/replay of the broadcast's nested V2 fields. Takes
@@ -595,7 +601,9 @@ contract RewardReporterFacet is
      *         consensus fields, THIS chain's own funded figures for the day,
      *         and the day's FROZEN lapse-clock facts. Applies, in order:
      *
-     *      1. The trust + destination-binding gates.
+     *      1. The trust, destination-binding, role and source-chain gates
+     *         (#903: `sourceChainId`, the CCIP source the messenger
+     *         authenticated, must be the Base this mirror answers to).
      *      2. Fail-closed clock presence — a zero `finalizedAt` is rejected.
      *         Base freezes the clock in the same call that finalizes the
      *         day, and only a finalized day is broadcast, so a zero clock is
@@ -623,11 +631,12 @@ contract RewardReporterFacet is
      *      together, and no other wire can apply a day (#1944 retired kinds
      *      2 and 5), so there is no day with figures but no recorded era.
      */
-    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b)
-        external
-    {
+    function onRewardBroadcastV3Received(
+        uint256 sourceChainId,
+        RewardBroadcastV3 calldata b
+    ) external {
         LibVaipakam.Storage storage s =
-            _broadcastIngressGates(b.v2.destChainId);
+            _broadcastIngressGates(sourceChainId, b.v2.destChainId);
         uint256 dayId = b.v2.dayId;
         if (b.finalizedAt == 0) revert BroadcastClockMissing(dayId);
         // Codex #1632 r1 P1 — the era ground truth is the CONFIGURED
@@ -1306,5 +1315,27 @@ contract RewardReporterFacet is
     ///         2 Unconfigured, 3 Detached.
     function getRewardRole() external view returns (uint8 role) {
         return uint8(LibVaipakam.rewardRole(LibVaipakam.storageSlot()));
+    }
+
+    /// @notice #903 — the only chains this Diamond accepts Base-to-mirror
+    ///         reward messages from, per kind of traffic. A Mirror names its
+    ///         configured base for both. A Detached Diamond names the base it
+    ///         detached from for the day broadcast only and 0 for tier
+    ///         traffic (every tier push and tier-table bump refused). A
+    ///         canonical or never-configured Diamond names 0 for both. Stated
+    ///         so an operator can see which source each ingress enforces
+    ///         rather than infer it from the raw role fields.
+    /// @return tierSource The authorised source for tier pushes and
+    ///         tier-table version bumps, or 0 when there is none.
+    /// @return dayBroadcastSource The authorised source for the day
+    ///         broadcast, or 0 when there is none.
+    function getRewardBaseSourceChainId()
+        external
+        view
+        returns (uint32 tierSource, uint32 dayBroadcastSource)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        tierSource = LibVaipakam.rewardBaseSourceChainId(s, false);
+        dayBroadcastSource = LibVaipakam.rewardBaseSourceChainId(s, true);
     }
 }

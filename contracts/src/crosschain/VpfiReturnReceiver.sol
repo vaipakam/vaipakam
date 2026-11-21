@@ -29,7 +29,8 @@ interface IRepatriationReturnIngress {
         uint32 sourceChainId,
         address token,
         uint256 declaredAmount,
-        uint256 actualReceived
+        uint256 actualReceived,
+        bytes32 transportMessageId
     ) external;
 
     function onRepatriationCancelAck(
@@ -116,8 +117,10 @@ interface IUntypedRemainderReturnIngress {
 ///      contract publishes (the receiver/messenger probe pattern).
 ///      Generation 2 = the B1 stranded-return decode branch (#1434 P2-w5); a proxy
 ///      without the selector is generation 1. Generation 4 = the
-///      retired-surplus decode branch (#917).
-uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 4;
+///      retired-surplus decode branch (#917). Generation 5 = the Mode-A
+///      return forwards its transport message id, so the Diamond records
+///      it as an ingress packet under its transport identity (#2204).
+uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 5;
 
 contract VpfiReturnReceiver is
     Initializable,
@@ -267,7 +270,7 @@ contract VpfiReturnReceiver is
 
         uint256 head = abi.decode(payload[:32], (uint256));
         if (head == ReturnWire.RETURN_WIRE_TAG_REPAT_A1) {
-            _handleRepatReturn(uint32(sourceChainId), payload, tokens);
+            _handleRepatReturn(uint32(sourceChainId), payload, tokens, transportMessageId);
         } else if (head == ReturnWire.RETURN_WIRE_TAG_REPAT_CANCEL_ACK_A1) {
             _handleRepatCancelAck(uint32(sourceChainId), payload, tokens);
         } else if (head == ReturnWire.RETURN_WIRE_TAG_STRANDED_B1) {
@@ -292,7 +295,8 @@ contract VpfiReturnReceiver is
     function _handleRepatReturn(
         uint32 sourceChainId,
         bytes calldata payload,
-        ICrossChainMessenger.TokenAmount[] calldata tokens
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
     ) internal {
         if (payload.length != 4 * 32) {
             revert PayloadSizeMismatch(payload.length, 4 * 32);
@@ -313,7 +317,8 @@ contract VpfiReturnReceiver is
             sourceChainId,
             deliveredToken,
             declaredAmount,
-            actualReceived
+            actualReceived,
+            transportMessageId
         );
 
         emit RepatriationReturnForwarded(

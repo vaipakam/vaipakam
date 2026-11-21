@@ -125,7 +125,9 @@ contract LoanSideRewardCapTest is SetupTest {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: capOpen * 2, // any non-zero notional; cap read from cache
-                loanSideRewardCapOpen: uint128(capOpen)
+                loanSideRewardCapOpen: uint128(capOpen),
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
     }
@@ -287,7 +289,9 @@ contract LoanSideRewardCapTest is SetupTest {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0, // dust: list LIF floored to 0
-                loanSideRewardCapOpen: 0 // ceiling rounds to 0
+                loanSideRewardCapOpen: 0, // ceiling rounds to 0
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
         // Fully capped ⇒ pays 0, but the claim SUCCEEDS (does not revert): the
@@ -298,38 +302,35 @@ contract LoanSideRewardCapTest is SetupTest {
         assertEq(paid, 0, "stamped dust loan capped to 0 (claim clears it, no revert)");
     }
 
-    // ── Legacy in-place-upgrade record (cStarOpen set, cap cache 0) is derived ──
+    // ── #3360: a stamped record with a zero cap pays nothing ──
 
-    function test_ArmedClaim_LegacyRecordDerivesCapFromCStar() public {
+    function test_ArmedClaim_ZeroKeptFeeCapPaysNothing() public {
         _seedArmedDay(1, 1e18, 1e18);
         _seedArmedDay(2, 1e18, 1e18);
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _pushEntry(1e18, 1, 3); // raw reward 2e18
 
-        // Simulate a record stamped by the parent (#1347) impl BEFORE the cap
-        // cache slot existed: `cStarOpen` / `openDays` are set but
-        // `loanSideRewardCapOpen` reads 0 (appended slot). The cap must be
-        // DERIVED from `cStarOpen`, not treated as a real zero ceiling (Codex
-        // #1371 r6). A legacy record also predates `rewardHaircutBpsAtOpen`, so
-        // its 0 is defaulted to the 200-bps default, NOT read as a literal 0%
-        // (Codex #1371 r7): cStarOpen 0.2e18, default 2% haircut ⇒ capOpen =
-        // ½ × 0.2e18 × 0.98 = 0.098e18; full-term ⇒ capEff 0.098e18 < raw 2e18.
+        // A loan with a real notional C* but no kept initiation fee: the cap
+        // is half the LOWER figure, so the cached cap is zero, and the zero is
+        // read as a real zero, never rebuilt from `cStarOpen`.
         _mut().setFeeEntitlementRaw(
             LOAN_ID,
             LibVaipakam.FeeEntitlement({
                 borrowerMode: LibVaipakam.FeeEntitlementMode.None,
                 lenderMode: LibVaipakam.FeeEntitlementMode.None,
                 openDays: 2,
-                rewardHaircutBpsAtOpen: 0, // legacy record never stamped a haircut ⇒ defaulted to 200
+                rewardHaircutBpsAtOpen: 200,
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
-                cStarOpen: 0.2e18, // real notional from the parent stamp
-                loanSideRewardCapOpen: 0 // cache slot did not exist at parent-stamp time
+                cStarOpen: 0.2e18,
+                loanSideRewardCapOpen: 0,
+                keptFeeOpen: 0,
+                keptFeeNumeraire18: 0
             })
         );
         vm.prank(rewardLender);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
-        assertEq(paid, 0.098e18, "cap derived from cStarOpen + default haircut for a legacy record");
+        assertEq(paid, 0, "no kept fee, no reward");
     }
 
     // ── Cutover-spanning entry: only the ARMED (post-D*) portion is capped ──
