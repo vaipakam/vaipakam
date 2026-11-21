@@ -354,11 +354,17 @@ beyond the bounds its owner signed. The same statement has to carry what those b
 
    **The highest rate is one signed field for every kind of loan:** a fixed loan's rate, or a floating
    loan's highest possible rate (its cap level plus the margin, or with no cap its series' own ceiling plus the
-   margin, [FloatingRateLoansDesign.md](FloatingRateLoansDesign.md) section 6). The Diamond refuses an opening unless
-   that field equals the figure the one floating-rate library returns for those terms, and the vault reads only the
-   signed field. What the owner reads at signing is the highest rate, the late-fee cap and the date, with the amount
-   at the due date plus grace shown as an illustration and named as one, because interest runs until a loan is
-   closed.
+   margin, [FloatingRateLoansDesign.md](FloatingRateLoansDesign.md) section 6). **The signed field is an upper
+   bound, not the loan's own figure.** A standing offer is signed before its counterparty is known: a borrower's
+   offer states the most it pays, and a match opens the loan at the midpoint with the lender's least, which can be
+   lower. So the Diamond refuses an opening when the loan's highest possible rate, as the one floating-rate library
+   returns it for the loan that opens, is above the signed field, and admits one at or below it. The lien records the
+   signed field, because that is the figure the vault can establish itself, and the vault reads nothing else. Where
+   the loan opens below the signed bound, the ceiling is looser than the debt by that difference in rate, and this
+   too is part of the slack §3.7.8 states. On a direct accept in the owner's own call the two are equal.
+
+   What the owner reads at signing is the highest rate, the late-fee cap and the date, with the amount at the due
+   date plus grace shown as an illustration and named as one, because interest runs until a loan is closed.
 
    **A borrowing holds no lien** (ruled 2026-11-20). Each loan in a borrowing
    ([BorrowingDesign.md](BorrowingDesign.md)) has its own collateral lien with its own principal still owed, highest
@@ -673,9 +679,11 @@ reaches a chain by fresh deploy, as every stage has.
   opening, after a part repayment, and after a pause that moved the term's end.
 - A backstop buyout hands over no more than the lender side's slice, only against the backstop vault's payment in
   the same call, and replaces no position token. It passes when the collateral's price has risen since fallback
-  entry, and it is refused when the payment is below the principal the lien still records as owed.
-- A floating loan's signed highest rate equals the floating-rate library's figure for its terms, and an opening where
-  the two differ is refused.
+  entry, and when a part match at a fallen price has left the due below the principal the lien records. The slice
+  never reaches any address but the backstop vault.
+- An opening is refused when the loan's highest possible rate, by the floating-rate library, is above the highest
+  rate its borrower signed, and admitted when it is at or below it: a match at the midpoint of two margins opens
+  under a borrower's standing offer with no fresh signature.
 - In a borrowing of several loans, a liquidation of one loan can take nothing from another loan's lien, and a draw
   from the borrowing's collateral reserve raises exactly one named loan's lien.
 - A fee to the Diamond is refused in any asset but the platform token, to any address but the one fixed in the vault
@@ -774,16 +782,24 @@ considered are stated with it. The build notes for Stage B3 record the details t
     slice is the one an in-kind claim would hand the lender side. The valuation against the ceiling (§3.7.4) is made
     once, when the split is recorded at fallback entry, and not again at a claim or a buyout: a later rise in the
     collateral's price must not make a vault refuse a slice the Diamond's rules already fixed.
-  - *The lender side's vault* accepts cash in place of its slice only when the payment is at least the principal the
-    lien still records as owed. That is the same condition as being taken out at face value with no owner present
-    (§3.7.5). The Diamond pays the whole fallback due, which is never less.
+  - *The lender side's vault* gives up nothing in a buyout: the slice was never in it. It receives the payment as a
+    receipt for its position, from the backstop vault and from no one else.
+  - **How much cash the lender side is due is the Diamond's figure, and the vault sets no floor on it.** The due is
+    fixed when the loan enters fallback (principal, interest and the fallback's own addition) and is scaled down when
+    an internal match closes part of the loan, by the share of collateral that remains. It can be above the principal
+    the lien records, and after a match at a fallen price it can be below it. No figure a vault holds bounds it from
+    either side, so it joins what §3.7.8 states the vault does not check: what a loan owes on the day. What the vaults
+    do establish bounds the harm of a wrong figure. The slice can reach only the backstop vault, which is the
+    platform's own, and never a caller, and only against a payment proven to have reached the lender side's holder.
   - The Diamond's par check (the slice is worth at least what the backstop pays) protects the backstop. It is not a
     floor for the lender and the vault adds no upper limit on what the slice is worth: after a price rise the slice
     may be worth more than the due, and the buyout the Diamond permits must still pass.
 
   *Alternatives considered:* mapping it onto a purchase of the lender's position (it would need a replacement token
   for a position that ends in the same call); holding the payment to the outer floor of a forced sale (after a price
-  rise that floor exceeds the fixed cash due, and the vault would refuse a buyout the Diamond allows).
+  rise that floor exceeds the fixed cash due, and the vault would refuse a buyout the Diamond allows); a floor at the
+  principal the lien still records (after a part match at a fallen price the due is below it, with the same result).
+  Each numeric floor tried here refused a buyout the Diamond permits, which is why none is set.
 - **A buyer's payment for a registered order** is recorded by the vault in the fill callback, measured and held for
   the `ref`. The price leg names the vault, not the Diamond.
 - **Still to be measured by the build:** the gas of a lien change that moves no tokens, of the receipt call, of the
