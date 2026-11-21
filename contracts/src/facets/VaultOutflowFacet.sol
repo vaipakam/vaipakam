@@ -9,6 +9,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibBatchCredit} from "../libraries/LibBatchCredit.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
@@ -597,7 +598,14 @@ contract VaultOutflowFacet is IVaipakamErrors {
         if (o.amount > free) revert WithdrawWouldUnderflowLien(user, o.asset, o.tokenId, o.amount, free);
         uint256 held = LibDepositoryLedger.holding(user, o.asset, o.tokenId);
         uint256 room = free > held ? free - held : 0;
-        LibDepositoryLedger.credit(user, o.asset, o.tokenId, o.amount < room ? o.amount : room);
+        uint256 booked = o.amount < room ? o.amount : room;
+        LibDepositoryLedger.credit(user, o.asset, o.tokenId, booked);
+        // Codex #3805 — the batch's "and withdraw" figure counts the whole
+        // release, not the capped ledger increment: a ledger already at or
+        // above the free balance (a platform-token figure the depository does
+        // not debit on every spend) still makes all of `o.amount` newly
+        // withdrawable. The credit above already counted `booked`.
+        LibBatchCredit.onCredit(user, o.asset, o.tokenId, o.amount - booked);
         emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, o.amount, proxy, o.class_, o.reason, o.ref);
         return o.amount;
     }

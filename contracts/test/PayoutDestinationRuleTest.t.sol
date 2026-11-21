@@ -7,6 +7,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -328,6 +329,26 @@ contract PayoutDestinationRuleTest is SetupTest {
         assertEq(queuedId, 0);
         assertEq(_wallet(lender) - wallet0, PRINCIPAL, "paid to the wallet");
         assertEq(_free(lender), 100 ether, "earlier free balance stays");
+    }
+
+    /// @dev Codex #3805 — a free-balance ledger already at or above the
+    ///      vault's free part (a spend the depository did not debit) caps the
+    ///      ledger increment of a release, but the batch's "and withdraw"
+    ///      figure still counts the whole release, so the batch withdraws it.
+    function test_andWithdraw_staleLedger_stillWithdrawsTheWholeRelease() public {
+        uint256 offerId = _createLenderOffer(0);
+        vm.prank(lender);
+        VaultDepositoryFacet(address(diamond)).depositToVault(0, mockERC20, 0, 100 ether);
+        // The 100 leave the vault without the depository ledger falling.
+        address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        deal(mockERC20, vault, ERC20Mock(mockERC20).balanceOf(vault) - 100 ether);
+        assertEq(_free(lender), 100 ether, "ledger now above the free part");
+        _pastCooldown();
+        uint256 wallet0 = _wallet(lender);
+        MulticallFacet.Result[] memory r = _cancelAndWithdraw(offerId);
+        (uint256 amount,) = abi.decode(r[1].returnData, (uint256, uint256));
+        assertEq(amount, PRINCIPAL, "the whole release");
+        assertEq(_wallet(lender) - wallet0, PRINCIPAL, "paid to the wallet");
     }
 
     /// @dev Test 9 — outside a batch the figure is zero: nothing moves.
