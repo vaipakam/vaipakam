@@ -23,10 +23,12 @@ import {
   type ChainDeployment,
   type ChannelOp,
   type CommitResult,
+  type IssueResult,
   type LinkedRow,
   type LockLink,
   type LockRequest,
   type PendingChange,
+  type RequestOrder,
   type SqlLike,
   type UnansweredLock,
 } from './store';
@@ -51,8 +53,8 @@ export class TelegramState extends DurableObject {
   }
 
   // ─── Handshake codes ──────────────────────────────────────────────────
-  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number): boolean {
-    return this.store.issueLinkCode(code, wallet, chainId, expiresAt);
+  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number, issuedAt: number): IssueResult {
+    return this.store.issueLinkCode(code, wallet, chainId, expiresAt, issuedAt);
   }
   consumeLinkCode(code: string, now: number): { wallet: string; chainId: number } | null {
     return this.store.consumeLinkCode(code, now);
@@ -76,8 +78,15 @@ export class TelegramState extends DurableObject {
   }
 
   // ─── Channel changes (#3246) ──────────────────────────────────────────
-  commit(wallet: string, chainId: number | null, observed: LinkedRow[], ops: ChannelOp[], now: number): CommitResult {
-    return this.store.commit(wallet, chainId, observed, ops, now);
+  commit(
+    wallet: string,
+    chainId: number | null,
+    observed: LinkedRow[],
+    ops: ChannelOp[],
+    now: number,
+    order?: RequestOrder,
+  ): CommitResult {
+    return this.store.commit(wallet, chainId, observed, ops, now, order);
   }
   markNotified(ids: number[], now: number): void {
     this.store.markNotified(ids, now);

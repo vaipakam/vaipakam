@@ -14,7 +14,8 @@
  */
 import type { Config } from 'wagmi';
 import { getAccount, getPublicClient, readContract, waitForTransactionReceipt } from 'wagmi/actions';
-import { hashTypedData, type TransactionReceipt } from 'viem';
+import type { TransactionReceipt } from 'viem';
+import { ERC1271_ABI, awaitAccountSignature, gatewayRead, isPendingSignature, onChainRead, safeMessageUrl } from '@vaipakam/lib/accountSignature';
 
 type Hex = `0x${string}`;
 
@@ -349,95 +350,23 @@ export async function waitForSentReceipt(config: Config, hash: Hex, chainId: num
 
 // ─── #3770: a signature an account wallet has not finished approving ─────
 
-/** EIP-1271's answer for a valid signature. */
-export const ERC1271_MAGIC = '0x1626ba7e';
-
-const ERC1271_ABI = [
-  {
-    type: 'function',
-    name: 'isValidSignature',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'hash', type: 'bytes32' },
-      { name: 'signature', type: 'bytes' },
-    ],
-    outputs: [{ name: '', type: 'bytes4' }],
-  },
-] as const;
-
-/** A Safe opened as a Safe App answers a signing request its other owners
- *  still have to approve with an empty signature (`0x`): a proposal, not a
- *  signature. */
-export function isPendingSignature(signature: Hex): boolean {
-  return signature.length <= 2;
-}
-
-/** The hash a Safe records a message under (its `SafeMessage` typed data
- *  over the message's own hash), which its service keys the message by. */
-export function safeMessageHash(chainId: number, safe: Hex, hash: Hex): Hex {
-  return hashTypedData({
-    domain: { chainId, verifyingContract: safe },
-    types: { SafeMessage: [{ name: 'message', type: 'bytes' }] },
-    primaryType: 'SafeMessage',
-    message: { message: hash },
-  });
-}
-
-/** One read of a proposed signature: what to sign the step with, or not yet. */
-export type AccountSignatureRead = { kind: 'valid'; signature: Hex } | { kind: 'pending' };
-
-/** Reads the gateway's record of a proposed message: its combined signature
- *  once enough owners confirmed it, else pending. A shape it does not know
- *  throws rather than reading as pending. */
-export function preparedSignature(body: unknown): AccountSignatureRead {
-  const b = body as { status?: unknown; preparedSignature?: unknown } | null;
-  if (b === null || typeof b !== 'object' || typeof b.status !== 'string') throw new Error('unrecognised message record');
-  if (b.status === 'CONFIRMED' && typeof b.preparedSignature === 'string' && /^0x[0-9a-fA-F]+$/.test(b.preparedSignature)) return { kind: 'valid', signature: b.preparedSignature as Hex };
-  return { kind: 'pending' };
-}
-
-/**
- * Waits until a proposed account-wallet signature is complete, and returns
- * what the step signs with: the combined signature the wallet's service
- * prepared once enough owners confirmed (an off-chain message), or `0x` once
- * the wallet itself answers that the hash is signed (an on-chain message,
- * which EIP-1271 checks with an empty signature). Each read is preceded by
- * `stillLive`, which throws when the wallet or network moved, so nothing is
- * signed for another identity. A read that fails does not end the wait.
- */
-export async function awaitAccountSignature(
-  reads: readonly (() => Promise<AccountSignatureRead>)[],
-  stillLive: () => void,
-  pause: () => Promise<void> = () => new Promise((r) => setTimeout(r, ACCOUNT_POLL_MS)),
-): Promise<Hex> {
-  for (;;) {
-    stillLive();
-    for (const read of reads) {
-      try {
-        const r = await read();
-        if (r.kind === 'valid') return r.signature;
-      } catch {
-        // Unread this time: the wallet's approvals are what complete it.
-      }
-    }
-    await pause();
-  }
-}
+// The rule lives once, in `@vaipakam/lib/accountSignature`, shared with the
+// connected app's alert requests.
+export {
+  ERC1271_MAGIC,
+  awaitAccountSignature,
+  isPendingSignature,
+  preparedSignature,
+  safeMessageHash,
+  type AccountSignatureRead,
+} from '@vaipakam/lib/accountSignature';
 
 /** The signature a step signs with: `signature` itself, unless a Safe App
  *  answered with a proposal, in which case the wait above runs first. */
 export async function settleAccountSignature(config: Config, chainId: number, account: Hex, hash: Hex, signature: Hex, stillLive: () => void): Promise<Hex> {
   const { connector } = getAccount(config);
   if (!isPendingSignature(signature) || !connector || connector.id !== 'safe') return signature;
-  const onChain = async (): Promise<AccountSignatureRead> => {
-    const answer = await readContract(config, { chainId, address: account, abi: ERC1271_ABI, functionName: 'isValidSignature', args: [hash, '0x'] });
-    return answer.toLowerCase() === ERC1271_MAGIC ? { kind: 'valid', signature: '0x' } : { kind: 'pending' };
-  };
-  const offChain = async (): Promise<AccountSignatureRead> => {
-    const res = await fetch(`${SAFE_GATEWAY}/v1/chains/${chainId}/messages/${safeMessageHash(chainId, account, hash)}`);
-    if (res.status === 404) return { kind: 'pending' };
-    if (!res.ok) throw new Error(`message read ${res.status}`);
-    return preparedSignature(await res.json());
-  };
+  const onChain = onChainRead(() => readContract(config, { chainId, address: account, abi: ERC1271_ABI, functionName: 'isValidSignature', args: [hash, '0x'] }));
+  const offChain = gatewayRead(() => fetch(safeMessageUrl(chainId, account, hash, SAFE_GATEWAY)));
   return awaitAccountSignature([onChain, offChain], stillLive);
 }

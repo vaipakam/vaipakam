@@ -16,6 +16,8 @@
  * claimed that was not measured.
  */
 
+import { PENDING_ALERT_PREFIX } from '../alerts/pendingRequest';
+
 /** Keys the app itself writes, by prefix. Anything else in this origin's
  *  storage was written by the wallet libraries. */
 export const APP_KEY_PREFIXES = ['app.', 'alpha05.', 'vaipakam:language'] as const;
@@ -28,6 +30,23 @@ export const LANG_COOKIE = 'vaipakam_lang';
 /** Where the last erasure's report is kept for this tab, so it survives the
  *  reload that resets every preference. */
 export const REPORT_KEY = 'alpha05.dataRights.report';
+
+/** #3836 — said in the download in place of a pending alert request's key.
+ *  With the wallet's approval (which a multi-signature wallet can publish),
+ *  that key is what lets a request be presented, so a shared download must
+ *  not carry it. The file says it was withheld and why. */
+export const WITHHELD_REQUEST_KEY =
+  '(withheld from this file: the secret that lets this browser finish a pending alert request. A copy outside this browser could let someone else finish it. Erasing removes it.)';
+
+/** What the download shows for one of the app's records: as stored, except
+ *  a pending alert request's key. */
+export function exportedRecord(key: string, value: string): unknown {
+  const parsed = parseMaybe(value);
+  if (key.startsWith(PENDING_ALERT_PREFIX) && parsed && typeof parsed === 'object' && 'requestKey' in parsed) {
+    return { ...(parsed as Record<string, unknown>), requestKey: WITHHELD_REQUEST_KEY };
+  }
+  return parsed;
+}
 
 export type StorageLike = Pick<Storage, 'length' | 'key' | 'getItem' | 'removeItem' | 'setItem'>;
 
@@ -159,7 +178,7 @@ export function downloadBody(inv: Inventory, at: Date, wallets: readonly string[
       at: at.toISOString(),
       walletAddresses: wallets,
       walletAddressesNote: 'Records are kept per wallet address, so the addresses above appear in this file.',
-      records: Object.fromEntries(inv.app.map((r) => [r.key, parseMaybe(r.value)])),
+      records: Object.fromEntries(inv.app.map((r) => [r.key, exportedRecord(r.key, r.value)])),
       notIncluded: {
         walletConnectionItems: inv.connector,
         perTabItems: inv.session,

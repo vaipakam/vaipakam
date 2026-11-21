@@ -396,7 +396,22 @@
       "paidAgreed": "Gespeichert: Du hast zugestimmt, bis zu {{fee}} VPFI pro Kreditseite auf {{chain}} zu zahlen.",
       "paidWithdrawn": "Zurückgezogen: Gebühren für kostenpflichtige Push-Benachrichtigungen können dir auf {{chain}} nicht berechnet werden.",
       "signatureCheckUnavailable": "Deine Einstellungen wurden nicht gespeichert: Der Benachrichtigungsdienst konnte deine Signatur gerade nicht prüfen. Bitte versuche es in Kürze erneut.",
-      "requestAlreadyUsed": "Deine Einstellungen wurden nicht gespeichert: Diese Signatur wurde bereits verwendet. Speichere erneut, um eine neue Anfrage zu signieren."
+      "requestAlreadyUsed": "Deine Einstellungen wurden nicht gespeichert: Diese Signatur wurde bereits verwendet. Speichere erneut, um eine neue Anfrage zu signieren.",
+      "requestUsedAgain": "Nichts wurde geändert: Diese signierte Anfrage wurde bereits verwendet. Beginne erneut, um eine neue zu signieren.",
+      "requestSuperseded": "Nichts wurde geändert: Eine später signierte Anfrage für diese Änderung wurde bereits angewendet. Beginne erneut, wenn du diese noch möchtest.",
+      "requestCheckUnavailable": "Noch nichts wurde geändert: Der Benachrichtigungsdienst konnte die Signatur gerade nicht prüfen. Schließe die Anfrage in Kürze erneut ab.",
+      "serviceUpgrading": "Nichts wurde gespeichert: Der Benachrichtigungsdienst wird gerade aktualisiert. Bitte versuche es in Kürze erneut.",
+      "multisigNote": "Jede Anfrage nennt einen Schlüssel, den nur dieser Browser hat, daher kann nur dieser Browser sie abschließen. Eine Wallet, die die Freigabe mehrerer Eigentümer braucht, hat bis zu {{days}} Tage Zeit; danach läuft die Anfrage ab und du beginnst neu.",
+      "pendingTitle": "Eine Anfrage wartet auf deine Wallet",
+      "pendingBody": "{{action}}: in diesem Browser gestartet am {{started}}. Nur dieser Browser kann sie abschließen, bis {{expires}}. Beim Abschließen wird deine Wallet erneut um dieselbe Freigabe gebeten, dann wird sie gesendet.",
+      "pendingFinish": "Abschließen",
+      "pendingDiscard": "Verwerfen",
+      "pendingKindLink": "Telegram verknüpfen",
+      "pendingKindUnlink": "Telegram trennen",
+      "pendingKindTest": "Testbenachrichtigung senden",
+      "pendingKindSave": "Benachrichtigungseinstellungen speichern",
+      "awaitingOwners": "Warten auf die Zustimmung der anderen Eigentümer dieser Wallet. Du kannst diese Seite geöffnet lassen oder sie schließen und die Anfrage später hier abschließen.",
+      "walletMovedWhileAwaiting": "Nichts wurde gesendet: Die verbundene Wallet oder das Netzwerk hat sich während des Wartens auf die Zustimmung geändert. Die Anfrage bleibt erhalten; verbinde dieselbe Wallet im selben Netzwerk erneut, um sie abzuschließen."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",
