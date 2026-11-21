@@ -110,8 +110,15 @@ export function keepPending(chainId: number, wallet: string, p: PendingAlert, st
   }
 }
 
-export function clearPending(chainId: number, wallet: string, store: PendingStore = browserPendingStore()): void {
+/** Forget the kept request. With `requestKey`, only when the kept one is
+ *  that request: one that finishes must not drop a newer one another tab
+ *  started for the same wallet and network meanwhile. */
+export function clearPending(chainId: number, wallet: string, store: PendingStore = browserPendingStore(), requestKey?: string): void {
   try {
+    if (requestKey !== undefined) {
+      const kept = parsePending(store?.getItem(pendingStorageKey(chainId, wallet)) ?? null);
+      if (kept?.requestKey !== requestKey) return;
+    }
     store?.removeItem(pendingStorageKey(chainId, wallet));
   } catch {
     // Storage unavailable: nothing was kept.

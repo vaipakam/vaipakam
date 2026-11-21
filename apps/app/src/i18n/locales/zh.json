@@ -410,6 +410,8 @@
       "pendingKindUnlink": "取消关联 Telegram",
       "pendingKindTest": "发送测试提醒",
       "pendingKindSave": "保存提醒设置",
+      "awaitingOwners": "正在等待此钱包的其他所有者批准该请求。你可以保持此页面打开，也可以关闭它，稍后在这里完成请求。",
+      "walletMovedWhileAwaiting": "未发送任何内容：在等待批准期间，已连接的钱包或网络发生了变化。请求已保留；请在同一网络上重新连接同一钱包以完成它。",
       "pendingKindSetPhrase": "设置提醒短语",
       "pendingKindClearPhrase": "移除提醒短语",
       "phraseTitle": "提醒短语",

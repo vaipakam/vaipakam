@@ -28,16 +28,18 @@
  *    card says so, states how long it can wait, and offers to finish or
  *    discard it.
  */
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BellRing } from 'lucide-react';
-import { useAccount, useSignMessage } from 'wagmi';
+import { useAccount, useConfig } from 'wagmi';
 import { useMode } from '../app/ModeContext';
 import { chainDisplayName } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
 import { useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { PaidPushConsent } from './PaidPushConsent';
+import { createShownScope, scopeKey } from '../lib/shownScope';
+import { WalletMovedWhileWaiting, signAccountMessage } from '../lib/accountMessageSigner';
 import {
   addsAlertOptIn,
   alertsConfigured,
@@ -63,7 +65,7 @@ import { AlertPhraseSection } from './AlertPhraseSection';
 
 export function AlertsCard() {
   const { address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  const wagmiConfig = useConfig();
   const termsVerdict = useTermsBlockNonExitWrites();
   const { readChain } = useActiveChain();
   const { isAdvanced } = useMode();
@@ -89,14 +91,25 @@ export function AlertsCard() {
   const [pending, setPending] = useState<PendingAlertRequest | null>(() =>
     address ? loadPendingAlertRequest(chainId, address) : null,
   );
-  const refreshPending = () => setPending(address ? loadPendingAlertRequest(chainId, address) : null);
   // #3346 — a kept phrase request the owner chose to finish; the phrase
   // section finishes it (a set needs the phrase typed again).
   const [phraseResume, setPhraseResume] = useState<PendingAlertRequest | null>(null);
   // Re-derive when the wallet/chain changes (state init runs once).
-  const [scope, setScope] = useState(`${chainId}:${address ?? ''}`);
-  if (scope !== `${chainId}:${address ?? ''}`) {
-    setScope(`${chainId}:${address ?? ''}`);
+  const currentScope = scopeKey(chainId, address);
+  const [scope, setScope] = useState(currentScope);
+  // An action's answer can arrive after the wallet or network changed (a
+  // multi-signature wallet may take days): it is written to the card only
+  // while the card still shows the wallet and network that signed it.
+  const [shown] = useState(() => createShownScope(currentScope));
+  useLayoutEffect(() => shown.show(currentScope), [shown, currentScope]);
+  /** Re-reads the kept request of the scope an action started under, and
+   *  shows it only if the card still shows that scope. */
+  const refreshPending = (forScope = currentScope, forChain = chainId, forWallet = address) =>
+    shown.ifShowing(forScope, () =>
+      setPending(forWallet ? loadPendingAlertRequest(forChain, forWallet) : null),
+    );
+  if (scope !== currentScope) {
+    setScope(currentScope);
     setPrefs(address ? loadAlertPrefs(chainId, address) : null);
     setPending(address ? loadPendingAlertRequest(chainId, address) : null);
     setPhraseResume(null);
@@ -141,6 +154,19 @@ export function AlertsCard() {
       : copy.errors.termsNotAccepted;
   }
 
+  // #3836 — every alert request is signed through this: a Safe App's
+  // proposal is waited on until its owners approve, the request kept in
+  // this browser meanwhile, so the page can also be closed and the request
+  // finished later.
+  async function signForRequest(message: string): Promise<string> {
+    try {
+      return await signAccountMessage(wagmiConfig, message, () => setNotice(copy.alerts.awaitingOwners));
+    } catch (e) {
+      if (e instanceof WalletMovedWhileWaiting) throw new Error(copy.alerts.walletMovedWhileAwaiting);
+      throw e;
+    }
+  }
+
   async function persist(
     next: AlertPrefs,
     opts?: { dueDateChanged?: boolean; bandsChanged?: boolean },
@@ -163,6 +189,7 @@ export function AlertsCard() {
         return;
       }
     }
+    const mine = currentScope;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -180,7 +207,7 @@ export function AlertsCard() {
       const push = await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
         bandsChanged: opts?.bandsChanged,
-        signMessage: (message) => signMessageAsync({ message }),
+        signMessage: signForRequest,
         resume,
       });
       // #2251 — the agent stores a NEW Push opt-in only where it can send,
@@ -190,18 +217,20 @@ export function AlertsCard() {
       const refusedEnable = push === 'unavailable';
       const saved = refusedEnable ? { ...next, pushEnabled: false } : next;
       storeAlertPrefs(chainId, address, saved);
-      setPrefs(saved);
-      if (refusedEnable) {
-        void pushStatus.refetch();
-        setNotice(copy.alerts.pushNotSaved);
-      } else {
-        setNotice(copy.alerts.saved);
-      }
+      shown.ifShowing(mine, () => {
+        setPrefs(saved);
+        if (refusedEnable) {
+          void pushStatus.refetch();
+          setNotice(copy.alerts.pushNotSaved);
+        } else {
+          setNotice(copy.alerts.saved);
+        }
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
-      refreshPending();
+      refreshPending(mine, chainId, address);
     }
   }
 
@@ -212,6 +241,7 @@ export function AlertsCard() {
       return;
     }
     if (!address) return;
+    const mine = currentScope;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -226,19 +256,13 @@ export function AlertsCard() {
       // The wallet signs a free ownership proof first — the agent
       // refuses to issue a link code without it, so nobody can point
       // another wallet's alerts at their own Telegram.
-      setLink(
-        await issueTelegramLink(
-          address,
-          chainId,
-          (message) => signMessageAsync({ message }),
-          resume,
-        ),
-      );
+      const issued = await issueTelegramLink(address, chainId, signForRequest, resume);
+      shown.ifShowing(mine, () => setLink(issued));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
-      refreshPending();
+      refreshPending(mine, chainId, address);
     }
   }
 
@@ -250,6 +274,7 @@ export function AlertsCard() {
   // every future alert.
   async function sendTest(resume?: PendingAlertRequest) {
     if (!address || !prefs) return;
+    const mine = currentScope;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -257,25 +282,27 @@ export function AlertsCard() {
       const result = await sendTestTelegramAlert(
         address,
         chainId,
-        (message) => signMessageAsync({ message }),
+        signForRequest,
         resume,
       );
       if (result === 'sent') {
         const next = { ...prefs, telegramLinked: true };
         storeAlertPrefs(chainId, address, next);
-        setPrefs(next);
-        setLink(null);
-        setNotice(copy.alerts.testAlertSent);
+        shown.ifShowing(mine, () => {
+          setPrefs(next);
+          setLink(null);
+          setNotice(copy.alerts.testAlertSent);
+        });
       } else if (result === 'not-linked') {
-        setError(copy.alerts.testAlertNotLinked);
+        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked));
       } else {
-        setError(copy.alerts.testAlertError);
+        shown.ifShowing(mine, () => setError(copy.alerts.testAlertError));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
-      refreshPending();
+      refreshPending(mine, chainId, address);
     }
   }
 
@@ -295,6 +322,7 @@ export function AlertsCard() {
     // a network switch, and the chain-scoped notice must name the
     // network the unlink actually covered — never "this network".
     const forChain = chainId;
+    const mine = currentScope;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -304,11 +332,11 @@ export function AlertsCard() {
       const outcome = await unlinkTelegram(
         address,
         forChain,
-        (message) => signMessageAsync({ message }),
+        signForRequest,
         resume,
       );
       if (outcome.protectionUnknown) {
-        setError(copy.alerts.unlinkProtectionUnknown);
+        shown.ifShowing(mine, () => setError(copy.alerts.unlinkProtectionUnknown));
         return;
       }
       // #3246 — under protected mode a chat is not removed at once: it
@@ -319,36 +347,34 @@ export function AlertsCard() {
       // says unlinked here and names the networks still waiting.
       const here = outcome.pending.find((p) => p.chainId === forChain);
       if (here) {
-        setNotice(
-          here.effectiveAt === null
-            ? copy.alerts.unlinkPendingUntold
-            : copy.alerts.unlinkPending(new Date(here.effectiveAt * 1000).toLocaleString()),
+        shown.ifShowing(mine, () =>
+          setNotice(
+            here.effectiveAt === null
+              ? copy.alerts.unlinkPendingUntold
+              : copy.alerts.unlinkPending(new Date(here.effectiveAt * 1000).toLocaleString()),
+          ),
         );
         return;
       }
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(forChain, address, next);
-      setPrefs(next);
-      if (outcome.pending.length > 0) {
+      shown.ifShowing(mine, () => {
+        setPrefs(next);
         setNotice(
-          copy.alerts.unlinkedOthersPending(
-            outcome.pending.map((p) => chainDisplayName(p.chainId) ?? String(p.chainId)).join(', '),
-          ),
+          outcome.pending.length > 0
+            ? copy.alerts.unlinkedOthersPending(
+                outcome.pending.map((p) => chainDisplayName(p.chainId) ?? String(p.chainId)).join(', '),
+              )
+            : outcome.scope === 'chain'
+              ? copy.alerts.unlinkedChainOnly(chainDisplayName(forChain) ?? String(forChain))
+              : copy.alerts.unlinked,
         );
-        return;
-      }
-      setNotice(
-        outcome.scope === 'chain'
-          ? copy.alerts.unlinkedChainOnly(
-              chainDisplayName(forChain) ?? String(forChain),
-            )
-          : copy.alerts.unlinked,
-      );
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
-      refreshPending();
+      refreshPending(mine, chainId, address);
     }
   }
 
@@ -537,7 +563,7 @@ export function AlertsCard() {
             key={`${chainId}:${address}`}
             address={address}
             chainId={chainId}
-            signMessage={(message) => signMessageAsync({ message })}
+            signMessage={signForRequest}
             resume={phraseResume}
             onSettled={() => {
               setPhraseResume(null);

@@ -410,6 +410,8 @@
       "pendingKindUnlink": "텔레그램 연결 해제",
       "pendingKindTest": "테스트 알림 보내기",
       "pendingKindSave": "알림 설정 저장",
+      "awaitingOwners": "이 지갑의 다른 소유자들이 요청을 승인하기를 기다리고 있습니다. 이 페이지를 열어 두거나, 닫고 나중에 여기에서 요청을 완료할 수 있습니다.",
+      "walletMovedWhileAwaiting": "아무것도 보내지 않았습니다: 승인을 기다리는 동안 연결된 지갑 또는 네트워크가 바뀌었습니다. 요청은 보관되어 있으니, 같은 네트워크에서 같은 지갑을 다시 연결해 완료하세요.",
       "pendingKindSetPhrase": "알림 문구 설정",
       "pendingKindClearPhrase": "알림 문구 삭제",
       "phraseTitle": "알림 문구",

@@ -100,6 +100,15 @@ are built. The backstop vault's lending is refused
 like any wallet's: the Terms rule exempts that vault, and the closing rule
 does not.
 
+**Two slot steps that ask no Terms rule today are refused too** (ruled
+2026-11-20 on #3864). Re-committing a payment held for a lender into that
+lender's Auto-lend slot, and rolling a repaid slot loan's proceeds back into
+the slot, each put money to new lending. Neither asks the Terms rule, because
+the owner's consent was given when the slot was set, so each asks the
+network-open part of the question alone. Releasing a slot's exposure commits
+nothing and stays open. If the slot facet has no room for the call under its
+size limit, the builder raises it before choosing another host.
+
 **What Closing leaves open.** Repaying, in full or in part. Adding collateral.
 Funding or withdrawing a loan's reserves. Setting or clearing standing
 instructions, and their runs. Withdrawing collateral that is surplus.
@@ -231,13 +240,17 @@ balance under the owner's own hold. Cancelling and taking capital back stay
 available with no end date, the closed view lists them from chain reads, and
 the builder confirms that neither path reads a price, a swap or the indexer.
 
-**A loan in the fallback state does block Closed, and it has no dated end.**
-It ends when its lender claims, when its borrower cures it, or when the
-backstop takes it at the lender's request, and a cure returns it to an open
-loan, so everything in section 6 keeps running for it. No step on `main`
-ends an unclaimed fallback by a date. One lender who never claims can
-therefore hold a network in Closing. This document does not settle that: it
-is a question for the fallback's own design, carded from section 13.
+**A loan in the fallback state does block Closed, and today it has no dated end.**
+It ends when its lender claims, when its borrower cures it, when the
+backstop takes it at the lender's request, or when an internal match closes
+it against an opposite loan, and a cure returns it to an open loan, so
+everything in section 6 keeps running for it. No step on `main` ends an
+unclaimed fallback by a date. One lender who never claims can therefore hold
+a network in Closing. This document does not settle that: it is a question
+for the fallback's own design (#3865). That design, agreed on 2026-11-20,
+lets anyone finish such a loan in kind 30 days after it entered the fallback
+state (`FallbackDatedEndDesign.md`). Once it is built, the earliest Closed
+day counts each fallback loan as ending at its date.
 
 After that:
 
@@ -363,11 +376,11 @@ Signers, proposal text and readbacks for each step are the runbook's.
 
 | Piece | Owner |
 |---|---|
-| The closing switch, its view and event, asked through the Terms host | A contract builder, one card |
+| The closing switch, its view and event, asked through the Terms host | A contract builder (#3864) |
 | The rate auction and the flash loan ask the same question | Their builders |
 | Runbook section, the launch check's rule, the `.active-chains` header | Governance thread (#3858, part 2) |
 | Network state in the deployment record and the bundle (the export script, the `Deployment` type) | Governance thread with the app-fixes thread |
 | Closing and closed views, and the notices | App threads |
 | Pass sets for a closing network | Keeper thread |
 | The order for leaving the reward sources | Reward builder |
-| Whether an unclaimed fallback gets a dated end | Design thread, its own card |
+| Whether an unclaimed fallback gets a dated end | Design thread (#3865) |

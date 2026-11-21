@@ -845,6 +845,10 @@ const copySource = {
     pendingKindUnlink: 'Unlink Telegram',
     pendingKindTest: 'Send a test alert',
     pendingKindSave: 'Save alert settings',
+    awaitingOwners:
+      'Waiting for the other owners of this wallet to approve the request. You can keep this page open, or close it and finish the request here later.',
+    walletMovedWhileAwaiting:
+      'Nothing was sent: the connected wallet or network changed while the approval was awaited. The request is kept; reconnect the same wallet on the same network to finish it.',
     pendingKindSetPhrase: 'Set the alert phrase',
     pendingKindClearPhrase: 'Remove the alert phrase',
     // #3346 — the alert phrase: a phrase only the owner knows, which our

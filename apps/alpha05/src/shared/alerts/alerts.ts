@@ -232,7 +232,7 @@ export function readAlertAnswer(action: AlertAction, status: number, data: Recor
   if (status === 503 && error === 'protection-unknown') return { ok: false, problem: 'protection-unknown', status };
   if (status === 503 && error === 'bot-not-configured') return { ok: false, problem: 'bot-off', status };
   if (status === 404 && error === 'not-linked') return { ok: false, problem: 'not-linked', status };
-  if (status === 429 && error === 'rate-limited' && kind === 'test-alert') return { ok: false, problem: 'cooldown', status };
+  if (status === 429 && error === 'test-alert-cooldown') return { ok: false, problem: 'cooldown', status };
   if (status === 429) return { ok: false, problem: 'busy', status };
   if (status === 502 && error === 'send-failed') return { ok: false, problem: 'send-failed', status };
   if (status === 400 && error === 'chain-not-configured') return { ok: false, problem: 'chain-not-watched', status };

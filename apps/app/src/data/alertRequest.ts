@@ -23,6 +23,7 @@
  */
 import {
   LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
+  alertRequestUnused,
   newRequestKey,
   requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
@@ -110,10 +111,24 @@ export function loadPendingAlertRequest(
   return parsed;
 }
 
-/** Forget the pending request for (`chainId`, `wallet`). */
-export function clearPendingAlertRequest(chainId: number, wallet: string): void {
+/** Forget the pending request for (`chainId`, `wallet`). With `requestKey`,
+ *  only when the stored request is that one: a request that finishes must not
+ *  drop a newer one another tab started for the same wallet meanwhile. */
+export function clearPendingAlertRequest(chainId: number, wallet: string, requestKey?: string): void {
   try {
-    localStorage.removeItem(storageKey(chainId, wallet));
+    const key = storageKey(chainId, wallet);
+    if (requestKey !== undefined) {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      let stored: unknown;
+      try {
+        stored = JSON.parse(raw);
+      } catch {
+        stored = null;
+      }
+      if (!stored || typeof stored !== 'object' || (stored as { requestKey?: unknown }).requestKey !== requestKey) return;
+    }
+    localStorage.removeItem(key);
   } catch {
     // Storage unavailable: nothing was kept.
   }
@@ -161,13 +176,14 @@ export interface AlertServiceAnswer {
 }
 
 /**
- * Ask the wallet to sign `req` and send it. The request is kept in this
- * browser before the wallet is asked, so a page closed while the owners
+ * Ask the wallet to sign `req` and send it. A new request (`how` = start)
+ * is kept in this browser before the wallet is asked; a kept one being
+ * finished (`resume`) is not written again, so a page closed while the owners
  * approve can still finish it. It is dropped once the service answers,
- * except when the answer is that it could not check the signature yet
- * (`verification-unavailable`: nothing recorded the request, so the same
- * signed request may be sent again), and when the owner rejects it in the
- * wallet.
+ * except when the service refused it before recording it (a busy or
+ * unavailable limiter, or a signature check that could not run:
+ * `alertRequestUnused`), so the same signed request may be sent again. It
+ * is also dropped when the owner rejects it in the wallet.
  * Any other failure (a wallet that gave up waiting, a network error) keeps
  * it, to be finished later.
  *
@@ -178,14 +194,18 @@ export async function signAndSendAlertRequest(
   req: PendingAlertRequest,
   signMessage: (message: string) => Promise<string>,
   send: (path: string, body: Record<string, unknown>) => Promise<AlertServiceAnswer>,
+  how: 'start' | 'resume' = 'start',
   unkept: Record<string, unknown> = {},
 ): Promise<AlertServiceAnswer> {
-  keep(req);
+  // Only a new request is written. Finishing one sends what is already
+  // kept and writes nothing: a stale card finishing an older request must
+  // not overwrite a newer one another tab started for the same wallet.
+  if (how === 'start') keep(req);
   let signature: string;
   try {
     signature = await signMessage(req.message);
   } catch (err) {
-    if (isUserRejection(err)) clearPendingAlertRequest(req.chainId, req.wallet);
+    if (isUserRejection(err)) clearPendingAlertRequest(req.chainId, req.wallet, req.requestKey);
     throw err;
   }
   const res = await send(req.path, {
@@ -195,8 +215,8 @@ export async function signAndSendAlertRequest(
     signature,
     requestKey: req.requestKey,
   });
-  if (!(res.status === 503 && res.data?.error === 'verification-unavailable')) {
-    clearPendingAlertRequest(req.chainId, req.wallet);
+  if (!alertRequestUnused(res.status, res.data?.error)) {
+    clearPendingAlertRequest(req.chainId, req.wallet, req.requestKey);
   }
   return res;
 }

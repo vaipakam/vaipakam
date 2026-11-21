@@ -410,6 +410,8 @@
       "pendingKindUnlink": "Telegram の連携を解除",
       "pendingKindTest": "テストアラートを送信",
       "pendingKindSave": "アラート設定を保存",
+      "awaitingOwners": "このウォレットの他の所有者による承認を待っています。このページを開いたままにすることも、閉じて後でここからリクエストを完了することもできます。",
+      "walletMovedWhileAwaiting": "何も送信されていません：承認を待つ間に接続中のウォレットまたはネットワークが変わりました。リクエストは保持されています。完了するには同じネットワークで同じウォレットを再接続してください。",
       "pendingKindSetPhrase": "アラートフレーズを設定",
       "pendingKindClearPhrase": "アラートフレーズを削除",
       "phraseTitle": "アラートフレーズ",

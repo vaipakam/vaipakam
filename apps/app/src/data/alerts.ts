@@ -450,20 +450,30 @@ export async function saveAlertPrefs(
         ...(change.pushAlerts ? { push_channel: 'subscribed' } : {}),
       },
       (issuedAt, keyHash) => buildAlertSettingsMessage(wallet, chainId, change, issuedAt, keyHash),
-      { prefs, dueDateChanged: !!opts.dueDateChanged, bandsChanged: !!opts.bandsChanged },
+      // `pushRefused` rides with the kept request (#3836): the save sent
+      // again without the Push opt-in is one the agent already refused Push
+      // for, so finishing it later must report Push as not stored.
+      {
+        prefs,
+        dueDateChanged: !!opts.dueDateChanged,
+        bandsChanged: !!opts.bandsChanged,
+        pushRefused: !withPush && prefs.pushEnabled,
+      },
     );
     return signAndSendAlertRequest(req, opts.signMessage, post);
   };
   let res =
     opts.resume?.kind === 'save-settings'
-      ? await signAndSendAlertRequest(opts.resume, opts.signMessage, post)
+      ? await signAndSendAlertRequest(opts.resume, opts.signMessage, post, 'resume')
       : await attempt(true);
   // #2251 (Codex #2665 r1) — the agent refuses a NEW Push opt-in it cannot
   // honour by refusing the WHOLE save with a 409, so that an app bundle
   // from before this change reads it as a failure rather than as "Push is
   // on". This client knows the answer: Push is not stored, and the same
   // save is sent again without the opt-in so everything else in it lands.
-  let pushRefused = false;
+  let pushRefused =
+    opts.resume?.kind === 'save-settings' &&
+    (opts.resume.context as { pushRefused?: unknown } | undefined)?.pushRefused === true;
   if (res.status === 409 && res.data?.error === 'push-unavailable') {
     pushRefused = true;
     res = await attempt(false);
@@ -526,7 +536,7 @@ export async function issueTelegramLink(
       : newAlertRequest('link', wallet, chainId, '/link/telegram', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildTelegramLinkMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `starting the Telegram link failed (${res.status})`);
   const code = res.data?.code;
   if (typeof code !== 'string' || !code) {
@@ -558,7 +568,7 @@ export async function sendTestTelegramAlert(
       : newAlertRequest('test-alert', wallet, chainId, '/telegram/test', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildTelegramTestMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   if (res.ok) return 'sent';
   // Only a body-tagged `not-linked` is the fumbled-handshake case. A
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
@@ -583,7 +593,7 @@ export async function unlinkTelegram(
       : newAlertRequest('unlink', wallet, chainId, '/unlink/telegram', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildTelegramUnlinkMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   // #3246 — the service could not check whether the wallet has protected
   // mode on, so it changed nothing (a failed read must never silence a
   // protected account's alerts).
@@ -706,7 +716,7 @@ export async function setAlertPhrase(
       context: { fingerprint },
     };
   }
-  const res = await signAndSendAlertRequest(req, signMessage, post, { phrase });
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start', { phrase });
   if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat' };
   if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `setting the alert phrase failed (${res.status})`);
   return { kind: 'set', groupLinked: res.data?.groupLinked === true, scope: phraseScopeOf(res.data?.scope) };
@@ -732,7 +742,7 @@ export async function clearAlertPhrase(
       : newAlertRequest('clear-phrase', wallet, chainId, '/telegram/phrase/clear', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
           buildAlertPhraseClearMessage(wallet, chainId, issuedAt, keyHash),
         );
-  const res = await signAndSendAlertRequest(req, signMessage, post);
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `removing the alert phrase failed (${res.status})`);
   return phraseScopeOf(res.data?.scope);
 }

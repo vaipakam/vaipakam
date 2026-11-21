@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { useConfig } from 'wagmi';
-import { newRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
+import { alertRequestUnused, newRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import { signMessageFor } from '../tx/walletGuard';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
 import { alertBody, alertMessage, alertRoute, readAlertAnswer, type AlertAction, type AlertAnswer } from './alerts';
@@ -144,19 +144,24 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
   );
   const busy = entry.run.phase === 'signing' || entry.run.phase === 'sending';
 
-  /** Ask the wallet to sign `p` and send it. `p` is kept before the wallet
-   *  is asked and dropped once the service answers, except when it could
-   *  not check the signature yet (nothing recorded the request, so the same
-   *  one may be sent again). A declined signature drops it; any other
+  /** Ask the wallet to sign `p` and send it. A new `p` is kept before the
+   *  wallet is asked (a kept one being finished is not written again) and
+   *  dropped once the service answers, except when the service
+   *  refused it before recording it (`alertRequestUnused`: a busy or
+   *  unavailable limiter, or a check that could not run), so the same one
+   *  may be sent again. A declined signature drops it; any other
    *  failure (a wallet that stopped waiting, a network error) keeps it, to
    *  be finished later. */
   const send = useCallback(
-    async (p: PendingAlert): Promise<AlertAnswer | null> => {
+    async (p: PendingAlert, how: 'start' | 'resume'): Promise<AlertAnswer | null> => {
       const { action } = p;
-      keepPending(chainId, wallet, p);
+      // Only a new request is written. Finishing one sends what is kept and
+      // writes nothing, so a stale card finishing an older request cannot
+      // overwrite a newer one another tab started for this wallet.
+      if (how === 'start') keepPending(chainId, wallet, p);
       setRun(identity, { run: { phase: 'signing', action }, pending: p });
       const drop = () => {
-        clearPending(chainId, wallet);
+        clearPending(chainId, wallet, undefined, p.requestKey);
         // A newer request started meanwhile in this tab is not dropped.
         if (runs.get(identity)?.pending === p) setRun(identity, { pending: null });
       };
@@ -174,7 +179,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       try {
         const res = await client.request(route.method, route.path, alertBody(action, wallet, chainId, p.issuedAt, signature, p.requestKey));
         const answer = readAlertAnswer(action, res.status, res.data);
-        if (answer.ok || answer.problem !== 'verify-down') drop();
+        if (!alertRequestUnused(res.status, (res.data as { error?: unknown } | null)?.error)) drop();
         const at = Math.floor(Date.now() / 1000);
         recordAnswer(chainId, wallet, action, answer, at);
         if (answer.ok && answer.action === 'unlink' && answer.scope === 'wallet') dropWalletCodes(wallet);
@@ -200,7 +205,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
     async (action: AlertAction): Promise<AlertAnswer | null> => {
       const now = runs.get(identity)?.run.phase;
       if (now === 'signing' || now === 'sending') return null;
-      return send({ action, issuedAt: nextIssuedAt(), requestKey: newRequestKey() });
+      return send({ action, issuedAt: nextIssuedAt(), requestKey: newRequestKey() }, 'start');
     },
     [send, identity],
   );
@@ -215,7 +220,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       setRun(identity, { pending: null });
       return null;
     }
-    return send(cur.pending);
+    return send(cur.pending, 'resume');
   }, [send, identity, chainId, wallet]);
 
   /** Forget the kept request. The wallet may still hold its approval; with

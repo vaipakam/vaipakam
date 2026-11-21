@@ -410,6 +410,8 @@
       "pendingKindUnlink": "Délier Telegram",
       "pendingKindTest": "Envoyer une alerte de test",
       "pendingKindSave": "Enregistrer les réglages d’alerte",
+      "awaitingOwners": "En attente de l’approbation des autres propriétaires de ce portefeuille. Vous pouvez garder cette page ouverte, ou la fermer et finaliser la demande ici plus tard.",
+      "walletMovedWhileAwaiting": "Rien n’a été envoyé : le portefeuille connecté ou le réseau a changé pendant l’attente de l’approbation. La demande est conservée ; reconnectez le même portefeuille sur le même réseau pour la finaliser.",
       "pendingKindSetPhrase": "Définir la phrase d’alerte",
       "pendingKindClearPhrase": "Supprimer la phrase d’alerte",
       "phraseTitle": "Phrase d’alerte",

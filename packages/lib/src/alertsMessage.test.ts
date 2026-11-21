@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { keccak256, toHex } from 'viem';
 import {
+  alertRequestUnused,
   ALERT_PHRASE_MAX,
   alertPhraseFingerprint,
   alertPhraseProblem,
@@ -216,6 +217,25 @@ describe('the request key (#3836)', () => {
     expect(KEY_HASH).toBe('0x' + KEY_HASH.slice(2).toLowerCase());
     expect(KEY_HASH).toHaveLength(66);
     expect(KEY_HASH).not.toBe(KEY);
+  });
+});
+
+describe('alertRequestUnused (#3836)', () => {
+  it('keeps a request the service refused before recording it', () => {
+    expect(alertRequestUnused(429, 'rate-limited')).toBe(true);
+    expect(alertRequestUnused(429, 'verification_failed')).toBe(true);
+    expect(alertRequestUnused(503, 'verification-unavailable')).toBe(true);
+    expect(alertRequestUnused(503, 'rate-limit-unavailable')).toBe(true);
+    expect(alertRequestUnused(503, 'rate-limit-binding-missing')).toBe(true);
+  });
+
+  it('drops one that was used or can never apply', () => {
+    expect(alertRequestUnused(200, undefined)).toBe(false);
+    expect(alertRequestUnused(429, 'test-alert-cooldown')).toBe(false);
+    expect(alertRequestUnused(409, 'request-already-used')).toBe(false);
+    expect(alertRequestUnused(409, 'request-superseded')).toBe(false);
+    expect(alertRequestUnused(401, 'verification_failed')).toBe(false);
+    expect(alertRequestUnused(503, 'order-unavailable')).toBe(false);
   });
 });
 

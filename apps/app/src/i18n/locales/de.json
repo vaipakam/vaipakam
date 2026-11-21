@@ -410,6 +410,8 @@
       "pendingKindUnlink": "Telegram trennen",
       "pendingKindTest": "Testbenachrichtigung senden",
       "pendingKindSave": "Benachrichtigungseinstellungen speichern",
+      "awaitingOwners": "Warten auf die Zustimmung der anderen Eigentümer dieser Wallet. Du kannst diese Seite geöffnet lassen oder sie schließen und die Anfrage später hier abschließen.",
+      "walletMovedWhileAwaiting": "Nichts wurde gesendet: Die verbundene Wallet oder das Netzwerk hat sich während des Wartens auf die Zustimmung geändert. Die Anfrage bleibt erhalten; verbinde dieselbe Wallet im selben Netzwerk erneut, um sie abzuschließen.",
       "pendingKindSetPhrase": "Die Warnphrase festlegen",
       "pendingKindClearPhrase": "Die Warnphrase entfernen",
       "phraseTitle": "Warnphrase",
