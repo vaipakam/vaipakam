@@ -672,7 +672,8 @@ reaches a chain by fresh deploy, as every stage has.
 - For a loan with a full-term interest minimum, the ceiling is never below what an early settlement charges: at
   opening, after a part repayment, and after a pause that moved the term's end.
 - A backstop buyout hands over no more than the lender side's slice, only against the backstop vault's payment in
-  the same call, and replaces no position token.
+  the same call, and replaces no position token. It passes when the collateral's price has risen since fallback
+  entry, and it is refused when the payment is below the principal the lien still records as owed.
 - A floating loan's signed highest rate equals the floating-rate library's figure for its terms, and an opening where
   the two differ is refused.
 - In a borrowing of several loans, a liquidation of one loan can take nothing from another loan's lien, and a draw
@@ -762,16 +763,27 @@ considered are stated with it. The build notes for Stage B3 record the details t
 - **The receive hooks** accept the owner's own send, with or without a commitment; a genuine vault (a custody move, a
   consolidation); the vault's own listing escrow and the rental return; and a swap adapter's output, measured as
   today. Anything else is refused, and the build notes list each delivery today's routes make that is refused.
-- **The backstop's buyout** is not a purchase of §3.7.5. It replaces no position token and the loan ends with it:
-  the backstop takes the lender side's slice of collateral that is in fallback custody, and the lender side's holder
-  is paid cash. It is therefore a forced sale of that slice with the backstop vault as the buyer, at its address
-  fixed in the vault code. The backstop vault pays the lender side's holder's vault, and the borrower's vault hands
-  over the lender side's slice, as the lien's fallback row records it and no more, only against the proof of that
-  payment in the same call. The payment is no less than the vault's own outer floor for a forced sale (the price
-  guard's value of the slice, less the widest slippage the settings allow), and the Diamond's par check stays the
-  tighter rule. The slice counts toward the ceiling like any collateral that reaches the lender side.
-  *Alternative considered:* mapping it onto a purchase of the lender's position, which would need a replacement
-  token for a position that ends in the same call.
+- **The backstop's buyout** is not a purchase of §3.7.5. It replaces no position token and the loan ends with it.
+  When a loan is in fallback, the collateral rests in the borrower's vault under the lien, split by a row written when
+  the loan entered fallback: a slice for the lender side, sized to cover what the lender is due, and the rest. The
+  buyout pays the lender side that due in cash from the backstop vault, at its address fixed in the vault code, and
+  the backstop vault receives the lender side's slice in the lender's place. So it changes **who receives the slice
+  and never how much leaves the lien**. Each vault checks its own side:
+  - *The borrower's vault* hands over the lender side's slice as the fallback row records it, and no more, only
+    against the proof of the backstop vault's payment to the lender side's holder's vault in the same call. The
+    slice is the one an in-kind claim would hand the lender side. The valuation against the ceiling (§3.7.4) is made
+    once, when the split is recorded at fallback entry, and not again at a claim or a buyout: a later rise in the
+    collateral's price must not make a vault refuse a slice the Diamond's rules already fixed.
+  - *The lender side's vault* accepts cash in place of its slice only when the payment is at least the principal the
+    lien still records as owed. That is the same condition as being taken out at face value with no owner present
+    (§3.7.5). The Diamond pays the whole fallback due, which is never less.
+  - The Diamond's par check (the slice is worth at least what the backstop pays) protects the backstop. It is not a
+    floor for the lender and the vault adds no upper limit on what the slice is worth: after a price rise the slice
+    may be worth more than the due, and the buyout the Diamond permits must still pass.
+
+  *Alternatives considered:* mapping it onto a purchase of the lender's position (it would need a replacement token
+  for a position that ends in the same call); holding the payment to the outer floor of a forced sale (after a price
+  rise that floor exceeds the fixed cash due, and the vault would refuse a buyout the Diamond allows).
 - **A buyer's payment for a registered order** is recorded by the vault in the fill callback, measured and held for
   the `ref`. The price leg names the vault, not the Diamond.
 - **Still to be measured by the build:** the gas of a lien change that moves no tokens, of the receipt call, of the
