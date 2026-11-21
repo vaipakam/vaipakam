@@ -8,7 +8,7 @@
  * never depends on the first.
  */
 import { erc20Abi, keccak256, toHex, type Hex } from 'viem';
-import { scenario } from '../lib/chain';
+import { installPlatformToken, scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 import type { Page } from '@playwright/test';
@@ -89,6 +89,7 @@ test('the faucet mints a test token, a test NFT and a multi-token, measures each
 
 test('the fee discount turns on and off with a measured outcome; with no Terms in force nothing else is asked', async ({ launchWallet }) => {
   const sc = scenario();
+  await installPlatformToken(sc);
   await sc.diamondWrite('lender', 'setVPFIDiscountConsent', [false]);
   const { page, flags } = await launchWallet('lender');
   await page.goto('/');
@@ -122,6 +123,7 @@ test('the fee discount turns on and off with a measured outcome; with no Terms i
 
 test('with Terms in force, turning the discount on asks for them first; turning it off never does', async ({ launchWallet }) => {
   const sc = scenario();
+  await installPlatformToken(sc);
   // A Terms version can only move up; the suite reverts the chain after
   // every test, so later specs and the other project start with none.
   await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
@@ -172,6 +174,7 @@ test('with Terms in force, turning the discount on asks for them first; turning 
 
 test('a paused protocol closes the toggle in both directions and names the pause', async ({ launchWallet }) => {
   const sc = scenario();
+  await installPlatformToken(sc);
   await sc.diamondWrite('admin', 'pause');
   try {
     const { page, flags } = await launchWallet('lender');

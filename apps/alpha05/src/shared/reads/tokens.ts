@@ -3,8 +3,15 @@
  * token itself (a chain read, RB-RAILS) and shared by every surface. A token
  * that does not answer is stated as such: its amounts are shown in base
  * units beside its address, never with a guessed number of decimals.
+ *
+ * A symbol is whatever the token's deployer wrote, so it is cleaned here,
+ * once, by the shared rule (`cleanTokenLabel`: no control, bidi or
+ * zero-width characters, one line, capped) before any surface sees it. Every
+ * surface reads `TokenMeta.symbol`, so none can show the raw value. A symbol
+ * that cleans to nothing reads as unanswered and shows the short address.
  */
 import { erc20Abi, type PublicClient } from 'viem';
+import { cleanTokenLabel } from '@vaipakam/lib/tokenLabel';
 import { useChainRead } from './chainRead';
 import { formatExact, formatFigureText, shortAddress } from '../ui/format';
 import type { CopyAccess } from '../copy/useCopy';
@@ -33,8 +40,9 @@ export async function readTokenMeta(client: PublicClient, addresses: readonly `0
   addresses.forEach((address, i) => {
     const sym = results[2 * i];
     const dec = results[2 * i + 1];
+    const clean = sym?.status === 'fulfilled' ? cleanTokenLabel(sym.value, 'symbol') : '';
     out[address.toLowerCase()] = {
-      symbol: sym?.status === 'fulfilled' && typeof sym.value === 'string' && sym.value.length > 0 ? sym.value : null,
+      symbol: clean.length > 0 ? clean : null,
       decimals: dec?.status === 'fulfilled' ? Number(dec.value) : null,
     };
   });

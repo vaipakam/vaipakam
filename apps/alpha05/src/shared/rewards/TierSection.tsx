@@ -1,17 +1,14 @@
 import { useMode } from '../../app/ModeContext';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
-import { readVpfiToken } from '../claims/rewards';
+import { usePlatformToken } from '../consent/holdDiscount';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
-import { useChainRead } from '../reads/chainRead';
 import { tokenAmount, useTokenMeta } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
 import { formatUtc } from '../ui/format';
 import { OwnStamp } from '../ui/OwnStamp';
 import { discountPercent, readTierCard, readTierTable, tierRows, tierState, type HeldBy, type TierRow } from './tiers';
-
-const ZERO = '0x0000000000000000000000000000000000000000';
 
 /**
  * RW-08, RW-09, RW-10 — the wallet's fee-discount tier and the table of
@@ -37,8 +34,7 @@ export function TierSection({ chain, own }: { chain: SupportedChain; own: OwnSta
   const { mode } = useMode();
   const diamond = chain.diamondAddress;
   const account = own.account;
-  const tokenRead = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { immutable: true });
-  const token = tokenRead.data && tokenRead.data.toLowerCase() !== ZERO ? tokenRead.data : null;
+  const { token } = usePlatformToken(chain);
   const card = useOwnRead(['rewards', 'tierCard', diamond], (c) => readTierCard(c, diamond, account), { enabled: token !== null, perBlock: true });
   const home = card.data?.home ?? null;
   const table = useOwnRead(['rewards', 'tierTable', diamond], (c) => readTierTable(c, diamond), { enabled: token !== null && home === true, perBlock: true });

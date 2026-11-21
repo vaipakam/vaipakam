@@ -7,6 +7,7 @@ import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
+import { useHoldDiscount } from '../consent/holdDiscount';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { WhyLink } from '../help/WhyLink';
@@ -90,6 +91,8 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose,
   const { mode } = useMode();
   const diamond = chain.diamondAddress;
   const account = own.account;
+  // No platform token on this network: no holding discount applies.
+  const hold = useHoldDiscount(chain);
   // #3205 — the indexer's moved verdict for a position-bound offer.
   const flows = indexerPositionFlowReader(useWorldRail().indexer, chain.chainId);
   const identity = reviewIdentity(own);
@@ -548,7 +551,13 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose,
             {riskNeed !== null && (
               <RiskGate chain={chain} own={own} need={riskNeed} source={riskSource} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
-            {review.consent === false && <p className="tier-b">{text(lender ? 'lendAccept.shareOff' : 'accept.feeOff')}</p>}
+            {hold === 'none' ? (
+              <p className="tier-b" data-testid="accept-no-hold-discount">
+                {text('consent.noHoldDiscount')}
+              </p>
+            ) : (
+              review.consent === false && <p className="tier-b">{text(lender ? 'lendAccept.shareOff' : 'accept.feeOff')}</p>
+            )}
             <WhyLink summaryKey={lender ? 'lendAccept.feeSummary' : 'accept.feeSummary'} detailKey={lender ? 'lendAccept.feeWhy' : 'accept.feeWhy'} />
             <WhyLink summaryKey="accept.signSummary" detailKey={lender ? 'lendAccept.signWhy' : 'accept.signWhy'} />
             <ApprovalWindowChoice step="acceptOffer" chain={chain} state={approvalWindow} />

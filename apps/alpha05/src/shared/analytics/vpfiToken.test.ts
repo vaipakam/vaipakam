@@ -23,7 +23,7 @@ const chain: SupportedChain = {
 };
 const E18 = 10n ** 18n;
 
-function client(home: boolean, token: Hex = TOKEN, failing: string[] = []) {
+function client(home: boolean, token: Hex = TOKEN, failing: string[] = [], over: Record<string, unknown> = {}) {
   const calls: { fn: string; block?: bigint }[] = [];
   const c = {
     readContract: async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => {
@@ -41,6 +41,7 @@ function client(home: boolean, token: Hex = TOKEN, failing: string[] = []) {
         cap: 230_000_000n * E18,
         INITIAL_MINT: 23_000_000n * E18,
         minter: DIAMOND,
+        ...over,
       };
       return answers[functionName];
     },
@@ -69,6 +70,14 @@ describe('readVpfiToken', () => {
     expect(calls.some((x) => x.fn === 'cap' || x.fn === 'minter')).toBe(false);
     expect(r.facts.decimals).toEqual({ ok: false, reason: 'decimals timed out' });
     expect(r.facts.supply.ok).toBe(true);
+  });
+
+  it('states a name or symbol that cleans to nothing as unread, never as a blank', async () => {
+    const { c } = client(true, TOKEN, [], { name: '\u202e\u200b', symbol: '\u0000' });
+    const r = await readVpfiToken(c, chain, 77n);
+    if (r.kind !== 'token') throw new Error('expected a token');
+    expect(r.facts.name.ok).toBe(false);
+    expect(r.facts.symbol.ok).toBe(false);
   });
 
   it('says there is no token when the protocol names none', async () => {

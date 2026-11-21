@@ -34,6 +34,11 @@ describe('readAssetRankings', () => {
     expect(r.sources.cg.listFetchedAt).toBe(1_000);
   });
 
+  it('cleans each list’s name and symbol by the shared label rule', async () => {
+    const r = await rankings([{ address: A, ranks: { cg: { rank: 3, name: 'Wrapped\u202e Ether\n', symbol: 'WE\u200bTH' } } }]);
+    expect(r.byAddress.get(A)).toEqual({ cg: { rank: 3, name: 'Wrapped Ether', symbol: 'WETH' } });
+  });
+
   it('refuses an answer for another network, or one it cannot read', async () => {
     await expect(readAssetRankings(client({ ...body([]), chainId: 1 }), 8453)).rejects.toBeInstanceOf(IndexerUnavailable);
     await expect(rankings([{ address: 'nope', ranks: {} }])).rejects.toThrow('readable address');

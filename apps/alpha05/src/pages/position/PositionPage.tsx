@@ -341,7 +341,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
 
       {/* LN-18 — the holding discount on the protocol's share of this loan's
           interest, for the wallet holding the lender side of a running loan. */}
-      {live && erc20 && role?.lender === true && <LenderDiscount loanId={loanId} diamond={chain.diamondAddress as Hex} lender={account} />}
+      {live && erc20 && role?.lender === true && <LenderDiscount loanId={loanId} chain={chain} lender={account} />}
 
       {live && erc20 && (
         <Facts title={text('position.healthTitle')} id="position-health" lead={<WhyLink summaryKey="position.healthSummary" detailKey="position.healthWhy" />}>
