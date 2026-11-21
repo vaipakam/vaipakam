@@ -12,12 +12,12 @@ Each authority has a different response budget:
 
 | Authority | Held by | Path | Delay | Can do |
 |---|---|---|---|---|
-| Diamond owner + role root (`DEFAULT_ADMIN_ROLE`) + the delayed admin roles | Timelock | Governance Safe proposes, anyone executes after the delay | 48h | `diamondCut`, every grant and rotation of a role, `transferAdmin`, risk / oracle / vault config, UUPS upgrades of the cross-chain contracts, `setGuardian`, `unpause` |
+| Diamond owner + role root (`DEFAULT_ADMIN_ROLE`) + the delayed admin roles | Timelock | Governance Safe proposes, anyone executes after the delay | 7 days (the standard wait); 48h only for a restart or an approved urgent fix, see "Which wait" below | `diamondCut`, every grant and rotation of a role, `transferAdmin`, risk / oracle / vault config, UUPS upgrades of the cross-chain contracts, `setGuardian`, `unpause` |
 | Proposer | Governance Safe (e.g. 4/7) | schedules on the Timelock | n/a | queue an operation; cancel one |
 | Emergency revoker (`EMERGENCY_REVOKER_ROLE`) | Governance Safe | direct | 0 | `emergencyRevokeRole` only: strip a role from a compromised hot key. Never grants, never touches the role root, never touches anything the Diamond owner holds |
 | Guardian / Pauser (`PAUSER_ROLE`) and the Timelock's independent canceller | Pauser Safe (e.g. 2/3) | direct | 0 | `pause()` on the Diamond and every `GuardianPausable` cross-chain contract; cancel a queued Timelock operation (#938). Cannot unpause, cannot propose |
 
-The Guardian exists to close the detect-to-freeze window that a 48h
+The Guardian exists to close the detect-to-freeze window that a delayed
 timelock would otherwise introduce — the April 2026 cross-chain bridge
 incident showed a 46-minute pause blocked ~$200M of follow-up drain,
 which under a pure timelock would have been impossible. Unpause is
@@ -26,10 +26,32 @@ incident team to re-enable a live contract.
 
 The Governance Safe has no zero-delay path to authority. Before D1 it held
 the role root directly, so it could re-grant any Timelock-held role to a hot
-key in one transaction and the 48h window was advisory. Giving a role to a
+key in one transaction and the delay was advisory. Giving a role to a
 new key after handover is now a Timelock operation and waits out the delay;
 taking a role away from a compromised key stays immediate through the
 emergency revoker.
+
+### Which wait an operation needs (#3828)
+
+The Timelock has two waits, and it refuses to queue an operation with less
+than the one that operation needs:
+
+- **The standard wait (7 days on a production chain)** applies to every
+  operation by default: every grant, revoke, upgrade, parameter change,
+  ownership acceptance and administrator acceptance in this runbook.
+- **The restart wait (48h)** applies only when every call in the operation
+  is on the restart list: the Diamond's `unpause()`, `unpauseAsset(address)`
+  or `unpauseIfPauseEpoch(uint64)`, with no value attached.
+- **An urgent fix** may also use the restart wait, but only when the Pauser
+  Safe has first approved that exact operation id with `approveUrgent(id)`.
+  The approval counts for 3 days, only while the approver still holds
+  `URGENT_APPROVER_ROLE` under the same grant, and is spent when the
+  operation is queued.
+
+Before queuing, read `timelock.requiredDelay(id, targets, values, payloads)`
+and pass at least that value as the delay. In the steps below, "the required
+wait" means that value; a bare "48h" appears only where the step is a
+restart.
 
 ## Pre-flight — one-time setup
 
@@ -75,10 +97,13 @@ under `.timelock`. It deploys `VaipakamTimelock`, which:
   `TIMELOCK_PROPOSER` that differs from `EMERGENCY_REVOKER_ADDRESS` (one
   Governance Safe);
 - opens execution to anyone by default (`TIMELOCK_EXECUTOR` unset);
-- defaults to a 48h delay, which is also the permanent floor: the delay
-  can be raised later through the Timelock but never lowered below its
-  deploy-time value. Every chain that is not a known testnet (the Phase-1
-  mainnets and BNB Chain alike) refuses less than 48h.
+- defaults to a 48h restart wait and a 7-day standard wait
+  (`TIMELOCK_MIN_DELAY`, `TIMELOCK_STANDARD_DELAY`), each also its
+  permanent floor: either can be raised later through the Timelock but
+  never lowered below its deploy-time value, and the standard wait never
+  above 30 days. Every chain that is not a known testnet (the Phase-1
+  mainnets and BNB Chain alike) refuses a restart wait under 48h, and a
+  production chain refuses a standard wait under 7 days.
 
 ### 2–4. Hand the Diamond and the cross-chain contracts to governance
 
@@ -140,8 +165,8 @@ includes the canonical `vpfiToken` on Base; if the admin no longer owns a
 reused token, `ConfigureCcip` says so and the token's owner sets it.
 
 After this the Diamond is fully Timelock-controlled. Any further admin
-action is Governance-Safe-proposed, waits 48h, and can be cancelled by
-either Safe during the wait.
+action is Governance-Safe-proposed, waits the required wait (7 days for
+anything but a restart), and can be cancelled by either Safe during it.
 
 ### 5. Safe-schedule `acceptOwnership()` on each 2-step contract
 
@@ -154,9 +179,11 @@ For each 2-step target, from the Governance Safe UI:
 
 1. Compose a Safe tx calling `TimelockController.schedule(target,
    value=0, data=acceptOwnership(), predecessor=0, salt=<unique>,
-   delay=48h)`.
+   delay=<the required wait>)`. `acceptOwnership()` is not a restart, so
+   this is the standard wait (7 days) unless the Pauser Safe approved the
+   operation as urgent.
 2. Confirm + execute (the Safe threshold). This queues the call.
-3. Wait 48h.
+3. Wait out that delay.
 4. Compose a second Safe tx calling `TimelockController.execute(target,
    value=0, data=acceptOwnership(), predecessor=0, salt=<same>)`.
 5. Confirm + execute. The Timelock now calls `acceptOwnership()` and
@@ -175,7 +202,7 @@ execute it the same way, with the registry as the target:
 TimelockController.schedule(
   target = <CCIP TokenAdminRegistry>,
   data   = acceptAdminRole(<vpfiToken>),
-  ... same predecessor / salt / 48h delay as above)
+  ... same predecessor / salt / required wait (the standard wait) as above)
 ```
 
 Miss this and step 6's administrator readback fails with no step in this runbook
@@ -236,6 +263,9 @@ ac.hasRole(EMERGENCY_REVOKER_ROLE, deployerEOA) == false
 timelock.hasRole(CANCELLER_ROLE, pauserSafe)    == true    // independent veto
 timelock.hasRole(DEFAULT_ADMIN_ROLE, deployerEOA) == false  // self-administered
 timelock.MIN_DELAY_FLOOR()                      >= 172800  // any non-testnet chain
+timelock.STANDARD_DELAY_FLOOR()                 >= 604800  // production: every non-restart op
+timelock.standardDelay()                        >= 604800
+timelock.hasRole(URGENT_APPROVER_ROLE, pauserSafe) == true // approves one urgent fix by id
 
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
@@ -423,7 +453,8 @@ diamond mutation, not via an operator hot key.
    them). The call is the
    adapter's own `addSwapTarget(<newSettler>)`, NOT a diamond
    selector.
-3. **Wait the 48h delay**, then execute.
+3. **Wait the required wait** (the standard wait; the adapter is not on
+   the restart list), then execute.
 4. **Verify.** Read `swapTargetAllowed(<newSettler>) == true` and
    `swapTargetCount > prior` on the adapter. Re-trigger one stale
    quote through the 0x path on a low-stakes loan to confirm the
@@ -460,7 +491,7 @@ not a per-adapter mutation.
 
 | Role | Path | Delay | Adds |
 |---|---|---|---|
-| Owner (Governance Safe) | via Timelock | 48h | `ZeroExAggregatorAdapter.addSwapTarget(...)`, `ZeroExAggregatorAdapter.removeSwapTarget(...)`, equivalent on `OneInchAggregatorAdapter` |
+| Owner (Governance Safe) | via Timelock | 7 days (the standard wait) | `ZeroExAggregatorAdapter.addSwapTarget(...)`, `ZeroExAggregatorAdapter.removeSwapTarget(...)`, equivalent on `OneInchAggregatorAdapter` |
 
 ### 6.3 Internal-liquidation match path bring-up (added 2026-05-15)
 
@@ -473,8 +504,8 @@ every fresh deploy. To enable per chain after audit sign-off:
 | 1 | Confirm `getInternalMatchConfigBundle()` returns `(false, 200, 100)` post-deploy — defaults landed. | Sanity check that the new selectors are cut into the diamond and the storage slots zero-resolve to library defaults. |
 | 2 | Confirm `getTierLiquidationLtvBps()` returns `(9000, 8500, 8000)` post-deploy. | Per-tier liquidation thresholds replaced the retired per-asset `liqThresholdBps` in PR2; verify the defaults stuck. |
 | 3 | Ensure keeper-bot deploy (`vaipakam-keeper-bot`) is live on this chain with the `internalMatcher` detector running. | The kill-switch alone enables the path; without a bot, no matches fire. |
-| 4 | Governance Safe schedules `timelock.schedule(diamond, 0, setInternalMatchEnabled(true), 0, salt, 48h)`. | Same 48h-gated flow as every other tunable post-handover. |
-| 5 | 48h later: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. `apps/keeper`'s own matcher picks it up only while that keeper is running on its machine and armed (`KEEPER_ENABLED`; see [`KeeperMachine.md`](KeeperMachine.md) §5). The separate `vaipakam-keeper-bot` deployment from step 3 does not depend on it; if neither is running, enablement produces no matches at all and step 6 will read as a failed rollout rather than a stopped bot. |
+| 4 | Governance Safe schedules `timelock.schedule(diamond, 0, setInternalMatchEnabled(true), 0, salt, <the standard wait>)`. | Same delayed flow as every other tunable post-handover. |
+| 5 | Once that wait has passed: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. `apps/keeper`'s own matcher picks it up only while that keeper is running on its machine and armed (`KEEPER_ENABLED`; see [`KeeperMachine.md`](KeeperMachine.md) §5). The separate `vaipakam-keeper-bot` deployment from step 3 does not depend on it; if neither is running, enablement produces no matches at all and step 6 will read as a failed rollout rather than a stopped bot. |
 | 6 | Monitor `InternalMatchExecuted` event volume + matcher wallet balances for one week. | Validate the match rate is non-zero and the priority window is producing the expected 1% saving per leg. |
 | 7 | Optional follow-up: tune the priority window or incentive via `timelock.schedule(setInternalMatchConfig(window, incentive))`. | Only after a week of baseline data. Stay inside the `[0,500]` window cap + `[0,300]` incentive cap. |
 
@@ -493,9 +524,10 @@ every fresh deploy. To enable per chain after audit sign-off:
 ### Routine admin action (e.g. tweak a risk param)
 
 1. Governance Safe proposes `timelock.schedule(target=diamond, ...,
-   data=encoded call, delay=48h)`.
+   data=encoded call, delay=<the required wait>)` (the standard wait for
+   any parameter change).
 2. Threshold signs + executes. Tx is now queued.
-3. 48h elapses (off-chain monitoring emits alerts on all queued txs).
+3. The wait elapses (off-chain monitoring emits alerts on all queued txs).
 4. Governance Safe proposes `timelock.execute(target=diamond, ...)`.
 5. Threshold signs + executes. The Diamond call fires.
 
@@ -794,10 +826,13 @@ The Pauser Safe can cancel the queued launch like any other operation.
 
 ### Incident response — unpause
 
-Unpause goes through the full Timelock path (48h). Recovery cannot
-race the incident team — if 48h of market exposure is unacceptable,
-the correct move is a separate surgical fix (facet upgrade, parameter
-change) also queued via Timelock, then unpause.
+Unpause goes through the Timelock on the restart wait (48h) when the
+operation holds only the Diamond's restart calls. A batch that also
+unpauses the cross-chain contracts is not on the restart list and waits
+the standard wait, unless the Pauser Safe approves it as urgent first.
+Recovery cannot race the incident team. A surgical fix (facet upgrade,
+parameter change) waits the standard wait, or 48h once the Pauser Safe
+has approved that exact operation as urgent; then unpause.
 
 ### Rotating a Safe signer
 
@@ -809,16 +844,24 @@ changes.
 
 1. Governance Safe schedules `timelock.schedule(target=diamond, ...,
    data=grantRole(PAUSER_ROLE, newGuardian))`.
-2. Wait 48h. Execute. New Guardian now holds `PAUSER_ROLE`.
+2. Wait the required wait (the standard wait). Execute. New Guardian now
+   holds `PAUSER_ROLE`.
 3. For each cross-chain contract: schedule `timelock.schedule(target=contract,
-   ..., data=setGuardian(newGuardian))`. Wait 48h. Execute.
-4. Hand over the Timelock veto: schedule
+   ..., data=setGuardian(newGuardian))`. Wait the standard wait. Execute.
+4. Hand over the Timelock veto and the urgent approval: schedule
    `timelock.schedule(target=timelock, ..., data=grantRole(CANCELLER_ROLE,
-   newGuardian))`. The Timelock administers itself, so this too waits 48h.
-5. Governance Safe schedules `timelock.schedule(target=diamond, ...,
-   data=revokeRole(PAUSER_ROLE, oldGuardian))` and
-   `timelock.schedule(target=timelock, ..., data=revokeRole(CANCELLER_ROLE,
-   oldGuardian))`. Wait 48h. Execute. Queue the `CANCELLER_ROLE` revoke as
+   newGuardian))` and `timelock.schedule(target=timelock, ...,
+   data=grantRole(URGENT_APPROVER_ROLE, newGuardian))`. The Timelock
+   administers itself, so these too wait the standard wait.
+5. Before revoking, the old Guardian withdraws any approval it left
+   unused (`withdrawUrgentApproval(id)`), so none is outstanding. Then the
+   Governance Safe schedules `timelock.schedule(target=diamond, ...,
+   data=revokeRole(PAUSER_ROLE, oldGuardian))`,
+   `timelock.schedule(target=timelock, ..., data=revokeRole(URGENT_APPROVER_ROLE,
+   oldGuardian))` and `timelock.schedule(target=timelock, ...,
+   data=revokeRole(CANCELLER_ROLE, oldGuardian))`. Wait the standard wait.
+   Execute. Revoking `URGENT_APPROVER_ROLE` voids every approval the old
+   Guardian gave, and granting it back later does not revive them. Queue the `CANCELLER_ROLE` revoke as
    its own single-call `schedule`, never inside a `scheduleBatch`: only the
    single-call form is protected from being cancelled by the canceller it
    removes.
@@ -827,7 +870,10 @@ Order matters — install the new Guardian before revoking the old, so
 the pause surface and the veto are never unmanned. If the old Guardian is
 compromised, strip its `PAUSER_ROLE` at once with `emergencyRevokeRole`
 from the Governance Safe instead of waiting for step 5; its Timelock
-`CANCELLER_ROLE` can only be removed through the Timelock. Queue
+`CANCELLER_ROLE` and `URGENT_APPROVER_ROLE` can only be removed through
+the Timelock, so queue both revokes at once; until the urgent-approver
+revoke runs, any approval it gives still lets a proposer queue that one
+operation at 48h, which the veto can cancel. Queue
 `revokeRole(CANCELLER_ROLE, oldGuardian)` as a single-call `schedule` at once:
 the Timelock refuses to let the canceller being removed cancel that operation
 (a proposer or another canceller still can), so the compromised canceller
@@ -841,8 +887,8 @@ veto a queued removal of itself. It keeps its veto over everything else until
 that removal executes, so an operation the attacker queues alongside the
 removal (even one chained behind it as a predecessor) is still cancellable
 during the first delay. Only an operation queued after the removal has run is
-beyond the veto, and that one waits a full second delay (96h in total at the
-48h floor). The Pauser Safe must therefore actually cancel whatever the
+beyond the veto, and that one waits a full second delay (at least the
+standard wait again, unless it is a restart or an urgent fix). The Pauser Safe must therefore actually cancel whatever the
 attacker queues in the first window; if it does nothing, those operations run
 after one delay, exactly as they would with no canceller at all. Treat
 any queued `revokeRole(CANCELLER_ROLE, …)` the incident team did not plan as an
@@ -931,13 +977,13 @@ must exceed every number used before.
    hash pins — the user reads what they record.
 4. Governance Safe schedules the change through the timelock:
    `timelock.schedule(target=diamond, data=publishTos(newVersion,
-   newHash), delay=48h)` for a small change, or
+   newHash), delay=<the required wait>)` (the standard wait) for a small change, or
    `data=announceTos(newVersion, newHash, effectiveAt)` for a material
    one. Pick `effectiveAt` so it is still at least seven days after
    the timelock EXECUTES, not after it is scheduled, or the call
-   reverts `TosNoticeTooShort`. (The 48h delay also gives step 3's
+   reverts `TosNoticeTooShort`. (The wait also gives step 3's
    deploy time to be verified live before the hash goes on-chain.)
-5. Wait 48h. Execute. A small change emits `TosPublished(version,
+5. Wait out the delay. Execute. A small change emits `TosPublished(version,
    hash, minVersion, at)`; a material one emits `TosAnnounced(version,
    hash, effectiveAt, minVersion, newVersion)` and later
    `TosVersionInForce(...)` when its time comes (the first transaction
@@ -998,7 +1044,7 @@ never parked in a public timelock queue. Steps:
    overwrites `pendingRiskTermsCommitment` only when the NEW commit executes,
    so an un-cancelled old one can execute later and clobber it (stalling the
    reveal, or letting the `PAUSER` reveal an obsolete anchor).
-3. Wait out the 48h, then **execute op A.** Verify on-chain BEFORE revealing:
+3. Wait out the required wait (the standard wait), then **execute op A.** Verify on-chain BEFORE revealing:
    `getRiskAccessUnlockCooldown()` == your value, AND
    `getPendingRiskTermsCommitment() == keccak256(abi.encode(termsAnchor))`
    (the live pending commitment is yours, not a superseded one).
@@ -1007,14 +1053,14 @@ never parked in a public timelock queue. Steps:
    IS the activation, atomic). It bumps `currentRiskTermsVersion` to 1 and
    sets `currentRiskTermsHash`. The secret is exposed only in this tx's brief
    mempool window. **Verify `currentRiskTermsHash != 0`** before proceeding.
-5. **Only AFTER the reveal is confirmed on-chain, schedule and (after its 48h)
+5. **Only AFTER the reveal is confirmed on-chain, schedule and (after its required wait)
    execute op B: `setRiskAccessGateEnabled(true)`.** Scheduling the gate flip
    *after* the reveal is deliberate: a flip pre-scheduled alongside op A
    carries **no on-chain dependency on the reveal**, so once its delay elapses
    it can be executed first (especially with a permissionless Timelock
    executor) — turning the gate on while `currentRiskTermsHash` is still 0,
    which binds the accept ack to the guessable zero. The cost of scheduling-after is the gate's own
-   48h delay following the reveal: during it the anchor is public and users
+   delay (the standard wait) following the reveal: during it the anchor is public and users
    can arm opt-ups, which is exactly why step 2 sets the cooldown **≥ this
    delay** — any window-armed opt-up stays locked until the gate is live.
    (Advanced optimisation: to remove the window you MAY pre-schedule op B with
@@ -1055,9 +1101,10 @@ proposer, `PAUSER_ADDRESS` as canceller). From the current Governance Safe:
    four through the NEW Timelock so it holds only the delayed roles.
 2. For each Ownable2Step target (VPFIToken + every cross-chain contract):
    schedule `transferOwnership(newTimelock)` through the old Timelock.
-3. Wait 48h. Execute all.
+3. Wait the standard wait. Execute all.
 4. From the Safe, schedule `newTimelock.schedule(acceptOwnership())`
-   against every 2-step contract. Wait 48h. Execute.
+   against every 2-step contract. Wait the new Timelock's standard wait.
+   Execute.
 5. Update `.timelock` in `deployments/<chain>/addresses.json`.
 
 ## VPFI recycling — activation ceremony (M7)
@@ -2947,19 +2994,24 @@ Before mainnet:
   as the intended mainnet ones (via CreateCall).
 - Walk the **per-chain handover** steps 1–6 above (Deploy the Timelock →
   Readback verification) end-to-end against each testnet Diamond with
-  `TIMELOCK_MIN_DELAY=3600` (1h) to compress the rehearsal.
+  `TIMELOCK_MIN_DELAY=3600` and `TIMELOCK_STANDARD_DELAY=3600` (1h) to compress the rehearsal.
 - Confirm `GovernanceHandover.t.sol` passes against each testnet fork
-  before re-deploying with the 48h mainnet delay.
+  before re-deploying with the mainnet waits (48h restart, 7 days standard).
 
 ## Known trade-offs
 
 - **48h on unpause is long.** The alternative (a Guardian unpause
   surface) lets a compromised Guardian re-open an incident mid-
   response. We accept 48h as the cost of a single trust assumption.
+- **7 days on every other change is long.** An urgent fix can run at 48h,
+  but only with both Safes: the Governance Safe proposes and the Pauser
+  Safe approves that exact operation. That makes the two Safes a known
+  two-party trust, which holds only while their signers are independent.
 - **Timelock can't block a Safe-signer compromise.** If N-of-M Safe
   signers are compromised the attacker can schedule any call. Mitigation
   is social / operational: off-chain alerts on `CallScheduled` events
-  give 48h for white-hat cancellation via the Safe's CANCELLER_ROLE
+  give the full wait (7 days for anything but a restart or an urgent fix the
+  Pauser Safe approved) for white-hat cancellation via the Safe's CANCELLER_ROLE
   (held by the Safe itself).
 - **Open execution vs Safe-only execution. The DEPLOYED default is OPEN, not
   Safe-only** — `DeployTimelock.s.sol` reads

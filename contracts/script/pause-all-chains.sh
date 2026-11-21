@@ -403,10 +403,15 @@ BANNER
 BANNER
     UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
     ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
-    # The timelock schedule() delay MUST be >= the timelock's getMinDelay() or
-    # it reverts (safe failure). Default 48h; override with UNPAUSE_TIMELOCK_DELAY.
-    # Confirm against `cast call <timelock> "getMinDelay()(uint256)"` before use.
-    TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-172800}"
+    # The timelock has two waits (#3828) and refuses a delay below what the
+    # batch needs (safe failure). Only the Diamond's own unpause() is on its
+    # restart list; this batch also unpauses the cross-chain contracts, so it
+    # waits the STANDARD delay (default 7 days) unless the Pauser Safe first
+    # approves its exact id as urgent (approveUrgent), which lets it run at
+    # the restart delay (getMinDelay, 48h). Confirm with
+    # `cast call <timelock> "requiredDelay(bytes32,address[],uint256[],bytes[])(uint256)"`.
+    # Override with UNPAUSE_TIMELOCK_DELAY (e.g. 172800 after an urgent approval).
+    TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-604800}"
     # Salt MUST be run-unique: OZ TimelockController keeps executed ops
     # registered as Done and scheduleBatch() rejects any id that already exists,
     # so a zero (constant) salt would let only the FIRST incident's unpause be
@@ -419,7 +424,8 @@ BANNER
     TL_SALT_OVERRIDE="${UNPAUSE_TIMELOCK_SALT:-}"
     echo
     echo "Selector:      unpause()  =  $UNPAUSE_SELECTOR"
-    echo "Timelock delay:$TL_DELAY s (override UNPAUSE_TIMELOCK_DELAY; must be >= getMinDelay())"
+    echo "Timelock delay:$TL_DELAY s (override UNPAUSE_TIMELOCK_DELAY; must be >= the timelock's requiredDelay for the batch:"
+    echo "               the standard delay, or getMinDelay once the Pauser Safe has approved the batch id as urgent)"
     echo "Salt nonce:    $RUN_NONCE (per-chain salt = keccak(vaipakam-unpause-<slug>-$RUN_NONCE); override UNPAUSE_TIMELOCK_SALT)"
     echo "Handover:      set POST_HANDOVER=1 for chains where the timelock already owns unpause"
     echo "               (makes missing-cast a hard failure; default treats it as pre-handover)"

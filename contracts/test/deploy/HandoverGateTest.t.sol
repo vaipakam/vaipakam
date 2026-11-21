@@ -19,6 +19,8 @@ import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
+import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
@@ -158,6 +160,42 @@ contract HandoverGateTest is Test {
         (string[] memory failures, string[] memory notChecked) = _evaluate(_build(_none()));
         _assertNoFailures(failures);
         assertEq(notChecked.length, 0, "nothing should be left notChecked");
+    }
+
+    /// @notice The timelock's 48-hour route reaches only the Diamond it was
+    ///         deployed for, and only calls that Diamond routes (#3828).
+    function test_RestartList_FitsOnlyItsDiamondAndItsRoutes() public {
+        _build(_none());
+        assertEq(HandoverPlan.restartListProblem(address(timelock), address(diamond)), "");
+        // Another Diamond: the restart target no longer matches.
+        vm.startPrank(deployer);
+        VaipakamDiamond other = _deployMinDiamond();
+        vm.stopPrank();
+        assertTrue(_has(HandoverPlan.restartListProblem(address(timelock), address(other)), "is not the Diamond"));
+        // The Diamond stops routing a restart call.
+        bytes4[] memory gone = new bytes4[](1);
+        gone[0] = bytes4(keccak256("unpauseAsset(address)"));
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        cut[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0), action: IDiamondCut.FacetCutAction.Remove, functionSelectors: gone
+        });
+        address owner_ = IERC173(address(diamond)).owner();
+        vm.prank(owner_);
+        IDiamondCut(address(diamond)).diamondCut(cut, address(0), "");
+        assertTrue(
+            _has(HandoverPlan.restartListProblem(address(timelock), address(diamond)), "does not route restart selector")
+        );
+        // A restart selector routed to other code than the pause facet.
+        cut[0] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: gone
+        });
+        vm.prank(owner_);
+        IDiamondCut(address(diamond)).diamondCut(cut, address(0), "");
+        assertTrue(
+            _has(HandoverPlan.restartListProblem(address(timelock), address(diamond)), "is not routed to the pause facet")
+        );
     }
 
     /// @notice The case `hasRole` on known addresses cannot see: a third key
@@ -518,7 +556,7 @@ contract HandoverGateTest is Test {
         (string[] memory failures,) = gate.evaluate(inp, _logs());
         _assertContains(failures, "VPFI CCT administrator NOT CHECKED");
         // Production also demands the 48h delay this test's Timelock lacks.
-        _assertContains(failures, "Timelock delay");
+        _assertContains(failures, "Timelock restart delay");
     }
 
     /// @notice The registry routes VPFI through a pool other than the
@@ -573,7 +611,7 @@ contract HandoverGateTest is Test {
         address[] memory executors = new address[](1); // open executor
         address[] memory cancellers = new address[](1);
         cancellers[0] = pauserSafe;
-        timelock = new VaipakamTimelock(DELAY, proposers, executors, cancellers);
+        timelock = new VaipakamTimelock(DELAY, DELAY, address(diamond), proposers, executors, cancellers, cancellers);
 
         messenger = CrossChainGuardianHarness(
             address(
@@ -725,7 +763,7 @@ contract HandoverGateTest is Test {
         DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         d = new VaipakamDiamond(deployer, address(cutFacet));
         HelperTest h = new HelperTest();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(OwnershipFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
@@ -735,6 +773,24 @@ contract HandoverGateTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: h.getAccessControlFacetSelectors()
+        });
+        // The loupe, and the restart calls the timelock's 48-hour route may
+        // reach: the handover refuses a timelock whose restart list names a
+        // call the Diamond does not route (#3828).
+        cuts[2] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(DiamondLoupeFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: h.getDiamondLoupeFacetSelectors()
+        });
+        bytes4[] memory restart = new bytes4[](4);
+        restart[0] = AdminFacet.unpause.selector;
+        restart[1] = AdminFacet.unpauseAsset.selector;
+        restart[2] = AdminFacet.unpauseIfPauseEpoch.selector;
+        restart[3] = AdminFacet.pause.selector;
+        cuts[3] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: restart
         });
         IDiamondCut(address(d)).diamondCut(cuts, address(0), "");
     }

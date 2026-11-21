@@ -25,7 +25,7 @@ contract VaipakamTimelockTest is Test {
         executors[0] = executor;
         address[] memory cancellers = new address[](1);
         cancellers[0] = canceller;
-        timelock = new VaipakamTimelock(DELAY, proposers, executors, cancellers);
+        timelock = new VaipakamTimelock(DELAY, DELAY, address(0), proposers, executors, cancellers, new address[](0));
     }
 
     function _schedule(uint256 salt) internal returns (bytes32 id) {
@@ -157,7 +157,19 @@ contract VaipakamTimelockTest is Test {
     }
 
     function testUpdateDelay_raiseThenLowerToFloorAllowed() public {
-        bytes memory up = _queueUpdateDelay(DELAY * 2, bytes32("up"));
+        // The restart delay may never exceed the standard delay, so the
+        // standard delay goes up first.
+        bytes memory std = abi.encodeCall(timelock.updateStandardDelay, (DELAY * 2));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, std, bytes32(0), bytes32("std"), DELAY);
+        vm.warp(block.timestamp + DELAY + 1);
+        vm.prank(executor);
+        timelock.execute(address(timelock), 0, std, bytes32(0), bytes32("std"));
+
+        bytes memory up = abi.encodeCall(timelock.updateDelay, (DELAY * 2));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, up, bytes32(0), bytes32("up"), DELAY * 2);
+        vm.warp(block.timestamp + DELAY * 2 + 1);
         vm.prank(executor);
         timelock.execute(address(timelock), 0, up, bytes32(0), bytes32("up"));
         assertEq(timelock.getMinDelay(), DELAY * 2);
@@ -207,7 +219,7 @@ contract VaipakamTimelockTest is Test {
         executors[0] = executor;
         address[] memory cancellers = new address[](1);
         vm.expectRevert(VaipakamTimelock.ZeroCanceller.selector);
-        new VaipakamTimelock(DELAY, proposers, executors, cancellers);
+        new VaipakamTimelock(DELAY, DELAY, address(0), proposers, executors, cancellers, new address[](0));
     }
 
     // ─── Canceller removal is not vetoable by a canceller ────────────────

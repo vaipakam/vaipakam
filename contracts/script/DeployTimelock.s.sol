@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamTimelock} from "../src/governance/VaipakamTimelock.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {HandoverPlan} from "./lib/HandoverPlan.sol";
 
 /**
  * @title DeployTimelock
@@ -19,10 +20,15 @@ import {Deployments} from "./lib/Deployments.sol";
  *      Keeping the two phases separate lets the deployer EOA reclaim control
  *      cheaply if the multi-sig setup is wrong (before the handover is made).
  *
- *      Default min delay: 48 hours (172800 s). Rationale: long enough for
- *      users to observe a scheduled parameter change on Tenderly / the
- *      subgraph and exit positions if the change is hostile, short enough
- *      that legitimate ops (fee tweaks, 0x proxy rotation) aren't intolerable.
+ *      Two waits (owner decision 2026-11-19, option A):
+ *        - the STANDARD delay, default and mainnet minimum 7 days, which
+ *          every operation waits unless it is one of the two below;
+ *        - the RESTART delay (OZ's min delay), default and mainnet minimum
+ *          48 hours, for an operation that only lifts a pause (the
+ *          timelock's fixed restart list) or an urgent fix whose exact id
+ *          the Pauser Safe approved first.
+ *      Both are permanent floors: neither can be lowered below its
+ *      deploy-time value.
  *
  *      Roles:
  *        - PROPOSER_ROLE : multi-sig (Gnosis Safe) that schedules + cancels
@@ -45,7 +51,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *
  *      Required env vars:
  *        - DEPLOYER_PRIVATE_KEY           : deployer key (any funded EOA)
- *        - TIMELOCK_MIN_DELAY    : optional, defaults to 172800 (48h)
+ *        - TIMELOCK_MIN_DELAY    : optional, the restart delay; defaults
+ *                                  to 172800 (48h)
+ *        - TIMELOCK_STANDARD_DELAY : optional, the standard delay; defaults
+ *                                  to 604800 (7 days)
  *        - TIMELOCK_PROPOSER     : proposer/canceller (multi-sig address)
  *        - TIMELOCK_EXECUTOR     : optional, defaults to address(0) = open
  *        - PAUSER_ADDRESS        : the Pauser Safe. It becomes the
@@ -62,9 +71,12 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                  given to anything else by a typo, and
  *                                  the handover re-checks that the Timelock
  *                                  it hands the Diamond to has it.
+ *                                  It is also the one urgent approver
+ *                                  (URGENT_APPROVER_ROLE).
  */
 contract DeployTimelock is Script {
     uint256 internal constant DEFAULT_MIN_DELAY = 48 hours;
+    uint256 internal constant DEFAULT_STANDARD_DELAY = 7 days;
 
     /// @notice Everything the deploy decides from, as plain values.
     /// @dev    `run()` fills it from the environment; tests build it directly
@@ -74,19 +86,25 @@ contract DeployTimelock is Script {
     ///         test that set these as env vars could read another test's
     ///         values (#2716; the `DeployDiamond.runWith` precedent is #72).
     /// @param deployerKey Broadcasting key (`DEPLOYER_PRIVATE_KEY`).
-    /// @param minDelay    Timelock minimum delay in seconds (`TIMELOCK_MIN_DELAY`, default 48h).
+    /// @param minDelay    The restart delay in seconds (`TIMELOCK_MIN_DELAY`, default 48h).
+    /// @param standardDelay The standard delay in seconds (`TIMELOCK_STANDARD_DELAY`, default 7 days).
     /// @param proposer    The Governance Safe (`TIMELOCK_PROPOSER`).
     /// @param executor    Executor, or zero for "anyone may execute" (`TIMELOCK_EXECUTOR`).
     /// @param canceller   The Pauser Safe, the independent canceller (`PAUSER_ADDRESS`).
     /// @param revoker     `EMERGENCY_REVOKER_ADDRESS`, or zero when unset; when
     ///                    set it must name the same Safe as `proposer`.
+    /// @param diamond     The chain's Diamond (`addresses.json` `.diamond`):
+    ///                    the only target of the timelock's restart list. It
+    ///                    must route every restart selector.
     struct Config {
         uint256 deployerKey;
         uint256 minDelay;
+        uint256 standardDelay;
         address proposer;
         address executor;
         address canceller;
         address revoker;
+        address diamond;
     }
 
     function run() external returns (address timelock) {
@@ -104,6 +122,7 @@ contract DeployTimelock is Script {
         );
         c.deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         c.minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
+        c.standardDelay = vm.envOr("TIMELOCK_STANDARD_DELAY", DEFAULT_STANDARD_DELAY);
         c.proposer = vm.envAddress("TIMELOCK_PROPOSER");
         c.executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));
         // The canceller IS the Pauser Safe — read from the same variable
@@ -111,6 +130,7 @@ contract DeployTimelock is Script {
         // one (Codex #2642 r1).
         c.canceller = vm.envOr("PAUSER_ADDRESS", address(0));
         c.revoker = vm.envOr("EMERGENCY_REVOKER_ADDRESS", address(0));
+        c.diamond = Deployments.readDiamond();
     }
 
     /// @notice Checks `c` and deploys the Timelock. Every refusal happens
@@ -131,6 +151,8 @@ contract DeployTimelock is Script {
             "DeployTimelock: TIMELOCK_PROPOSER must equal EMERGENCY_REVOKER_ADDRESS (one Governance Safe)"
         );
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
+        require(c.standardDelay >= minDelay, "DeployTimelock: standard delay < restart delay");
+        require(c.standardDelay <= 30 days, "DeployTimelock: standard delay > 30 days (MAX_STANDARD_DELAY)");
         // #1195 F4 (Pass-2 hardening) — on a Phase-1 MAINNET the Timelock must
         // enforce the ratified 48h minimum delay; the `TIMELOCK_MIN_DELAY` env
         // must not be able to floor governance to the 1h dev minimum with no
@@ -142,6 +164,7 @@ contract DeployTimelock is Script {
         bool phase1Mainnet = Deployments.requiresProductionGovernance();
         if (phase1Mainnet) {
             require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
+            require(c.standardDelay >= 7 days, "DeployTimelock: mainnet standard delay < 7 days");
         }
         // #938 — every Timelock gets a veto party other than the Safe that
         // queues operations. Required on testnets too: the handover refuses
@@ -155,6 +178,11 @@ contract DeployTimelock is Script {
             require(proposer.code.length > 0, "DeployTimelock: TIMELOCK_PROPOSER has no code (not a Safe)");
         }
         require(canceller != proposer, "DeployTimelock: PAUSER_ADDRESS must differ from TIMELOCK_PROPOSER");
+        // The restart list's one target. The timelock deploys after the
+        // Diamond, and on mainnet after the switch host merges, so every
+        // restart selector must already be routed (checked after the
+        // construction below, before anything is recorded).
+        require(c.diamond.code.length > 0, "DeployTimelock: no Diamond deployed at .diamond (the restart target)");
 
         address[] memory proposers = new address[](1);
         proposers[0] = proposer;
@@ -163,7 +191,8 @@ contract DeployTimelock is Script {
 
         console.log("=== Deploy TimelockController ===");
         console.log("Chain id:       ", block.chainid);
-        console.log("Min delay (s):  ", minDelay);
+        console.log("Restart delay (s):  ", minDelay);
+        console.log("Standard delay (s): ", c.standardDelay);
         console.log("Proposer:       ", proposer);
         console.log("Executor:       ", executor);
         console.log("Canceller (Pauser Safe):", canceller);
@@ -172,15 +201,24 @@ contract DeployTimelock is Script {
         cancellers[0] = canceller;
 
         vm.startBroadcast(deployerKey);
+        // The Pauser Safe is both the independent canceller and the one
+        // urgent approver; the timelock refuses an approver that proposes.
         VaipakamTimelock tl = new VaipakamTimelock(
             minDelay,
+            c.standardDelay,
+            c.diamond,
             proposers,
             executors,
-            cancellers // self-administered by construction — no admin argument
+            cancellers, // self-administered by construction — no admin argument
+            cancellers
         );
         vm.stopBroadcast();
 
         timelock = address(tl);
+        // The simulation reaches this before `--broadcast` sends anything, so
+        // a misfit refuses the whole run.
+        string memory restartProblem = HandoverPlan.restartListProblem(timelock, c.diamond);
+        require(bytes(restartProblem).length == 0, string.concat("DeployTimelock: restart list: ", restartProblem));
         Deployments.writeTimelock(timelock);
         console.log("Timelock:       ", timelock);
         console.log("Recorded in deployments/<chain>/addresses.json under .timelock");

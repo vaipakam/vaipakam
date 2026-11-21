@@ -2552,7 +2552,10 @@ phase_pause_rehearsal() {
       local UNPAUSE_SELECTOR
       UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
       local ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
-      local TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-172800}"
+      # The batch below unpauses more than the Diamond, so it is not on the
+      # timelock's restart list (#3828): it waits the standard delay, or the
+      # restart delay once the Pauser Safe approves its id as urgent.
+      local TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-604800}"
       local RUN_NONCE; RUN_NONCE="$(date +%s)"
       # (1) PRE-handover: direct owner call on each contract.
       echo "  [pre-handover] admin/Pauser EOA -> unpause() direct:"
@@ -2607,7 +2610,7 @@ phase_pause_rehearsal() {
           exit 1
         fi
         echo "  [post-handover] governance timelock ($TL) -> scheduleBatch then executeBatch:"
-        echo "    salt=$USALT   delay=$TL_DELAY s (must be >= getMinDelay())"
+        echo "    salt=$USALT   delay=$TL_DELAY s (must be >= the timelock's requiredDelay: standard, or getMinDelay after an urgent approval)"
         echo "    [1] queue:   to=$TL data=$USCHED"
         echo "    [2] execute: to=$TL data=$UEXEC   (after >= $TL_DELAY s, same salt)"
       fi

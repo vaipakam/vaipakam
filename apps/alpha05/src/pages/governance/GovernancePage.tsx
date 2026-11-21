@@ -73,7 +73,11 @@ export function GovernanceView({
             {format('governance.rereadFailed', { reason: queue.error })}
           </Notice>
         )}
-        <p className="tier-b">{format('governance.minDelay', { delay: formatSpan(Number(q.minDelay)) })}</p>
+        {/* The timelock's two waits (#3828), with the exceptions named. */}
+        <p className="tier-b" data-testid="governance-waits">
+          {format('governance.waits', { standard: formatSpan(Number(q.standardDelay)) })}{' '}
+          {format('governance.waitsRestart', { restart: formatSpan(Number(q.minDelay)) })}
+        </p>
         {q.operations.length === 0 ? (
           <p className="tier-b" data-testid="governance-empty">
             {format('governance.empty', { chain: chain.name })}
