@@ -100,7 +100,7 @@ describe('requestUnlink', () => {
     const { store, state } = harness();
     link(store, 84532, '42');
     const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
-    expect(await requestUnlink(d, W, null)).toEqual({ kind: 'done', pending: [] });
+    expect(await requestUnlink(d, W, null, NOW)).toEqual({ kind: 'done', pending: [] });
     expect(chat(store, 84532)).toBeNull();
     expect(sent).toEqual([]);
   });
@@ -110,7 +110,7 @@ describe('requestUnlink', () => {
     link(store, 84532, '42');
     link(store, 421614, '42');
     const { d, sent } = deps(state, reader({ 84532: { enabled: true, delaySeconds: 3 * DAY }, 421614: { enabled: false, delaySeconds: 0 } }));
-    const out = await requestUnlink(d, W, null);
+    const out = await requestUnlink(d, W, null, NOW);
     expect(out).toEqual({ kind: 'done', pending: [{ chain_id: 84532, effective_at: NOW + 3 * DAY }] });
     // The protected chain keeps its chat; the open one clears at once.
     expect(chat(store, 84532)).toBe('42');
@@ -126,7 +126,7 @@ describe('requestUnlink', () => {
     link(store, 84532, '42');
     link(store, 97, '42');
     const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
-    expect(await requestUnlink(d, W, null)).toEqual({ kind: 'unknown' });
+    expect(await requestUnlink(d, W, null, NOW)).toEqual({ kind: 'unknown' });
     expect(chat(store, 84532)).toBe('42');
     expect(chat(store, 97)).toBe('42');
     expect(sent).toEqual([]);
@@ -136,8 +136,21 @@ describe('requestUnlink', () => {
     const { store, state } = harness();
     link(store, 84532, '42');
     const { d } = deps(state, reader({ 84532: { enabled: true, delaySeconds: 365 * DAY } }));
-    const out = await requestUnlink(d, W, 84532);
+    const out = await requestUnlink(d, W, 84532, NOW);
     expect(out).toEqual({ kind: 'done', pending: [{ chain_id: 84532, effective_at: NOW + MAX_PROTECTED_DELAY_SECONDS }] });
+  });
+
+  it('changes nothing for a request signed before a link already applied (#3836)', async () => {
+    const { store, state } = harness();
+    link(store, 84532, '42');
+    // A link request signed at NOW was applied (its code issued)…
+    expect(store.issueLinkCode('CODE', W, 84532, NOW + 600, NOW)).toBe('issued');
+    const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
+    // …so an unlink a Safe approved slowly, signed before it, is refused.
+    expect(await requestUnlink(d, W, 84532, NOW - 1)).toEqual({ kind: 'superseded' });
+    expect(chat(store, 84532)).toBe('42');
+    expect(store.consumeLinkCode('CODE', NOW)).toEqual({ wallet: W.toLowerCase(), chainId: 84532 });
+    expect(sent).toEqual([]);
   });
 });
 
@@ -184,7 +197,7 @@ describe('cancelFromChat', () => {
     const { store, state } = harness();
     link(store, 84532, '42');
     const { d } = deps(state, reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } }));
-    await requestUnlink(d, W, null);
+    await requestUnlink(d, W, null, NOW);
     // The new chat (or any other chat) cannot cancel it.
     expect(await cancelFromChat(d, '77', true)).toBe(0);
     expect(await cancelFromChat(d, '42', false)).toBe(0);
@@ -203,9 +216,9 @@ describe('applyDueChannelChanges', () => {
   it('clears only the chat the unlink was asked about', async () => {
     const { db, store, state } = harness();
     link(store, 84532, '42');
-    store.issueLinkCode('CODE', W, 84532, NOW + 600);
+    store.issueLinkCode('CODE', W, 84532, NOW + 600, NOW);
     const { d } = deps(state, reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } }));
-    await requestUnlink(d, W, null);
+    await requestUnlink(d, W, null, NOW);
     // The handshake codes go at the request: a code only links.
     expect(codes(db)).toEqual({ n: 0 });
     const due = deps(state, reader({}), NOW + 2 * DAY);
@@ -220,8 +233,8 @@ describe('applyDueChannelChanges', () => {
     const { db, store, state } = harness();
     link(store, 84532, '42');
     const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
-    await requestUnlink(deps(state, r).d, W, null);
-    await requestUnlink(deps(state, r, NOW + DAY).d, W, null);
+    await requestUnlink(deps(state, r).d, W, null, NOW);
+    await requestUnlink(deps(state, r, NOW + DAY).d, W, null, NOW + DAY);
     expect(await applyDueChannelChanges(deps(state, reader({}), NOW + 2 * DAY).d)).toBe(0);
     expect(await applyDueChannelChanges(deps(state, reader({}), NOW + 3 * DAY).d)).toBe(1);
     expect(changes(db, 'state')).toEqual([{ state: 'superseded' }, { state: 'applied' }]);
@@ -231,7 +244,7 @@ describe('applyDueChannelChanges', () => {
     const { store, state } = harness();
     link(store, 84532, '42');
     const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
-    const out = await requestUnlink(deps(state, r, NOW, 'transient').d, W, null);
+    const out = await requestUnlink(deps(state, r, NOW, 'transient').d, W, null, NOW);
     expect(out).toEqual({ kind: 'done', pending: [{ chain_id: 84532, effective_at: null }] });
     // Long past the delay, still untold: nothing is due, and a failed retry
     // keeps it that way.
@@ -279,10 +292,10 @@ describe('applyDueChannelChanges', () => {
   it('a wallet-wide unlink revokes the codes of every chain at once', async () => {
     const { db, store, state } = harness();
     link(store, 84532, '42');
-    store.issueLinkCode('A', W, 84532, NOW + 600);
-    store.issueLinkCode('B', W, 97, NOW + 600);
+    store.issueLinkCode('A', W, 84532, NOW + 600, NOW);
+    store.issueLinkCode('B', W, 97, NOW + 600, NOW);
     const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
-    await requestUnlink(deps(state, r).d, W, null);
+    await requestUnlink(deps(state, r).d, W, null, NOW);
     expect(codes(db)).toEqual({ n: 0 });
   });
 
@@ -291,7 +304,7 @@ describe('applyDueChannelChanges', () => {
     link(store, 84532, '42');
     const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
     const noBot: ChannelDeps = { ...deps(state, r).d, send: null };
-    expect(await requestUnlink(noBot, W, null)).toEqual({
+    expect(await requestUnlink(noBot, W, null, NOW)).toEqual({
       kind: 'done',
       pending: [{ chain_id: 84532, effective_at: null }],
     });
@@ -311,7 +324,7 @@ describe('applyDueChannelChanges', () => {
     link(store, 421614, '42');
     const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY }, 421614: { enabled: true, delaySeconds: 5 * DAY } });
     const { d, sent } = deps(state, r);
-    const out = await requestUnlink(d, W, null);
+    const out = await requestUnlink(d, W, null, NOW);
     expect(out).toEqual({
       kind: 'done',
       pending: [
@@ -339,12 +352,12 @@ describe('applyDueChannelChanges', () => {
         // change, and its own notice fails.
         if (inner) {
           inner = false;
-          await requestUnlink(deps(state, r, NOW + 60, 'transient').d, W, null);
+          await requestUnlink(deps(state, r, NOW + 60, 'transient').d, W, null, NOW);
         }
         return 'accepted';
       },
     };
-    await requestUnlink(racing, W, null);
+    await requestUnlink(racing, W, null, NOW);
     expect(changes(db, 'state, notified_at')).toEqual([
       { state: 'superseded', notified_at: null },
       { state: 'pending', notified_at: null },
@@ -419,7 +432,7 @@ describe('applyDueChannelChanges', () => {
       },
     };
     const { d, sent } = deps(racingState, read);
-    const out = await requestUnlink(d, W, null);
+    const out = await requestUnlink(d, W, null, NOW);
     // The second decision saw the protected chat: it waits, and is told.
     expect(out).toEqual({ kind: 'done', pending: [{ chain_id: 84532, effective_at: NOW + 2 * DAY }] });
     expect(chat(store, 84532)).toBe('42');
@@ -447,7 +460,7 @@ describe('applyDueChannelChanges', () => {
     const { store, state } = harness();
     link(store, 84532, '42');
     const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
-    await requestUnlink(deps(state, r).d, W, null);
+    await requestUnlink(deps(state, r).d, W, null, NOW);
     const due = store.dueChanges(NOW + 2 * DAY, 50);
     expect(due).toHaveLength(1);
     expect(store.applyChange(due[0]!.id, NOW + 2 * DAY)?.applied).toBe(true);

@@ -47,6 +47,11 @@ import {
 import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
 import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
+import {
+  newAlertRequest,
+  signAndSendAlertRequest,
+  type PendingAlertRequest,
+} from './alertRequest';
 
 /* The four signed messages (link, unlink, save settings, test alert) come from `@vaipakam/lib/alertsMessage`
  * (#2014) — ONE builder per action, imported by both this client and
@@ -369,6 +374,9 @@ export interface SaveAlertPrefsOptions {
    *  nothing that is not signed over a message naming exactly what the
    *  save changes. */
   signMessage: (message: string) => Promise<string>;
+  /** #3836 — finish this browser's pending save instead of starting a new
+   *  one (its own body and text, asked of the wallet again). */
+  resume?: PendingAlertRequest;
 }
 
 /** Persist the outcome toggles as the agent's thresholds row. The
@@ -413,35 +421,54 @@ export async function saveAlertPrefs(
       // One-way by backend design (COALESCE): only sent when enabling.
       ...(withPush && prefs.pushEnabled ? { pushAlerts: true as const } : {}),
     };
-    const issuedAt = Math.floor(Date.now() / 1000);
-    const signature = await opts.signMessage(
-      buildAlertSettingsMessage(wallet, chainId, change, issuedAt),
-    );
-    return post('/thresholds', {
+    // #3836 — the request names a key only this browser holds, and is kept
+    // here until the service answers, so a wallet that needs several owners'
+    // approval can finish it later (the card's pending block).
+    const req = newAlertRequest(
+      'save-settings',
       wallet,
-      chain_id: chainId,
-      ...(change.bands
-        ? {
-            warn_hf: change.bands.warnHf,
-            alert_hf: change.bands.alertHf,
-            critical_hf: change.bands.criticalHf,
-          }
-        : {}),
-      ...(change.dueDateReminders !== undefined
-        ? { notify_maturity_approaching: change.dueDateReminders }
-        : {}),
-      ...(change.pushAlerts ? { push_channel: 'subscribed' } : {}),
-      issuedAt,
-      signature,
-    });
+      chainId,
+      '/thresholds',
+      {
+        wallet,
+        chain_id: chainId,
+        ...(change.bands
+          ? {
+              warn_hf: change.bands.warnHf,
+              alert_hf: change.bands.alertHf,
+              critical_hf: change.bands.criticalHf,
+            }
+          : {}),
+        ...(change.dueDateReminders !== undefined
+          ? { notify_maturity_approaching: change.dueDateReminders }
+          : {}),
+        ...(change.pushAlerts ? { push_channel: 'subscribed' } : {}),
+      },
+      (issuedAt, keyHash) => buildAlertSettingsMessage(wallet, chainId, change, issuedAt, keyHash),
+      // `pushRefused` rides with the kept request (#3836): the save sent
+      // again without the Push opt-in is one the agent already refused Push
+      // for, so finishing it later must report Push as not stored.
+      {
+        prefs,
+        dueDateChanged: !!opts.dueDateChanged,
+        bandsChanged: !!opts.bandsChanged,
+        pushRefused: !withPush && prefs.pushEnabled,
+      },
+    );
+    return signAndSendAlertRequest(req, opts.signMessage, post);
   };
-  let res = await attempt(true);
+  let res =
+    opts.resume?.kind === 'save-settings'
+      ? await signAndSendAlertRequest(opts.resume, opts.signMessage, post, 'resume')
+      : await attempt(true);
   // #2251 (Codex #2665 r1) — the agent refuses a NEW Push opt-in it cannot
   // honour by refusing the WHOLE save with a 409, so that an app bundle
   // from before this change reads it as a failure rather than as "Push is
   // on". This client knows the answer: Push is not stored, and the same
   // save is sent again without the opt-in so everything else in it lands.
-  let pushRefused = false;
+  let pushRefused =
+    opts.resume?.kind === 'save-settings' &&
+    (opts.resume.context as { pushRefused?: unknown } | undefined)?.pushRefused === true;
   if (res.status === 409 && res.data?.error === 'push-unavailable') {
     pushRefused = true;
     res = await attempt(false);
@@ -459,11 +486,29 @@ export async function saveAlertPrefs(
     if (res.status === 409 && res.data?.error === 'request-already-used') {
       throw new Error(copy.alerts.requestAlreadyUsed);
     }
+    if (res.status === 409 && res.data?.error === 'request-superseded') {
+      throw new Error(copy.alerts.requestSuperseded);
+    }
+    if (res.status === 503 && res.data?.error === 'order-unavailable') {
+      throw new Error(copy.alerts.serviceUpgrading);
+    }
     throw new Error(`saving alert settings failed (${res.status})`);
   }
   if (pushRefused) return 'unavailable';
   if (!prefs.pushEnabled) return 'not-requested';
   return 'stored';
+}
+
+/** #3836 — the plain-words reason for a signed request the alert service
+ *  refused for what the request was rather than what it asked: a newer one
+ *  already applied, a repeat, or a check it could not run yet. Null for any
+ *  other answer. */
+function signedRequestRefusal(res: PostResult): string | null {
+  const error = res.data?.error;
+  if (res.status === 409 && error === 'request-superseded') return copy.alerts.requestSuperseded;
+  if (res.status === 409 && error === 'request-already-used') return copy.alerts.requestUsedAgain;
+  if (res.status === 503 && error === 'verification-unavailable') return copy.alerts.requestCheckUnavailable;
+  return null;
 }
 
 export interface TelegramLink {
@@ -478,18 +523,16 @@ export async function issueTelegramLink(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
+  resume?: PendingAlertRequest,
 ): Promise<TelegramLink> {
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = await signMessage(
-    buildTelegramLinkMessage(wallet, chainId, issuedAt),
-  );
-  const res = await post('/link/telegram', {
-    wallet,
-    chain_id: chainId,
-    issuedAt,
-    signature,
-  });
-  if (!res.ok) throw new Error(`starting the Telegram link failed (${res.status})`);
+  const req =
+    resume?.kind === 'link'
+      ? resume
+      : newAlertRequest('link', wallet, chainId, '/link/telegram', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
+          buildTelegramLinkMessage(wallet, chainId, issuedAt, keyHash),
+        );
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
+  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `starting the Telegram link failed (${res.status})`);
   const code = res.data?.code;
   if (typeof code !== 'string' || !code) {
     throw new Error('the alerts backend returned no link code');
@@ -512,17 +555,15 @@ export async function sendTestTelegramAlert(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
+  resume?: PendingAlertRequest,
 ): Promise<TestAlertResult> {
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = await signMessage(
-    buildTelegramTestMessage(wallet, chainId, issuedAt),
-  );
-  const res = await post('/telegram/test', {
-    wallet,
-    chain_id: chainId,
-    issuedAt,
-    signature,
-  });
+  const req =
+    resume?.kind === 'test-alert'
+      ? resume
+      : newAlertRequest('test-alert', wallet, chainId, '/telegram/test', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
+          buildTelegramTestMessage(wallet, chainId, issuedAt, keyHash),
+        );
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   if (res.ok) return 'sent';
   // Only a body-tagged `not-linked` is the fumbled-handshake case. A
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
@@ -539,24 +580,22 @@ export async function unlinkTelegram(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
+  resume?: PendingAlertRequest,
 ): Promise<TelegramUnlinkOutcome> {
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = await signMessage(
-    buildTelegramUnlinkMessage(wallet, chainId, issuedAt),
-  );
-  const res = await post('/unlink/telegram', {
-    wallet,
-    chain_id: chainId,
-    issuedAt,
-    signature,
-  });
+  const req =
+    resume?.kind === 'unlink'
+      ? resume
+      : newAlertRequest('unlink', wallet, chainId, '/unlink/telegram', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
+          buildTelegramUnlinkMessage(wallet, chainId, issuedAt, keyHash),
+        );
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
   // #3246 — the service could not check whether the wallet has protected
   // mode on, so it changed nothing (a failed read must never silence a
   // protected account's alerts).
   if (res.status === 503 && res.data?.error === 'protection-unknown') {
     return { scope: 'wallet', pending: [], protectionUnknown: true };
   }
-  if (!res.ok) throw new Error(`unlinking Telegram failed (${res.status})`);
+  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `unlinking Telegram failed (${res.status})`);
   const pending = Array.isArray(res.data?.pending)
     ? (res.data.pending as unknown[]).flatMap((p) => {
         const r = p as { chain_id?: unknown; effective_at?: unknown };

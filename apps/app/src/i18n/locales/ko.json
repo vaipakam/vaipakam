@@ -396,7 +396,22 @@
       "paidAgreed": "저장됨: {{chain}}에서 대출 한쪽당 최대 {{fee}} VPFI 지불에 동의했습니다.",
       "paidWithdrawn": "철회됨: {{chain}}에서 유료 Push 알림 수수료가 청구되지 않습니다.",
       "signatureCheckUnavailable": "설정이 저장되지 않았습니다. alert service가 지금 서명을 확인하지 못했습니다. 잠시 후 다시 시도하세요.",
-      "requestAlreadyUsed": "설정이 저장되지 않았습니다. 해당 서명은 이미 사용되었습니다. 다시 저장하여 새 요청에 서명하세요."
+      "requestAlreadyUsed": "설정이 저장되지 않았습니다. 해당 서명은 이미 사용되었습니다. 다시 저장하여 새 요청에 서명하세요.",
+      "requestUsedAgain": "변경된 것이 없습니다. 해당 서명된 요청은 이미 사용되었습니다. 다시 시작하여 새 요청에 서명하세요.",
+      "requestSuperseded": "변경된 것이 없습니다. 이 변경에 대해 나중에 서명된 요청이 이미 적용되었습니다. 여전히 원하시면 다시 시작하세요.",
+      "requestCheckUnavailable": "아직 변경된 것이 없습니다. 알림 서비스가 지금은 서명을 확인하지 못했습니다. 잠시 후 요청을 다시 완료하세요.",
+      "serviceUpgrading": "저장된 것이 없습니다. 알림 서비스를 업그레이드하는 중입니다. 잠시 후 다시 시도하세요.",
+      "multisigNote": "각 요청에는 이 브라우저만 가진 키가 기재되므로 이 브라우저에서만 완료할 수 있습니다. 여러 소유자의 승인이 필요한 지갑은 최대 {{days}}일까지 기다릴 수 있으며, 그 후에는 요청이 만료되어 다시 시작해야 합니다.",
+      "pendingTitle": "지갑의 승인을 기다리는 요청이 있습니다",
+      "pendingBody": "{{action}}: 이 브라우저에서 {{started}}에 시작했습니다. 이 브라우저에서만 {{expires}}까지 완료할 수 있습니다. 완료하면 지갑에 같은 승인을 다시 요청한 뒤 전송합니다.",
+      "pendingFinish": "완료하기",
+      "pendingDiscard": "버리기",
+      "pendingKindLink": "텔레그램 연결",
+      "pendingKindUnlink": "텔레그램 연결 해제",
+      "pendingKindTest": "테스트 알림 보내기",
+      "pendingKindSave": "알림 설정 저장",
+      "awaitingOwners": "이 지갑의 다른 소유자들이 요청을 승인하기를 기다리고 있습니다. 이 페이지를 열어 두거나, 닫고 나중에 여기에서 요청을 완료할 수 있습니다.",
+      "walletMovedWhileAwaiting": "아무것도 보내지 않았습니다: 승인을 기다리는 동안 연결된 지갑 또는 네트워크가 바뀌었습니다. 요청은 보관되어 있으니, 같은 네트워크에서 같은 지갑을 다시 연결해 완료하세요."
     },
     "notifications": {
       "bellLabel": "알림",

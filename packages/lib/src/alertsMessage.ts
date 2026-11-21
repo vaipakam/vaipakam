@@ -22,11 +22,101 @@
  * prelive: every settings save is now signed over the settings message.) The wallet is
  * lower-cased so a checksummed and an all-lowercase spelling of the
  * same address produce the same message.
+ *
+ * #3836 changed all four while the platform is prelive: each now ends
+ * with the hash of a request key only the requesting browser holds.
  */
 
-/** Replay window — a signed alert request older (or further in the
- *  future) than this is rejected. Mirrors the erasure endpoints. */
+import { keccak256 } from 'viem';
+
+/** Replay window — a signed alert request whose signature recovers to
+ *  the wallet's own key is rejected when older than this, and every
+ *  request when further in the future. Mirrors the erasure endpoints. */
 export const LINK_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
+
+/**
+ * #3836 — the longer window for a request only a CONTRACT approved: a
+ * smart account whose ERC-1271 / ERC-6492 check passes on the signed
+ * chain (a Safe, typically). The timestamp goes into the message before
+ * the wallet is asked, and a Safe returns the signature only once
+ * enough owners have approved, which routinely takes longer than ten
+ * minutes; every such request used to be refused as stale. The window
+ * is one-sided: a timestamp in the future is held to
+ * `LINK_SIGNATURE_MAX_AGE_SECONDS` for every wallet, and a signature
+ * that recovers to the wallet's own key keeps the ten minutes whatever
+ * code sits at the address.
+ *
+ * What makes the longer window safe, all in the agent: each request
+ * names a request key only the requesting browser holds, each signed
+ * request is accepted once, and a request older than the newest one
+ * already applied for the same change is refused.
+ */
+export const LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * #3836 — the request key. The app draws a random secret for each
+ * request, the signed text carries its hash, and the request body
+ * carries the secret, so only the browser that made the request can
+ * present it, however the wallet's approval is published. The secret
+ * is 32 random bytes as 0x-prefixed hex; the hash is its keccak-256.
+ */
+const REQUEST_KEY_RE = /^0x[0-9a-f]{64}$/;
+
+/** True for a well-shaped request key (lower-case 0x-prefixed hex, 32
+ *  bytes). */
+export function isRequestKey(value: unknown): value is `0x${string}` {
+  return typeof value === 'string' && REQUEST_KEY_RE.test(value);
+}
+
+/** A fresh request key, from the platform's secure random source. */
+export function newRequestKey(): `0x${string}` {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `0x${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** The hash the signed text names for `requestKey`. */
+export function requestKeyHash(requestKey: `0x${string}`): `0x${string}` {
+  return keccak256(requestKey);
+}
+
+/**
+ * #3836 — whether the alert service refused a signed request BEFORE it
+ * recorded it as used, so the same signed request may be sent again and the
+ * browser must keep it. One rule for both apps.
+ *
+ * Those answers are the ones given before the one-time record is written:
+ * the admission budget taken ahead of every limited route (429
+ * `rate-limited`, or 503 when the limiter is missing or could not count),
+ * the signature check's own budget (429 from the verification gate), and a
+ * signature check that could not run (503 `verification-unavailable`). Every
+ * other answer, an acceptance included, means the request was used or can
+ * never be, so it is dropped. The service names the one limit it applies
+ * after recording a request (the test alert's cooldown) differently, so a
+ * `rate-limited` answer is never that.
+ */
+export function alertRequestUnused(status: number, error: unknown): boolean {
+  if (status === 429) return error === 'rate-limited' || error === 'verification_failed';
+  if (status === 503) {
+    return (
+      error === 'verification-unavailable' ||
+      error === 'rate-limit-unavailable' ||
+      error === 'rate-limit-binding-missing'
+    );
+  }
+  return false;
+}
+
+/** The lines every alert message ends with: who, where, when, and the
+ *  request key's hash. */
+function trailer(wallet: string, chainId: number, issuedAt: number, keyHash: string): string[] {
+  return [
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+    `Request key hash (only the requesting browser holds the key): ${keyHash.toLowerCase()}`,
+  ];
+}
 
 /**
  * Link: authorises Telegram delivery for the wallet to whichever chat
@@ -36,6 +126,7 @@ export function buildTelegramLinkMessage(
   wallet: string,
   chainId: number,
   issuedAt: number,
+  keyHash: string,
 ): string {
   return [
     'Vaipakam — Link Telegram alerts',
@@ -44,9 +135,7 @@ export function buildTelegramLinkMessage(
     'chat that completes this link code. Signing this message proves',
     'ownership of the wallet. It is not a transaction and costs no gas.',
     '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
+    ...trailer(wallet, chainId, issuedAt, keyHash),
   ].join('\n');
 }
 
@@ -69,6 +158,7 @@ export function buildTelegramUnlinkMessage(
   wallet: string,
   chainId: number,
   issuedAt: number,
+  keyHash: string,
 ): string {
   return [
     'Vaipakam — Unlink Telegram alerts',
@@ -77,9 +167,7 @@ export function buildTelegramUnlinkMessage(
     'disconnected. Signing this message proves ownership of the',
     'wallet. It is not a transaction and costs no gas.',
     '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
+    ...trailer(wallet, chainId, issuedAt, keyHash),
   ].join('\n');
 }
 
@@ -124,6 +212,7 @@ export function buildAlertSettingsMessage(
   chainId: number,
   change: AlertSettingsChange,
   issuedAt: number,
+  keyHash: string,
 ): string {
   const { bands, dueDateReminders, pushAlerts, vaultOutflowAlerts } = change;
   return [
@@ -153,9 +242,7 @@ export function buildAlertSettingsMessage(
           }`,
         ]),
     '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
+    ...trailer(wallet, chainId, issuedAt, keyHash),
   ].join('\n');
 }
 
@@ -171,6 +258,7 @@ export function buildTelegramTestMessage(
   wallet: string,
   chainId: number,
   issuedAt: number,
+  keyHash: string,
 ): string {
   return [
     'Vaipakam — Send a test alert',
@@ -180,8 +268,6 @@ export function buildTelegramTestMessage(
     'proves ownership of the wallet. It is not a transaction and costs',
     'no gas.',
     '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
+    ...trailer(wallet, chainId, issuedAt, keyHash),
   ].join('\n');
 }

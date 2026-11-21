@@ -44,7 +44,7 @@ describe('issueTelegramLinkCode', () => {
       issueLinkCode: async (...a: Parameters<TelegramStateStore['issueLinkCode']>) => store.issueLinkCode(...a),
     } as unknown as LinkStatePort;
     const order: string[] = [];
-    const code = await issueTelegramLinkCode(
+    const issued1 = await issueTelegramLinkCode(
       state,
       async (wallet, chainId) => {
         order.push(`row ${wallet} ${chainId}`);
@@ -52,14 +52,18 @@ describe('issueTelegramLinkCode', () => {
       w,
       CHAIN,
       NOW,
+      NOW,
     );
     expect(order).toEqual([`row ${w} ${CHAIN}`]);
-    expect(store.consumeLinkCode(code, NOW)).toEqual({ wallet: w, chainId: CHAIN });
+    if (issued1.kind !== 'issued') throw new Error('no code');
+    expect(store.consumeLinkCode(issued1.code, NOW)).toEqual({ wallet: w, chainId: CHAIN });
+    // #3836 — a request signed before the one just applied gets no code.
+    expect(await issueTelegramLinkCode(state, async () => {}, w, CHAIN, NOW, NOW - 1)).toEqual({ kind: 'superseded' });
 
     let issued = 0;
-    const counting = { issueLinkCode: async () => (issued++, true) } as unknown as LinkStatePort;
+    const counting = { issueLinkCode: async () => (issued++, 'issued') } as unknown as LinkStatePort;
     await expect(
-      issueTelegramLinkCode(counting, async () => Promise.reject(new Error('d1 down')), w, CHAIN, NOW),
+      issueTelegramLinkCode(counting, async () => Promise.reject(new Error('d1 down')), w, CHAIN, NOW, NOW),
     ).rejects.toThrow('d1 down');
     expect(issued).toBe(0);
   });

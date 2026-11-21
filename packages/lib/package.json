@@ -10,6 +10,10 @@
       "default": "./src/index.ts"
     },
     "./brand.css": "./src/brand/tokens.css",
+    "./accountSignature": {
+      "types": "./src/accountSignature.ts",
+      "default": "./src/accountSignature.ts"
+    },
     "./address": {
       "types": "./src/address.ts",
       "default": "./src/address.ts"

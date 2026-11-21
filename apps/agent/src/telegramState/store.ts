@@ -27,6 +27,8 @@
  * `user_thresholds` row, which the keeper's watchers also read.
  */
 
+import { LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS } from '@vaipakam/lib/alertsMessage';
+
 /** The SQL surface the store uses: a Durable Object's `ctx.storage.sql`, or
  *  the test harness over `node:sqlite`. */
 export interface SqlLike {
@@ -79,7 +81,30 @@ export type ChannelOp =
 /** What {@link TelegramStateStore.commit} did: nothing (the rows in scope
  *  moved after the caller read them), or every op, with the id of each
  *  pending change it recorded, in op order. */
-export type CommitResult = { ok: false } | { ok: true; ids: number[] };
+export type CommitResult = { ok: false; superseded?: true } | { ok: true; ids: number[] };
+
+/**
+ * #3836 — the signed request a write carries, for the newest-first order
+ * of link and unlink requests. `scope` is the chain the request applies to,
+ * or null for one that applies to every chain (an unlink signed with the
+ * wallet's own key). A request is refused when it is strictly older than
+ * the newest one already applied to its scope: for one chain, that chain's
+ * mark and the wallet-wide mark; for every chain, every mark the wallet
+ * has. Applying it raises its scope's mark, so a wallet-wide request
+ * raises the mark on every chain at once.
+ */
+export interface RequestOrder {
+  issuedAt: number;
+  scope: number | null;
+}
+
+/** What {@link TelegramStateStore.issueLinkCode} did. */
+export type IssueResult = 'issued' | 'taken' | 'superseded';
+
+/** #3836 — an order mark outlives the oldest request it could still refuse
+ *  (seven days, the longest a signed alert request is presentable) by this
+ *  margin; past that the request's own age check refuses it anyway. */
+export const ORDER_RETENTION_SECONDS = LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS + 60;
 
 /** One wallet's open LOCK requests on a chain, taken together. */
 export interface LockRequest {
@@ -179,6 +204,19 @@ const SCHEMA: readonly string[] = [
      seen_at  INTEGER NOT NULL,
      PRIMARY KEY (chain_id, diamond)
    );`,
+  // #3836 — the newest applied link or unlink request's signed time, per
+  // wallet and chain, and per wallet for a request that applied to every
+  // chain (see RequestOrder).
+  `CREATE TABLE IF NOT EXISTS request_order_chain (
+     wallet         TEXT NOT NULL,
+     chain_id       INTEGER NOT NULL,
+     last_issued_at INTEGER NOT NULL,
+     PRIMARY KEY (wallet, chain_id)
+   );
+   CREATE TABLE IF NOT EXISTS request_order_wallet (
+     wallet         TEXT PRIMARY KEY,
+     last_issued_at INTEGER NOT NULL
+   );`,
 ];
 
 /** Bring the schema to the current version. Idempotent. */
@@ -208,19 +246,73 @@ export class TelegramStateStore {
 
   // ─── Handshake codes ──────────────────────────────────────────────────
 
-  /** Store a handshake code. False when the code is already taken (a
-   *  collision; the caller draws another). */
-  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number): boolean {
-    const taken = this.sql.exec(`SELECT 1 FROM link_codes WHERE code = ?`, code).toArray().length > 0;
-    if (taken) return false;
-    this.sql.exec(
-      `INSERT INTO link_codes (code, wallet, chain_id, expires_at) VALUES (?, ?, ?, ?)`,
-      code,
-      lower(wallet),
-      chainId,
-      expiresAt,
-    );
-    return true;
+  /** Store a handshake code for a link request signed at `issuedAt`.
+   *  `taken` when the code is already taken (a collision; the caller draws
+   *  another); `superseded` when a later-signed link or unlink request was
+   *  already applied for this wallet and chain (#3836), and nothing is
+   *  stored. The order check, the mark and the code are one transaction. */
+  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number, issuedAt: number): IssueResult {
+    const w = lower(wallet);
+    return this.tx(() => {
+      const taken = this.sql.exec(`SELECT 1 FROM link_codes WHERE code = ?`, code).toArray().length > 0;
+      if (taken) return 'taken';
+      const order = { issuedAt, scope: chainId };
+      if (!this.inOrder(w, order)) return 'superseded';
+      this.raiseOrder(w, order);
+      this.sql.exec(
+        `INSERT INTO link_codes (code, wallet, chain_id, expires_at) VALUES (?, ?, ?, ?)`,
+        code,
+        w,
+        chainId,
+        expiresAt,
+      );
+      return 'issued';
+    });
+  }
+
+  // ─── Request order (#3836) ────────────────────────────────────────────
+
+  /** True when `order` is not older than the newest request already applied
+   *  to its scope (see {@link RequestOrder}). */
+  private inOrder(w: string, order: RequestOrder): boolean {
+    const walletMark = this.sql
+      .exec<{ m: number | null }>(`SELECT MAX(last_issued_at) AS m FROM request_order_wallet WHERE wallet = ?`, w)
+      .toArray()[0]?.m;
+    const chainMark =
+      order.scope === null
+        ? this.sql
+            .exec<{ m: number | null }>(`SELECT MAX(last_issued_at) AS m FROM request_order_chain WHERE wallet = ?`, w)
+            .toArray()[0]?.m
+        : this.sql
+            .exec<{ m: number | null }>(
+              `SELECT MAX(last_issued_at) AS m FROM request_order_chain WHERE wallet = ? AND chain_id = ?`,
+              w,
+              order.scope,
+            )
+            .toArray()[0]?.m;
+    const newest = Math.max(Number(walletMark ?? 0), Number(chainMark ?? 0));
+    return order.issuedAt >= newest;
+  }
+
+  /** Record `order` as the newest request applied to its scope. Only after
+   *  {@link inOrder} passed, so the mark never moves back. */
+  private raiseOrder(w: string, order: RequestOrder): void {
+    if (order.scope === null) {
+      this.sql.exec(
+        `INSERT INTO request_order_wallet (wallet, last_issued_at) VALUES (?, ?)
+         ON CONFLICT (wallet) DO UPDATE SET last_issued_at = MAX(last_issued_at, excluded.last_issued_at)`,
+        w,
+        order.issuedAt,
+      );
+    } else {
+      this.sql.exec(
+        `INSERT INTO request_order_chain (wallet, chain_id, last_issued_at) VALUES (?, ?, ?)
+         ON CONFLICT (wallet, chain_id) DO UPDATE SET last_issued_at = MAX(last_issued_at, excluded.last_issued_at)`,
+        w,
+        order.scope,
+        order.issuedAt,
+      );
+    }
   }
 
   /** Consume a code: it is deleted whatever happens, so it is good once.
@@ -303,11 +395,25 @@ export class TelegramStateStore {
    * and the caller reads and decides again. This is what makes a decision
    * that needed a chain read in between (the protection status) and its
    * writes one atomic step.
+   *
+   * `order` is the signed request the decision answers, when it answers one
+   * (#3836): a request older than one already applied to its scope writes
+   * nothing (`superseded`), and an applied one raises its scope's mark, in
+   * the same transaction as the writes.
    */
-  commit(wallet: string, chainId: number | null, observed: readonly LinkedRow[], ops: readonly ChannelOp[], now: number): CommitResult {
+  commit(
+    wallet: string,
+    chainId: number | null,
+    observed: readonly LinkedRow[],
+    ops: readonly ChannelOp[],
+    now: number,
+    order?: RequestOrder,
+  ): CommitResult {
     const w = lower(wallet);
     return this.tx(() => {
+      if (order && !this.inOrder(w, order)) return { ok: false, superseded: true };
       if (!sameRows(this.linkedRows(w, chainId), observed)) return { ok: false };
+      if (order) this.raiseOrder(w, order);
       const ids: number[] = [];
       for (const o of ops) {
         switch (o.op) {
@@ -496,10 +602,13 @@ export class TelegramStateStore {
     });
   }
 
-  /** Drop closed changes and handled LOCK requests past their retention. */
+  /** Drop closed changes, handled LOCK requests and request-order marks
+   *  past their retention. */
   pruneClosed(now: number): void {
     this.sql.exec(`DELETE FROM channel_changes WHERE state <> 'pending' AND closed_at < ?`, now - CLOSED_RETENTION_SECONDS);
     this.sql.exec(`DELETE FROM lock_requests WHERE handled_at IS NOT NULL AND handled_at < ?`, now - LOCK_RETENTION_SECONDS);
+    this.sql.exec(`DELETE FROM request_order_chain WHERE last_issued_at < ?`, now - ORDER_RETENTION_SECONDS);
+    this.sql.exec(`DELETE FROM request_order_wallet WHERE last_issued_at < ?`, now - ORDER_RETENTION_SECONDS);
   }
 
   // ─── Telegram LOCK (#3088) ────────────────────────────────────────────

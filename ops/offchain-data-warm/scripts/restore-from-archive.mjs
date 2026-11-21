@@ -197,6 +197,9 @@ const REQUIRED_TABLE_COLUMNS = {
     'wallet', 'chain_id', 'warn_hf', 'alert_hf', 'critical_hf',
     'tg_chat_id', 'push_channel', 'created_at', 'updated_at',
     'locale', 'notify_maturity_approaching', 'last_test_alert_at',
+    // Not `settings_issued_at` (#3836): an archive from before it restores
+    // the column as NULL, which only means no settings save is ordered yet
+    // for that row; the next signed save sets it.
   ],
   notify_state: ['wallet', 'chain_id', 'loan_id', 'last_band', 'last_hf_milli', 'last_sent_ts'],
   pre_grace_notify_state: ['wallet', 'chain_id', 'loan_id', 'last_sent_ts'],

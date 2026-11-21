@@ -12,7 +12,7 @@
  */
 import { keccak256, toHex, verifyMessage, type Hex } from 'viem';
 import type { Page } from '@playwright/test';
-import { buildAlertSettingsMessage, buildTelegramLinkMessage, buildTelegramTestMessage, buildTelegramUnlinkMessage } from '@vaipakam/lib/alertsMessage';
+import { buildAlertSettingsMessage, buildTelegramLinkMessage, buildTelegramTestMessage, buildTelegramUnlinkMessage, isRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import { scenario } from '../lib/chain';
 import { agentState, controlAgent, type AgentRequest } from '../lib/stub';
 import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
@@ -21,11 +21,14 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-/** The signed request is the wallet's signature over the shared message. */
-async function signedBy(req: AgentRequest, wallet: Hex, message: (w: Hex, chainId: number, issuedAt: number) => string): Promise<void> {
-  const b = req.body as { wallet: Hex; chain_id: number; issuedAt: number; signature: Hex };
+/** The signed request is the wallet's signature over the shared message,
+ *  which names the hash of the request key the body carries (#3836). */
+async function signedBy(req: AgentRequest, wallet: Hex, message: (w: Hex, chainId: number, issuedAt: number, keyHash: string) => string): Promise<void> {
+  const b = req.body as { wallet: Hex; chain_id: number; issuedAt: number; signature: Hex; requestKey: unknown };
   expect(b.wallet.toLowerCase()).toBe(wallet.toLowerCase());
-  expect(await verifyMessage({ address: wallet, message: message(b.wallet, b.chain_id, b.issuedAt), signature: b.signature })).toBe(true);
+  expect(isRequestKey(b.requestKey)).toBe(true);
+  const keyHash = requestKeyHash(b.requestKey as Hex);
+  expect(await verifyMessage({ address: wallet, message: message(b.wallet, b.chain_id, b.issuedAt, keyHash), signature: b.signature })).toBe(true);
 }
 
 async function lastRequest(path: string): Promise<AgentRequest> {
@@ -125,7 +128,7 @@ test('push is offered only when the service can send; reminders and health lines
   expect(pushReq.body).toMatchObject({ push_channel: 'subscribed' });
   expect(pushReq.body).not.toHaveProperty('warn_hf');
   expect(pushReq.body).not.toHaveProperty('notify_maturity_approaching');
-  await signedBy(pushReq, me, (w, c, t) => buildAlertSettingsMessage(w, c, { pushAlerts: true }, t));
+  await signedBy(pushReq, me, (w, c, t, k) => buildAlertSettingsMessage(w, c, { pushAlerts: true }, t, k));
 
   // Payment reminders: off, then on, each save carrying only that switch.
   await expect(page.getByTestId('alert-due-state')).toContainText('on unless they were switched off elsewhere');
@@ -134,7 +137,7 @@ test('push is offered only when the service can send; reminders and health lines
   const off = await lastRequest('/thresholds');
   expect(off.body).toMatchObject({ notify_maturity_approaching: false });
   expect(off.body).not.toHaveProperty('push_channel');
-  await signedBy(off, me, (w, c, t) => buildAlertSettingsMessage(w, c, { dueDateReminders: false }, t));
+  await signedBy(off, me, (w, c, t, k) => buildAlertSettingsMessage(w, c, { dueDateReminders: false }, t, k));
   // A save still out when the page is left keeps going: back on Alerts the
   // card shows it out and offers no second action, then shows its outcome.
   await controlAgent({ slow: { path: '/thresholds' } });
@@ -163,7 +166,7 @@ test('push is offered only when the service can send; reminders and health lines
   await expect(page.getByTestId('alert-health-bands')).toContainText('below 1.8, 1.6 and 1.1', { timeout: 30_000 });
   const bands = await lastRequest('/thresholds');
   expect(bands.body).toMatchObject({ warn_hf: 1.8, alert_hf: 1.6, critical_hf: 1.1 });
-  await signedBy(bands, me, (w, c, t) => buildAlertSettingsMessage(w, c, { bands: { warnHf: 1.8, alertHf: 1.6, criticalHf: 1.1 } }, t));
+  await signedBy(bands, me, (w, c, t, k) => buildAlertSettingsMessage(w, c, { bands: { warnHf: 1.8, alertHf: 1.6, criticalHf: 1.1 } }, t, k));
   expect((await agentState()).thresholds[me.toLowerCase()]).toMatchObject({ warn_hf: 1.8, notify_maturity_approaching: true, push_channel: 'subscribed' });
   await fitsWidth(page);
   await page.evaluate(() => localStorage.setItem('app.mode', 'basic'));
@@ -205,6 +208,41 @@ test('a declined signature sends nothing, and a request already used is refused'
   await page.getByTestId('alert-due-toggle').click();
   await expect(page.getByTestId('alert-run')).toContainText('That signed request was already used; sign again to repeat it.', { timeout: 30_000 });
   await expect(page.getByTestId('alert-due-state')).toContainText('on unless they were switched off elsewhere');
+});
+
+test('a request the service could not check yet is kept, survives a reload, and is finished or discarded (#3836)', async ({ launchWallet }) => {
+  const { page, account } = await launchWallet('visitor');
+  await openChannels(page);
+  await controlAgent({ next: { path: '/thresholds', status: 503, body: { error: 'verification-unavailable' } } });
+  await page.getByTestId('alert-due-toggle').click();
+  await expect(page.getByTestId('alert-run')).toHaveAttribute('data-problem', 'verify-down', { timeout: 30_000 });
+  const pending = page.getByTestId('alert-pending');
+  await expect(pending).toContainText('Save alert settings: started in this browser at');
+  await expect(pending).toContainText('A multi-signature wallet has up to 7 days to approve.');
+  await fitsWidth(page);
+  const first = (await lastRequest('/thresholds')).body as { issuedAt: number; requestKey: string };
+
+  // Kept in this browser: a reload still offers it.
+  await page.reload();
+  await expect(pending).toBeVisible({ timeout: 30_000 });
+
+  // Finishing signs the same text again and sends the same request.
+  await pending.getByTestId('alert-pending-finish').click();
+  await expect(page.getByTestId('alert-run')).toHaveAttribute('data-phase', 'answered', { timeout: 30_000 });
+  await expect(page.getByTestId('alert-run')).toHaveAttribute('data-problem', '');
+  const again = await lastRequest('/thresholds');
+  expect(again.body).toMatchObject({ issuedAt: first.issuedAt, requestKey: first.requestKey });
+  await signedBy(again, account.address, (w, c, t, k) => buildAlertSettingsMessage(w, c, { dueDateReminders: false }, t, k));
+  await expect(pending).toHaveCount(0);
+
+  // Discarding forgets it without asking the wallet.
+  await controlAgent({ next: { path: '/thresholds', status: 503, body: { error: 'verification-unavailable' } } });
+  await page.getByTestId('alert-due-toggle').click();
+  await expect(pending).toBeVisible({ timeout: 30_000 });
+  const sent = (await agentState()).requests.length;
+  await pending.getByTestId('alert-pending-discard').click();
+  await expect(pending).toHaveCount(0);
+  expect((await agentState()).requests).toHaveLength(sent);
 });
 
 test('with Terms in force, linking Telegram asks for them first; switching off never does', async ({ launchWallet }) => {
