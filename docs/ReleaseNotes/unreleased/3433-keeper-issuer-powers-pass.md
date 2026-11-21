@@ -1,0 +1,9 @@
+## Keeper checks what each offered asset's code says about its issuer (#3433)
+
+The keeper machine has a new pass, `issuerPowers`, that fills the issuer powers store the apps disclose from. The contracts stay uncurated: the pass refuses nothing and nothing on-chain reads what it writes.
+
+It finds every lending and collateral asset of an active offer, an active loan, an unexpired signed offer and an active Auto-lend slot, and checks up to 50 a chain at a time, at one block. Assets never checked go first, then checks made by an older checker version, then checks older than a day. Each asset's check row and findings are replaced together, so a reader never sees half a check.
+
+The checks are one shared rule in the shared library, so the apps can run the same rule later. They state facts, never a verdict: whether the code is an upgradeable proxy (and its implementation and admin), whether it has pause, freeze or forced-transfer functions (only "not found" when the checker saw all of the code; "unknown" with the reason otherwise), whether it is paused now, for an NFT a transfer validator or soulbound marker, and a simulated move of a unit one vault holds to another vault. A refused move is stored as found, with the revert's name or "returned false". The checks that apply only to NFTs are left off a token's row. The marketplace conduit transfer is not run by this checker version and is left off every row, so readers show it as not checked; it remains open under #3433.
+
+No staggered minute is free, so the pass runs every tick and keeps its own clock: each chain is scanned once an hour, and a scan the run deadline cut short continues on the next tick. Before the store's migration is applied it declines by name. It reads and simulates only and sends no transaction. It ships disarmed behind `ISSUER_POWERS_ENABLED`.

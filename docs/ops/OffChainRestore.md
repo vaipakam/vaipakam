@@ -597,6 +597,7 @@ then deploy.
       | `PRICE_CHECKPOINT_ENABLED` | price checkpoint pass skips — no hourly price checkpoint is written unless someone calls the permissionless `checkpointHourlyPrices` by hand, so the #3359 forced-sale floor reads no checkpoint and every forced sale uses the full liquidation slippage cap (the behaviour before #3359; nothing is lost, sales just keep the wider floor) | the hourly checkpoints the forced-sale floor's calm test reads (#3384) |
       | `RATE_RECORD_ENABLED` | the rate record step skips — no rate-priced token's rate is recorded unless someone calls the permissionless `recordRate` by hand, so its accepted rate stops rising with honest growth and the collateral is undervalued (never overvalued) until a record lands; nothing is lost | the hourly record of every rate binding a token has had (#3437) |
       | `ASSET_RANKINGS_ENABLED` | asset rankings pass skips — no new market-cap ranking is written, so the app keeps showing each asset's tier from the last list written, with that list's date; nothing on-chain reads the rankings | the daily `asset_ranking` rows the app's asset trust tiers read (#3446) |
+      | `ISSUER_POWERS_ENABLED` | issuer powers pass skips — no asset is checked again, so the apps keep showing each asset's last stored check with its date, and an asset first offered after that shows as not checked; nothing on-chain reads these rows | the `asset_issuer_check` / `asset_issuer_finding` rows the apps' issuer powers disclosure reads (#3433) |
       | `REWARD_STAGING_UPKEEP_ENABLED` | reward staging upkeep pass skips — a reward claim day held in a staging record waits for whoever calls the permissionless staging entries by hand: a record or claim domain is not prepared, reserved or resolved, a resolving record (which has no deadline) never pays out, a legacy slice is not stepped, and a released batch's priority window lapses with nobody registered | moving held reward claim days on to payment (#3097) |
       | `REWARD_STAGING_UNWIND_ENABLED` | the reward staging upkeep pass's unwind step skips — a staging record or claim domain past its deadline that cannot be covered, or one the contract finds stale, keeps holding what it reserved until someone calls `unwindStagedDayPage` / `unwindDomainPage` by hand; the pass names each one it left | releasing stuck staging records (#3097) |
 
@@ -1745,6 +1746,8 @@ DELETE FROM protected_lock_readiness; \
 DELETE FROM alert_channel_changes; \
 DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
+DELETE FROM asset_issuer_check; \
+DELETE FROM asset_issuer_finding; \
 DELETE FROM keeper_step_status; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_chain_anchor; \
@@ -1803,6 +1806,13 @@ source and chain is due, and the keeper's `assetRankings` pass refetches them
 on its next hourly run (it must be armed). Until then the app shows no tier,
 and its own-risk warning, for every asset. Keeping a restored copy would show
 tiers no fetch has checked.
+
+`asset_issuer_check` and `asset_issuer_finding` (#3433) hold what each
+offered asset's own code said about its issuer's powers at the block it was
+checked. Nothing in them is born here: an asset with no row is checked first,
+so the keeper's `issuerPowers` pass rewrites every row from the chain (it
+must be armed). Until then the apps show each asset as not checked. Keeping a
+restored copy would show findings no check has read.
 
 `keeper_step_status` (#3681) is the keeper's record of which of its
 standing-instruction steps are armed on each chain, which the app reads to say
@@ -2133,7 +2143,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `TIER_VERSION_SYNC_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `STANDING_TOPUP_ENABLED`, `STANDING_REPAY_ENABLED`, `STANDING_INTEREST_ENABLED`, `STANDING_ALERTS_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `RATE_RECORD_ENABLED`, `ASSET_RANKINGS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `TIER_VERSION_SYNC_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `STANDING_TOPUP_ENABLED`, `STANDING_REPAY_ENABLED`, `STANDING_INTEREST_ENABLED`, `STANDING_ALERTS_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `RATE_RECORD_ENABLED`, `ASSET_RANKINGS_ENABLED`, `ISSUER_POWERS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

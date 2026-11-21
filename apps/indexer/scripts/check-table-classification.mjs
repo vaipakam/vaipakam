@@ -374,6 +374,18 @@ const CLASSIFICATION = {
       'the assetRankings pass\'s per-source, per-chain run record (#3446), cleared WITH asset_ranking; ' +
       'an empty record makes every pair due, so the pass refetches rather than trusting a restored row',
   },
+  asset_issuer_check: {
+    class: 'replay-derived',
+    reason:
+      'the issuer powers pass\'s per-asset check record (#3433), cleared WITH asset_issuer_finding; ' +
+      'an asset with no row is never checked, so the keeper\'s issuerPowers pass checks it first and rewrites it from the chain',
+  },
+  asset_issuer_finding: {
+    class: 'replay-derived',
+    reason:
+      'what each check found for an asset (#3433), read from the asset\'s code at one block and replaced whole with its ' +
+      'asset_issuer_check row; cleared with that table, the keeper rechecks every asset from the chain',
+  },
   keeper_step_status: {
     class: 'replay-derived',
     reason:

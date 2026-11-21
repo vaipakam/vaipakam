@@ -63,6 +63,7 @@ import { runTermsNotice } from './termsNotice';
 import { runPlatformAlerts } from './platformAlerts';
 import { PASS_CADENCE_SEC as PRICE_CHECKPOINT_CADENCE_SEC, runPriceCheckpoint } from './priceCheckpoint';
 import { PASS_CADENCE_SEC as ASSET_RANKINGS_CADENCE_SEC, runAssetRankings } from './assetRankings';
+import { PASS_CADENCE_SEC as ISSUER_POWERS_CADENCE_SEC, runIssuerPowers } from './issuerPowers';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -447,6 +448,15 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 56,
     why: 'refreshes the daily market-cap rankings the app\'s asset trust tiers read; a pair is fetched once a UTC day and a failed fetch is retried the next hour (#3446)',
     run: runAssetRankings,
+  },
+  {
+    name: 'issuerPowers',
+    cadenceMinutes: ISSUER_POWERS_CADENCE_SEC / 60,
+    // Every tick: no staggered minute is free. The pass throttles itself to
+    // one scan a chain an hour, continued on the next ticks while a scan the
+    // deadline cut short has due assets left. It sends nothing.
+    why: 'checks what each offered asset\'s code says about its issuer\'s powers for the apps to disclose; no staggered minute is free, so it runs every tick and scans each chain hourly on its own clock (#3433)',
+    run: runIssuerPowers,
   },
 ];
 

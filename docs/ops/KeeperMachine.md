@@ -542,6 +542,11 @@ journalctl -u vaipakam-keeper -f
    the app's asset trust tiers read; off-chain only, it sends no
    transaction, and while it is unarmed the app shows no tier newer than the
    last list written),
+   `ISSUER_POWERS_ENABLED` (`issuerPowers`, every tick (each chain scanned hourly on its own clock): checks what each
+   offered asset's code says about its issuer's powers, up to 50 assets a
+   chain per run, and writes the shared `asset_issuer_check` /
+   `asset_issuer_finding` tables the apps disclose from; off-chain only, it
+   reads and simulates and sends no transaction),
    `REWARD_STAGING_UPKEEP_ENABLED` (`rewardStagingUpkeep`, hourly at :51:
    moves held reward claim days on to payment; its unwind step also needs
    `REWARD_STAGING_UNWIND_ENABLED`), and

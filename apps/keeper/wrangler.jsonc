@@ -503,6 +503,13 @@
   //     keyed by contract address, written to the shared asset_ranking table
   //     the app's asset trust tiers read. A failed day keeps the last good
   //     list. Off-chain only; sends no transaction. Ships unset.
+  //   - ISSUER_POWERS_ENABLED — 'true' arms the #3433 issuer powers pass,
+  //     every tick (each chain scanned hourly on its own clock): what each offered asset's own code says about its
+  //     issuer's powers (upgradeable, pause, freeze, forced transfer, a
+  //     simulated vault-to-vault move), up to 50 assets a chain per run,
+  //     written to the shared asset_issuer_check / asset_issuer_finding
+  //     tables. Off-chain only; reads and simulates, sends no transaction.
+  //     Ships unset.
   //   - REWARD_STAGING_UPKEEP_ENABLED — 'true' arms the #3097 reward staging
   //     upkeep pass, hourly: prepareStagedDay / reserveStagedDay /
   //     resolveStagedDayPage for open staging records, reserveDomainPage /
