@@ -53,19 +53,6 @@
   },
   {
     "type": "function",
-    "name": "DAY_WINDOW",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "DIAMOND",
     "inputs": [],
     "outputs": [
@@ -144,7 +131,33 @@
   },
   {
     "type": "function",
+    "name": "MAX_OPEN_LEVELS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_SOURCES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_TRACKED_LEVELS",
     "inputs": [],
     "outputs": [
       {
@@ -209,13 +222,13 @@
   },
   {
     "type": "function",
-    "name": "MONTH_WINDOW",
+    "name": "READS",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -341,62 +354,6 @@
   },
   {
     "type": "function",
-    "name": "band",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "termDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "rateBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "b",
-        "type": "tuple",
-        "internalType": "struct IRateReference.Band",
-        "components": [
-          {
-            "name": "available",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "termAverage1e18",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outside",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "above",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "distanceBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "cancelChange",
     "inputs": [
       {
@@ -412,6 +369,40 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "clampedSum",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "capId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "floorId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "clamped",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilingBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -619,34 +610,88 @@
   },
   {
     "type": "function",
-    "name": "linkedRate",
+    "name": "levelCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "levelOf",
     "inputs": [
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "termDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "kind",
-        "type": "uint8",
-        "internalType": "enum IRateReference.LinkKind"
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
       {
-        "name": "rate1e18",
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IRateReference.Level",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "rateBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "isCap",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "retired",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "openLoans",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "levelOnSeries",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "total",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "refusal",
-        "type": "uint8",
-        "internalType": "enum IRateReference.LinkRefusal"
+        "name": "openLoans",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -751,6 +796,16 @@
         "name": "id",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "capId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "floorId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -764,6 +819,16 @@
         "name": "asset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "capId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "floorId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -771,6 +836,16 @@
         "name": "id",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "clamped",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilingBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "nonpayable"
@@ -862,6 +937,42 @@
         "name": "value",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeLevel",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "isCap",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeRetireLevel",
+    "inputs": [
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -1249,7 +1360,7 @@
   },
   {
     "type": "function",
-    "name": "status",
+    "name": "trackedLevels",
     "inputs": [
       {
         "name": "asset",
@@ -1259,112 +1370,9 @@
     ],
     "outputs": [
       {
-        "name": "st",
-        "type": "tuple",
-        "internalType": "struct IRateReference.Status",
-        "components": [
-          {
-            "name": "seriesId",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "referenceRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "index",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "held",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lastUpdate",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "holding",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "holdingSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "stale",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "unusual",
-            "type": "uint8",
-            "internalType": "enum IRateReference.Unusual"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "termAverage",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "termDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ta",
-        "type": "tuple",
-        "internalType": "struct IRateReference.TermAverage",
-        "components": [
-          {
-            "name": "available",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "rate1e18",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "average24h",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "averageLong",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "longWindow",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "weightBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          }
-        ]
+        "name": "",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
       }
     ],
     "stateMutability": "view"
@@ -1384,25 +1392,6 @@
   },
   {
     "type": "function",
-    "name": "unusual",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum IRateReference.Unusual"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "update",
     "inputs": [
       {
@@ -1413,44 +1402,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "weightBps",
-    "inputs": [
-      {
-        "name": "termDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "windowForTerm",
-    "inputs": [
-      {
-        "name": "termDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -1629,6 +1580,125 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LevelAccrued",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LevelAdded",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "isCap",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LevelLoanCount",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "openLoans",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LevelRetired",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LevelUntracked",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -1995,6 +2065,22 @@
   },
   {
     "type": "error",
+    "name": "FloorNotBelowCap",
+    "inputs": [
+      {
+        "name": "floorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "capBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidChange",
     "inputs": [
       {
@@ -2022,6 +2108,75 @@
         "name": "field",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LevelForOtherAsset",
+    "inputs": [
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LevelNotOpen",
+    "inputs": [
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LevelRefused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "isCap",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LevelWrongSide",
+    "inputs": [
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "isCap",
+        "type": "bool",
+        "internalType": "bool"
       }
     ]
   },
@@ -2199,6 +2354,27 @@
   },
   {
     "type": "error",
+    "name": "SeriesStale",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "lastUpdate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "holding",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TooManyLiveSeries",
     "inputs": [
       {
@@ -2215,6 +2391,17 @@
         "name": "max",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownLevel",
+    "inputs": [
+      {
+        "name": "levelId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

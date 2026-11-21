@@ -30,6 +30,11 @@ contract MockRateReferenceLink {
         series = id;
     }
 
+    /// @notice The mock answers the read side itself.
+    function READS() external view returns (address) {
+        return address(this);
+    }
+
     function newestSeries(address) external view returns (uint32) {
         return series;
     }

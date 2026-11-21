@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRateReference} from "../libraries/LibRateReference.sol";
 import {IRateReference} from "../interfaces/IRateReference.sol";
+import {IRateReferenceReads} from "../interfaces/IRateReferenceReads.sol";
 
 /**
  * @title  RateLinkFacet
@@ -154,7 +155,7 @@ contract RateLinkFacet {
         (bool ok, IRateReference rr) = LibRateReference.tryReference();
         if (!ok) return (0, uint8(IRateReference.LinkRefusal.ReferenceUnavailable));
         (uint256 rate1e18, IRateReference.LinkRefusal why) =
-            rr.linkedRate(asset, termDays, IRateReference.LinkKind(kind));
+            IRateReferenceReads(rr.READS()).linkedRate(asset, termDays, IRateReference.LinkKind(kind));
         if (why != IRateReference.LinkRefusal.None) return (0, uint8(why));
         // 1 bps = 1e14 at the 1e18 scale.
         uint256 base = lenderSide ? (rate1e18 + 1e14 - 1) / 1e14 : rate1e18 / 1e14;
@@ -227,7 +228,7 @@ contract RateLinkFacet {
     {
         (bool ok, IRateReference rr) = LibRateReference.tryReference();
         if (!ok) return (0, band);
-        band = rr.band(asset, termDays, rateBps);
+        band = IRateReferenceReads(rr.READS()).band(asset, termDays, rateBps);
         if (band.outside) warnings = band.above ? WARN_FAR_ABOVE : WARN_FAR_BELOW;
     }
 
