@@ -1,4 +1,4 @@
-## Security — the recovery claim (PR #<n>)
+## Security — the recovery claim (PR #3817)
 
 A protected account can now let its recovery address ask for the account after
 a wait the owner chooses, so an account with no signer still has an exit when

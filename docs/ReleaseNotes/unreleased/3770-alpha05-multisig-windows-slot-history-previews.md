@@ -1,4 +1,4 @@
-## Thread — alpha05: multi-signature wallets, approval windows, Auto-lend history and protocol previews (PR #<n>)
+## Thread — alpha05: multi-signature wallets, approval windows, Auto-lend history and protocol previews (PR #3806)
 
 The app may be framed by exactly one named origin, the multi-signature wallet's own site, and that list is the only place to change it. The build writes that origin into the frame policy for every path and fails when the policy has no placeholder or the list holds anything but one exact https origin. A subdomain or a look-alike is refused. Framed by anything else, the app shows a refusal and mounts no wallet connection. A browser that hides its ancestors keeps the refusal until the listed parent answers a handshake. Only the manifest and its icon may be read cross-origin, and only by that origin.
 

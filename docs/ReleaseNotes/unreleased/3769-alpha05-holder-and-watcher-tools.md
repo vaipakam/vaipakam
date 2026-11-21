@@ -1,4 +1,4 @@
-## Thread — alpha05: payers, watchers, goals and a loan given away (PR #<n>)
+## Thread — alpha05: payers, watchers, goals and a loan given away (PR #3806)
 
 A reader who holds neither side of a running loan now sees who holds the borrower position, read from the chain. Where the position moved, the payer confirms whom a payment benefits before Repay opens, and a change of holder before signing stops it. Such a reader can also ask for Telegram alerts about the loan; watching gives no right over it. A loan link names its network, and a wallet on another network is told so rather than shown a different loan with the same number.
 

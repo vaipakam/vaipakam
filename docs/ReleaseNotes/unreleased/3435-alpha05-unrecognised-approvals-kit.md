@@ -1,4 +1,4 @@
-## Thread — alpha05: unrecognised items, position token approvals, outflow alerts, lending kit (PR #<n>)
+## Thread — alpha05: unrecognised items, position token approvals, outflow alerts, lending kit (PR #3806)
 
 What reached a vault outside the protocol is listed apart from the wallet's own assets on the Vault page, closed by default with its count. The index finds candidates; the chain decides what is shown, at one block, and only the vault the protocol names. A token's own name is shown as plain text beside its address, never as a link or image. Recover lists the same items to pick from and suggests neither choice. No alert is sent for these on purpose: an alert would itself be the lure.
 
