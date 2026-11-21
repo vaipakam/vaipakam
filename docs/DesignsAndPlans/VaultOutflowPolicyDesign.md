@@ -335,12 +335,24 @@ beyond the bounds its owner signed. The same statement has to carry what those b
    Interest accrues per second for as long as a loan is open, with no stop at the due date or at the end of grace, so
    no figure fixed at signing can bound a loan whose default is run late or after a pause. A fixed figure would then
    refuse a step the Diamond's rules allow and short the lender, which this section forbids. The lien therefore
-   records the loan's **highest rate**, the late-fee cap and the fees the signed terms allow, and the time it opened.
+   records the loan's **highest rate**, the late-fee cap and the fees the signed terms allow, the time it opened, the
+   signed term, and whether the terms carry a full-term interest minimum.
    The ceiling at a moment is the principal still owed, plus interest at the highest rate over the real time elapsed,
-   plus the late-fee cap, plus those fees. It is kept exact across part repayments by a running interest bound that
+   plus the late-fee cap, plus those fees. It is kept across part repayments by a running interest bound that
    is stamped whenever the principal still owed changes. Interest this lien has itself paid may be subtracted,
    counted once, and nothing else. It reads only block time, so a pause, a sequencer outage and a late default need
-   no special case. The highest rate is one signed field for every kind of loan: a fixed loan's rate, or a floating
+   no special case.
+
+   **A loan with a full-term interest minimum owes that minimum before real time reaches it.** Where the signed terms
+   carry one, a settlement before the term's end charges interest over the longer of the time elapsed and the rest of
+   the term, and the rest of the term is measured to an end that a pause before that point has moved later. The vault
+   cannot see pause time, so for such a loan the interest of the current segment is bounded over the longer of the
+   real time elapsed since its stamp and **the whole signed term**. The whole term is never less than the minimum the
+   Diamond charges, because a pause can move the end by no more than the time that has passed. This bound is looser
+   than the debt after a part repayment made late in the term, by at most one term's interest on what is still owed,
+   and that slack is part of the difference between the debt and the ceiling that §3.7.8 states.
+
+   **The highest rate is one signed field for every kind of loan:** a fixed loan's rate, or a floating
    loan's highest possible rate (its cap level plus the margin, or with no cap its series' own ceiling plus the
    margin, [FloatingRateLoansDesign.md](FloatingRateLoansDesign.md) section 6). The Diamond refuses an opening unless
    that field equals the figure the one floating-rate library returns for those terms, and the vault reads only the
@@ -657,6 +669,10 @@ reaches a chain by fresh deploy, as every stage has.
   collateral, and collateral with no price cannot be taken before the lien's date. Across the lifecycle suites the
   ceiling is never below what the loan owes at any moment, including after a long pause and for a default run months
   late, and the date is never after the time the Diamond allows a default.
+- For a loan with a full-term interest minimum, the ceiling is never below what an early settlement charges: at
+  opening, after a part repayment, and after a pause that moved the term's end.
+- A backstop buyout hands over no more than the lender side's slice, only against the backstop vault's payment in
+  the same call, and replaces no position token.
 - A floating loan's signed highest rate equals the floating-rate library's figure for its terms, and an opening where
   the two differ is refused.
 - In a borrowing of several loans, a liquidation of one loan can take nothing from another loan's lien, and a draw
@@ -746,7 +762,16 @@ considered are stated with it. The build notes for Stage B3 record the details t
 - **The receive hooks** accept the owner's own send, with or without a commitment; a genuine vault (a custody move, a
   consolidation); the vault's own listing escrow and the rental return; and a swap adapter's output, measured as
   today. Anything else is refused, and the build notes list each delivery today's routes make that is refused.
-- **The backstop's buyout** is a purchase from the backstop vault, at its address fixed in the vault code.
+- **The backstop's buyout** is not a purchase of §3.7.5. It replaces no position token and the loan ends with it:
+  the backstop takes the lender side's slice of collateral that is in fallback custody, and the lender side's holder
+  is paid cash. It is therefore a forced sale of that slice with the backstop vault as the buyer, at its address
+  fixed in the vault code. The backstop vault pays the lender side's holder's vault, and the borrower's vault hands
+  over the lender side's slice, as the lien's fallback row records it and no more, only against the proof of that
+  payment in the same call. The payment is no less than the vault's own outer floor for a forced sale (the price
+  guard's value of the slice, less the widest slippage the settings allow), and the Diamond's par check stays the
+  tighter rule. The slice counts toward the ceiling like any collateral that reaches the lender side.
+  *Alternative considered:* mapping it onto a purchase of the lender's position, which would need a replacement
+  token for a position that ends in the same call.
 - **A buyer's payment for a registered order** is recorded by the vault in the fill callback, measured and held for
   the `ref`. The price leg names the vault, not the Diamond.
 - **Still to be measured by the build:** the gas of a lien change that moves no tokens, of the receipt call, of the
