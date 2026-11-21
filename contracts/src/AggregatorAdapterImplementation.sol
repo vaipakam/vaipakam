@@ -137,11 +137,14 @@ interface IVaipakamIntentSurface {
 
     function paused() external view returns (bool);
 
-    /// @dev #3734 — the Terms standing; for this adapter, its principal's.
-    function isTermsCurrent(address wallet) external view returns (bool);
+    /// @dev #3734 / #3864 — whether a new position may open: the network is
+    ///      open and the Terms standing (for this adapter, its principal's)
+    ///      is current.
+    function mayOpen(address wallet) external view returns (bool);
 
-    /// @dev #3734 — reverts TermsNotAccepted naming this adapter's principal.
-    function requireCurrentTerms(address wallet) external view;
+    /// @dev #3734 / #3864 — reverts NetworkClosing while the network is
+    ///      closing, else TermsNotAccepted naming this adapter's principal.
+    function requireMayOpen(address wallet) external view;
 
     function getAggregatorAdapterVersion(address adapter)
         external
@@ -470,19 +473,20 @@ contract AggregatorAdapterImplementation is
     /// @dev Gate to the single authorized principal, then pull + mint via OZ,
     ///      then deploy the pulled assets into the standing intent.
     /// @inheritdoc ERC4626Upgradeable
-    /// @dev #3734 — a deposit is new lending: while the principal is not
-    ///      current on the Terms it is refused with the Diamond's
+    /// @dev #3734 / #3864 — a deposit is new lending: while the network is
+    ///      closing it is refused with the Diamond's `NetworkClosing(since)`,
+    ///      and while the principal is not current on the Terms with
     ///      `TermsNotAccepted(principal, version)`, ahead of the limit check
     ///      (whose `maxDeposit` is 0 then, as the standard requires).
     function deposit(uint256 assets, address receiver) public override returns (uint256) {
-        _requireTermsForNewLending();
+        _requireMayOpenForNewLending();
         return super.deposit(assets, receiver);
     }
 
     /// @inheritdoc ERC4626Upgradeable
     /// @dev #3734 — as {deposit}.
     function mint(uint256 shares, address receiver) public override returns (uint256) {
-        _requireTermsForNewLending();
+        _requireMayOpenForNewLending();
         return super.mint(shares, receiver);
     }
 
@@ -752,9 +756,10 @@ contract AggregatorAdapterImplementation is
                 .isSanctionedAddress(authorizedPrincipal) &&
                 !IVaipakamIntentSurface(diamond).isSanctionedAddress(msg.sender) &&
                 !_belowMandatoryFloor() &&
-                // #3734 — the re-fund is new lending, so it needs the
-                // principal current on the Terms; the claim itself never does.
-                IVaipakamIntentSurface(diamond).isTermsCurrent(address(this));
+                // #3734 / #3864 — the re-fund is new lending, so it needs the
+                // network open and the principal current on the Terms; the
+                // claim itself never does.
+                IVaipakamIntentSurface(diamond).mayOpen(address(this));
             if (gatesOpen) {
                 IERC20(lend).forceApprove(diamond, recovered);
                 try
@@ -894,8 +899,9 @@ contract AggregatorAdapterImplementation is
         // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
         // reverts), so advertise 0.
         if (d.isSanctionedAddress(authorizedPrincipal)) return false;
-        // #3734 — funding is new lending: the principal must be current.
-        if (!d.isTermsCurrent(address(this))) return false;
+        // #3734 / #3864 — funding is new lending: the network must be open
+        // and the principal current on the Terms.
+        if (!d.mayOpen(address(this))) return false;
         if (!d.getLenderIntent(address(this), asset(), collateralAsset, LibVaipakam.PROTOCOL_INTENT_SLOT).active) {
             return false;
         }
@@ -905,14 +911,15 @@ contract AggregatorAdapterImplementation is
         return true;
     }
 
-    /// @dev #3734 — refuse new lending, naming the principal, while the
-    ///      principal is not current on the Terms. A pause or a version below
-    ///      the mandatory floor keeps its own refusal, so it is left to the
-    ///      usual path.
-    function _requireTermsForNewLending() private view {
+    /// @dev #3734 / #3864 — refuse new lending while the network is closing
+    ///      (NetworkClosing), else while the principal is not current on the
+    ///      Terms (naming the principal). A pause or a version below the
+    ///      mandatory floor keeps its own refusal, so it is left to the usual
+    ///      path.
+    function _requireMayOpenForNewLending() private view {
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
         if (_belowMandatoryFloor() || d.paused()) return;
-        d.requireCurrentTerms(address(this));
+        d.requireMayOpen(address(this));
     }
 
     /// @dev True when a mandatory upgrade floor is set and this adapter is below

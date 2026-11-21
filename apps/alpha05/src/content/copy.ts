@@ -3652,6 +3652,7 @@ export const copy = {
     codeGuard: B('a maker’s price-move guard refuses it now.'),
     codeFresh: B('one of them was posted or changed moments ago; it can be matched shortly.'),
     codeTermsNotAccepted: B('one of the two makers has not accepted the Terms of Service in force on this network.'),
+    codeNetworkClosing: B('this network is closing, so no new loan may start on it.'),
     codeOther: B('reason code {{code}}.'),
     whySummary: B('How a match works'),
     why: C(
@@ -5627,6 +5628,7 @@ export const copy = {
       RateReferenceUnavailable: A("This offer's rate follows the market reference, and that reference cannot be read for this term now, so it cannot be taken. It may clear later."),
       RateReferenceUnusual: A("This offer's rate follows the market reference, and the market is unusual now, so an offer for a term over 30 days cannot be taken. It may clear later."),
       RateRangeEmpty: A("This offer's rate follows the market reference, which has moved past the offer's own limit, so no rate is acceptable now. It may clear later."),
+      NetworkClosing: A('This network is closing, so no new loan may start on it. Loans already open run to their own end, and repaying, claiming and withdrawing stay open.'),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
       // OFF-60 — a signed order's own refusals, reported only by the
       // protocol's preview of a signed order's fill (#3552).

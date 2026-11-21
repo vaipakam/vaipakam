@@ -4827,18 +4827,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = bytes4(keccak256("MAX_BATCH_IDS()"));
     }
 
-    /// Phase 4.1 / #3734 — Terms of Service: acceptance (own transaction or
-    /// signature), announced versions, and the rule every opening step
-    /// self-calls (`requireCurrentTerms`). Nothing is checked while no
-    /// version is in force (the default at deploy).
+    /// Phase 4.1 / #3734 / #3864 — Terms of Service: acceptance (own
+    /// transaction), announced versions, the network's closing switch, and
+    /// the opening rule every opening step self-calls (`requireMayOpen`; the
+    /// Terms part alone is `requireCurrentTerms`). Nothing is checked while
+    /// no version is in force and the network is open (the default at deploy).
     function _getLegalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](22);
         s[0] = LegalFacet.acceptTerms.selector;
         s[1] = LegalFacet.announceTos.selector;
         s[2] = LegalFacet.withdrawTosAnnouncement.selector;
         s[3] = LegalFacet.requireCurrentTerms.selector;
         s[4] = LegalFacet.isTermsCurrent.selector;
-        s[5] = LegalFacet.termsBlocker.selector;
+        s[5] = LegalFacet.openingBlocker.selector;
         s[6] = LegalFacet.hasAcceptedCurrentTerms.selector;
         s[7] = LegalFacet.getCurrentTos.selector;
         s[8] = LegalFacet.getAnnouncedTos.selector;
@@ -4851,5 +4852,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[15] = LegalFacet.getTosVersionInForceAt.selector;
         s[16] = LegalFacet.getUserAcceptedTosVersions.selector;
         s[17] = bytes4(keccak256("MAX_TOS_WINDOW()"));
+        s[18] = LegalFacet.requireMayOpen.selector;
+        s[19] = LegalFacet.mayOpen.selector;
+        s[20] = LegalFacet.setNetworkClosing.selector;
+        s[21] = LegalFacet.getNetworkClosing.selector;
     }
 }

@@ -315,7 +315,7 @@ contract LenderIntentFacet is
         LibTiming.requireDeadline(validUntil);
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibProtectedAccount.requireCanOpen(msg.sender);
-        LibTerms.requireCurrent(msg.sender); // #3734
+        LibTerms.requireMayOpen(msg.sender); // #3734 / #3864
 
         // Mandatory risk/terms consent — same gate as every offer-create path
         // (`RiskAndTermsConsentRequired`), captured once for the standing intent.
@@ -520,7 +520,7 @@ contract LenderIntentFacet is
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibProtectedAccount.requireCanOpen(msg.sender);
-        LibTerms.requireCurrent(msg.sender); // #3734
+        LibTerms.requireMayOpen(msg.sender); // #3734 / #3864
         if (amount == 0) revert LenderIntentInvalidBounds();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot].active) {
@@ -787,6 +787,11 @@ contract LenderIntentFacet is
     /// @param  loanId The repaid intent loan to roll.
     function rollIntentLoan(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #3864 — the roll re-commits the proceeds as the slot's lending
+        // capital, a commitment to a new position, so a closing network
+        // refuses it (the owner claims normally instead). The closing part
+        // only: the roll has never asked the Terms.
+        LibTerms.requireNetworkOpen(s);
         LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
         if (io.owner == address(0)) revert LenderIntentLoanNotRollable();
 
@@ -999,6 +1004,11 @@ contract LenderIntentFacet is
     /// @param  loanId The open intent loan whose held payments to re-commit.
     function recommitHeldToIntent(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #3864 — re-committing held payments to the slot commits them to
+        // its future lending, so a closing network refuses it (the payments
+        // stay held for the position holder's claim). The closing part only:
+        // the re-commit has never asked the Terms.
+        LibTerms.requireNetworkOpen(s);
         LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
         if (io.owner == address(0)) revert LenderIntentLoanNotRollable();
         LibVaipakam._assertNotSanctioned(io.owner);

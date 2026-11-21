@@ -199,7 +199,7 @@ contract TermsGateTest is SetupTest {
         vm.prank(borrower);
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
         assertFalse(OfferCancelFacet(address(diamond)).getOffer(offerId).accepted, "still on the book");
-        (address w, uint32 v) = _l().termsBlocker(lender, borrower);
+        (, address w, uint32 v) = _l().openingBlocker(lender, borrower);
         assertEq(w, lender);
         assertEq(v, 2);
 

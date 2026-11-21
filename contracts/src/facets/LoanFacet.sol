@@ -241,11 +241,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         if (!isLenderSaleVehicle && offer.assetType == LibVaipakam.AssetType.ERC20) {
             LibPriceGuard.requireNotRatePricedLending(offer.lendingAsset);
         }
-        // #3734 — both parties of a new loan must have accepted the Terms in
-        // force, whichever route opens it. A lender-sale vehicle's creator is
+        // #3734 / #3864 — the opening rule, whichever route opens a new loan:
+        // the network is open, and both parties have accepted the Terms in
+        // force. A lender-sale vehicle's creator is
         // the exiting lender, who is leaving, so only its buyer is asked.
-        if (!isLenderSaleVehicle) LibTerms.requireCurrent(offer.creator);
-        LibTerms.requireCurrent(acceptor);
+        if (!isLenderSaleVehicle) LibTerms.requireMayOpen(offer.creator);
+        LibTerms.requireMayOpen(acceptor);
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send

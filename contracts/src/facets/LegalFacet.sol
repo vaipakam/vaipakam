@@ -10,10 +10,11 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
  * @title LegalFacet
  * @author Vaipakam Developer Team
  * @notice Terms of Service: which versions are in force, which wallets have
- *         accepted which version, and (#3734) the rule every new position
- *         passes: a wallet that takes on a new position must be current on
- *         the Terms. A wallet that only reduces or leaves a position is never
- *         asked, and a loan always settles.
+ *         accepted which version, the network's closing switch (#3864), and
+ *         the rule every new position passes: the network is open, and the
+ *         wallet taking on the position is current on the Terms (#3734). A
+ *         wallet that only reduces or leaves a position is never asked, and a
+ *         loan always settles.
  *
  * @dev Accepting. A wallet accepts only by its own paid transaction
  *      ({acceptTerms}, `msg.sender` is the wallet; it also works as the
@@ -55,9 +56,39 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
  *      is its principal's, who accepts with its own wallet before the adapter
  *      can be created or take new positions.
  *
- *      The rule lives once, in `LibTerms`; {requireCurrentTerms} is its one
- *      runtime host, which the opening steps self-call. Nothing here is
- *      pause-gated: a wallet can accept while the protocol is paused.
+ *      The opening rule (#3864). Every step that commits a wallet's money or
+ *      standing consent to a new position asks ONE question with two parts:
+ *      the network is open ({setNetworkClosing} is off), then the wallet is
+ *      current on the Terms. The rule lives once, in `LibTerms`;
+ *      {requireMayOpen} is its one runtime host, which the opening steps
+ *      self-call: loan creation (both parties), the two position migrations
+ *      in `LibLoan` (a lender sale or takeover, an obligation handover),
+ *      posting an offer (`OfferBookFacet`; a sale listing is exempt from the
+ *      Terms part only, and the closing refusal reaches its fill at loan
+ *      creation), setting and funding a standing-intent slot, and the
+ *      in-place extension (both holders). An aggregator adapter asks it
+ *      through {requireMayOpen} / {mayOpen}. The previews ask
+ *      {openingBlocker}, which reports the closing state first.
+ *      Two named exceptions ask one part alone:
+ *      - setting standing instructions on a loan asks the Terms part alone
+ *        ({requireCurrentTerms}): a top-up, an interest payment and a
+ *        repayment at the due date all help a loan end, so a closing network
+ *        leaves it open;
+ *      - the standing-intent slot's re-commit of held payments
+ *        (`LenderIntentFacet.recommitHeldToIntent`) and its roll of a repaid
+ *        loan (`rollIntentLoan`) ask the closing part alone
+ *        (`LibTerms.requireNetworkOpen`): each commits money to the slot's
+ *        future lending, and neither asked the Terms before.
+ *      Nothing else here is pause-gated: a wallet can accept, and the switch
+ *      can move, while the protocol is paused.
+ *
+ *      The closing switch (#3864). {setNetworkClosing}(true) — ADMIN_ROLE or
+ *      PAUSER_ROLE, the quick hands — starts Closing; (false) — ADMIN_ROLE or
+ *      UNPAUSER_ROLE, the slower ones — reopens. The shape is the per-asset
+ *      pause's. It stops growth without stopping a repayment, a claim, a
+ *      liquidation or a default, and moves no deadline. Every position
+ *      already open runs to its own end; a plain transfer of a position token
+ *      passes no opening site and is never refused by it.
  */
 contract LegalFacet is DiamondPausable, DiamondAccessControl {
     // ─── Constants ─────────────────────────────────────────────────────────
@@ -107,6 +138,12 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     ///         counted from `effectiveAt` whether or not this was emitted).
     /// @custom:event-category informational/governance
     event TosVersionInForce(uint32 indexed version, bytes32 hash, uint64 effectiveAt, uint32 minVersion, bool newVersion);
+
+    /// @notice #3864 — the closing switch moved. `closing` true: the network
+    ///         has been closing since `since` (on a repeat switch-on, still the
+    ///         first time); false: it is open again and `since` is 0.
+    /// @custom:event-category informational/governance
+    event NetworkClosingSet(bool closing, uint64 since);
 
     // ─── Errors ────────────────────────────────────────────────────────────
 
@@ -242,42 +279,113 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
         _clearAnnouncement(s);
     }
 
-    // ─── The rule ──────────────────────────────────────────────────────────
+    // ─── The closing switch (#3864) ──────────────────────────────────────
 
-    /// @notice Revert {LibTerms.TermsNotAccepted} unless `wallet` may take on
-    ///         a new position as far as the Terms go. The one runtime host of
-    ///         the rule; every opening step self-calls it.
-    function requireCurrentTerms(address wallet) external view {
+    /**
+     * @notice Start or end this network's Closing state. While closing, no
+     *         step may commit a wallet's money or standing consent to a new
+     *         position here ({LibTerms.NetworkClosing}); every position
+     *         already open runs to its own end on its own terms.
+     * @dev Switching on: ADMIN_ROLE or PAUSER_ROLE. Switching off: ADMIN_ROLE
+     *      or UNPAUSER_ROLE — the per-asset pause's asymmetry, so a fast key
+     *      cannot undo its own switch. Idempotent: a repeat switch-on keeps the
+     *      first `since`, a repeat switch-off stays open; each call emits
+     *      {NetworkClosingSet} with the state after it. Not pause-gated.
+     * @param closing True to start Closing, false to reopen.
+     */
+    function setNetworkClosing(bool closing) external {
+        bytes32 second = closing ? LibAccessControl.PAUSER_ROLE : LibAccessControl.UNPAUSER_ROLE;
+        if (
+            !LibAccessControl.hasRole(LibAccessControl.ADMIN_ROLE, msg.sender)
+                && !LibAccessControl.hasRole(second, msg.sender)
+        ) revert LibAccessControl.AccessControlUnauthorizedAccount(msg.sender, second);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (bool current, uint32 needed) = LibTerms.isCurrent(s, wallet);
-        if (!current) revert LibTerms.TermsNotAccepted(LibTerms.subject(s, wallet), needed);
+        uint64 since = s.networkClosingSince;
+        if (closing && since == 0) since = uint64(block.timestamp);
+        if (!closing) since = 0;
+        s.networkClosingSince = since;
+        emit NetworkClosingSet(closing, since);
     }
 
-    /// @notice Whether `wallet` may take on a new position as far as the
-    ///         Terms go: true when no version is in force, or when it accepted
-    ///         a version in force from the minimum to the latest.
+    /// @notice Whether this network is closing, and since when (0 = open).
+    function getNetworkClosing() external view returns (bool closing, uint64 since) {
+        since = LibTerms.closingSince(LibVaipakam.storageSlot());
+        closing = since != 0;
+    }
+
+    // ─── The rule ──────────────────────────────────────────────────────────
+
+    /// @notice Revert unless `wallet` may take on a new position now: first
+    ///         {LibTerms.NetworkClosing} while the network is closing (the
+    ///         backstop vault included), then {LibTerms.TermsNotAccepted}
+    ///         unless `wallet` is current on the Terms. The one runtime host
+    ///         of the opening rule; every opening step self-calls it.
+    function requireMayOpen(address wallet) external view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibTerms.requireNetworkOpen(s);
+        _requireTerms(s, wallet);
+    }
+
+    /// @notice The Terms part alone: revert {LibTerms.TermsNotAccepted}
+    ///         unless `wallet` is current, whatever the closing state. For the
+    ///         one opening-adjacent step a closing network leaves open
+    ///         (setting standing instructions on a loan); every other opening
+    ///         step asks {requireMayOpen}.
+    function requireCurrentTerms(address wallet) external view {
+        _requireTerms(LibVaipakam.storageSlot(), wallet);
+    }
+
+    /// @notice Whether `wallet` may take on a new position now: the network
+    ///         is open and `wallet` is current on the Terms ({requireMayOpen}
+    ///         as a bool).
+    function mayOpen(address wallet) external view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.networkClosingSince != 0) return false;
+        (bool current,) = LibTerms.isCurrent(s, wallet);
+        return current;
+    }
+
+    /// @notice Whether `wallet` is current on the Terms, whatever the closing
+    ///         state: true when no version is in force, or when it accepted a
+    ///         version in force from the minimum to the latest.
     function isTermsCurrent(address wallet) external view returns (bool) {
         (bool current,) = LibTerms.isCurrent(LibVaipakam.storageSlot(), wallet);
         return current;
     }
 
-    /// @notice The first of `a`, `b` that is not current, and the latest
-    ///         version it should accept; (0, 0) when both are. For an
-    ///         aggregator adapter, the wallet returned is its principal. For the
-    ///         previews, which report a refusal before a transaction is sent.
-    ///         A zero address is skipped.
-    function termsBlocker(address a, address b) external view returns (address wallet, uint32 version) {
+    /// @notice Why a new position between `a` and `b` (0 = skip) would be
+    ///         refused now, in the opening rule's order, for the previews,
+    ///         which report a refusal before a transaction is sent.
+    /// @return closingSince Non-zero when the network is closing (the first
+    ///                      reason; `wallet` and `version` are then 0).
+    /// @return wallet       Else the first of `a`, `b` not current on the
+    ///                      Terms (an aggregator adapter's principal for an
+    ///                      adapter), 0 when both are.
+    /// @return version      The latest version `wallet` should accept.
+    function openingBlocker(address a, address b)
+        external
+        view
+        returns (uint64 closingSince, address wallet, uint32 version)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        closingSince = s.networkClosingSince;
+        if (closingSince != 0) return (closingSince, address(0), 0);
         bool current;
         if (a != address(0)) {
             (current, version) = LibTerms.isCurrent(s, a);
-            if (!current) return (LibTerms.subject(s, a), version);
+            if (!current) return (0, LibTerms.subject(s, a), version);
         }
         if (b != address(0)) {
             (current, version) = LibTerms.isCurrent(s, b);
-            if (!current) return (LibTerms.subject(s, b), version);
+            if (!current) return (0, LibTerms.subject(s, b), version);
         }
-        return (address(0), 0);
+        return (0, address(0), 0);
+    }
+
+    /// @dev Revert {LibTerms.TermsNotAccepted} unless `wallet` is current.
+    function _requireTerms(LibVaipakam.Storage storage s, address wallet) private view {
+        (bool current, uint32 needed) = LibTerms.isCurrent(s, wallet);
+        if (!current) revert LibTerms.TermsNotAccepted(LibTerms.subject(s, wallet), needed);
     }
 
     // ─── Views ─────────────────────────────────────────────────────────────

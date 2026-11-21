@@ -2037,6 +2037,7 @@
     "L|vaipakam|761|1|bool|instantTakerActive",
     "L|vaipakam|761|2|bool|instantRateFarAck",
     "L|vaipakam|761|3|uint16|backstopDailyLimitBps",
+    "L|vaipakam|765|0|uint64|networkClosingSince",
     "L|vaipakam|7|0|address|retiredNumeraireChainlinkDenominator",
     "L|vaipakam|80|0|address|retiredSequencerUptimeFeed",
     "L|vaipakam|85|0|uint256|activeLoansCount",

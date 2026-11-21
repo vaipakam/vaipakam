@@ -132,6 +132,24 @@
   },
   {
     "type": "function",
+    "name": "getNetworkClosing",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "closing",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "since",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTosVersionInForceAt",
     "inputs": [
       {
@@ -308,6 +326,59 @@
   },
   {
     "type": "function",
+    "name": "mayOpen",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "openingBlocker",
+    "inputs": [
+      {
+        "name": "a",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "b",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "closingSince",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "publishTos",
     "inputs": [
       {
@@ -339,32 +410,29 @@
   },
   {
     "type": "function",
-    "name": "termsBlocker",
+    "name": "requireMayOpen",
     "inputs": [
-      {
-        "name": "a",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "b",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
       {
         "name": "wallet",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ],
+    "outputs": [],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setNetworkClosing",
+    "inputs": [
+      {
+        "name": "closing",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -372,6 +440,25 @@
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "NetworkClosingSet",
+    "inputs": [
+      {
+        "name": "closing",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "since",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -559,6 +646,17 @@
     "type": "error",
     "name": "InvalidTosVersion",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NetworkClosing",
+    "inputs": [
+      {
+        "name": "since",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",

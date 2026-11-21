@@ -9058,6 +9058,14 @@ library LibVaipakam {
         ///      Written only by `LibBackstopDailyLimit.syncPair`. Appended —
         ///      append-only.
         mapping(address => mapping(address => uint256)) backstopPairCapital;
+        /// @dev #3864 — when this network began closing (0 = open). While it
+        ///      is non-zero no step may commit a wallet's money or standing
+        ///      consent to a new position here; every position already open
+        ///      runs to its own end. Written only by `LegalFacet`'s switch
+        ///      (`setNetworkClosing`), read by the opening rule's host
+        ///      (`LegalFacet.requireMayOpen`, through `LibTerms`). Appended —
+        ///      append-only.
+        uint64 networkClosingSince;
     }
 
     /// @notice #3849 — what the backstop lent in one lending asset on one UTC

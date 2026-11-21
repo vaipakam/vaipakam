@@ -551,11 +551,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address lenderNftOwner = LibPositionNFT.ownerOf(loan.lenderTokenId);
         LibVaipakam._assertNotSanctioned(borrowerNftOwner);
         LibVaipakam._assertNotSanctioned(lenderNftOwner);
-        // #3734 — an extension starts a new term, so both sides must have
+        // #3734 / #3864 — an extension starts a new term, so it asks the
+        // opening rule (the network is open) and both sides must have
         // accepted the Terms in force: the wallet that manages each position
         // (its holder, or the holder's replacement once one retired it).
-        LibTerms.requireCurrent(LibProtectedAccount.manager(borrowerNftOwner));
-        LibTerms.requireCurrent(LibProtectedAccount.manager(lenderNftOwner));
+        LibTerms.requireMayOpen(LibProtectedAccount.manager(borrowerNftOwner));
+        LibTerms.requireMayOpen(LibProtectedAccount.manager(lenderNftOwner));
 
         // ── Both-side cap consent + staleness fence ──────────────────
         LibVaipakam.AutoExtendCaps storage borrowerCaps =

@@ -563,13 +563,25 @@ runs half of it on old code:
   refuse a Diamond that does not already route `newLoanInitLtvCapBps`
   (`PredatesCollateralConcentration`).
 
-- **LegalFacet + every facet that opens a position (#3734).** The Terms
-  rule lives once, in `LibTerms`, and its one runtime host is
-  `LegalFacet.requireCurrentTerms`: LoanFacet (both parties), the two
-  position migrations in `LibLoan` (every facet inlining them), OfferBookFacet
-  (posting, sale listings exempt), LenderIntentFacet,
-  StandingInstructionFacet and AutoLifecycleFacet (the in-place extension)
-  self-call it, and the previews ask `termsBlocker`. A caller refreshed
+- **LegalFacet + every facet that opens a position (#3734, #3864).** The
+  opening rule lives once, in `LibTerms`, as ONE question with two parts:
+  the network is open (the closing switch, `LegalFacet.setNetworkClosing`,
+  is off; refusal `NetworkClosing(since)`, which binds the backstop vault
+  too), then the wallet is current on the Terms (`TermsNotAccepted`). Its
+  one runtime host is `LegalFacet.requireMayOpen`: LoanFacet (both
+  parties), the two position migrations in `LibLoan` (every facet inlining
+  them), OfferBookFacet (posting; a sale listing asks the closing part
+  only), LenderIntentFacet (set and fund) and AutoLifecycleFacet (the
+  in-place extension) self-call it, and the previews ask `openingBlocker`,
+  which reports the closing state first. **Two named exceptions ask one
+  part alone:** StandingInstructionFacet's `setStandingInstructions` asks
+  `requireCurrentTerms` (the Terms part only: its runs help a loan end, so
+  a closing network leaves it open), and LenderIntentFacet's
+  `recommitHeldToIntent` / `rollIntentLoan` ask
+  `LibTerms.requireNetworkOpen` (the closing part only, inlined; they never
+  asked the Terms). **`requireCurrentTerms` is no longer the opening
+  host and `termsBlocker` is gone** (renamed `openingBlocker`, with the
+  closing state as its first return). A caller refreshed
   without the host reverts `FunctionDoesNotExist` on every opening step (a
   hard revert, never an unchecked position); a hand-built test Diamond adds
   it with `LibTestTermsCut.withTermsHost`. A loan's `startTime` and

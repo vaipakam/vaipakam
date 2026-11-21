@@ -443,8 +443,11 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert IVaipakamErrors.LoanNotActive();
         LibAuth.requirePositionManager(loan.borrowerTokenId);
-        // #3734 — setting a standing instruction is a standing commitment.
-        LibTerms.requireCurrent(msg.sender);
+        // #3734 — setting a standing instruction is a standing commitment, so
+        // it asks the Terms. #3864 — it asks the Terms part ALONE: a top-up,
+        // an interest payment and a repayment at the due date all help a loan
+        // end, so a closing network leaves this open (the one exception).
+        LibTerms.requireCurrentTerms(msg.sender);
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             revert StandingInstructionNotOffered(loanId, INSTRUCTION_REPAY_AT_DUE);
         }

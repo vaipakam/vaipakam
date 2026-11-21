@@ -224,7 +224,9 @@ contract IntentPreviewFacet {
                     ? LibOfferMatch.MatchError.CadenceNotAdmitted
                     : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
                         ? LibOfferMatch.MatchError.TermsNotAccepted
-                        : LibOfferMatch.MatchError.PriceGuardRefused;
+                        : refusal == OfferPriceGuardFacet.OriginationRefusal.NetworkClosing
+                            ? LibOfferMatch.MatchError.NetworkClosing
+                            : LibOfferMatch.MatchError.PriceGuardRefused;
                 res.ok = false;
                 return res;
             }

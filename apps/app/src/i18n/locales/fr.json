@@ -2425,6 +2425,7 @@
         "rateReferenceUnavailable": "Le taux de cette offre suit la référence du marché, et cette référence ne peut pas être lue pour la durée de ce prêt pour le moment ; l’offre ne peut donc pas être acceptée. Cela peut se résoudre plus tard. Rien n’a été envoyé.",
         "rateReferenceUnusual": "Le taux de cette offre suit la référence du marché, et le marché est inhabituel en ce moment ; une offre sur plus de 30 jours ne peut donc pas être acceptée. Cela peut se résoudre plus tard. Rien n’a été envoyé.",
         "rateRangeEmpty": "Le taux de cette offre suit la référence du marché, qui a dépassé la limite de taux propre à l’offre ; aucun taux n’est donc acceptable pour le moment. Cela peut se résoudre plus tard. Rien n’a été envoyé.",
+        "networkClosing": "Cette offre ne peut pas être prise pour le moment : ce réseau est en cours de fermeture, aucun nouveau prêt ne peut donc y commencer. Les prêts déjà ouverts vont jusqu’à leur propre terme, et rembourser, réclamer et retirer continuent de fonctionner. Rien n’a été envoyé.",
         "unknown": "Le protocole n’accepte pas cette offre pour le moment. Rien n’a été envoyé — actualisez et réessayez, ou revenez un peu plus tard."
       },
       "termsNotAccepted": "Vous devez accepter les conditions de Vaipakam avant de faire cela. Ouvrez la page Accueil et la demande vous sera faite une seule fois ; rembourser, réclamer et retirer continuent de fonctionner dans tous les cas.",

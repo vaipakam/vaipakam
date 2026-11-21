@@ -115,7 +115,7 @@ library LibOfferMatch {
         // `CollectionParentNotFillable(lenderOfferId)`. Appended last.
         CollectionParent,
         // #3734 — a party of the loan has not accepted the Terms in force
-        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.openingBlocker` names it.
         // Reported by the match and intent previews. Appended.
         TermsNotAccepted,
         // #3635 A — a maker's rate limit is linked to the rate reference and
@@ -125,7 +125,12 @@ library LibOfferMatch {
         // (`ReferenceUnusual`). `matchOffers` reverts
         // `RateLinkUnavailable(refusal)`. Transient. Appended.
         ReferenceUnavailable,
-        ReferenceUnusual
+        ReferenceUnusual,
+        // #3864 — the network is closing (`LibTerms.NetworkClosing`): no new
+        // loan opens here, whatever the makers' Terms. Reported by the match
+        // and intent previews before `TermsNotAccepted`; `matchOffers`
+        // reverts `NetworkClosing(since)`. Appended.
+        NetworkClosing
     }
 
     /// @notice Structured return from `previewMatch`. Bots check

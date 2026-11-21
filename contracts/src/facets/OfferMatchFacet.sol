@@ -125,7 +125,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 st.offers[lenderOfferId].creator,
                 st.offers[borrowerOfferId].creator
             );
-            if (r == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted) {
+            if (r == OfferPriceGuardFacet.OriginationRefusal.NetworkClosing) {
+                result.errorCode = LibOfferMatch.MatchError.NetworkClosing;
+            } else if (r == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted) {
                 result.errorCode = LibOfferMatch.MatchError.TermsNotAccepted;
             } else if (r == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted) {
                 result.errorCode = LibOfferMatch.MatchError.CadenceNotAdmitted;

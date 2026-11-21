@@ -3466,9 +3466,9 @@ contract HelperTest {
     }
 
     /// @dev Mirrors `_getLegalSelectors` at
-    ///      `contracts/script/DeployDiamond.s.sol` (12-entry list, #3734).
-    ///      ToS acceptance + admin-side current-ToS pointer
-    ///      management.
+    ///      `contracts/script/DeployDiamond.s.sol` (#3734, #3864): ToS
+    ///      acceptance, admin-side version management, the closing switch
+    ///      and the opening rule's host.
     function getLegalFacetSelectors()
         public
         pure

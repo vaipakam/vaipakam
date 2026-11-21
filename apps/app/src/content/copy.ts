@@ -6351,6 +6351,10 @@ const copySource = {
         'This offer’s rate follows the market reference, and the market is unusual right now, so an offer for a term over 30 days can’t be taken. It may clear later. Nothing was sent.',
       rateRangeEmpty:
         'This offer’s rate follows the market reference, which has moved past the offer’s own rate limit, so no rate is acceptable right now. It may clear later. Nothing was sent.',
+      // #3864 — the network is closing: no new position may open on it,
+      // whatever either side's Terms standing. Open loans run to their end.
+      networkClosing:
+        'This offer can’t be taken right now: this network is closing, so no new loan may start on it. Loans already open run to their own end, and repaying, claiming and withdrawing keep working. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
