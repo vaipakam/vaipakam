@@ -272,6 +272,9 @@ export interface DeploymentFacets {
   integratorFacet?: HexAddress;
   standingOfferCheckFacet?: HexAddress;
   referralFacet?: HexAddress;
+  lenderCashOutFacet?: HexAddress;
+  lenderAdvanceFacet?: HexAddress;
+  lenderSideFacet?: HexAddress;
   /** #3635 A / #3713 — the rate link and the warning band. */
   rateLinkFacet?: HexAddress;
   signedOfferFacet?: HexAddress;

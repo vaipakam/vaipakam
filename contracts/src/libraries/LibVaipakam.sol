@@ -1682,6 +1682,122 @@ library LibVaipakam {
         uint64 setAt;
     }
 
+    /// @notice #3760 — an Auto-lend slot owner's consent to advance on loans
+    ///         (LenderCashOutDesign §6.1). Its own record beside the slot,
+    ///         keyed like `lenderIntent`, cleared whenever the slot's terms
+    ///         are set again (the `InstantSlot` precedent), so a consent never
+    ///         outlives the terms it was given against.
+    /// @param consent     The slot advances on loans.
+    /// @param maxShareBps The largest share of a loan's outstanding principal
+    ///                    the slot advances, interest to the grace end
+    ///                    included (default 7,000; never above 8,500).
+    /// @param setAt       When the consent was given (the minimum-age rule).
+    struct AdvanceSlot {
+        bool consent;
+        uint16 maxShareBps;
+        uint64 setAt;
+    }
+
+    /// @notice #3760 — an advance against a lender position, kept BY LOAN
+    ///         (LenderCashOutDesign §6.5): the final claim retires the lender
+    ///         token while the advance may still be owed from it. Opened by
+    ///         `LenderAdvanceFacet`, then booked and paid only by
+    ///         `LenderSideFacet` (the host `LibLenderSide` self-calls).
+    /// @param slotOwner       The Auto-lend slot owner who advanced the money.
+    /// @param collateralAsset The collateral asset of the slot's key (the
+    ///                        loan's collateral asset); the lending asset is
+    ///                        the loan's principal asset.
+    /// @param slot            The slot index it came from.
+    /// @param open            True while anything is owed.
+    /// @param rateBps         The advance's fixed yearly rate, by time.
+    /// @param treasuryFeeBps  The treasury's cut of the advance's interest,
+    ///                        fixed at the advance's start.
+    /// @param openedAt        When the advance was taken.
+    /// @param accruedAt       When interest was last brought up to date.
+    /// @param advanced        The principal advanced at the start (gross,
+    ///                        before the initiation fee was taken from it).
+    /// @param principalOwed   Advance principal still owed.
+    /// @param interestOwed    Interest accrued and not yet paid.
+    /// @param setAside        Paid to the advance as the money arrived for the
+    ///                        position, and still in `custody`'s vault under the
+    ///                        advance's lien, for the slot owner. Interest has
+    ///                        stopped on it.
+    /// @param setAsideInterest The interest part of `setAside` (in the
+    ///                        principal asset), so its payout takes the
+    ///                        treasury's cut from the interest only.
+    /// @param setAsideAsset   The asset `setAside` is in: the principal asset,
+    ///                        or the collateral asset after an in-kind split.
+    /// @param custody         Whose vault holds `setAside` (the loan's stored
+    ///                        lender; consolidation leaves a locked lender
+    ///                        side where it is, so this does not move).
+    /// @param interestPaid    Interest booked as paid over the advance's life.
+    /// @param shortfall       What the loan's end left unpaid, stated at close.
+    /// @param finalBooked     The whole final lender claim the advance has been
+    ///                        booked against so far (0 = none yet), so a later
+    ///                        change to that claim books only its difference.
+    /// @param finalToAdvance  How much of that final claim went to the advance.
+    /// @param inKindSetAside  Collateral (in `collateralAsset`) a fallback's
+    ///                        in-kind split gave the advance, in `custody`'s
+    ///                        vault under the advance's lien for the slot owner.
+    /// @param inKindInterest  The part of `inKindSetAside` that stands for
+    ///                        interest, so its payout takes the treasury's cut
+    ///                        from the interest only.
+    /// @param heldElsewhere   Cash set aside for the slot owner in vaults
+    ///                        other than `custody` (a holder's own repayment
+    ///                        while the slot owner is flagged), listed by
+    ///                        vault in `advanceHolds`; their sum.
+    /// @param inKindRateNum   Collateral units per `inKindRateDen` principal
+    ///                        units: the rate an in-kind end of the loan is
+    ///                        split at. A fallback's own stored rate, or, for
+    ///                        a default that delivers collateral directly, the
+    ///                        rate read when the default wrote its claim.
+    ///                        `inKindRateDen` 0: no price (the advance takes
+    ///                        the whole slice).
+    /// @param inKindRateDen   See `inKindRateNum`.
+    /// @param inKindRateRead  The rate was read at a direct in-kind default
+    ///                        (not copied from a fallback), so a release of a
+    ///                        parked leg later splits at that same rate.
+    struct Advance {
+        address slotOwner;
+        address collateralAsset;
+        uint8 slot;
+        bool open;
+        uint16 rateBps;
+        uint16 treasuryFeeBps;
+        uint64 openedAt;
+        uint64 accruedAt;
+        uint256 advanced;
+        uint256 principalOwed;
+        uint256 interestOwed;
+        uint256 setAside;
+        uint256 setAsideInterest;
+        address setAsideAsset;
+        address custody;
+        uint256 interestPaid;
+        uint256 shortfall;
+        uint256 finalBooked;
+        uint256 finalToAdvance;
+        uint256 inKindSetAside;
+        uint256 inKindInterest;
+        uint256 heldElsewhere;
+        uint256 inKindRateNum;
+        uint256 inKindRateDen;
+        bool inKindRateRead;
+    }
+
+    /// @notice #3760 — cash set aside for an advance's slot owner in one
+    ///         vault other than the advance's `custody`, under the advance's
+    ///         lien there (LenderCashOutDesign §6.4: money is booked where it
+    ///         arrived, and interest stops on it then).
+    /// @param vault    Whose vault holds it.
+    /// @param amount   How much (in the loan's principal asset).
+    /// @param interest The interest part of `amount`.
+    struct AdvanceHold {
+        address vault;
+        uint256 amount;
+        uint256 interest;
+    }
+
     /// @dev #3328 — the kind of collateral set a collection offer names.
     ///      `None` marks an offer that is not a collection offer.
     enum CollateralSetKind {
@@ -2729,6 +2845,14 @@ library LibVaipakam {
         uint256 treasuryPrincipalDue;
         bool active;
         bool retryAttempted;
+        // #3760 — the collateral-per-principal rate the fallback priced its
+        // split at (`rateNum / rateDen`, LibFallback.Rate), recorded only when
+        // an advance is open on the loan, so the advance's in-kind share after
+        // the one retry uses the fallback's own rate. `rateDen == 0`: the
+        // fallback had no price (the advance then takes the whole lender
+        // slice, LenderCashOutDesign §6.6). Appended.
+        uint256 rateNum;
+        uint256 rateDen;
     }
 
     /**
@@ -9039,6 +9163,22 @@ library LibVaipakam {
         // rate is band-checked with the request's acknowledgement.
         bool instantTakerActive;
         bool instantRateFarAck; // Appended — append-only.
+        /// @dev #3760 — the advance against each loan's lender position, by
+        ///      loan. Opened by `LenderAdvanceFacet`, then written only by
+        ///      `LenderSideFacet`. Appended — append-only.
+        mapping(uint256 => Advance) advances;
+        /// @dev #3760 — each Auto-lend slot's consent to advance on loans,
+        ///      keyed like `lenderIntent`. Written only by
+        ///      `LenderAdvanceFacet.setAdvanceSlot` and cleared by
+        ///      `LenderIntentFacet.setLenderIntent` / `cancelLenderIntent`.
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => AdvanceSlot)))) advanceSlot;
+        /// @dev #3760 — the advance feature's own switch (off at deploy).
+        ///      Off refuses new advances; an open one still runs to its end.
+        bool advancesEnabled;
+        /// @dev #3760 — per loan, the advance's cash set aside in vaults other
+        ///      than its custody, by vault ({AdvanceHold}). Written only by
+        ///      `LenderSideFacet`. Appended — append-only.
+        mapping(uint256 => AdvanceHold[]) advanceHolds;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

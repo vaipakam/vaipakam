@@ -106,6 +106,53 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "takeoverInstantFor",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "incoming",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "takeoverPositionRefusal",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "InstantTakenOver",
     "inputs": [
@@ -221,6 +268,17 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AdvanceLocksPosition",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -359,11 +417,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InstantMarketDisabled",
-    "inputs": []
   },
   {
     "type": "error",
@@ -695,5 +748,10 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedCrossFacetCall",
+    "inputs": []
   }
 ]

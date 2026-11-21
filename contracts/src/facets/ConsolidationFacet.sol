@@ -83,6 +83,18 @@ contract ConsolidationFacet is
         );
     }
 
+    /// @notice #3760 — internal-only STRICT consolidation for an entry that
+    ///         needs the position consolidated before it may go on (the loan
+    ///         sale listing): `Tier1Strict` reverts on a flagged current
+    ///         holder, and the caller reads the result. The orchestrator is
+    ///         inlined once here instead of in the caller (the #658 pattern),
+    ///         so a facet near EIP-170 pays a few bytes for it.
+    /// @return result The {LibConsolidation.Result}, as a number.
+    function consolidateStrictInternal(uint256 loanId, bool isLenderSide) external returns (uint8 result) {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        return uint8(LibConsolidation.consolidateToHolder(loanId, isLenderSide, LibConsolidation.Ctx.Tier1Strict));
+    }
+
     /// @notice Consolidate the **borrower** (collateral) side of `loanId` into
     ///         the current borrower-NFT holder's vault.
     function consolidateCollateralToHolder(

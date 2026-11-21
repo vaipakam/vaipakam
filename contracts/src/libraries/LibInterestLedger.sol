@@ -387,6 +387,12 @@ library LibInterestLedger {
     /// @param holderNet   The holder's net part of the slice.
     /// @param parked      What the held balance received for the holder's part
     ///                    (principal included, so it may exceed `holderNet`).
+    /// @param kept        What the held store kept of `parked`: less where an
+    ///                    open advance on the position took its part first
+    ///                    (#3760). That part paid the holder's own advance, so
+    ///                    its share of the interest, in proportion, is the
+    ///                    holder's PAID, not parked: a later sale cannot turn
+    ///                    it into a seller claim.
     /// @param reserved    Whether the held credit sits under the active-held
     ///                    reservation (a frozen park) or not (a handover).
     function holderParked(
@@ -395,6 +401,7 @@ library LibInterestLedger {
         uint256 holderGross,
         uint256 holderNet,
         uint256 parked,
+        uint256 kept,
         bool reserved
     ) internal {
         if (holderNet == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
@@ -413,6 +420,13 @@ library LibInterestLedger {
             LibMetricsHooks.onInterestUndelivered(loan, holderGross - arrivedGross);
         }
         if (net == 0) return;
+        if (kept < parked) {
+            uint256 paidGross = (arrivedGross * (parked - kept)) / parked;
+            holderPaid(s, loan, paidGross);
+            arrivedGross -= paidGross;
+            net -= (net * (parked - kept)) / parked;
+            if (net == 0) return;
+        }
         LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
         l.parkedInterestNet += net;
         l.parkedInterestGross += arrivedGross;

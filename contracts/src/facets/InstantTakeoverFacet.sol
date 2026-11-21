@@ -21,6 +21,7 @@ import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibNewLoanRisk} from "../libraries/LibNewLoanRisk.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
@@ -110,10 +111,58 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
     {
         LibTiming.requireDeadline(validUntil);
+        _takeover(msg.sender, loanId, incoming, slot);
+    }
+
+    /**
+     * @notice #3760 — the takeover run by the Diamond for `caller`, as one
+     *         source of `LenderCashOutFacet.sellNow` (and its preview).
+     * @dev    `address(this)`-gated: only the cash-out door reaches it, after
+     *         taking the Diamond's reentrancy guard. `caller` is the door's
+     *         caller and is authorised exactly as on {takeoverInstant} (the
+     *         holder, or a keeper holding the holder's mandate). The body is
+     *         the one takeover, with every check.
+     */
+    function takeoverInstantFor(address caller, uint256 loanId, address incoming, uint8 slot)
+        external
+        whenNotPaused
+    {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        _takeover(caller, loanId, incoming, slot);
+    }
+
+    /**
+     * @notice Whether loan `loanId` can be taken over by any slot at all: the
+     *         instant market on, an instant-market loan with interest by
+     *         time, and nothing held for the lender position. Returns the
+     *         ABI-encoded refusal the takeover would raise, or empty.
+     * @dev    The ONE position-level rule: the takeover's admission
+     *         ({_requireAdmissible}, so the takeover and {previewTakeover})
+     *         reverts with it, and `LenderCashOutFacet.cashOptions` reads it
+     *         for a keeper, whose only "sell now" source is a takeover slot,
+     *         so the read and the execution cannot disagree.
+     */
+    function takeoverPositionRefusal(uint256 loanId) public view returns (bytes memory) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.instantCfg.enabled) {
+            return abi.encodeWithSelector(InstantMarketFacet.InstantMarketDisabled.selector);
+        }
+        if (!s.loanLentRecord[loanId].instant || s.loans[loanId].useFullTermInterest) {
+            return abi.encodeWithSelector(InstantLoanNotEligible.selector, loanId);
+        }
+        uint256 held = s.heldForLender[loanId];
+        if (held != 0) return abi.encodeWithSelector(InstantTakeoverHeld.selector, loanId, held);
+        return "";
+    }
+
+    /// @dev The takeover body. `caller` is who started it.
+    function _takeover(address caller, uint256 loanId, address incoming, uint8 slot) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        (address holder, , bool byKeeper) = _requireAdmissible(s, loan, loanId, msg.sender, incoming, slot);
-        if (byKeeper) LibServiceCapacity.chargeKeeper(); // one keeper action (#1219)
+        (address holder, , bool byKeeper) = _requireAdmissible(s, loan, loanId, caller, incoming, slot);
+        // One keeper action (#1219), charged to the keeper that started it,
+        // also when the cash-out door runs it through a self-call.
+        if (byKeeper) LibServiceCapacity.chargeKeeperFor(caller);
         // The position-move gate's own call also clears a stale sanctions
         // registry entry on a clean read, which the shared view only reads.
         LibFacet.crossFacetCall(
@@ -212,9 +261,13 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         address incoming,
         uint8 slot
     ) private view returns (address holder, address borrowerNow, bool byKeeper) {
-        if (!s.instantCfg.enabled) revert InstantMarketFacet.InstantMarketDisabled();
-        if (!s.loanLentRecord[loanId].instant || loan.useFullTermInterest) {
-            revert InstantLoanNotEligible(loanId);
+        {
+            bytes memory refusal = takeoverPositionRefusal(loanId);
+            if (refusal.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(refusal, 0x20), mload(refusal))
+                }
+            }
         }
         holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
         {
@@ -234,10 +287,6 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
                 loanId, actor, SaleExitVerdictFacet.SaleRoute.Direct
             );
-        }
-        {
-            uint256 held = s.heldForLender[loanId];
-            if (held != 0) revert InstantTakeoverHeld(loanId, held);
         }
         borrowerNow = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (incoming == holder || incoming == borrowerNow) revert InstantTakeoverSameParty(incoming);

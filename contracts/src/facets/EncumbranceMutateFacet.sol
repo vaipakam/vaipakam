@@ -434,13 +434,17 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///         exiting borrower-position holder on an obligation handover.
     ///         Called by `PrecloseFacet.transferObligationViaOffer` before it
     ///         re-anchors `loan.borrower`. See
-    ///         {LibCloseoutFreeze.payHeldBorrowerExtra}.
+    ///         {LibCloseoutFreeze.payHeldBorrowerExtra}. Also the host of
+    ///         `ClaimFacet.claimHeldForBorrower`'s payment (#3760: inlined
+    ///         once here instead of in that EIP-170-tight facet).
+    /// @return paid What reached `to`'s vault (0 when nothing was held).
     function payHeldBorrowerExtra(uint256 loanId, address to)
         external
         onlyDiamondInternal
+        returns (uint256 paid)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibCloseoutFreeze.payHeldBorrowerExtra(s, loanId, s.loans[loanId], to);
+        return LibCloseoutFreeze.payHeldBorrowerExtra(s, loanId, s.loans[loanId], to);
     }
 
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────

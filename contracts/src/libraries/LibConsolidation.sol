@@ -6,6 +6,8 @@ import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibLoanCollateral} from "./LibLoanCollateral.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLenderSide} from "./LibLenderSide.sol";
+import {LibAdvance} from "./LibAdvance.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
@@ -234,6 +236,13 @@ library LibConsolidation {
             return true;
         }
         if (isLenderSide) {
+            // #3760 — while an advance stands on the position (open, or money
+            // set aside for it not yet paid to the slot owner) the lender side
+            // stays where the advance was opened: every arrival is booked
+            // there and the set-aside is paid from there, so the advance's
+            // money never splits across two vaults. The holder's claims pay
+            // from that vault to the holder's as they always do.
+            if (LibAdvance.locked(s, loanId)) return true;
             // #597 dependency (Codex #655 Msm + YPp): any UNRESERVED portion of
             // a VPFI `heldForLender` amount, once moved into the holder's vault,
             // is a FREE, unstake-drainable balance (the holder could
@@ -399,7 +408,7 @@ library LibConsolidation {
         // reservations re-keyed beside it in step 5 never exceed it.
         uint256 credited = _moveERC20(stored, current, asset, amount, loanId, loan.lenderTokenId);
         if (credited < amount) {
-            s.heldForLender[loanId] = credited;
+            LibLenderSide.capHeld(s, loanId, credited);
             LibEncumbrance.capLenderHeldReservations(loanId, current, asset, credited);
         }
         amount = credited;

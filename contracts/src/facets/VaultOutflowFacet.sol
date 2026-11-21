@@ -13,6 +13,7 @@ import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
+import {LibAdvancePayAuth} from "../libraries/LibAdvancePayAuth.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibFillLock} from "../libraries/LibFillLock.sol";
@@ -537,6 +538,27 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // wallet (a protected inviter's vault, below).
             o.to = LibReferral.activeInviter(o.to);
             if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
+        } else if (c == VaultOutflowTypes.OutflowClass.AdvanceToHolder) {
+            // #3760 — loan `ref`'s advance, paid by its slot owner into the
+            // vault of whoever holds the loan's lender token now, exactly what
+            // the advance host authorized in this transaction.
+            LibVaipakam.Loan storage loan = s.loans[o.ref];
+            if (o.positionToken == 0 || o.positionToken != loan.lenderTokenId || s.advances[o.ref].slotOwner != user) {
+                revert OutflowPositionMismatch(o.ref, o.positionToken);
+            }
+            LibAdvancePayAuth.consume(o.ref, LibAdvancePayAuth.TO_HOLDER, o.amount);
+            payeeOwner = LibPositionNFT.core().holderOf(o.positionToken);
+            if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = LibFacet.getOrCreateVault(payeeOwner);
+        } else if (c == VaultOutflowTypes.OutflowClass.AdvanceRepayment) {
+            // #3760 — money booked to loan `ref`'s advance, to the advance's
+            // slot owner as the record names it, exactly what the advance
+            // host authorized in this transaction.
+            payeeOwner = s.advances[o.ref].slotOwner;
+            if (payeeOwner == address(0)) revert OutflowPositionMismatch(o.ref, 0);
+            LibAdvancePayAuth.consume(o.ref, LibAdvancePayAuth.REPAYMENT, o.amount);
+            o.positionToken = s.loans[o.ref].lenderTokenId;
+            o.to = LibFacet.getOrCreateVault(payeeOwner);
         } else {
             // Incentive, LiquidationBuyer: the caller names the actor; never
             // this Diamond or a vault-less zero.
@@ -599,7 +621,9 @@ contract VaultOutflowFacet is IVaipakamErrors {
     function _credits(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
             || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
-            || c == VaultOutflowTypes.OutflowClass.IntegratorShare;
+            || c == VaultOutflowTypes.OutflowClass.IntegratorShare
+            || c == VaultOutflowTypes.OutflowClass.AdvanceToHolder
+            || c == VaultOutflowTypes.OutflowClass.AdvanceRepayment;
     }
 
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
@@ -617,7 +641,8 @@ contract VaultOutflowFacet is IVaipakamErrors {
         return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
             || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
             || c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.SellerClaim
-            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer;
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer
+            || c == VaultOutflowTypes.OutflowClass.AdvanceRepayment;
     }
 
     /// @dev Where a payout from `user`'s vault to `recipient` must land instead

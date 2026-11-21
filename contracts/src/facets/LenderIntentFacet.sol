@@ -24,7 +24,8 @@ import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
-import {LibHeldForLender} from "../libraries/LibHeldForLender.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
+import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
@@ -394,6 +395,8 @@ contract LenderIntentFacet is
         // Instant market (#3656) — the slot's instant-market consents were given
         // for its previous terms; new terms need them given again.
         delete s.instantSlot[msg.sender][lendingAsset][collateralAsset][slot];
+        // #3760 — so was its consent to advance on loans.
+        delete s.advanceSlot[msg.sender][lendingAsset][collateralAsset][slot];
 
         emit LenderIntentSet(
             msg.sender,
@@ -453,6 +456,8 @@ contract LenderIntentFacet is
         _syncSlot(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — a cancelled intent carries no priority opt-in.
         LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
+        // #3760 — a cancelled slot advances nothing.
+        delete s.advanceSlot[msg.sender][lendingAsset][collateralAsset][slot];
         // A new intent in the slot starts with the calm-price check on.
         if (s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot]) {
             delete s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot];
@@ -895,11 +900,15 @@ contract LenderIntentFacet is
         // vault for the position, never paid to a wallet). The claim alone is
         // never the original fill: a partial repayment shrank `loan.principal`,
         // so the final repayment's claim carries only the remainder, and the
-        // rest is the held part. `LibHeldForLender.take` settles the held
+        // rest is the held part. `LibLenderSide.takeHeld` settles the held
         // records (reservation, parked interest, fail-closed marker) the same
         // way the mid-loan claim does; the free-balance check below confirms
         // the vault still holds both parts.
-        (uint256 heldAmount, ) = LibHeldForLender.take(s, loanId, loan);
+        // #3760 — never while an advance is open on the position; money
+        // already set aside for a closed one moves to its slot owner inside
+        // `takeHeld` before the holder's part is counted.
+        LibAdvance.requireNoOpenAdvance(s, loanId);
+        (uint256 heldAmount, ) = LibLenderSide.takeHeld(s, loanId, loan);
         uint256 rolledAmount = claim.amount + heldAmount;
 
         // #623 Codex round-2 P2 — assert the proceeds are STILL FREE in the
@@ -923,7 +932,7 @@ contract LenderIntentFacet is
 
         // Consume the claim BEFORE re-liening, so the proceeds can never be both
         // claimable (NFT) and re-liened (capital) — the two-bucket invariant.
-        claim.claimed = true;
+        LibLenderSide.markFinalClaimed(s, loanId);
 
         // Re-lien the proceeds as intent capital. They already sit FREE in the
         // owner's vault (the repay deposit; non-VPFI ⇒ unencumbered), so the
@@ -993,7 +1002,7 @@ contract LenderIntentFacet is
     ///         still the owner, the intent is active with its window open, no
     ///         seller claims ride the loan, VPFI is not the lending asset, and
     ///         neither asset is paused. The held funds already sit in the
-    ///         owner's vault; {LibHeldForLender.take} settles their records and
+    ///         owner's vault; {LibLenderSide.takeHeld} settles their records and
     ///         the lien re-commits them. The loan's live-principal exposure is
     ///         unchanged: it is released when the loan ends.
     /// @param  loanId The open intent loan whose held payments to re-commit.
@@ -1021,7 +1030,8 @@ contract LenderIntentFacet is
         )) LibServiceCapacity.chargeKeeper();
         else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeKeeper();
 
-        (uint256 amount, address asset) = LibHeldForLender.take(s, loanId, loan);
+        LibAdvance.requireNoOpenAdvance(s, loanId); // #3760
+        (uint256 amount, address asset) = LibLenderSide.takeHeld(s, loanId, loan);
         if (amount == 0 || asset != io.lendingAsset) revert LenderIntentNothingToRoll();
         // The held funds must still be free in the owner's vault once their
         // reservation is released, else the lien would back nothing.

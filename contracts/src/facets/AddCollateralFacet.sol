@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -329,7 +330,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, IVaipakamErrors {
         LibFallbackCustody.requireVaultHeld(loanId);
 
         delete s.fallbackSnapshot[loanId];
-        delete s.lenderClaims[loanId];
+        LibLenderSide.clearFinal(s, loanId);
         delete s.borrowerClaims[loanId];
         // #630 — drop any Role-B cash-exit opt-in: this fallback episode is over,
         // so a later, distinct fallback must be re-authorized by the then-owner.

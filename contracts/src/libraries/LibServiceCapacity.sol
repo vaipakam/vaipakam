@@ -344,7 +344,15 @@ library LibServiceCapacity {
     ///      owner acting alone), charged to the actor {routeActor} names for it — an
     ///      aggregator adapter's to the operator bound to it, never the adapter.
     function chargeKeeper() internal {
-        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Keeper));
+        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Keeper), msg.sender);
+    }
+
+    /// @dev {chargeKeeper} for a keeper action the Diamond runs on a keeper's
+    ///      behalf through a self-call (#3760: the cash-out door's takeover
+    ///      fill), where `msg.sender` is the Diamond: `keeper` is the caller the
+    ///      door forwarded, so its own bucket is charged, as on the public entry.
+    function chargeKeeperFor(address keeper) internal {
+        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Keeper), keeper);
     }
 
     /// @dev The solver-route gate for EVERY fill — `matchOffers` and `matchIntent`
@@ -352,7 +360,7 @@ library LibServiceCapacity {
     ///      r4: `matchOffers` charged its caller directly, so an adapter's match was
     ///      charged to the adapter contract and its preview, which routed, disagreed).
     function chargeSolver() internal {
-        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Solver));
+        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Solver), msg.sender);
     }
 
     /// @notice The compact gate every charged route calls: ONE self-call into the
@@ -365,10 +373,10 @@ library LibServiceCapacity {
     ///         for the role) means no charge AND no self-call: a fresh deployment
     ///         pays nothing per fill or action, and a Diamond that has not routed the
     ///         capacity facet is not broken by the gate.
-    function _chargeRoute(uint8 role) private {
+    function _chargeRoute(uint8 role, address caller) private {
         if (LibVaipakam.storageSlot().capacityCurves[role].freeTier == 0) return;
         LibFacet.crossFacetCall(
-            abi.encodeWithSignature("capacityChargeInternal(uint8,address)", role, msg.sender),
+            abi.encodeWithSignature("capacityChargeInternal(uint8,address)", role, caller),
             IVaipakamErrors.ServiceCapacityCallFailed.selector
         );
     }

@@ -1157,7 +1157,9 @@ contract FallbackCustodyTest is CustodyInvariantBase {
                 lenderPrincipalDue: 0,
                 treasuryPrincipalDue: tpd,
                 active: active,
-                retryAttempted: retried
+                retryAttempted: retried,
+                rateNum: 0,
+                rateDen: 0
             })
         );
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
@@ -1207,7 +1209,9 @@ contract FallbackCustodyTest is CustodyInvariantBase {
                 lenderPrincipalDue: 0,
                 treasuryPrincipalDue: 0,
                 active: true,
-                retryAttempted: false
+                retryAttempted: false,
+                rateNum: 0,
+                rateDen: 0
             })
         );
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
