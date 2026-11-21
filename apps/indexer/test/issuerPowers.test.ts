@@ -48,6 +48,7 @@ describe('GET /assets/issuer-powers', () => {
       checkerVersion: '1',
       complete: true,
       detail: null,
+      notRun: [],
       checks: [
         { check: 'freeze', result: 'found', evidence: 'blacklist(address)', known: true },
         { check: 'future_power', result: 'not_found', evidence: null, known: false },
@@ -75,6 +76,31 @@ describe('GET /assets/issuer-powers', () => {
     const body = (await (await get(counting, '?chainId=1')).json()) as IssuerPowers;
     expect(statements).toBe(1);
     expect(body.assets[0].checks).toHaveLength(3);
+  });
+
+  it('under the current list, completeness counts only the checks that apply to the kind and are run', async () => {
+    const h = createSqliteD1(DDL);
+    const check = h.db.prepare(
+      'INSERT INTO asset_issuer_check (chain_id, address, kind, checked_at, block_number, checker_version, complete, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    const f = h.db.prepare('INSERT INTO asset_issuer_finding (chain_id, address, check_id, result, evidence, checked_at) VALUES (?, ?, ?, ?, ?, ?)');
+    const v = ISSUER_CHECKER_VERSION;
+    const fungible = ['upgradeable_proxy', 'admin_transfer', 'freeze', 'pause', 'paused_now', 'vault_transfer'];
+    // A token answering every check that applies to it, and no NFT-only check.
+    check.run(1, USDC, 'erc20', 10, 1, v, 1, null);
+    for (const id of fungible) f.run(1, USDC, id, 'not_found', null, 10);
+    // A collection answering every run check; conduit_transfer is not run.
+    check.run(1, NFT, 'erc721', 20, 2, v, 1, null);
+    for (const id of [...fungible, 'transfer_validator', 'soulbound']) f.run(1, NFT, id, 'not_found', null, 20);
+    // A token whose writer said complete but that lacks the vault move.
+    const OTHER = '0x0000000000000000000000000000000000000abc';
+    check.run(1, OTHER, 'erc20', 30, 3, v, 1, null);
+    for (const id of fungible.filter((x) => x !== 'vault_transfer')) f.run(1, OTHER, id, 'not_found', null, 30);
+    const body = (await (await get(h.d1, '?chainId=1')).json()) as IssuerPowers;
+    const by = new Map(body.assets.map((a) => [a.address, a]));
+    expect(by.get(USDC)).toMatchObject({ complete: true, notRun: [] });
+    expect(by.get(NFT)).toMatchObject({ complete: true, notRun: ['conduit_transfer'] });
+    expect(by.get(OTHER)).toMatchObject({ complete: false, notRun: [] });
   });
 
   it('answers one asset, and names an unchecked one as not checked', async () => {

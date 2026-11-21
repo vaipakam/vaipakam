@@ -34,7 +34,12 @@
  * `unavailable`, never an empty list. Cached for an hour.
  */
 import { redactedError } from '@vaipakam/lib/errorDescription';
-import { ISSUER_CHECKER_VERSION, isKnownIssuerCheck } from '@vaipakam/lib/issuerPowers';
+import {
+  ISSUER_CHECKER_VERSION,
+  isKnownIssuerCheck,
+  issuerChecksNotRunFor,
+  issuerRunComplete,
+} from '@vaipakam/lib/issuerPowers';
 import { parseTokenChainId } from './assetRankings';
 
 /** The narrow D1 surface this route reads. */
@@ -78,8 +83,16 @@ export interface IssuerPowersAsset {
   checkedAt: number;
   blockNumber: number;
   checkerVersion: string;
-  /** True only when every check in the run's list produced found / not_found. */
+  /**
+   * True only when the checker marked the run complete AND, for a run under
+   * the current list, every check that list runs on this kind answered found
+   * or not_found. A check that does not apply to the kind (an NFT-only check
+   * on a fungible token) or that the list does not run never counts against it.
+   */
   complete: boolean;
+  /** Checks that apply to this kind but the run's list does not run: not
+   *  checked, never "not found". Stated only for a run under the current list. */
+  notRun: string[];
   detail: string | null;
   checks: IssuerFinding[];
 }
@@ -138,6 +151,7 @@ export async function readIssuerPowers(db: D1Like, chainId: number, address?: st
         checkerVersion: r.checker_version,
         complete: r.complete === 1,
         detail: r.detail,
+        notRun: r.checker_version === ISSUER_CHECKER_VERSION ? issuerChecksNotRunFor(r.kind) : [],
         checks: [],
       };
       byAddress.set(r.address, asset);
@@ -145,6 +159,15 @@ export async function readIssuerPowers(db: D1Like, chainId: number, address?: st
     if (r.check_id !== null) {
       asset.checks.push({ check: r.check_id, result: r.result as string, evidence: r.evidence, known: isKnownIssuerCheck(r.check_id) });
     }
+  }
+
+  // Completeness follows the current list's per-kind rule. A run under
+  // another list keeps the flag its writer stored: this build cannot say
+  // which checks that list ran.
+  for (const asset of byAddress.values()) {
+    if (asset.checkerVersion !== ISSUER_CHECKER_VERSION) continue;
+    const results = new Map(asset.checks.map((c) => [c.check, c.result]));
+    asset.complete = asset.complete && issuerRunComplete(asset.kind, results);
   }
 
   const notChecked = address !== undefined && !byAddress.has(address) ? [address] : [];
