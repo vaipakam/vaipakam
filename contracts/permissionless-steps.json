@@ -112,6 +112,20 @@
       "flag": "TIER_EXCLUSION_REFRESH_ENABLED",
       "evidence": "apps/keeper/src/tierExclusionRefresh.ts"
     },
+    "ExitInstructionFacet.clearExitInstruction(uint256)": {
+      "class": "user",
+      "why": "the instruction's owner, or the current borrower-position holder, clears its own exit instruction; any other caller is refused"
+    },
+    "ExitInstructionFacet.runExit(uint256,struct:LibSwap.AdapterCall[],uint64)": {
+      "class": "gap",
+      "issue": "#3752",
+      "why": "closes the loan from its own collateral on the holder's exit instruction once the health factor is below the holder's level: sells the least collateral whose value less the holder's tolerance repays the whole debt, through the manual full repay-with-collateral route; the caller chooses only the swap routes and receives nothing, and a skipped run says why by event. No keeper pass backs it yet; the step ships disarmed with the keeper follow-up of #3752"
+    },
+    "ExitInstructionFacet.runReduce(uint256,struct:LibSwap.AdapterCall[],uint64)": {
+      "class": "gap",
+      "issue": "#3752",
+      "why": "reduces the loan from its own collateral on the holder's exit instruction once the health factor is below the holder's level, at most once per configured interval, through the manual partial repay-with-collateral route; the caller chooses only the swap routes and receives nothing, and a skipped run says why by event. No keeper pass backs it yet; the step ships disarmed with the keeper follow-up of #3752"
+    },
     "InteractionRewardsFacet.compactRewardEntryIndex(address,uint256)": {
       "class": "keeper",
       "pass": "protocolUpkeep",

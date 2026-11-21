@@ -1855,4 +1855,9 @@ interface IVaipakamErrors {
     ///         `matchCollectionOffer`), one token at a time; it cannot be
     ///         accepted, matched, edited or sold into directly.
     error CollectionParentNotFillable(uint256 offerId);
+    /// @notice #3752 — a loan carrying both the collateral top-up and the
+    ///         exit instruction for one holder needs the exit's level below
+    ///         the top-up's trigger by the governed margin, so the top-up
+    ///         acts first.
+    error ExitLevelNotBelowTopUp(uint64 exitLevelHf, uint64 topUpTriggerHf);
 }

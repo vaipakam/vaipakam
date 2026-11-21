@@ -1436,6 +1436,22 @@
   },
   {
     "type": "error",
+    "name": "ExitLevelNotBelowTopUp",
+    "inputs": [
+      {
+        "name": "exitLevelHf",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "topUpTriggerHf",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ExpectedSourceListUnusable",
     "inputs": []
   },

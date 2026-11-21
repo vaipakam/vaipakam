@@ -236,6 +236,13 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   StandingInstructionsSet: { label: 'Standing instructions set', category: 'loan-modify', priority: 40 },
   StandingInstructionsCleared: { label: 'Standing instructions cleared', category: 'loan-modify', priority: 40 },
   StandingInstructionSkipped: { label: 'Standing instruction skipped', category: 'loan-modify', priority: 40 },
+  // #3752 — the exit instruction (sell and repay before liquidation). A run
+  // leads its transaction's row, over the swap-to-repay event it settles by.
+  ExitInstructionSet: { label: 'Exit instruction set', category: 'loan-modify', priority: 40 },
+  ExitInstructionChangeQueued: { label: 'Exit instruction change scheduled', category: 'loan-modify', priority: 40 },
+  ExitInstructionCleared: { label: 'Exit instruction cleared', category: 'loan-modify', priority: 40 },
+  ExitInstructionRun: { label: 'Loan closed by exit instruction', category: 'loan-repay', priority: 90 },
+  ExitReductionRun: { label: 'Loan reduced by exit instruction', category: 'loan-repay', priority: 75 },
   InterestPaymentBooked: { label: 'Interest payment booked', category: 'loan-repay', priority: 15 },
   HolderWalletPaymentToVault: { label: 'Payment credited to vault', category: 'other', priority: 30 },
   // #3681 / #3682 / #3722 / #3246 — reserve legs, Auto-lend settings, fee

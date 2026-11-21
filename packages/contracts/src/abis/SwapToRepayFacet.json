@@ -74,6 +74,67 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "swapToRepayFullByInstruction",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "adapterCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "collateralSold",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proceeds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "debtPaid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "CollateralConsolidated",
     "inputs": [
@@ -1420,6 +1481,22 @@
   },
   {
     "type": "error",
+    "name": "ExitLevelNotBelowTopUp",
+    "inputs": [
+      {
+        "name": "exitLevelHf",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "topUpTriggerHf",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ExpectedSourceListUnusable",
     "inputs": []
   },
@@ -2104,6 +2181,11 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyDiamondInternal",
     "inputs": []
   },
   {
@@ -4197,6 +4279,22 @@
     "inputs": [
       {
         "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SlippageAboveRouteCap",
+    "inputs": [
+      {
+        "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "routeCapBps",
         "type": "uint256",
         "internalType": "uint256"
       }

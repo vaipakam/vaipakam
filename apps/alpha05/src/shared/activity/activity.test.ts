@@ -104,6 +104,8 @@ const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
   CollateralConsolidated: 'the flag names the side',
   CollateralSaleProceedsSplit: 'the flag is whether part is held for the borrower',
   DefaultAutoRefinanceCapsChanged: 'says the limits changed, not which way',
+  ExitInstructionRun: 'the flag is whether the holder had switched the calm wait off, a detail of the run',
+  ExitReductionRun: 'the flags are run details: the calm wait setting and which target sized the sale',
   ForcedSaleSettled: 'the flags are what the sale held and covered, shown with its rows',
   InstantSlotSet: 'says the slot’s settings changed; the flags are its three consents, not one switch',
   IntegratorShareSettled: 'the flag is whether the share reached the integrator, a detail of the settlement',

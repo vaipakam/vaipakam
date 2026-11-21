@@ -66,6 +66,7 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {ExitInstructionFacet} from "../src/facets/ExitInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -693,7 +694,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1315,6 +1316,12 @@ contract SetupTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(RateLinkFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRateLinkFacetSelectors()
+        });
+        // #3752 — sell and repay before liquidation.
+        cuts[138] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ExitInstructionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getExitInstructionFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

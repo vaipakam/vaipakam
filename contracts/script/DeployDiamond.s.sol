@@ -81,6 +81,7 @@ import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {ExitInstructionFacet} from "../src/facets/ExitInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -636,6 +637,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
         // #3635 A / #3713 — the one host of the rate link and the warning band.
         RateLinkFacet rateLinkFacet = RateLinkFacet(ArtifactDeploy.deploy(type(RateLinkFacet).name));
+        ExitInstructionFacet exitInstructionFacet =
+            ExitInstructionFacet(ArtifactDeploy.deploy(type(ExitInstructionFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -682,7 +685,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](137);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -827,6 +830,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
         cuts[136] = _buildCut(address(rateLinkFacet), _getRateLinkSelectors());
+        // #3752 — sell and repay before liquidation (the fourth standing instruction).
+        cuts[137] = _buildCut(address(exitInstructionFacet), _getExitInstructionSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1611,6 +1616,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("referralFacet", address(referralFacet));
         Deployments.writeFacet("rateLinkFacet", address(rateLinkFacet));
+        Deployments.writeFacet("exitInstructionFacet", address(exitInstructionFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2467,6 +2473,21 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[1] = StandingOfferCheckFacet.checkForAmount.selector;
     }
 
+    /// @dev Selectors for `ExitInstructionFacet` (#3752) — the "sell and
+    ///      repay before liquidation" instruction: its setting, its two
+    ///      executors, the preview and the governed bounds.
+    function _getExitInstructionSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = ExitInstructionFacet.setExitInstruction.selector;
+        s[1] = ExitInstructionFacet.clearExitInstruction.selector;
+        s[2] = ExitInstructionFacet.runExit.selector;
+        s[3] = ExitInstructionFacet.runReduce.selector;
+        s[4] = ExitInstructionFacet.previewExit.selector;
+        s[5] = ExitInstructionFacet.getExitInstruction.selector;
+        s[6] = ExitInstructionFacet.getExitInstructionConfig.selector;
+        s[7] = ExitInstructionFacet.setExitInstructionConfig.selector;
+    }
+
     /// @dev Selectors for `ReferralFacet` (#3722) — the referral binding,
     ///      its settings and views, the fee quote and the isolated payment.
     /// @dev Selectors for `RateLinkFacet` (#3635 A, #3713) — the linked
@@ -2564,16 +2585,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
     function _getSwapToRepayFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = SwapToRepayFacet.swapToRepayFull.selector;
         // #2317 — read-only sizing preview for the full close-out.
         s[1] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+        // #3752 — the same close-out on the holder's exit instruction.
+        s[2] = SwapToRepayFacet.swapToRepayFullByInstruction.selector;
     }
 
     /// #2416 — the partial swap-to-repay route (split off SwapToRepayFacet).
     function _getSwapToRepayPartialFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = SwapToRepayPartialFacet.swapToRepayPartial.selector;
+        // #3752 — the same repayment on the holder's exit instruction.
+        s[1] = SwapToRepayPartialFacet.swapToRepayPartialByInstruction.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
