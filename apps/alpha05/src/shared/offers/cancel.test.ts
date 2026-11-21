@@ -240,6 +240,16 @@ function outflowLog(owner: Hex, asset: Hex, delivered: bigint, opts: { to?: Hex;
   return { address: DIAMOND, topics, data } as unknown as Log;
 }
 
+function heldLog(offerId: bigint, holder: Hex, asset: Hex, amount: bigint, tokenId = 0n): Log {
+  const abi = OfferCancelFacetABI as Abi;
+  const args = { offerId, positionToken: 5n, holder, asset, tokenId, amount };
+  const event = abi.find((e) => e.type === 'event' && e.name === 'OfferRefundHeld') as unknown as { inputs: { name: string; type: string; indexed?: boolean }[] };
+  const topics = encodeEventTopics({ abi, eventName: 'OfferRefundHeld', args } as never);
+  const plain = event.inputs.filter((i) => !i.indexed);
+  const data = encodeAbiParameters(plain, plain.map((i) => (args as Record<string, unknown>)[i.name]));
+  return { address: DIAMOND, topics, data } as unknown as Log;
+}
+
 describe('measureCancel', () => {
   it('reports no cancel when the logs record none', () => {
     const legs = measureCancel(review(offer()), [], DIAMOND, ME, words, copy);
@@ -259,8 +269,30 @@ describe('measureCancel', () => {
     expect(none[1]!.status).toBe('not-done');
   });
   it('ignores a record for another offer, another class or another owner', () => {
-    const logs = [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n, { ref: 8n }), outflowLog(ME, TOKEN, 100n, { class_: 19 }), outflowLog(OTHER, TOKEN, 100n)];
+    const logs = [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n, { ref: 8n }), outflowLog(ME, TOKEN, 100n, { class_: 2 }), outflowLog(OTHER, TOKEN, 100n)];
     expect(measureCancel(review(offer()), logs, DIAMOND, ME, words, copy)[1]!.status).toBe('not-done');
+  });
+  it('measures a refund the protocol released in the creator’s own vault (a refinance request)', () => {
+    const legs = measureCancel(review(offer()), [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n, { class_: 19 })], DIAMOND, ME, words, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    expect(legs[1]!.label).toBe('offerCancel.legFreed:{"what":"100"}');
+  });
+  it('says a refund kept for the offer token’s holder as held, never as nothing returned', () => {
+    const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
+    const HOLDER = '0x00000000000000000000000000000000000000c3' as Hex;
+    const legs = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(9n, HOLDER, TOKEN, 100n)], DIAMOND, ME, words, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    expect(legs[1]!.label).toMatch(/^offerCancel\.legHeld:/);
+    expect(legs[1]!.label).toContain('"what":"100"');
+    // The reader holds the token: said to them.
+    const mine = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(9n, ME, TOKEN, 100n)], DIAMOND, ME, words, copy);
+    expect(mine[1]!.label).toBe('offerCancel.legHeldMine:{"what":"100"}');
+    // Held short of the review: said beside it.
+    const short = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(9n, HOLDER, TOKEN, 60n)], DIAMOND, ME, words, copy);
+    expect(short[1]!.status).toBe('unknown');
+    // Another offer's hold is not this one's.
+    const other = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(8n, HOLDER, TOKEN, 100n)], DIAMOND, ME, words, copy);
+    expect(other[1]!.status).toBe('not-done');
   });
   it('names the holder’s vault when the return left the creator’s own', () => {
     const HOLDER_VAULT = '0x00000000000000000000000000000000000000f2' as Hex;

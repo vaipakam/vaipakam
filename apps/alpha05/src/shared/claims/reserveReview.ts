@@ -4,9 +4,10 @@
  * and its outcome measured from the transaction's own record.
  *
  * `withdrawLoanReserve` (kind 0, the payment reserve) takes the whole
- * reserve the review read, from the
- * wallet's OWN vault to the wallet, so protected account mode queues it like
- * any withdrawal of the account's own (RB-PAYOUT-ROUTE). An extension that
+ * reserve the review read and releases it as free balance in the wallet's
+ * OWN vault (`OwnRelease`, the payout rule, owner decision 2026-11-19):
+ * nothing reaches a wallet, and only the account's own Withdraw takes it out
+ * (RB-PAYOUT-ROUTE). An extension that
  * draws on the reserve before the withdrawal confirms makes the amount too
  * large; the protocol then refuses it and nothing moves.
  */
@@ -15,9 +16,8 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal, Verdict } from '../eligibility/types';
-import { moved } from '../offers/acceptOutcome';
-import { payoutOutcomes, payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
-import { payoutLegs, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
+import { freedInVault, OWN_RELEASE, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { freedLeg, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import { frozenRefusal, frozenState, isFrozenRefusal, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { askThrough } from '../tx/simulate';
@@ -80,8 +80,9 @@ export async function readReserveReview(own: OwnStateClient, diamond: Hex, loanI
     row: facts.row,
     paused: facts.paused,
     protection: facts.protection,
-    // From the wallet's own vault to the wallet.
-    route: payoutRoute(facts.protection, wallet, wallet),
+    // Released as free balance in the account's own vault, whatever its
+    // protected mode; only the later Withdraw reaches the wallet.
+    route: 'credit',
     frozen: facts.frozen,
     dryRun,
     verdict,
@@ -134,8 +135,9 @@ export function reserveReceipt(r: ReserveReview, account: Hex, copy: Copy): Rece
   return { title: format('reserve.title', { id: r.loanId.toString() }), rows, consequences, prompts: 1, readAt: r.readAt };
 }
 
-/** RB-CONFIDENCE — the finish card: what left the reserve, measured where it
- *  landed (the wallet, or protected account mode's queue or vault). */
+/** RB-CONFIDENCE — the finish card: what left the reserve, released as free
+ *  balance in the account's own vault, from the protocol's own record of the
+ *  release (`OwnRelease`, ref = the loan). */
 export function measureReserve(r: ReserveReview, logs: Parameters<typeof reserveLogs>[0], diamond: Hex, account: Hex, w: ReserveWords, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const withdrawn = reserveLogs(logs, diamond, r.loanId, account);
@@ -143,19 +145,14 @@ export function measureReserve(r: ReserveReview, logs: Parameters<typeof reserve
   const legs: LegOutcome[] = [];
   for (const wd of withdrawn) {
     const want = r.row.funding?.reserved ?? wd.amount;
-    const outcomes = payoutOutcomes(logs, diamond, account, wd.asset);
-    const wallet = moved(logs, wd.asset, null, account);
     legs.push(
-      ...payoutLegs(
+      freedLeg(
         {
-          outcomes,
-          wallet,
+          freed: freedInVault(logs, diamond, account, wd.asset, [OWN_RELEASE], { ref: r.loanId }),
           expected: want,
-          protection: r.protection,
           what: (v) => w.amount(wd.asset, v, false),
           exact: (v) => w.amount(wd.asset, v, true),
-          walletLeg: (what) => format('loanClaim.legArrived', { amount: what }),
-          walletOther: (got, wantText) => format('loanClaim.arrivedOther', { amount: got, expected: wantText }),
+          label: (what) => format('payout.legCredit', { what }),
         },
         copy,
       ),

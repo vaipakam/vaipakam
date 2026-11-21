@@ -69,14 +69,21 @@ test('a borrower’s extension reserve is listed, drawable while the loan runs, 
   await expect(receipt).toContainText('Wallet prompts: 1');
   await fitsWidth(page);
 
-  const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] });
+  // The payout rule: the reserve is released as free balance in the
+  // borrower's own vault; only their own Withdraw reaches the wallet.
+  await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
+  const free = () => sc.read<bigint>('withdrawableNow', [borrowerAddr, 0, WETH, 0n]);
+  const wallet = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] });
+  const before = await free();
+  const walletBefore = await wallet();
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
-  await expect(finish).toContainText(/arrived in your wallet/);
+  await expect(finish).toContainText(/credited to your vault, free to withdraw/);
   expect(flags.sentTransactions).toBe(sent + 1);
-  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] })).toBe(before + reserve);
+  expect(await free()).toBe(before + reserve);
+  expect(await wallet()).toBe(walletBefore);
   const [, left] = await sc.read<Funding>('getExtendFunding', [loanId, borrowerAddr]);
   expect(left).toBe(0n);
 

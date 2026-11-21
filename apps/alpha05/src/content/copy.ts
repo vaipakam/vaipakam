@@ -4368,6 +4368,13 @@ export const copy = {
     legFreedHolder: B('Returned to the offer holder’s vault, free to withdraw: {{what}}'),
     legNothingMine: B('Nothing came back to this wallet or its vault in this transaction'),
     legNothingCreator: B('Nothing went back to the creator in this transaction'),
+    legHeld: A(
+      'Held for the offer token’s holder ({{holder}}) to collect: {{what}}. It stays in the creator’s vault until that holder collects it into their own vault; this app has no collect step yet.',
+    ),
+    legHeldMine: A(
+      'Held for you to collect, as the offer token’s holder: {{what}}. It stays in the creator’s vault until you collect it into your own vault; this app has no collect step yet.',
+    ),
+    heldOther: A('The protocol recorded {{amount}} returned or held, not the {{expected}} reviewed.'),
     whySummary: B('What cancelling does'),
     why: C(
       'Cancelling takes an offer off the book and returns what it still locks in the creator’s vault: a lending offer’s unlent amount or its NFT, a request’s unused collateral, a rental request’s prepaid fee and buffer. The creator may cancel at any time, except in the first five minutes of an offer nothing has filled, so a cancel never races an accept. Once an offer expires anyone may clean it up. What it returns becomes free balance in the vault of whoever holds the offer’s token, usually the creator; it reaches a wallet only through that owner’s own withdrawal. Part of an offer already filled stays filled. Cancelling is closed while the protocol is paused. Nothing leaves your wallet and no approval is asked.',

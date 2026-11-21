@@ -263,8 +263,8 @@ function modifiedLog(offerId: bigint, t: EditTerms): Log {
   return { address: DIAMOND, topics, data } as unknown as Log;
 }
 
-function outflowLog(owner: Hex, asset: Hex, delivered: bigint, to: Hex = VAULT, ref = 9n): Log {
-  const args = { owner, vault: VAULT, asset, tokenId: 0n, amount: delivered, delivered, to, class_: 20, reason: 1, ref };
+function outflowLog(owner: Hex, asset: Hex, delivered: bigint, to: Hex = VAULT, ref = 9n, class_ = 20): Log {
+  const args = { owner, vault: VAULT, asset, tokenId: 0n, amount: delivered, delivered, to, class_, reason: 1, ref };
   const abi = VaultOutflowFacetABI as Abi;
   const event = abi.find((e) => e.type === 'event' && e.name === 'VaultOutflow') as unknown as { inputs: { name: string; type: string; indexed?: boolean }[] };
   const topics = encodeEventTopics({ abi, eventName: 'VaultOutflow', args } as never);
@@ -307,6 +307,13 @@ describe('measureEdit', () => {
     expect(short[1]!.status).toBe('unknown');
     const other = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n, '0x00000000000000000000000000000000000000f2')], DIAMOND, ME, words, copy);
     expect(other[1]!.label).toBe('offerEdit.legReleasedHolder:{"what":"50"}');
+  });
+  it('measures a release kept in the creator’s own vault (a refinance request), and no other class', () => {
+    const t = with_(o, { amountMax: 150n });
+    const own = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n, VAULT, 9n, 19)], DIAMOND, ME, words, copy);
+    expect(own[1]!.label).toBe('offerEdit.legReleased:{"what":"50"}');
+    const holder = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n, VAULT, 9n, 2)], DIAMOND, ME, words, copy);
+    expect(holder[1]!.status).toBe('not-done');
   });
 });
 

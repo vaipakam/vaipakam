@@ -31,7 +31,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { answerOrNull } from '../reads/answer';
-import { freedInVault, OFFER_HOLDER, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { freedInVault, OFFER_REFUND_CLASSES, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { freedLeg, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import type { LegOutcome } from '../tx/outcome';
@@ -333,14 +333,47 @@ export function measureCancel(r: CancelReview, logs: readonly Log[], diamond: He
   const mine = creator.toLowerCase() === viewer.toLowerCase();
   const freedLabel = (what: string, ownVault: boolean) => format(mine && ownVault ? 'offerCancel.legFreed' : 'offerCancel.legFreedHolder', { what });
   const leg = refundLeg(o, refund);
-  const freed = freedInVault(logs, diamond, creator, leg.asset, [OFFER_HOLDER], { ref: r.offerId, ...(leg.kind === 'nft' ? { tokenId: leg.tokenId } : {}) });
+  const freed = freedInVault(logs, diamond, creator, leg.asset, OFFER_REFUND_CLASSES, { ref: r.offerId, ...(leg.kind === 'nft' ? { tokenId: leg.tokenId } : {}) });
   // A return measured after the fact names what the record shows.
   if (refund.kind === 'measured' && (freed === null || freed.amount === 0n)) return [...legs, nothingLeg(mine, copy)];
-  const expected = refund.kind === 'erc20' ? refund.amount : refund.kind === 'nft' ? refund.quantity : (freed?.amount ?? 0n);
+  const held = heldForHolder(events, r.offerId, leg);
+  const expected = refund.kind === 'erc20' ? refund.amount : refund.kind === 'nft' ? refund.quantity : (freed?.amount ?? 0n) + (held?.amount ?? 0n);
   const what = (v: bigint) => (leg.kind === 'nft' ? w.nft(leg.asset, leg.assetType, leg.tokenId, v) : w.amount(leg.asset, v, false));
   const exact = (v: bigint) => (leg.kind === 'nft' ? w.nft(leg.asset, leg.assetType, leg.tokenId, v) : w.amount(leg.asset, v, true));
-  legs.push(freedLeg({ freed, expected, what, exact, label: freedLabel }, copy));
+  if (held === null) {
+    legs.push(freedLeg({ freed, expected, what, exact, label: freedLabel }, copy));
+    return legs;
+  }
+  // #3744 — a clean-up that could not pay the offer token's holder keeps the
+  // escrow in the creator's vault, held for that token, and records no
+  // outflow; only the holder's own collect step moves it. Said as held, with
+  // who collects it, never as nothing returned.
+  if (freed !== null && freed.amount > 0n) legs.push({ status: 'done', label: freedLabel(what(freed.amount), freed.ownVault) });
+  const youHold = held.holder.toLowerCase() === viewer.toLowerCase();
+  const heldLabel = youHold
+    ? format('offerCancel.legHeldMine', { what: what(held.amount) })
+    : format('offerCancel.legHeld', { what: what(held.amount), holder: shortAddress(held.holder) });
+  const total = held.amount + (freed?.amount ?? 0n);
+  legs.push(
+    total === expected
+      ? { status: 'done', label: heldLabel }
+      : { status: 'unknown', label: heldLabel, reason: format('offerCancel.heldOther', { amount: exact(total), expected: exact(expected) }) },
+  );
   return legs;
+}
+
+/** What the cancel kept for the offer token's holder (`OfferRefundHeld`) in
+ *  the leg's asset, summed, and that holder; null when it kept nothing. */
+function heldForHolder(events: readonly { eventName: string; args: Args }[], offerId: bigint, leg: RefundLeg): { amount: bigint; holder: Hex } | null {
+  const hits = events.filter(
+    (e) =>
+      e.eventName === 'OfferRefundHeld' &&
+      BigInt(e.args.offerId as bigint) === offerId &&
+      String(e.args.asset).toLowerCase() === leg.asset.toLowerCase() &&
+      (leg.kind !== 'nft' || BigInt(e.args.tokenId as bigint) === leg.tokenId),
+  );
+  if (hits.length === 0) return null;
+  return { amount: hits.reduce((t, e) => t + BigInt(e.args.amount as bigint), 0n), holder: hits[0]!.args.holder as Hex };
 }
 
 /** A measured return that moved nothing to the creator: said as measured. */

@@ -32,7 +32,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { MAX_RATE_BPS } from '../post/postModel';
-import { freedInVault, OFFER_HOLDER, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { freedInVault, OFFER_REFUND_CLASSES, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { freedLeg, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import { answerOrNull } from '../reads/answer';
 import type { Receipt, ReceiptRow } from '../receipt/types';
@@ -559,7 +559,7 @@ export function measureEdit(r: EditReview, logs: readonly Log[], diamond: Hex, v
   legs.push(
     freedLeg(
       {
-        freed: freedInVault(logs, diamond, r.facts.offer?.creator ?? viewer, asset, [OFFER_HOLDER], { ref: r.offerId }),
+        freed: freedInVault(logs, diamond, r.facts.offer?.creator ?? viewer, asset, OFFER_REFUND_CLASSES, { ref: r.offerId }),
         expected: m.amount,
         what: (v) => w(asset, v, false),
         exact: (v) => w(asset, v, true),

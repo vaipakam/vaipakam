@@ -240,6 +240,13 @@ export function creditLots(logs: readonly Log[], diamond: Hex, vault: Hex, refs:
  *  Only the owner's own withdrawal then reaches a wallet. */
 export const OWN_RELEASE = 19;
 export const OFFER_HOLDER = 20;
+/** The classes an offer's escrow refund (cancel, edit-lower) can carry. The
+ *  contract picks exactly one per refund: `OwnRelease` when the offer carries
+ *  no position token or is a refinance request (the escrow stays in the
+ *  creator's own vault), `OfferHolder` otherwise (the token holder's vault).
+ *  Measuring both, narrowed by offer id, owner and asset, counts whichever
+ *  route the refund took. */
+export const OFFER_REFUND_CLASSES = [OWN_RELEASE, OFFER_HOLDER] as const;
 
 /**
  * What the transaction freed in a vault for `owner` (the account whose vault
