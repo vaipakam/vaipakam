@@ -119,8 +119,9 @@ export function parseAssetAddress(raw: string | null): string | undefined | null
 
 /** Read one chain's results, or one asset's. Throws when the tables cannot be read. */
 export async function readIssuerPowers(db: D1Like, chainId: number, address?: string): Promise<IssuerPowers> {
-  const where = address === undefined ? 'c.chain_id = ?' : 'c.chain_id = ? AND c.address = ?';
-  const binds = address === undefined ? [chainId] : [chainId, address];
+  // A static statement (the optional address is a bound NULL), so the
+  // SQL-vs-schema guard checks it against the migrated tables.
+  const addr = address ?? null;
   // ONE statement, so the run row and its findings come from one snapshot:
   // two separate reads could straddle a keeper refresh and pair the old row
   // with the new findings (or the reverse). The join on `checked_at` keeps a
@@ -133,10 +134,10 @@ export async function readIssuerPowers(db: D1Like, chainId: number, address?: st
          FROM asset_issuer_check c
          LEFT JOIN asset_issuer_finding f
            ON f.chain_id = c.chain_id AND f.address = c.address AND f.checked_at = c.checked_at
-        WHERE ${where}
+        WHERE c.chain_id = ? AND (? IS NULL OR c.address = ?)
         ORDER BY c.address, f.check_id`,
     )
-    .bind(...binds)
+    .bind(chainId, addr, addr)
     .all<JoinedRow>();
 
   const byAddress = new Map<string, IssuerPowersAsset>();
