@@ -219,9 +219,16 @@ JSON
     echo "## Limits (design section 10)"
     echo "- A fork is one chain's state at one block: real sequencers, mempools, gas markets and outside actors are absent."
     echo "- Arbitrum's block.number on a fork follows the fork, not the L1 block number the real chain reports."
-    echo "- Price feeds are not re-stamped after a clock step yet (open item 4): a step past a feed's maximum age reads it as stale."
+    echo "- After a clock step each price feed is brought to the new time with its round, answer and decimals unchanged; a real feed is replaced by a stand-in to do it (listed below). The sequencer status feed is left alone, and a Pyth or secondary query source fails the run."
     echo "- Role addresses are impersonated: the rehearsal proves the deploy as those addresses, and the real run proves its keys give them."
     echo
+    if [ -s "${FEEDS_TSV:-/nonexistent}" ]; then
+      echo "## Waiting: feeds re-stamped after a clock step"
+      echo "| Chain | Feed | Source | How | Answer | Time before | Time after |"
+      echo "| --- | --- | --- | --- | --- | --- | --- |"
+      awk -F'\t' '{ printf "| %s | %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6, $7 }' "$FEEDS_TSV"
+      echo
+    fi
     echo "## Logs"
     echo "\`$VAIPAKAM_REHEARSAL_ROOT/logs/\`"
   } > "$SCRATCH/report.md"
@@ -365,6 +372,30 @@ for d in "$CONTRACTS_DIR"/deployments/*/; do
 done
 log "  ✓ records copied into $VAIPAKAM_REHEARSAL_ROOT"
 
+# restamp_feeds WHERE — after a clock step, bring every chain's price sources
+# to the new time (ruling on design open item 4). A chain with no price guard in
+# its records yet (a clock step before the contracts phase) has nothing to do.
+FEEDS_TSV="$SCRATCH/feeds.tsv"
+restamp_feeds() {
+  local where="$1" c guard code
+  [ "${RH_SKIP_FEED_RESTAMP:-0}" = 1 ] && return 0
+  code=$(jq -r '.deployedBytecode.object' "$CONTRACTS_DIR/out/RehearsalFeedStandIn.sol/RehearsalFeedStandIn.json" 2>/dev/null)
+  for c in "${CHAINS[@]}"; do
+    guard=$(jq -r '.priceGuard // empty' "$SCRATCH/$c/addresses.json" 2>/dev/null)
+    [ -n "$guard" ] || continue
+    if [ -z "$code" ] || [ "$code" = null ]; then
+      log "  ✗ the feed stand-in is not built (out/RehearsalFeedStandIn.sol)"
+      FAILED_STAGE="steps ($where feed re-stamp)"; exit 1
+    fi
+    if ! (cd "$CONTRACTS_DIR" && FOUNDRY_BROADCAST="$SCRATCH/.forge/broadcast" FOUNDRY_CACHE_PATH="$SCRATCH/.forge/cache" \
+          rh_feeds_restamp "$c" "${FORK_URL[$c]}" "$guard" "${FORK_BLOCK[$c]}" "$code" "$FEEDS_TSV") 2>&1 \
+        | rh_redact | tee -a "$LOGS/driver.log"; then
+      FAILED_STAGE="steps ($where feed re-stamp on $c)"; exit 1
+    fi
+    log "  ✓ $c feeds re-stamped"
+  done
+}
+
 # ── 6. steps ───────────────────────────────────────────────────────────
 stage steps
 n=0
@@ -395,6 +426,7 @@ for s in "${STEP_LINES[@]}"; do
       log "  → [$n] plan:$ln clock to $target"
       # shellcheck disable=SC2046
       rh_clock_set "$target" $(fork_urls)
+      restamp_feeds "plan:$ln"
       ;;
     manual)
       log "  → [$n] plan:$ln ${words[1]} manual step with no command: ${s#*-- }"

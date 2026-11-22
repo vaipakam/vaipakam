@@ -154,3 +154,86 @@ rh_clock_align() {
   done
   rh_clock_set "$((max + 1))" "$@"
 }
+
+# rh_feeds_restamp SLUG URL GUARD FROM_BLOCK STANDIN_CODE OUT_TSV — after a
+# clock step, bring every price source the chain's guard holds to the fork's
+# new time, changing nothing else (#3891, ruling on open item 4).
+#
+#   - The list is read from the fork (script/rehearsal/ListPriceFeeds.s.sol),
+#     plus the asset direct feeds found from the guard's own change events
+#     since FROM_BLOCK. Never kept by hand.
+#   - A repo mock feed is re-stamped through its own setter; a feed already
+#     replaced in this run gets its time slot written; any other feed is
+#     REPLACED by the rehearsal stand-in carrying the same round, answer and
+#     decimals, and is reported as replaced. A real aggregator's own storage is
+#     never written.
+#   - Each feed is proven after: round, answer and decimals equal to before,
+#     the time equal to the fork's, and the guard reads it. A feed that fails
+#     the proof fails the run by name.
+#   - The sequencer status feed is left alone (moving its start time would put
+#     the fork inside the recovery window). A source the rehearsal cannot
+#     re-stamp (Pyth, a secondary query oracle) fails the run by name.
+#
+# Writes one line per feed to OUT_TSV: slug, address, label, mechanism, answer,
+# time before, time after. Needs cast, jq and node; runs from contracts/.
+rh_feeds_restamp() {
+  local slug="$1" url="$2" guard="$3" from="$4" code="$5" out="$6"
+  local ts list line addr label before after r0 a0 t0 r1 a1 t1 d0 d1 desc mech slot2 ok topic subj f
+  ts=$(cast block latest --field timestamp --rpc-url "$url") || return 1
+  if [ -n "${RH_FEED_LIST:-}" ]; then
+    list="$RH_FEED_LIST" # tests only: stands for the list script's output
+  else
+    list=$(FOUNDRY_NO_STORAGE_CACHING=true forge script script/rehearsal/ListPriceFeeds.s.sol \
+      --sig 'list(address)' "$guard" --rpc-url "$url" 2>&1) || { printf '%s\n' "$list" | tail -5 >&2; echo "Error: $slug: the price source list could not be read" >&2; return 1; }
+  fi
+  if printf '%s\n' "$list" | grep -q '^ *UNCOVERED '; then
+    printf '%s\n' "$list" | sed -n 's/^ *UNCOVERED /Error: '"$slug"': cannot re-stamp /p' >&2
+    return 1
+  fi
+  # Asset direct feeds: the guard keys them by asset; its ConfigSet events name the assets.
+  topic=$(cast to-uint256 17)
+  for subj in $(cast logs --rpc-url "$url" --from-block "$from" --address "$guard" \
+      'ConfigSet(uint8 indexed,bytes32 indexed,bytes32)' "$topic" --json 2>/dev/null \
+      | jq -r '.[]?.topics[2] // empty' | sort -u); do
+    f=$(cast call "$guard" 'assetDirectFeed(address)(address)' "0x${subj: -40}" --rpc-url "$url") || return 1
+    [ "$f" != 0x0000000000000000000000000000000000000000 ] && list+=$'\n'"FEED $f asset-direct-0x${subj: -40}"
+  done
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "$line" in FEED\ *) ;; *) continue ;; esac
+    read -r _ addr label <<<"$line"
+    before=$(cast call "$addr" 'latestRoundData()(uint80,int256,uint256,uint256,uint80)' --rpc-url "$url" 2>/dev/null | cut -d' ' -f1) \
+      || { echo "Error: $slug: feed $addr ($label) does not answer latestRoundData" >&2; return 1; }
+    r0=$(sed -n 1p <<<"$before"); a0=$(sed -n 2p <<<"$before"); t0=$(sed -n 4p <<<"$before")
+    d0=$(cast call "$addr" 'decimals()(uint8)' --rpc-url "$url" | cut -d' ' -f1) || return 1
+    desc=$(cast call "$addr" 'description()(string)' --rpc-url "$url" 2>/dev/null || true)
+    case "$desc" in
+      '"MockChainlinkAggregator"')
+        mech=mock-setter
+        cast send --unlocked --from "$DEPLOYER_ADDRESS" "$addr" 'setUpdatedAt(uint256)' "$ts" --rpc-url "$url" >/dev/null || return 1 ;;
+      '"RehearsalFeedStandIn"')
+        mech=stand-in
+        cast rpc --rpc-url "$url" anvil_setStorageAt "$addr" 0x1 "$(cast to-uint256 "$ts")" >/dev/null || return 1 ;;
+      *)
+        mech=replaced
+        slot2=$(node -e 'console.log("0x" + ((BigInt(process.argv[2]) << 80n) | BigInt(process.argv[1])).toString(16).padStart(64, "0"))' "$r0" "$d0")
+        cast rpc --rpc-url "$url" anvil_setCode "$addr" "$code" >/dev/null || return 1
+        cast rpc --rpc-url "$url" anvil_setStorageAt "$addr" 0x0 "$(cast to-uint256 "$a0")" >/dev/null || return 1
+        cast rpc --rpc-url "$url" anvil_setStorageAt "$addr" 0x1 "$(cast to-uint256 "$ts")" >/dev/null || return 1
+        cast rpc --rpc-url "$url" anvil_setStorageAt "$addr" 0x2 "$slot2" >/dev/null || return 1 ;;
+    esac
+    after=$(cast call "$addr" 'latestRoundData()(uint80,int256,uint256,uint256,uint80)' --rpc-url "$url" | cut -d' ' -f1) || return 1
+    r1=$(sed -n 1p <<<"$after"); a1=$(sed -n 2p <<<"$after"); t1=$(sed -n 4p <<<"$after")
+    d1=$(cast call "$addr" 'decimals()(uint8)' --rpc-url "$url" | cut -d' ' -f1) || return 1
+    if [ "$r1" != "$r0" ] || [ "$a1" != "$a0" ] || [ "$d1" != "$d0" ] || [ "$t1" != "$ts" ]; then
+      echo "Error: $slug: feed $addr ($label) moved more than its time (round $r0->$r1, answer $a0->$a1, decimals $d0->$d1, time $t1 not $ts)" >&2
+      return 1
+    fi
+    ok=$(cast call "$guard" 'readFeed(address,bool)(bool,uint256,uint8)' "$addr" true --rpc-url "$url" | head -1)
+    if [ "$ok" != true ]; then
+      echo "Error: $slug: the price guard does not read feed $addr ($label) after the re-stamp" >&2
+      return 1
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$slug" "$addr" "$label" "$mech" "$a0" "$t0" "$t1" >> "$out"
+  done <<<"$list"
+}
