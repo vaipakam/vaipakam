@@ -118,6 +118,23 @@ describe('planNotifications', () => {
     expect(rows[0].kind).toBe('loan_defaulted');
   });
 
+  it('tells both holders their claim is ready when a fallback loan is finished in kind (#3865)', () => {
+    // FallbackFinishedInKind terminalizes FallbackPending -> Defaulted with
+    // no LoanDefaulted companion; both position tokens stay live (each side
+    // collects with its ordinary claim), so both current holders get a row.
+    // The caller who ran the step is not a party and gets none.
+    const rows = planNotifications(
+      84532,
+      [{ eventName: 'FallbackFinishedInKind', args: { loanId: 7n, caller: BUYER }, blockNumber: 100n, logIndex: 0 }],
+      new Map([[7, parties(LENDER, BORROWER)]]),
+      new Map([[100n, 1000]]),
+      1,
+    );
+    expect(rows.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
+    expect(rows.every((r) => r.kind === 'loan_defaulted')).toBe(true);
+    expect(EVENT_NOTIF_MAP.FallbackFinishedInKind).toEqual({ kind: 'loan_defaulted', recipients: 'both' });
+  });
+
   it('self-dedups a wallet on both sides of its own loan', () => {
     const rows = planNotifications(
       84532,

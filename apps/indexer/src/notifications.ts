@@ -111,6 +111,13 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // lender NFT is burned in this path, so `recipientFor` skips that
   // side; the borrower (with the residual collateral claim) is notified.
   BackstopAbsorbedLoan: { kind: 'loan_defaulted', recipients: 'both' },
+  // #3865 — the dated finish of a loan left in the fallback state
+  // terminalizes it to Defaulted and emits ONLY `FallbackFinishedInKind` (no
+  // `LoanDefaulted` companion). Both holders now have a claim ready: the
+  // lender's part waits in the lender's vault, the borrower's part stays in
+  // the borrower's vault. The `loan_defaulted` row reads "A loan defaulted —
+  // see what you can claim.", which is that message.
+  FallbackFinishedInKind: { kind: 'loan_defaulted', recipients: 'both' },
   // HF-based liquidation is a DISTINCT terminal path from a time-based
   // default: the full-close (RiskFacet.sol:930) and split-terminal
   // (RiskSplitLiquidationFacet.sol:368) both `terminalize`→Defaulted and

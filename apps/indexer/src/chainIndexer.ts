@@ -6560,6 +6560,26 @@ export async function processLoanLogs(
       // row on this terminal so the frontend can't serve a stale live listing
       // (the on-chain LibPrepayCleanup clear emits no cancel event).
       await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'FallbackFinishedInKind') {
+      // #3865 — a loan left in the fallback state past its dated end was
+      // finished in kind by anyone (`FallbackCustodyFacet.finishFallbackInKind`).
+      // The recorded split was applied as it stood and the loan went
+      // FallbackPending → Defaulted through `terminalizeFromAny`; each side then
+      // collects with its ordinary claim. The status stays `active` in D1
+      // through a fallback episode, so the ordinary terminal flip applies, and
+      // the closed-loan side tables (prepay listing, swap actions, quarantine)
+      // are cleared exactly as for the other Defaulted terminals.
+      //
+      // THE THREE PARTS ARE RECORDED BY THE ACTIVITY LEDGER, not here:
+      // `recordActivityEvents` writes this log with its arguments (lenderPart,
+      // treasuryPart, borrowerPart, caller), and that row is the record the
+      // app's Activity feed reads. No loans-row field holds a fallback amount,
+      // so nothing else is owed. A co-emitted `LoanSettled` would settle the
+      // row through the handler below; the finish itself pays no one, so it
+      // normally leaves the row `defaulted` until the claims run.
+      const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
+      if (r) statusUpdates++;
+      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal

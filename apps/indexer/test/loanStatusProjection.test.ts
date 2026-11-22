@@ -127,6 +127,32 @@ describe('processLoanLogs — HF-liquidation status projection (#1293)', () => {
     expect(res2.statusUpdates).toBe(0); // already terminal — no-op
     expect(statusOf(h, 9)).toBe('defaulted');
   });
+
+  it('flips a fallback loan finished in kind to defaulted, once (#3865)', async () => {
+    // The row stays `active` in D1 through a fallback episode; the dated
+    // finish emits only FallbackFinishedInKind (no LoanDefaulted companion).
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 10);
+    const finish = {
+      eventName: 'FallbackFinishedInKind',
+      args: {
+        loanId: 10n,
+        lenderPart: 60n,
+        treasuryPart: 5n,
+        borrowerPart: 35n,
+        caller: '0x00000000000000000000000000000000000000ee',
+      },
+      blockNumber: 100n,
+      transactionHash: `0x${'cd'.repeat(32)}`,
+      logIndex: 0,
+    };
+    const res = await run(h, [finish as never]);
+    expect(res.statusUpdates).toBe(1);
+    expect(statusOf(h, 10)).toBe('defaulted');
+    const again = await run(h, [finish as never]);
+    expect(again.statusUpdates).toBe(0);
+    expect(statusOf(h, 10)).toBe('defaulted');
+  });
 });
 
 /**
