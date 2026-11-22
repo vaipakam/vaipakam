@@ -66,6 +66,7 @@ import {
   leftOutOfRatesSql,
   oneAddressLoanSql,
   partiesUnknownLoanSql,
+  ratesEligibleSql,
 } from './figureRules';
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -1946,7 +1947,7 @@ export async function handleLoansRateCandles(
         `SELECT loan_id, start_at, init_rate_bps,
                 init_principal, init_principal_unbacked
          FROM loans l
-         WHERE ${conds.join(' AND ')} AND NOT ${leftOutSql}
+         WHERE ${conds.join(' AND ')} AND ${ratesEligibleSql('l')}
          ORDER BY start_at DESC, loan_id DESC
          LIMIT ?`,
       ).bind(...binds, CANDLE_SCAN_CAP + 1),

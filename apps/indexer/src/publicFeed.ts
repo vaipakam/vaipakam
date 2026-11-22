@@ -111,11 +111,17 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     // An offer past its expiry can still read `active` (expiry is enforced
     // lazily on-chain), so the feed always drops expired offers: the book
     // it publishes is the one `about.excludes` describes.
-    fixed: { excludeExpired: '1' },
+    // An offer whose expiry the index has not read yet (a stub) is left
+    // out too: its expiry would otherwise read as "never".
+    fixed: { excludeExpired: '1', excludeUnknownExpiry: '1' },
     about: {
       what: 'The open offer book, paginated.',
       source: CHAIN_EVENTS,
-      excludes: ['cancelled, filled and expired offers', 'gasless signed offers (their own book, not indexed here)'],
+      excludes: [
+        'cancelled, filled and expired offers',
+        'offers whose expiry the index has not read yet (`/offers/stats` counts them as `activeUnknownExpiry`)',
+        'gasless signed offers (their own book, not indexed here)',
+      ],
     },
   },
   {

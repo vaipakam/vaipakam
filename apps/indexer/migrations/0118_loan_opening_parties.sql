@@ -32,6 +32,18 @@ CREATE INDEX IF NOT EXISTS idx_loans_rates_left_out_tenor_start_at
   ON loans (chain_id, lending_asset, collateral_asset, init_duration_days, start_at)
   WHERE init_lender IS NULL OR init_borrower IS NULL OR init_lender = init_borrower;
 
+-- The candles themselves read only loans with two known, different opening
+-- parties. The placement index cannot skip left-out loans, so a market
+-- full of them would make the capped candle read walk its whole history;
+-- this partial index holds only the eligible, placed loans. Its WHERE is
+-- the placement rule's flag plus the rule's terms exactly
+-- (figureRules.ts, ratesEligibleSql).
+CREATE INDEX IF NOT EXISTS idx_loans_rates_eligible_tenor_start_at
+  ON loans (chain_id, lending_asset, collateral_asset, init_duration_days, start_at)
+  WHERE init_terms_unbacked = 0
+    AND init_lender IS NOT NULL AND init_borrower IS NOT NULL
+    AND init_lender <> init_borrower;
+
 -- The pass-by-pass repair below looks only at rows still missing their
 -- parties; this index keeps that read to those rows.
 CREATE INDEX IF NOT EXISTS idx_loans_opening_parties_unknown

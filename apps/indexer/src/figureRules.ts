@@ -85,6 +85,20 @@ export function leftOutOfRatesSql(alias: string): string {
 }
 
 /**
+ * The complement of {@link leftOutOfRatesSql}, written as plain AND terms:
+ * true when loan row `alias` is two known, different opening parties. The
+ * rate candles select with it rather than `NOT leftOut`, because SQLite
+ * uses a partial index only when each term of the index's WHERE appears in
+ * the query's; `idx_loans_rates_eligible_tenor_start_at` (migration 0118)
+ * carries these same terms, so a market full of left-out loans cannot
+ * turn the capped candle read into a scan of its whole history.
+ */
+export function ratesEligibleSql(alias: string): string {
+  if (!ALIAS.test(alias)) throw new Error('bad alias');
+  return `${alias}.init_lender IS NOT NULL AND ${alias}.init_borrower IS NOT NULL AND ${alias}.init_lender <> ${alias}.init_borrower`;
+}
+
+/**
  * How many left-out loans a bounded figure counts before it says "at
  * least" instead (the rate candles; the unplaced count does the same).
  */

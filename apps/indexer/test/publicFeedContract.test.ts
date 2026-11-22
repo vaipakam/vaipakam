@@ -180,7 +180,7 @@ describe('(a) each route takes only the parameters it lists', () => {
 
   it('pins the parameters the feed fixes itself', () => {
     expect(Object.fromEntries(FEED_ROUTES.filter((r) => r.fixed).map((r) => [r.path, r.fixed]))).toEqual({
-      '/offers/active': { excludeExpired: '1' },
+      '/offers/active': { excludeExpired: '1', excludeUnknownExpiry: '1' },
     });
   });
 
@@ -361,15 +361,24 @@ describe('the budget', () => {
 });
 
 describe('(d) what a route publishes matches what it says it leaves out', () => {
-  it('drops an expired offer from the open book, and does not let a caller turn that off', async () => {
+  it('drops expired offers and offers of unknown expiry from the open book, and does not let a caller turn that off', async () => {
     const { h, env } = seeded();
     // Offer 2 has passed its expiry but still reads `active`: expiry is
     // enforced lazily on-chain.
     h.db.prepare('UPDATE offers SET expires_at = ? WHERE offer_id = 2').run(NOW - 60);
+    // Offer 1 is a stub: its expiry was never read, so `expires_at` is the
+    // default 0, which would otherwise read as "never expires".
+    h.db.prepare('UPDATE offers SET is_stub = 1 WHERE offer_id = 1').run();
+    insert(h.db, 'offers', {
+      chain_id: CHAIN, offer_id: 3, status: 'active', creator: A, offer_type: 0,
+      lending_asset: USDC, collateral_asset: WETH, asset_type: 0, collateral_asset_type: 0,
+      amount: '1000', interest_rate_bps: 500, collateral_amount: '2', duration_days: 30,
+      first_seen_block: 1, first_seen_at: NOW - 100, updated_at: NOW - 100, created_at: NOW - 100,
+    });
     const res = await handlePublicFeed(new Request(`https://x${withChain('/offers/active')}`), env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { offers: Array<{ offerId: number | string }> } };
-    expect(body.data.offers.map((o) => Number(o.offerId))).toEqual([1]);
+    expect(body.data.offers.map((o) => Number(o.offerId))).toEqual([3]);
     const refused = await handlePublicFeed(
       new Request(`https://x${withChain('/offers/active?excludeExpired=0')}`),
       env,

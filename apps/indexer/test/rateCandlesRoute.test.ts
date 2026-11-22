@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRateCandles } from '../src/loanRoutes';
-import { leftOutOfRatesSql } from '../src/figureRules';
+import { leftOutOfRatesSql, ratesEligibleSql } from '../src/figureRules';
 import { repairOpeningParties } from '../src/chainIndexer';
 import {
   PLACED_IN_TENOR_SQL,
@@ -163,6 +163,21 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     const body = await h.call();
     expect(body.buckets).toEqual([]);
     expect(body.unplaced).toEqual({ count: 1, capped: false });
+  });
+
+  it('reads the candles through the eligible-loans index, so left-out loans are never walked (#3888)', () => {
+    const h = makeHarness();
+    const plan = h.db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT loan_id, start_at FROM loans l
+          WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
+            AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
+            AND asset_type = 0 AND collateral_asset_type = 0 AND start_at >= ?
+            AND ${ratesEligibleSql('l')}
+          ORDER BY start_at DESC, loan_id DESC LIMIT ?`,
+      )
+      .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_rates_eligible_tenor_start_at');
   });
 
   it('counts the left-out loans through their own partial index (#3879)', () => {
