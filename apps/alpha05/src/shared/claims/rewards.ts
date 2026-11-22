@@ -14,7 +14,7 @@
  */
 import { BaseError, ContractFunctionRevertedError, decodeErrorResult, parseAbi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { InteractionRewardsLensFacetABI, RewardClaimFacetABI, VPFIDiscountFacetABI, VPFITokenFacetABI, ConfigFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
-import { extractRevertData } from '@vaipakam/lib/decodeContractError';
+import { extractRevertData } from '@vaipakam/lib/revertData';
 import { refusalFromError } from '../eligibility/refusal';
 import { isContractAnswer } from '../reads/answer';
 import type { CopyKey } from '../copy/useCopy';

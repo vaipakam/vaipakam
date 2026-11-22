@@ -16,7 +16,7 @@
  */
 import { decodeErrorResult, type Abi, type AbiItem, type PublicClient } from 'viem';
 import { ConfigFacetABI, OfferCreateFacetABI, RiskAccessFacetABI, RiskPreviewFacetABI } from '@vaipakam/contracts/abis';
-import { extractRevertData } from '@vaipakam/lib/decodeContractError';
+import { extractRevertData } from '@vaipakam/lib/revertData';
 
 type Hex = `0x${string}`;
 
