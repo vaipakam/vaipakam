@@ -44,6 +44,7 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
+import {PayoutRuleCrossing} from "./lib/PayoutRuleCrossing.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
@@ -190,6 +191,8 @@ contract RedeployFacets is Script {
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
         _requirePositionNFTDiamond(diamond);
+        // #3744 - and one from before the payout and offer-holder rule.
+        PayoutRuleCrossing.requireRouted(diamond);
         // #3412 - and one from before the required transaction deadlines.
         _requireValidUntilEntries(diamond);
         // #3272 part 2 - and one from before the price guard.

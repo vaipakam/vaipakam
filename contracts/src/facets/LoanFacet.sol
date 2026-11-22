@@ -370,10 +370,16 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // updated by EarlyWithdrawalFacet via {transferLenderEntry}.
         if (!isLenderSaleVehicle) {
             LibVaipakam.Loan storage loanRef = s.loans[loanId];
+            // #3744 — the entries belong to the wallets that hold the two
+            // position tokens as the loan opens (an offer's token holder, or
+            // the acceptor's side owner in a match), not to the vaults that
+            // fund it: `loan.lender` / `loan.borrower` stay the custody
+            // anchors only. An entry keyed to a funding creator who never held
+            // the position would earn on, or be frozen by, the wrong wallet.
             LibInteractionRewards.registerLoan(
                 loanId,
-                loanRef.lender,
-                loanRef.borrower,
+                LibPositionNFT.ownerOf(loanRef.lenderTokenId),
+                LibPositionNFT.ownerOf(loanRef.borrowerTokenId),
                 loanRef.principalAsset,
                 loanRef.principal,
                 loanRef.interestRateBps,

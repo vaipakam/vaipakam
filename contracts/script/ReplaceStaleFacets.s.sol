@@ -30,6 +30,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
+import {PayoutRuleCrossing} from "./lib/PayoutRuleCrossing.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
@@ -182,6 +183,8 @@ contract ReplaceStaleFacets is DeployDiamond {
         ) revert PredatesPositionNFT(diamond);
         // #3272 part 2 - and one from before the price guard.
         PriceGuardCrossing.requireRecorded(diamond);
+        // #3744 - and one from before the payout and offer-holder rule.
+        PayoutRuleCrossing.requireRouted(diamond);
 
         vm.startBroadcast(deployerKey);
 

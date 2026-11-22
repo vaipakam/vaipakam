@@ -22,6 +22,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -294,6 +295,7 @@ contract OfferFillHolderTest is SetupTest {
 
     function test_match_transferredLenderOffer_holderOwnsTheLenderSide() public {
         _enableMatching();
+        _ensureRewardClockLaunched();
         uint256 lo = _lenderOffer(PRINCIPAL);
         _soldTo(lo, buyer);
         uint256 bo = _borrowerOffer();
@@ -310,6 +312,20 @@ contract OfferFillHolderTest is SetupTest {
             buyer,
             "the entry discount is stamped for the holder"
         );
+        // The lender reward entry is the holder's too, never the funding
+        // creator's (Codex #3805: a creator entry would earn on, or be frozen
+        // by, a wallet that never held the position).
+        assertTrue(_hasLenderEntry(buyer, loanId), "the holder's lender reward entry");
+        assertFalse(_hasLenderEntry(lender, loanId), "no lender reward entry for the creator");
+    }
+
+    function _hasLenderEntry(address user, uint256 loanId) internal view returns (bool) {
+        LibVaipakam.RewardEntry[] memory es =
+            InteractionRewardsLensFacet(address(diamond)).getUserRewardEntries(user);
+        for (uint256 i; i < es.length; ++i) {
+            if (es[i].loanId == loanId && es[i].side == LibVaipakam.RewardSide.Lender) return true;
+        }
+        return false;
     }
 
     function test_match_transferredLenderOffer_inSlices_holderOwnsEach() public {
