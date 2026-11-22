@@ -183,6 +183,22 @@
       "getter": "getRewardRemittanceKeeper()(address)",
       "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B",
       "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setPancakeswapV3Factory(address)",
+      "getter": "getPancakeswapV3Factory()(address)",
+      "value": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+      "source": "On-chain evidence read 2026-11-22: PancakeSwap's v3 factory answers at its canonical address on all three testnets (feeAmountTickSpacing(500) = 10, the same poolDeployer 0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9 on each). Its published page lists no testnet; design ruling 2026-11-22: where the venue exists, set the address."
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setFusionLimitOrderProtocol(address)",
+      "getter": "getFusionLimitOrderProtocol()(address)",
+      "value": "0x111111125421cA6dc452d289314280a0f8842A65",
+      "source": "On-chain evidence read 2026-11-22: 1inch Router v6 (which carries Limit Order Protocol v4) answers on Base Sepolia: eip712Domain() names \"1inch Aggregation Router\" version 6. Its published list names mainnets only; design ruling 2026-11-22: where the venue exists, set the address."
     }
   ],
   "sanctionsClearance": {
@@ -223,11 +239,23 @@
         "bnb-testnet"
       ],
       "reason": "VPFI is minted on the canonical chain only; a mirror holds the CCIP mirror token, which has no minter on the Diamond."
-    }
-  },
-  "awaitingRuling": {
+    },
     "getRateModel()": {
-      "reason": "Design ruling 2026-11-22: shown as awaiting a ruling while the rate-reference thread says whether Auto-lend still reads the rate model."
+      "kind": "byDesign",
+      "chains": "all",
+      "reason": "Rate-reference thread 2026-11-22: nothing reads the rate model; the identity model applies, and the model is slated for removal in the refactor."
+    },
+    "getFusionLimitOrderProtocol()": {
+      "kind": "venue",
+      "chains": [
+        "arb-sepolia",
+        "bnb-testnet"
+      ],
+      "reason": "1inch's Limit Order Protocol v4 (Router v6) is not on Arbitrum Sepolia or BNB testnet: absent from its published list, and its address holds no code there. Swap-to-repay by limit order is unavailable on these chains.",
+      "evidence": {
+        "list": "https://github.com/1inch/limit-order-protocol",
+        "checked": "2026-11-22"
+      }
     }
   },
   "_notDeployedHereWhy": "#3893, design ruling 2026-11-22: the readback refuses a zero answer from a Diamond getter that names a deployment contract, and refuses a revert outright, unless the getter is listed here. byDesign: a zero the canonical/mirror split explains (design checks each). venue: an outside contract absent from the chain, with the venue's published deployment list and the date read; where the venue exists, its address is set instead. On mainnet every entry needs the owner's recorded acceptance. awaitingRuling rows are shown, neither met nor failed, and are refused on mainnet.",

@@ -10,7 +10,14 @@ import { join } from 'node:path';
 import { CHAINS, CONTRACTS_DIR, derivedRewardSources, settingExpect, termsVersions, validate, keeperFlags, addressGetters } from '../../../contracts/script/deploy-plan.mjs';
 import { AWAITING, MET, NOT_MET, UNREADABLE, createdAddresses, failed, grantableRoles, readback, words } from '../../../contracts/script/readback.mjs';
 
-const desired = () => JSON.parse(readFileSync(join(CONTRACTS_DIR, 'deployments/testnets.desired.json'), 'utf8'));
+// The committed file, with the rate model's entry taken out so each test
+// states the getter rule it exercises on its own.
+const desired = () => {
+  const d = JSON.parse(readFileSync(join(CONTRACTS_DIR, 'deployments/testnets.desired.json'), 'utf8'));
+  delete d.notDeployedHere?.['getRateModel()'];
+  delete d.awaitingRuling;
+  return d;
+};
 const terms = termsVersions();
 const A = (n) => `0x${n.toString(16).padStart(40, '0')}`;
 const ADMIN = A(0xa1);
@@ -289,6 +296,7 @@ test('on mainnet a zero needs the owner\'s recorded acceptance, and nothing may 
 
 test('a getter awaiting a ruling is shown, neither met nor failed, and a revert still fails', () => {
   const d = desired();
+  d.awaitingRuling = { 'getRateModel()': { reason: 'waiting for the design thread to rule on this getter' } };
   const w = world(d);
   for (const s of Object.keys(d.chains)) w.getters[s]['getRateModel()'] = A(0);
   const rows = readback(d, fakeCtx(d, w));
