@@ -123,10 +123,10 @@ export function buildAt(repo, commit) {
 /**
  * Run the TAGGED tree's own `run-regression.sh --verify-shards` over the
  * record's manifests, so the plan they are checked against is the tag's, not
- * this checkout's. Returns its refusals (empty when it accepts). Needs no
+ * this checkout's, built from the inputs the run recorded, not this machine's. Returns its refusals (empty when it accepts). Needs no
  * forge: the plan is read from the tree's test files.
  */
-export function verifyShardsAt(repo, commit, manifests) {
+export function verifyShardsAt(repo, commit, manifests, planInputs) {
   const scratch = mkdtempSync(join(tmpdir(), 'baseline-shards-'));
   const wt = join(scratch, 'tree');
   const dir = join(scratch, 'manifests');
@@ -142,7 +142,12 @@ export function verifyShardsAt(repo, commit, manifests) {
     }
     run('git', ['worktree', 'add', '--detach', '--quiet', wt, commit], { cwd: repo });
     try {
-      run('bash', [join(wt, 'contracts/script/run-regression.sh'), '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'] });
+      // The plan is rebuilt from the RECORDED inputs, never this machine's:
+      // its chunk sizes and FORK_URL_* are dropped, the recorded ones set (a
+      // name only marks a URL as present; planning never reads the value).
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'CHUNK_SIZE' && k !== 'SUBDIR_CHUNK_SIZE' && !k.startsWith('FORK_URL_')));
+      Object.assign(env, planInputs ?? {});
+      run('bash', [join(wt, 'contracts/script/run-regression.sh'), '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'], env });
       return [];
     } catch (e) {
       const said = `${e.stderr ?? ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -156,8 +161,8 @@ export function verifyShardsAt(repo, commit, manifests) {
 
 /**
  * Judge `tag`. `build(commit)` returns {outDir, cleanup}; `forgeVersion()` the
- * build tool's version line; `verifyShards(commit, manifests)` the tagged
- * tree's verdict on the regression manifests (a list of refusals). Returns {refusals, record}.
+ * build tool's version line; `verifyShards(commit, regression)` the tagged
+ * tree's verdict on the regression manifests, rebuilt from their recorded inputs (a list of refusals). Returns {refusals, record}.
  */
 export function checkBaseline({
   repo,
@@ -166,7 +171,7 @@ export function checkBaseline({
   build = (c) => buildAt(repo, c),
   forgeVersion,
   verifyTag,
-  verifyShards = (commit, manifests) => verifyShardsAt(repo, commit, manifests),
+  verifyShards = (commit, regression) => verifyShardsAt(repo, commit, regression.manifests, regression.planInputs),
 }) {
   const facts = tagFacts(repo, tag, verifyTag);
   const refusals = checkTagFacts(tag, facts);
@@ -195,7 +200,7 @@ export function checkBaseline({
   refusals.push(...gasCompleteness(record.gas, budgets == null ? {} : JSON.parse(budgets)));
   const regressionRefusals = regressionAgreement(record.regression);
   refusals.push(...regressionRefusals);
-  if (!regressionRefusals.length) refusals.push(...verifyShards(facts.commit, record.regression.manifests));
+  if (!regressionRefusals.length) refusals.push(...verifyShards(facts.commit, record.regression));
   if (!outDir) {
     const forge = forgeVersion();
     if (forge !== record.versions?.forge) {

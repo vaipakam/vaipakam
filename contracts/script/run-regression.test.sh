@@ -81,6 +81,19 @@ else
   bad "the manifests do not carry one 'tests <glob> 3 3' line per chunk"
 fi
 
+# #3964 — the manifest names the plan's inputs (the chunk sizes and the NAMES
+# of the FORK_URL_* set), never a URL's value.
+rm -rf "$WORK/inputs"; mkdir -p "$WORK/inputs"
+FORK_URL_SECRET_PROBE='https://rpc.example/key-1234' CHUNK_SIZE=7 rr --manifest "$WORK/inputs/full.tsv" > /dev/null 2>&1
+if grep -qP '^input\tCHUNK_SIZE\t7$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^input\tSUBDIR_CHUNK_SIZE\t3$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^input\tFORK_URL_SECRET_PROBE\tset$' "$WORK/inputs/full.tsv" \
+   && ! grep -q 'key-1234' "$WORK/inputs/full.tsv"; then
+  ok "the manifest names the plan's inputs and no URL"
+else
+  bad "the manifest does not name the plan's inputs, or carries a URL"
+fi
+
 # Round-robin: shard 1 takes plan positions 0, 3, 6, ...
 awk 'NR%3==1' "$WORK/plan.globs" > "$WORK/expect1"
 grep -P '^(pass|fail)\t' "$WORK/m3/shard-1.tsv" | cut -f2 > "$WORK/got1"

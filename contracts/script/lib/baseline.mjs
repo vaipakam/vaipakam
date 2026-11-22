@@ -283,12 +283,28 @@ export function regressionFromManifests(manifests) {
   const files = Object.keys(manifests).sort(byBytes);
   if (!files.length) throw new Error('baseline: the regression section carries no manifests');
   const digests = new Set();
+  let planInputs = null;
   let chunks = 0;
   let passed = 0;
   let testsRun = 0;
   let testsPassed = 0;
   for (const f of files) {
     const text = manifests[f];
+    // The inputs the plan was built from (run-regression.sh writes them), so
+    // a verifier elsewhere rebuilds the same plan. Every manifest names the same.
+    const inputs = {};
+    for (const line of text.split('\n')) {
+      const [k, name, value] = line.split('\t');
+      if (k !== 'input') continue;
+      const known = name === 'CHUNK_SIZE' || name === 'SUBDIR_CHUNK_SIZE' ? /^[1-9]\d*$/.test(value ?? '') : /^FORK_URL_[A-Z0-9_]+$/.test(name ?? '') && value === 'set';
+      if (!known || name in inputs) throw new Error(`baseline: ${f}: the input row "${line}" is not a chunk size or a FORK_URL_* name marked set, or repeats one`);
+      inputs[name] = value;
+    }
+    if (!('CHUNK_SIZE' in inputs) || !('SUBDIR_CHUNK_SIZE' in inputs)) {
+      throw new Error(`baseline: ${f}: no plan inputs (chunk sizes); run the regression again with this tree's run-regression.sh`);
+    }
+    if (planInputs && canonicalJson(planInputs) !== canonicalJson(inputs)) throw new Error(`baseline: ${f}: its plan inputs differ from another manifest's; one regression has one plan`);
+    planInputs = inputs;
     // Every chunk the manifest records carries exactly one count row, so the
     // record states measured figures, never a zero for a count it lacks.
     const ran = [];
@@ -316,7 +332,7 @@ export function regressionFromManifests(manifests) {
   if (digests.size !== 1) throw new Error(`baseline: the manifests name ${digests.size} plan digests; one regression has one plan`);
   const sorted = {};
   for (const f of files) sorted[f] = manifests[f];
-  return { planDigest: [...digests][0], chunks, chunksPassed: passed, testsRun, testsPassed, manifests: sorted };
+  return { planDigest: [...digests][0], planInputs, chunks, chunksPassed: passed, testsRun, testsPassed, manifests: sorted };
 }
 
 /**
@@ -335,8 +351,9 @@ export function regressionAgreement(regression) {
     return [`regression: ${e.message.replace(/^baseline: /, '')}`];
   }
   const out = [];
-  for (const k of ['planDigest', 'chunks', 'chunksPassed', 'testsRun', 'testsPassed']) {
-    if (regression[k] !== derived[k]) out.push(`regression: the record states ${k} ${regression[k]}, its manifests add up to ${derived[k]}`);
+  for (const k of ['planDigest', 'planInputs', 'chunks', 'chunksPassed', 'testsRun', 'testsPassed']) {
+    const [a, b] = [regression[k] ?? null, derived[k]].map((v) => JSON.stringify(JSON.parse(canonicalJson(v))));
+    if (a !== b) out.push(`regression: the record states ${k} ${a}, its manifests add up to ${b}`);
   }
   if (derived.chunksPassed !== derived.chunks) out.push(`regression: ${derived.chunks - derived.chunksPassed} of ${derived.chunks} chunks failed; a baseline records a green regression`);
   if (derived.testsPassed !== derived.testsRun) out.push(`regression: ${derived.testsRun - derived.testsPassed} of ${derived.testsRun} tests failed; a baseline records a green regression`);

@@ -31,7 +31,10 @@ bash script/run-regression.sh --manifest ../baseline-manifests/full.tsv
 The regression runs the gas suite with everything else and writes its figures
 to `out-gas-suite/`. `--ast` changes no code: it lets the record name every
 value a contract fixes at construction. A sharded run works too: put every
-shard's manifest in the same folder, at any depth.
+shard's manifest in the same folder, at any depth. Each manifest names the inputs its plan
+was built from (the chunk sizes, and the names of the `FORK_URL_*` variables
+that were set, never a URL), so the check rebuilds the same plan on another
+machine whatever that machine's own settings.
 
 ## 2. Write the record
 
