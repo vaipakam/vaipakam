@@ -147,7 +147,9 @@ describe('POST /internal/failed-tx', () => {
       { kind: 'cursor', chainId: CHAIN, cursor: { mode: 'sends-and-audit', blockNumber: 1, blockTime: 1 } },
       { kind: 'cursor', chainId: CHAIN, cursor: { mode: 'trace-filter', blockNumber: 1, blockTime: 1, watchedShareBps: 5000 } },
       { kind: 'cursor', chainId: CHAIN, cursor: { mode: 'trace-filter', blockNumber: 1, blockTime: 1, audits: [{ fromBlock: 1, toBlock: 2, found: 1, missed: 2 }] } },
-      { kind: 'replaced', chainId: CHAIN, fromBlock: 10, toBlock: 5 },
+      { kind: 'replaced', chainId: CHAIN, fromBlock: 10, toBlock: 5, staleCheckpoint: { blockNumber: 7, blockHash: h64(7) } },
+      { kind: 'replaced', chainId: CHAIN, fromBlock: 10, toBlock: 20 },
+      { kind: 'replaced', chainId: CHAIN, fromBlock: 10, toBlock: 20, staleCheckpoint: { blockNumber: 30, blockHash: h64(30) } },
       { kind: 'sql', chainId: CHAIN, sql: 'DELETE FROM loans' },
     ];
     for (const body of bad) {
@@ -190,7 +192,7 @@ describe('POST /internal/failed-tx', () => {
       chainId: CHAIN,
       cursor: { mode: 'list-and-audit', blockNumber: 3000, blockTime: NOW, checkpoints: [{ blockNumber: 900, blockHash: h64(9) }, { blockNumber: 1000, blockHash: h64(100) }] },
     });
-    const res = await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 950, toBlock: 1100 });
+    const res = await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 950, toBlock: 1100, staleCheckpoint: { blockNumber: 1000, blockHash: h64(100) } });
     expect(res.status).toBe(200);
     expect(s.rows('SELECT tx_hash, replaced_at FROM failed_tx ORDER BY block_number')).toEqual([
       { tx_hash: h64(1), replaced_at: NOW },
@@ -227,7 +229,7 @@ describe('GET /health/failed-tx', () => {
         ],
       },
     });
-    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 2000, toBlock: 2000 });
+    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 2000, toBlock: 2000, staleCheckpoint: { blockNumber: 2000, blockHash: h64(20) } });
     const res = await handleFailedTxHealth(s.d1 as D1Write, () => NOW);
     const body = (await res.json()) as { chains: Array<Record<string, unknown>> };
     expect(body.chains).toEqual([
@@ -266,7 +268,7 @@ describe('the deployment a write was made under', () => {
     expect(((await other.json()) as { error: string }).error).toMatch(/^deployment mismatch: /);
     const cursor = await s.post({ kind: 'cursor', chainId: CHAIN, diamond: addr(0xbad), cursor: { mode: 'trace-filter', blockNumber: 600, blockTime: NOW, checkpoints: [], gaps: [], audits: [] } });
     expect(cursor.status).toBe(409);
-    const replaced = await s.post({ kind: 'replaced', chainId: CHAIN, diamond: addr(0xbad), fromBlock: 600, toBlock: 700 });
+    const replaced = await s.post({ kind: 'replaced', chainId: CHAIN, diamond: addr(0xbad), fromBlock: 600, toBlock: 700, staleCheckpoint: { blockNumber: 650, blockHash: h64(65) } });
     expect(replaced.status).toBe(409);
     const early = await s.post({ kind: 'records', chainId: CHAIN, records: [record(), record({ txHash: h64(9), blockNumber: 400 })] });
     expect(early.status).toBe(409);
@@ -276,12 +278,28 @@ describe('the deployment a write was made under', () => {
     expect(s.rows('SELECT COUNT(*) AS n FROM failed_tx_cursor')).toEqual([{ n: 0 }]);
   });
 
-  it('counts a replacement inside its batch, so an overlapping retry adds only what it marked', async () => {
+  it('applies a replacement once: a duplicate, even after a rescan, marks nothing new', async () => {
     const s = setup();
+    const cursor = (hash: string) => ({ kind: 'cursor', chainId: CHAIN, cursor: { mode: 'trace-filter', blockNumber: 1100, blockTime: NOW, checkpoints: [{ blockNumber: 1100, blockHash: hash }] } });
+    const replace = { kind: 'replaced', chainId: CHAIN, fromBlock: 1000, toBlock: 1100, staleCheckpoint: { blockNumber: 1100, blockHash: h64(110) } };
     await s.post({ kind: 'records', chainId: CHAIN, records: [record(), record({ txHash: h64(2), blockNumber: 1050, blockHash: h64(105) })] });
-    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 1000, toBlock: 1100 });
-    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 1000, toBlock: 1100 });
+    await s.post(cursor(h64(110)));
+    // A replacement with no live checkpoint of that hash does nothing.
+    expect((await s.post({ ...replace, staleCheckpoint: { blockNumber: 1100, blockHash: h64(111) } })).status).toBe(200);
+    expect(s.rows("SELECT COUNT(*) AS n FROM failed_tx_range WHERE kind = 'replaced'")).toEqual([{ n: 0 }]);
+    await s.post(replace);
+    // The rescan: the canonical record and checkpoint at the same heights.
+    await s.post({ kind: 'records', chainId: CHAIN, records: [record({ txHash: h64(3), blockNumber: 1050, blockHash: h64(205) })] });
+    await s.post(cursor(h64(210)));
+    // The delayed duplicate.
+    await s.post(replace);
     expect(s.rows("SELECT marked FROM failed_tx_range WHERE kind = 'replaced'")).toEqual([{ marked: 2 }]);
+    expect(s.rows('SELECT tx_hash, replaced_at FROM failed_tx ORDER BY tx_hash')).toEqual([
+      { tx_hash: h64(1), replaced_at: NOW },
+      { tx_hash: h64(2), replaced_at: NOW },
+      { tx_hash: h64(3), replaced_at: null },
+    ]);
+    expect(s.rows("SELECT block_hash, replaced_at FROM failed_tx_range WHERE kind = 'checkpoint'")).toEqual([{ block_hash: h64(210), replaced_at: null }]);
   });
 });
 

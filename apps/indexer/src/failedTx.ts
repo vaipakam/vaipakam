@@ -16,8 +16,10 @@
  *   2. `cursor`   — the pass's mode and position for a network, with the
  *      checkpoints it left, the ranges it could not scan and the audit
  *      windows it measured.
- *   3. `replaced` — a statement that a block range was replaced. It marks the
- *      records and checkpoints in the range and deletes nothing.
+ *   3. `replaced` — a statement that a block range was replaced, naming the
+ *      checkpoint the chain no longer agrees with. It marks the records and
+ *      checkpoints in the range and deletes nothing, and it applies only while
+ *      that checkpoint is live, so it applies once.
  *
  * Every write names a network the bundle's deployment record knows and the
  * Diamond it scanned under, which must be the bundle's: a write made under
@@ -98,7 +100,7 @@ export interface CursorStatement {
 export type FailedTxWrite =
   | { kind: 'records'; chainId: number; records: FailedTxRecord[] }
   | { kind: 'cursor'; chainId: number; cursor: CursorStatement }
-  | { kind: 'replaced'; chainId: number; fromBlock: number; toBlock: number };
+  | { kind: 'replaced'; chainId: number; fromBlock: number; toBlock: number; staleCheckpoint: { blockNumber: number; blockHash: string } };
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; status: number };
 
@@ -286,8 +288,16 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
         return { ok: true, value: { kind: 'cursor', chainId, cursor } };
       }
       case 'replaced': {
-        onlyKeys(o, ['kind', 'chainId', 'diamond', 'fromBlock', 'toBlock'], 'body');
-        return { ok: true, value: { kind: 'replaced', chainId, ...range(o, 'body') } };
+        onlyKeys(o, ['kind', 'chainId', 'diamond', 'fromBlock', 'toBlock', 'staleCheckpoint'], 'body');
+        const r = range(o, 'body');
+        // The checkpoint the chain no longer agrees with is the replacement's
+        // identity: it is applied only while that checkpoint is live, so a
+        // delayed duplicate never marks what a rescan has written since.
+        const cp = obj(o.staleCheckpoint, 'staleCheckpoint');
+        onlyKeys(cp, ['blockNumber', 'blockHash'], 'staleCheckpoint');
+        const staleCheckpoint = { blockNumber: blockNum(cp.blockNumber, 'staleCheckpoint.blockNumber'), blockHash: lowerMatch(cp.blockHash, HASH, 'staleCheckpoint.blockHash') };
+        if (staleCheckpoint.blockNumber < r.fromBlock || staleCheckpoint.blockNumber > r.toBlock) refuse('staleCheckpoint must lie inside the replaced range');
+        return { ok: true, value: { kind: 'replaced', chainId, ...r, staleCheckpoint } };
       }
       default:
         return refuse('kind must be records, cursor or replaced');
@@ -424,28 +434,35 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
       break;
     }
     case 'replaced': {
-      // The count is taken inside the batch, just before the marking, so it
-      // is exactly the rows this batch marks: an overlapping retry counts
-      // none of the rows the first one already marked.
+      // Every statement runs only while the stale checkpoint is live, and the
+      // checkpoint marking runs last and marks it, so the replacement applies
+      // once. A delayed duplicate, or one sent after a rescan wrote the new
+      // hash at that height, finds no live stale checkpoint and changes
+      // nothing. The count is taken inside the batch, just before the
+      // marking, so it is exactly the rows this batch marks.
+      const live = `EXISTS (SELECT 1 FROM failed_tx_range WHERE chain_id = ?1 AND kind = 'checkpoint'
+        AND from_block = ?5 AND to_block = ?5 AND block_hash = ?6 AND replaced_at IS NULL)`;
+      const binds = [w.chainId, w.fromBlock, w.toBlock, now, w.staleCheckpoint.blockNumber, w.staleCheckpoint.blockHash] as const;
       stmts.push(
         db
           .prepare(
             `INSERT INTO failed_tx_range (chain_id, kind, from_block, to_block, marked, recorded_at)
-             VALUES (?1, 'replaced', ?2, ?3,
-               (SELECT COUNT(*) FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL), ?4)
+             SELECT ?1, 'replaced', ?2, ?3,
+               (SELECT COUNT(*) FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL), ?4
+             WHERE ${live}
              ON CONFLICT (chain_id, kind, from_block, to_block) DO UPDATE SET marked = failed_tx_range.marked + excluded.marked,
                recorded_at = excluded.recorded_at`,
           )
-          .bind(w.chainId, w.fromBlock, w.toBlock, now),
+          .bind(...binds),
         db
-          .prepare(`UPDATE failed_tx SET replaced_at = ?4 WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL`)
-          .bind(w.chainId, w.fromBlock, w.toBlock, now),
+          .prepare(`UPDATE failed_tx SET replaced_at = ?4 WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL AND ${live}`)
+          .bind(...binds),
         db
           .prepare(
             `UPDATE failed_tx_range SET replaced_at = ?4
-             WHERE chain_id = ?1 AND kind = 'checkpoint' AND from_block BETWEEN ?2 AND ?3 AND replaced_at IS NULL`,
+             WHERE chain_id = ?1 AND kind = 'checkpoint' AND from_block BETWEEN ?2 AND ?3 AND replaced_at IS NULL AND ${live}`,
           )
-          .bind(w.chainId, w.fromBlock, w.toBlock, now),
+          .bind(...binds),
       );
       break;
     }
