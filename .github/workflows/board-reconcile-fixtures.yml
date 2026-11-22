@@ -17,6 +17,9 @@
 # board automation, and filing it under documentation would have made a board
 # regression present as a docs failure and put its cadence and environment
 # under a docs workflow's ownership (#2139 r3).
+#
+# The `label-sync` job runs the fixtures for `board-label-sync.yml`'s script
+# here too: the same board automation, and it reuses the same trace parser.
 name: Board reconcile fixtures
 
 on:
@@ -53,3 +56,27 @@ jobs:
           bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest
           bash .github/scripts/board-reconcile-list-step.selftest.sh
           echo "Board-reconcile fixtures OK (trace parser + list step)." >> "$GITHUB_STEP_SUMMARY"
+
+  label-sync:
+    name: board-label-sync planner fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      # Node, unlike the job above: `board-label-sync.mjs` is a Node script.
+      # The same pinned setup-node every other workflow here uses, so no new
+      # SHA meets the action allowlist.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # The planner, the board pagination, the mutation document and the
+      # transport's rate-limit rule — the last against the REAL trace parser,
+      # so this job also fails if that parser changes under the sync.
+      - name: Run the fixtures
+        run: |
+          set -euo pipefail
+          node .github/scripts/board-label-sync.selftest.mjs
+          echo "Board label sync fixtures OK (planner + pagination + rate-limit rule)." >> "$GITHUB_STEP_SUMMARY"

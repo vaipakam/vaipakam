@@ -86,6 +86,20 @@ so the count above stays honest:
   never a stub — under a stubbed clock, so no assertion depends on how long
   the runner took between two reads of `date`.
 
+- `board-label-sync.mjs` is the script behind `board-label-sync.yml`, which
+  mirrors the `priority:*`, `stage:*` and `thread:*` labels onto the board's
+  `Priority`, `Stage` and `Thread` fields. Labels are the source of truth
+  because the board's fields have no API the project agents can write
+  (`.github/LABELS.md`, Owner Labels). Its decisions are one pure function,
+  `planWrites(issues, boardItems, fields, context)`; the board listing pages
+  through an injected transport; and a failed request is classified by
+  `gh-trace-ratelimit-wait.sh` run as-is, so the wait-and-retry-once rule is
+  the reconcile job's, not a copy. `board-label-sync.selftest.mjs` pins the
+  planner (labels added, changed and removed; two labels of one family; a
+  missing field or option; another repository's card; a closed issue), the
+  pagination, the mutation document and the rate-limit rule, the last against
+  the real parser.
+
 They run in their OWN workflow, `board-reconcile-fixtures.yml`, not with the
 gates above. Convenience would have put them in theirs; they are an operational
 check on the board automation, and filing them under documentation would make a
@@ -101,6 +115,7 @@ Nobody notices a diagnostic that has stopped diagnosing until they need it.
 ```bash
 bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest
 bash .github/scripts/board-reconcile-list-step.selftest.sh
+node .github/scripts/board-label-sync.selftest.mjs
 ```
 
 The path checker is two files, both small, plus the parser they read through:
