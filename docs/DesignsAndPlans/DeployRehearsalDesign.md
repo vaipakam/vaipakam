@@ -215,19 +215,19 @@ The gate binds refreshes on the testnets as well as on mainnet, with the same ov
 
 | Card | What | Suggested builder |
 | --- | --- | --- |
-| A | The mode: the driver, the node tests, the signer library and guard, the output root, the fork launcher, the clock, the report and verdict | governance thread |
-| B | The relay between forks | keeper thread |
-| C | The readback, on #3111's file | governance thread |
-| D | The indexer and keeper runners for a rehearsal | keeper thread |
-| E | alpha05's rehearsal mode and smoke subset | alpha05 thread |
-| F | The gate and the CI companion | governance thread |
-| G | Rehearsing an in-place refresh | governance thread, later |
+| #3891 | The mode: the driver, the node tests, the signer library and guard, the output root, the fork launcher, the clock, the report and verdict | governance thread |
+| #3892 | The relay between forks | keeper thread |
+| #3893 | The readback, on #3111's file | governance thread |
+| #3894 | The indexer and keeper runners for a rehearsal | keeper thread |
+| #3895 | alpha05's rehearsal mode and smoke subset | alpha05 thread |
+| #3896 | The gate on the real deploy, the smoke flows, reuse of the pre-deploy gate's verdict, and the CI companion | governance thread |
+| #3897 | Rehearsing an in-place refresh | governance thread, later |
 | #3111 | The desired-state file, the plan, and the hand steps as phases | governance thread (existing card) |
 | #3109 | The Arbitrum gas fault | governance thread (existing card) |
 
-Order: A first, since everything runs inside it. #3111's file and plan beside it, because C and the arming list read them. B and D can start with A. C, E after A. F last. A first useful run needs A, B, C and the plan with manual steps carried as command text.
+Order: #3891 first, since everything runs inside it. #3111's file and plan beside it, because #3893 and the arming list read them. #3892 and #3894 can start with #3891. #3893 and #3895 after #3891. #3896 last. #3897 follows once a fresh deploy has been gated. A first useful run needs #3891, #3892, #3893 and the plan with manual steps carried as command text.
 
-The fifth open question, how these merge: none of them touches `contracts/src/`, so none changes audited bytecode, and they go through the normal pull request flow, not the contract batch. They should land before the batch's fresh deploy so that deploy is the first one gated. A's change to the operator scripts is one line per broadcast, and held branches that add facets to the deploy script rebase over it.
+The fifth open question, how these merge: none of them touches `contracts/src/`, so none changes audited bytecode, and they go through the normal pull request flow, not the contract batch. They should land before the batch's fresh deploy so that deploy is the first one gated. #3891's change to the operator scripts is one line per broadcast, and held branches that add facets to the deploy script rebase over it.
 
 ## 22. Alternatives considered
 
@@ -245,7 +245,7 @@ The fifth open question, how these merge: none of them touches `contracts/src/`,
 
 ## 23. Recommendation
 
-Build cards A to F and finish #3111 and #3109, in the order of section 21, through the normal pull request flow. Gate fresh deploys and in-place refreshes on testnets and on mainnet, with the stated override. Treat a deploy step with no command as a defect in the plan.
+Build #3891 to #3896 and finish #3111 and #3109, in the order of section 21, with #3897 after them, through the normal pull request flow. Gate fresh deploys and in-place refreshes on testnets and on mainnet, with the stated override. Treat a deploy step with no command as a defect in the plan.
 
 ## 24. What is not built
 
