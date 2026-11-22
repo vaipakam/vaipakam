@@ -48,6 +48,7 @@ Each open issue carries one `thread:<name>` label naming the project thread that
 | `thread:keeper` | Keeper passes and the public keeper bot. |
 | `thread:design` | Designs awaiting a decision on the design thread. |
 | `thread:governance` | Mainnet governance gates, deploy scripts, ops and backups. |
+| `thread:local-testing` | Local node testing and the deploy rehearsal on local forks. |
 | `thread:issues-plan` | The open-issues plan thread, including VPFI rewards and recycling items. |
 | `thread:owner` | Waiting on an owner or operator step, not on a thread. |
 
