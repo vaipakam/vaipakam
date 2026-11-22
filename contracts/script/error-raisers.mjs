@@ -88,12 +88,12 @@
  *   --abi-dir  the exported interfaces to compare declarations with (the ABI
  *              export passes its staged set; default packages/contracts/src/abis)
  */
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CONTRACTS_DIR, REPO_ROOT, FACETS_FILE, loadBuild, keccak256 } from './storage-layout-guard.mjs';
-import { BUILD_OUT_DIR, oneJobProblems } from './check-measured-delivery.mjs';
+import { CONTRACTS_DIR, REPO_ROOT, FACETS_FILE, keccak256 } from './storage-layout-guard.mjs';
+import { BUILD_OUT_DIR, loadOneJobBuild } from './check-measured-delivery.mjs';
 import { indexNodes } from './check-permissionless-steps.mjs';
 
 export const RAISERS_FILE = join(REPO_ROOT, 'packages', 'contracts', 'src', 'errorRaisers.json');
@@ -667,12 +667,8 @@ function buildArtifacts() {
 
 /** Read the AST build and derive the map. Returns `{ok, result?, problems}`. */
 export function deriveFromBuild(outDir = BUILD_OUT_DIR) {
-  const build = loadBuild(outDir);
-  if (build.problems.length) return { ok: false, problems: build.problems };
-  const units = [...build.units.values()];
-  const infos = readdirSync(join(outDir, 'build-info')).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(readFileSync(join(outDir, 'build-info', n), 'utf8')));
-  const jobProblems = oneJobProblems(units, infos);
-  if (jobProblems.length) return { ok: false, problems: jobProblems };
+  const { units, problems: buildProblems } = loadOneJobBuild(outDir);
+  if (buildProblems.length) return { ok: false, problems: buildProblems };
   const manifest = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));
   const result = raisersFrom(units, manifest);
   const problems = result.missing.map((m) => `${m}: named in diamond-facets.json but not among the compiled src/ contracts`);

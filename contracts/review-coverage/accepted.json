@@ -1,0 +1,4 @@
+{
+  "_readme": "Declarations the owner accepted as uncovered (ReviewCoveragePassDesign §8.5, §9). Key: '<src path>:<label>' exactly as the coverage report prints it. Value: { reason, owner } where owner links to the owner's own words. Only on the owner's decision.",
+  "declarations": {}
+}

@@ -1,0 +1,38 @@
+{
+  "_readme": "The review coverage pass's order list (ReviewCoveragePassDesign \u00a74, \u00a76). Areas in review order, each with its state (waiting | in review | converged) and the units it holds; filled and kept by the Security thread. sharedLibraries names the libraries reviewed in slices of their own: a unit that reaches one leaves it out (the unit tool reads this list; LibVaipakam is the starting entry, Security may change it). What is not in the pass (vendor, the storage-layout probes, interfaces) is the tool's own EXCLUDED list, printed with its reasons by `review-coverage.mjs report`, so it is not repeated here; deploy scripts are outside contracts/src and so outside the pass.",
+  "sharedLibraries": [
+    "LibVaipakam"
+  ],
+  "areas": [
+    {
+      "stage": 0,
+      "name": "The trial (\u00a77)",
+      "state": "waiting",
+      "units": []
+    },
+    {
+      "stage": 1,
+      "name": "Standalone contracts",
+      "state": "waiting",
+      "units": []
+    },
+    {
+      "stage": 2,
+      "name": "The rule libraries",
+      "state": "waiting",
+      "units": []
+    },
+    {
+      "stage": 3,
+      "name": "The facets (with the refactor pass, #3926)",
+      "state": "waiting",
+      "units": []
+    },
+    {
+      "stage": 4,
+      "name": "Read-only facets and metrics",
+      "state": "waiting",
+      "units": []
+    }
+  ]
+}

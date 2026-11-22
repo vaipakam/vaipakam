@@ -302,6 +302,60 @@ else
   FAIL=1
 fi
 
+# ── 1e2. Refactor reports (#3914) ─────────────────────────────────────
+# The five refactor reports (silent functions, swallowed failures, ambiguous
+# errors, write-only storage, event categories) compared with the committed
+# results in contracts/refactor-reports/. Until the refactor pass ends a new
+# finding is a warning (refactor-reports/config.json "blocking": false); a
+# malformed ledger fails. Same AST artifacts as 1d.
+echo
+echo "[predeploy 1e2/4] refactor reports (#3914)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/refactor-reports.mjs" check; then
+  : # the script prints its own lines
+else
+  echo "  ✗ refactor reports failed — fix the ledger, or the new finding while" >&2
+  echo "    contracts/refactor-reports/config.json says blocking (see above)" >&2
+  FAIL=1
+fi
+
+# ── 1e3. Review coverage (#3936) ──────────────────────────────────────
+# The review coverage pass's ledger (contracts/review-coverage/ledger.json):
+# every hash must be a declaration at the commit its entry names, carry only
+# the allowed fields, and keep a reader's thread apart from the thread that
+# wrote the fix (ReviewCoveragePassDesign §10). A bad entry fails. The
+# coverage report itself is printed as a warning until the audit freeze.
+# Parses contracts/src on its own (solc stopAfter parsing), so it needs no
+# build artifacts.
+echo
+echo "[predeploy 1e3/4] review coverage ledger (#3936)"
+if node "$SCRIPT_DIR/review-coverage.mjs" check; then
+  node "$SCRIPT_DIR/review-coverage.mjs" report || true
+else
+  echo "  ✗ review-coverage ledger refused an entry (see above)" >&2
+  FAIL=1
+fi
+
+# ── 1e4. Entry gates (#3944) ─────────────────────────────────────────
+# Each entry point's checks (modifiers, and the gate calls reached before it
+# first changes state) compared with the cross-cutting rules file. The rules
+# stay in the private review repository until the check reports nothing; with
+# no contracts/entry-gate-rules.json this step says so and passes. Once the
+# file is here, a finding fails. Same AST artifacts as 1d.
+echo
+echo "[predeploy 1e4/4] entry gates (#3944)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-entry-gates.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ an entry point lacks a check its kind requires, or the rules file is malformed (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1f. Error raisers ─────────────────────────────────────────────────
 # The error catalogue's "raised by" lists come from the same AST artifacts
 # as 1d/1e (#3916). The catalogue itself (names, values, meanings) is checked

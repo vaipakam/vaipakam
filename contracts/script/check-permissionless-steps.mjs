@@ -113,8 +113,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTRACTS_DIR, REPO_ROOT, FACETS_FILE, loadBuild } from './storage-layout-guard.mjs';
-import { BUILD_OUT_DIR, oneJobProblems } from './check-measured-delivery.mjs';
+import { CONTRACTS_DIR, REPO_ROOT, FACETS_FILE } from './storage-layout-guard.mjs';
+import { BUILD_OUT_DIR, loadOneJobBuild } from './check-measured-delivery.mjs';
 
 export const LEDGER_FILE = join(CONTRACTS_DIR, 'permissionless-steps.json');
 export const KEEPER_SRC = join(REPO_ROOT, 'apps', 'keeper', 'src');
@@ -476,9 +476,14 @@ function canonicalType(ts) {
  * with its gate (undefined when open). Inherited functions are included; an
  * override hides what it overrides. Pure over the ASTs.
  *
+ * With `special`, a contract's `receive` and `fallback` are entries too
+ * (keyed `Contract.receive()` / `Contract.fallback()`, selector undefined):
+ * the entry-gate check reads every path a caller can reach. The ledger of
+ * permissionless steps does not pass it (yet), so its rows stay by selector.
+ *
  * @returns {{key: string, contract: string, name: string, selector: string, mutability: string, modifiers: string[], gate?: string, fn: object}[]}
  */
-export function entryPoints(units, names, byId = indexNodes(units)) {
+export function entryPoints(units, names, byId = indexNodes(units), { special = false } = {}) {
   const contracts = new Map();
   for (const u of units) {
     if (typeof u.absolutePath !== 'string' || !u.absolutePath.startsWith('src/')) continue;
@@ -496,17 +501,22 @@ export function entryPoints(units, names, byId = indexNodes(units)) {
     for (const baseId of c.linearizedBaseContracts ?? [c.id]) {
       const base = byId.get(baseId);
       for (const n of base?.nodes ?? []) {
-        if (n.nodeType !== 'FunctionDefinition' || n.kind !== 'function' || !n.implemented) continue;
+        if (n.nodeType !== 'FunctionDefinition' || !n.implemented) continue;
+        // `receive` and `fallback` have no selector: each is keyed by its kind,
+        // and the most derived one is the one the contract runs.
+        const isSpecial = n.kind === 'receive' || n.kind === 'fallback';
+        if (n.kind !== 'function' && !(special && isSpecial)) continue;
         if (n.visibility !== 'external' && n.visibility !== 'public') continue;
         if (n.stateMutability === 'view' || n.stateMutability === 'pure') continue;
-        if (!bySelector.has(n.functionSelector)) bySelector.set(n.functionSelector, n);
+        const key = isSpecial ? n.kind : n.functionSelector;
+        if (!bySelector.has(key)) bySelector.set(key, n);
       }
     }
     for (const fn of bySelector.values()) {
       out.push({
-        key: `${name}.${fn.name}(${typeList(fn)})`,
+        key: `${name}.${fn.name || fn.kind}(${typeList(fn)})`,
         contract: name,
-        name: fn.name,
+        name: fn.name || fn.kind,
         selector: fn.functionSelector,
         mutability: fn.stateMutability,
         modifiers: (fn.modifiers ?? []).map((m) => m.modifierName?.name ?? ''),
@@ -714,22 +724,9 @@ export function main(argv = process.argv.slice(2)) {
   );
   let summary = '';
   if (!ledgerOnly) {
-    let build;
-    try {
-      build = loadBuild(outDir);
-    } catch (e) {
-      console.error(`  ✗ cannot read ${relative(process.cwd(), outDir)}: ${e.message} — run check-measured-delivery.mjs first, or pass --out`);
-      return 1;
-    }
-    if (build.problems.length) {
-      for (const p of build.problems) console.error(`  ✗ ${p}`);
-      return 1;
-    }
-    const units = [...build.units.values()];
-    const infos = readdirSync(join(outDir, 'build-info')).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(readFileSync(join(outDir, 'build-info', n), 'utf8')));
-    const jobProblems = oneJobProblems(units, infos);
-    if (jobProblems.length) {
-      for (const p of jobProblems.slice(0, 5)) console.error(`  ✗ ${p}`);
+    const { units, problems: buildProblems } = loadOneJobBuild(outDir);
+    if (buildProblems.length) {
+      for (const p of buildProblems.slice(0, 5)) console.error(`  ✗ ${p}`);
       return 1;
     }
     const manifest = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));
