@@ -247,6 +247,34 @@ importers:
         specifier: ^4.84.1
         version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
+  apps/failed-tx-pass:
+    dependencies:
+      '@vaipakam/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../../packages/lib
+      viem:
+        specifier: ^2.48.4
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^24
+        version: 24.12.2
+      esbuild:
+        specifier: ^0.27.7
+        version: 0.27.7
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.4
+        version: 4.1.5(@types/node@24.12.2)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))
+
   apps/indexer:
     dependencies:
       '@vaipakam/contracts':

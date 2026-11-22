@@ -25,15 +25,19 @@ import { createSqliteD1 } from './helpers/sqliteD1';
 import {
   MAX_EXPLANATION_BYTES,
   handleFailedTxHealth,
+  handleFailedTxState,
   handleFailedTxWrite,
   parseFailedTxWrite,
   pruneOldFailedTx,
   FAILED_TX_RETENTION_DAYS,
   writerAuthorized,
   type D1Write,
+  type FailedTxPassState,
 } from '../src/failedTx';
 
-const DDL = [readFileSync(new URL('../migrations/0123_failed_transactions.sql', import.meta.url), 'utf8')];
+const DDL = ['0123_failed_transactions.sql', '0124_failed_tx_pass_state.sql'].map((f) =>
+  readFileSync(new URL(`../migrations/${f}`, import.meta.url), 'utf8'),
+);
 const CHAIN = 84532;
 const TOKEN = 'pass-token-0123456789';
 const NOW = 1_800_000_000;
@@ -89,7 +93,15 @@ function setup() {
       () => NOW,
     );
   const rows = (sql: string) => h.db.prepare(sql).all() as Array<Record<string, unknown>>;
-  return { ...h, post, rows };
+  const state = async (query: string, token: string | null = TOKEN) => {
+    const res = await handleFailedTxState(
+      new Request(`https://x/internal/failed-tx/state?${query.includes('diamond=') ? query : `${query}&diamond=${DIAMOND}`}`, { headers: token ? { authorization: `Bearer ${token}` } : {} }),
+      h.d1 as never,
+      TOKEN,
+    );
+    return { status: res.status, body: (await res.json()) as FailedTxPassState & { error?: string } };
+  };
+  return { ...h, post, rows, state };
 }
 
 describe('POST /internal/failed-tx', () => {
@@ -209,6 +221,27 @@ describe('POST /internal/failed-tx', () => {
   });
 });
 
+describe('records carried by the cursor write', () => {
+  it('stores them with the cursor and its checkpoint in one statement, and refuses one above the cursor', async () => {
+    const s = setup();
+    const ok = await s.post({
+      kind: 'cursor',
+      chainId: CHAIN,
+      cursor: { mode: 'list-and-audit', blockNumber: 1000, blockTime: NOW, checkpoints: [{ blockNumber: 1000, blockHash: h64(100) }], records: [record()] },
+    });
+    expect(ok.status).toBe(200);
+    expect(s.rows('SELECT tx_hash FROM failed_tx')).toEqual([{ tx_hash: h64(1) }]);
+    expect(s.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: 1000 }]);
+    const above = await s.post({
+      kind: 'cursor',
+      chainId: CHAIN,
+      cursor: { mode: 'list-and-audit', blockNumber: 999, blockTime: NOW, checkpoints: [], records: [record({ txHash: h64(3) })] },
+    });
+    expect(above.status).toBe(400);
+    expect(s.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: 1000 }]);
+  });
+});
+
 describe('GET /health/failed-tx', () => {
   it('states the mode, cursor age, newest live checkpoint, last replacement, gaps and miss rate', async () => {
     const s = setup();
@@ -226,6 +259,8 @@ describe('GET /health/failed-tx', () => {
         audits: [
           { fromBlock: 100, toBlock: 200, found: 3, missed: 1 },
           { fromBlock: 300, toBlock: 400, found: 1, missed: 0 },
+          // Read where the list was never asked: recorded, not a miss.
+          { fromBlock: 500, toBlock: 600, found: 2, missed: null },
         ],
       },
     });
@@ -241,7 +276,7 @@ describe('GET /health/failed-tx', () => {
         newestCheckpoint: { blockNumber: 1900, blockHash: h64(19) },
         lastReplacement: { fromBlock: 2000, toBlock: 2000, foundAt: NOW, marked: 0 },
         gaps: { count: 1, latest: { fromBlock: 10, toBlock: 20, reason: 'node unreachable' } },
-        audit: { windows: 2, found: 4, missed: 1, missRateBps: 2500 },
+        audit: { windows: 2, found: 4, missed: 1, missRateBps: 2500, unmeasured: 1 },
         recordsLast24h: 1,
       },
     ]);
@@ -313,6 +348,62 @@ describe('the deployment a write was made under', () => {
       { tx_hash: h64(3), replaced_at: null },
     ]);
     expect(s.rows("SELECT block_hash, replaced_at FROM failed_tx_range WHERE kind = 'checkpoint'")).toEqual([{ block_hash: h64(210), replaced_at: null }]);
+  });
+});
+
+describe('GET /internal/failed-tx/state', () => {
+  it('needs the token, and reads back the cursor, the live checkpoints, audit progress and the records in a range', async () => {
+    const s = setup();
+    expect((await s.state(`chainId=${CHAIN}`, null)).status).toBe(401);
+    expect((await s.state('chainId=999999')).status).toBe(400);
+    expect((await s.state(`chainId=${CHAIN}&from=1&to=30000`)).status).toBe(400);
+    expect((await s.state(`chainId=${CHAIN}`)).body).toEqual({ cursor: null, checkpoints: [], auditedTo: null, recorded: null, recordedByOthers: null });
+
+    await s.post({ kind: 'records', chainId: CHAIN, records: [record(), record({ txHash: h64(2), blockHash: h64(101), blockNumber: 1001, foundBy: 'audit' })] });
+    await s.post({
+      kind: 'cursor',
+      chainId: CHAIN,
+      cursor: {
+        mode: 'list-and-audit',
+        blockNumber: 2000,
+        blockTime: NOW - 30,
+        slowBlockNumber: 1900,
+        listFromBlock: 1200,
+        auditPlan: { day: '2026-11-21', fromBlock: 1700, toBlock: 1800 },
+        checkpoints: [{ blockNumber: 1500, blockHash: h64(15) }, { blockNumber: 2000, blockHash: h64(20) }],
+        gaps: [],
+        audits: [{ fromBlock: 1700, toBlock: 1740, found: 0, missed: 0 }],
+      },
+    });
+    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 2000, toBlock: 2000, staleCheckpoint: { blockNumber: 2000, blockHash: h64(20) } });
+    const { status, body } = await s.state(`chainId=${CHAIN}&from=900&to=1100`);
+    expect(status).toBe(200);
+    expect(body.cursor).toEqual({
+      mode: 'list-and-audit', blockNumber: 2000, blockTime: NOW - 30, watchedShareBps: null, slowBlockNumber: 1900, listFromBlock: 1200,
+      auditPlan: { day: '2026-11-21', fromBlock: 1700, toBlock: 1800 },
+    });
+    expect(body.checkpoints).toEqual([{ blockNumber: 1500, blockHash: h64(15) }]);
+    expect(body.auditedTo).toBe(1740);
+    expect([...body.recorded].sort()).toEqual([h64(1), h64(2)].map((h) => h.toLowerCase()).sort());
+    // The audit's own find is not coverage by the other sources.
+    expect(body.recordedByOthers).toEqual([h64(1).toLowerCase()]);
+  });
+
+  it('refuses a read naming another Diamond, and does not resume from a position written under one', async () => {
+    const s = setup();
+    expect((await s.state(`chainId=${CHAIN}&diamond=${addr(0xbad)}`)).status).toBe(409);
+    s.db.prepare(
+      `INSERT INTO failed_tx_cursor (chain_id, diamond, mode, block_number, block_time, watched_share_bps, updated_at)
+       VALUES (?, ?, 'trace-filter', 900, 1, NULL, 1)`,
+    ).run(CHAIN, addr(0xbad));
+    expect((await s.state(`chainId=${CHAIN}`)).body.cursor).toBeNull();
+  });
+
+  it('refuses a slow position or an audit plan outside the modes that have them', async () => {
+    const s = setup();
+    const base = { blockNumber: 10, blockTime: NOW, checkpoints: [], gaps: [], audits: [] };
+    expect((await s.post({ kind: 'cursor', chainId: CHAIN, cursor: { ...base, mode: 'trace-filter', slowBlockNumber: 5 } })).status).toBe(400);
+    expect((await s.post({ kind: 'cursor', chainId: CHAIN, cursor: { ...base, mode: 'trace-filter', auditPlan: { day: '2026-11-21', fromBlock: 1, toBlock: 2 } } })).status).toBe(400);
   });
 });
 

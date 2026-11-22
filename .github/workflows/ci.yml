@@ -1172,6 +1172,15 @@ jobs:
       - name: Typecheck — packages/lib (transaction explainer)
         run: pnpm --filter @vaipakam/lib typecheck
 
+      # The failed transaction pass (#3919). Its tests run the pass against
+      # a model chain and the indexer's real /internal/failed-tx route, so a
+      # drift between the writer and the route fails here.
+      - name: Typecheck — apps/failed-tx-pass
+        run: pnpm --filter @vaipakam/failed-tx-pass typecheck
+
+      - name: Unit tests — apps/failed-tx-pass
+        run: pnpm --filter @vaipakam/failed-tx-pass test
+
       - name: Typecheck — packages/push
         run: pnpm --filter @vaipakam/push typecheck
 

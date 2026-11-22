@@ -1,0 +1,136 @@
+# The failed transaction pass
+
+Finds every failed transaction sent to a contract in a network's deployment
+record, decodes it while the node still holds the state, and stores it through
+the indexer (#3919, TroubleshootingPictureDesign.md §4.3). The stored half is
+#3918: `apps/indexer/src/failedTx.ts`, its tables (migrations 0123 and 0124) and
+`GET /health/failed-tx`.
+
+## Where it runs, and what it can reach
+
+A oneshot on the keeper machine, started every five minutes by a systemd timer.
+It is not a Worker: on Workers Free one run gets 10 ms of CPU, and the
+explainer's first decode against the combined Diamond ABI takes about 75 ms.
+
+- Its own dynamic user, env file (`/etc/vaipakam/failed-tx.env`, root-only,
+  handed over by `LoadCredential`) and memory cap (384 MB).
+- **No signing key and no database binding.** Its only write is
+  `POST /internal/failed-tx` on the indexer, under its own token
+  (`FAILED_TX_WRITER_TOKEN`, also a secret on the indexer Worker). That route
+  accepts records, the pass's cursor and checkpoints, and a replaced range,
+  and nothing else. The pass reads its own state back from
+  `GET /internal/failed-tx/state` under the same token.
+- **The keeper's files are out of reach.** The unit makes `/etc/vaipakam` (every
+  service's env file, including the keeper's) and the keeper's and the
+  sanctions services' release and state trees inaccessible. Its own env file
+  still arrives, because systemd reads it for `LoadCredential` before the
+  sandbox applies.
+- No endpoint, key or token is ever printed. A node or explorer failure is
+  described by its error code and a bounded message with any URL removed.
+
+## What a run does
+
+For each network in `FAILED_TX_CHAINS`, independently:
+
+1. Reads back its cursor, its checkpoints and the day's audit plan. Every read
+   and write names the Diamond the pass's deployment record names, and the
+   indexer refuses (409) when its own record names another: the pass then holds
+   that network with a `deployment-mismatch` alert and writes nothing, until
+   the two run the same record. A cursor written under a retired Diamond is
+   not resumed from; after a fresh deploy the pass starts the new Diamond from
+   its deploy block.
+2. Reads the settled head (`safe`, the block the indexer reads). With no
+   answer, it holds and records nothing.
+3. Reads the newest checkpoint's block twice. A replacement is called only
+   when both reads agree with each other and differ from the checkpoint. The
+   pass then walks back to the newest checkpoint the chain still agrees with,
+   marks every record above it as replaced (nothing is deleted), and scans the
+   range again. A disagreeing read holds the run. The rewind is kept in what
+   is stored: a cursor above the newest unmarked checkpoint is read as a
+   marked replacement and scanned again from that checkpoint, so a run that
+   stops between the marking and its cursor write loses nothing. A run also
+   reads its range's top block before it scans and again before it stores
+   anything; if the chain replaced it in between, the run holds with nothing
+   past the last checkpoint stored.
+4. Finds failed transactions after its cursor, by the network's mode. The
+   mode comes from the node capability check's committed result
+   (`ops/node-capability/results/<slug>.json`, #3913). Those results reach
+   main with the capability check itself, and `install.sh` refuses a commit
+   that does not carry them:
+   - **trace-filter**: one `trace_filter` request per range over every
+     watched contract. This covers direct calls and calls made through another
+     contract.
+   - **list-and-audit**: the explorer's list of transactions sent to each
+     contract (Etherscan v2, one key), keeping the failed ones. The contracts
+     users call directly (the Diamond, the position token, the VPFI token) are
+     read every run, and the rest once an hour of blocks has passed. Each
+     list is asked again over the hour behind its position, because the
+     explorer can index a transaction after the node already shows the block
+     settled; what it lists later than that is the audit's to find.
+     When the explorer will not serve the list at all (a bad key, or a
+     network or tier the key does not cover), the run falls back to
+     sends-and-audit, says so in an alert and on the cursor (with the watched
+     share), and asks the list again next run.
+     Explorer requests are paced per key, not per network (at least 400 ms
+     apart for the whole process), because one Etherscan v2 key's rate limit
+     covers every network it serves and the networks run at once. A request
+     the explorer still refuses for its rate limit is retried within the run
+     with growing waits, four times, before the run holds.
+   - **sends-and-audit**: no explorer key. The keeper's own sends are this
+     mode's continuous source, and they arrive with the keeper decision record
+     (§4.4), which is not built yet. Until then the daily audit is the only
+     source, and the health route states the share of the day that is watched.
+5. Decodes each one, taking the best source the node offers: its trace
+   (`debug_traceTransaction`, the explainer's whole output), else a replay at
+   the parent block (the error and its values only, with what it cannot hold
+   listed), else "state no longer reachable" (the receipt's facts only). A
+   node that does not answer is never treated as a missing state: the run
+   holds at that transaction's block and tries again next time.
+6. In the two audit modes, it reads a slice of the day's audit window. The
+   window is a random 30 minutes of the previous UTC day. Every block in the
+   slice is read in full and compared with what was recorded there. A failure
+   the list missed is recorded with `found_by = audit` and alerted. The miss
+   rate so far is on the health route. A window is finished before the next
+   day's is chosen; a day left without a window (after an outage longer than
+   a day) is alerted, and in sends-and-audit that day was not watched.
+7. Writes its cursor, a checkpoint at its top block, any gaps and the audit
+   slice.
+
+A range the node or the explorer refuses outright is recorded as a gap, with
+its reason, and is alerted. Alerts (a cursor more than 30 minutes behind, a
+gap, an audit miss, a state no longer reachable, a replacement deeper than
+the checkpoints held) go to the operator chat when `TG_OPS_*` is set. The
+same condition is alerted again after six hours if it is still present.
+An alert the chat did not accept is kept in the state directory and sent on
+later runs until it is accepted, so a one-shot alert (an audit miss, a
+refused list) is not lost to a chat outage. At most 200 are kept; past that
+the oldest give way and the next message says how many were dropped.
+
+The **block-scan** mode is not built. No network's measured cost puts it
+inside the bound, and a capability result that selects it is refused by name.
+A **local rebuild** (the explainer's second source) is not run here, because
+it needs a local copy of the chain. An operator adds one with `explain-tx`
+through the same route.
+
+## Install (operator)
+
+```bash
+C=<full commit sha on main>
+curl -fsSL -o install.sh "https://raw.githubusercontent.com/vaipakam/vaipakam/$C/apps/failed-tx-pass/deploy/install.sh"
+sudo bash install.sh "$C"
+sudoedit /etc/vaipakam/failed-tx.env      # fill it in (template: deploy/failed-tx.env.example)
+sudo systemctl start vaipakam-failed-tx   # one run now; read journalctl -u vaipakam-failed-tx
+sudo systemctl enable --now vaipakam-failed-tx.timer
+```
+
+Set the same `FAILED_TX_WRITER_TOKEN` on the indexer Worker first
+(`wrangler secret put FAILED_TX_WRITER_TOKEN` in `apps/indexer`). Until it is
+set there, the route refuses every write.
+
+## Develop
+
+```bash
+pnpm --filter @vaipakam/failed-tx-pass typecheck
+pnpm --filter @vaipakam/failed-tx-pass test    # a model chain against the indexer's real route
+pnpm --filter @vaipakam/failed-tx-pass build   # dist/failed-tx-pass.mjs
+```

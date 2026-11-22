@@ -66,6 +66,10 @@
       "types": "./src/protectedLock.ts",
       "default": "./src/protectedLock.ts"
     },
+    "./failedTxBounds": {
+      "types": "./src/failedTxBounds.ts",
+      "default": "./src/failedTxBounds.ts"
+    },
     "./errorDescription": {
       "types": "./src/errorDescription.ts",
       "default": "./src/errorDescription.ts"
@@ -265,6 +269,10 @@
     "./txExplainer": {
       "types": "./src/txExplainer.ts",
       "default": "./src/txExplainer.ts"
+    },
+    "./txExplainerNode": {
+      "types": "./src/txExplainerNode.ts",
+      "default": "./src/txExplainerNode.ts"
     }
   },
   "scripts": {

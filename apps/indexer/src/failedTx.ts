@@ -35,15 +35,19 @@
  */
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import {
+  MAX_ERROR_VALUES_BYTES,
+  MAX_EXPLANATION_BYTES,
+  MAX_FAILED_TX_BODY,
+  MAX_RECORDS_PER_WRITE,
+  MAX_UNAVAILABLE_BYTES,
+} from '@vaipakam/lib/failedTxBounds';
 
 // ─── Bounds ──────────────────────────────────────────────────────────────
 
-/** A stored explanation is kept whole up to this size; the pass cuts above it (§4.3). */
-export const MAX_EXPLANATION_BYTES = 256 * 1024;
-/** Records in one write. */
-export const MAX_RECORDS_PER_WRITE = 20;
-/** The request body the route reads at most. */
-export const MAX_FAILED_TX_BODY = MAX_RECORDS_PER_WRITE * (MAX_EXPLANATION_BYTES + 8 * 1024);
+// The record bounds are shared with the pass, which cuts to them before it
+// writes (@vaipakam/lib/failedTxBounds).
+export { MAX_EXPLANATION_BYTES, MAX_FAILED_TX_BODY, MAX_RECORDS_PER_WRITE };
 const MAX_CHECKPOINTS = 200;
 const MAX_GAPS = 50;
 const MAX_AUDITS = 20;
@@ -92,9 +96,22 @@ export interface CursorStatement {
   blockNumber: number;
   blockTime: number;
   watchedShareBps: number | null;
+  /** List and audit mode: the block the hourly explorer list is read to. */
+  slowBlockNumber: number | null;
+  /** List and audit mode: the first block of the lists' present unbroken coverage. */
+  listFromBlock: number | null;
+  /** The audit window being scanned: a UTC day and its block range. */
+  auditPlan: { day: string; fromBlock: number; toBlock: number } | null;
   checkpoints: Array<{ blockNumber: number; blockHash: string }>;
   gaps: Array<{ fromBlock: number; toBlock: number; reason: string }>;
-  audits: Array<{ fromBlock: number; toBlock: number; found: number; missed: number }>;
+  /** `missed` null: the slice lies where the list was never asked, so nothing was measured. */
+  audits: Array<{ fromBlock: number; toBlock: number; found: number; missed: number | null }>;
+  /**
+   * The records found in the blocks this cursor covers, stored in the same
+   * statement as the cursor and its checkpoint: a record is never live
+   * without the checkpoint that lets a later run find its block replaced.
+   */
+  records: FailedTxRecord[];
 }
 
 export type FailedTxWrite =
@@ -206,13 +223,13 @@ function parseRecord(v: unknown, where: string): FailedTxRecord {
     offerId: optional(o.offerId, (x) => (typeof x === 'string' && UINT.test(x) ? x : refuse(`${where}.offerId must be a decimal string`))),
     errorSelector: optional(o.errorSelector, (x) => lowerMatch(x, SELECTOR, `${where}.errorSelector`)),
     errorName: optional(o.errorName, (x) => (typeof x === 'string' && IDENT.test(x) ? x : refuse(`${where}.errorName is malformed`))),
-    errorValues: jsonText(o.errorValues, 16 * 1024, `${where}.errorValues`),
+    errorValues: jsonText(o.errorValues, MAX_ERROR_VALUES_BYTES, `${where}.errorValues`),
     foundBy: oneOf(o.foundBy, FOUND_BY, `${where}.foundBy`),
     mode: oneOf(o.mode, MODES, `${where}.mode`),
     source,
     explanation,
     explanationCut: flag(o.explanationCut, `${where}.explanationCut`),
-    unavailable: jsonText(o.unavailable, 4 * 1024, `${where}.unavailable`),
+    unavailable: jsonText(o.unavailable, MAX_UNAVAILABLE_BYTES, `${where}.unavailable`),
     gasUsed: typeof o.gasUsed === 'string' && UINT.test(o.gasUsed) ? o.gasUsed : refuse(`${where}.gasUsed must be a decimal string`),
     gasLimit: typeof o.gasLimit === 'string' && UINT.test(o.gasLimit) ? o.gasLimit : refuse(`${where}.gasLimit must be a decimal string`),
     usedAllGas: flag(o.usedAllGas, `${where}.usedAllGas`),
@@ -253,7 +270,7 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
       case 'cursor': {
         onlyKeys(o, ['kind', 'chainId', 'diamond', 'cursor'], 'body');
         const c = obj(o.cursor, 'cursor');
-        onlyKeys(c, ['mode', 'blockNumber', 'blockTime', 'watchedShareBps', 'checkpoints', 'gaps', 'audits'], 'cursor');
+        onlyKeys(c, ['mode', 'blockNumber', 'blockTime', 'watchedShareBps', 'slowBlockNumber', 'listFromBlock', 'auditPlan', 'checkpoints', 'gaps', 'audits', 'records'], 'cursor');
         const mode = oneOf(c.mode, MODES, 'cursor.mode');
         const watchedShareBps = optional(c.watchedShareBps, (x) => {
           const n = blockNum(x, 'cursor.watchedShareBps');
@@ -261,11 +278,33 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
         });
         if (watchedShareBps !== null && mode !== 'sends-and-audit') refuse('cursor.watchedShareBps is only for sends-and-audit mode');
         if (watchedShareBps === null && mode === 'sends-and-audit') refuse('sends-and-audit mode must state the watched share');
+        const slowBlockNumber = optional(c.slowBlockNumber, (x) => blockNum(x, 'cursor.slowBlockNumber'));
+        if (slowBlockNumber !== null && mode !== 'list-and-audit') refuse('cursor.slowBlockNumber is only for list-and-audit mode');
+        const listFromBlock = optional(c.listFromBlock, (x) => blockNum(x, 'cursor.listFromBlock'));
+        if (listFromBlock !== null && mode !== 'list-and-audit') refuse('cursor.listFromBlock is only for list-and-audit mode');
+        const records = c.records === undefined ? [] : list(c.records, MAX_RECORDS_PER_WRITE, 'cursor.records').map((r, i) => parseRecord(r, `cursor.records[${i}]`));
+        const blockNumber = blockNum(c.blockNumber, 'cursor.blockNumber');
+        const outside = records.find((r) => r.blockNumber > blockNumber);
+        if (outside) refuse(`cursor.records: block ${outside.blockNumber} is above the cursor`);
+        const early = records.find((r) => r.blockNumber < dep.deployBlock);
+        if (early) {
+          throw new Refusal(`${DEPLOYMENT_MISMATCH}: block ${early.blockNumber} is before this Diamond's deploy block ${dep.deployBlock}`, 409);
+        }
+        const auditPlan = optional(c.auditPlan, (x) => {
+          const a = obj(x, 'cursor.auditPlan');
+          onlyKeys(a, ['day', 'fromBlock', 'toBlock'], 'cursor.auditPlan');
+          if (typeof a.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(a.day)) refuse('cursor.auditPlan.day must be YYYY-MM-DD');
+          return { day: a.day as string, ...range(a, 'cursor.auditPlan') };
+        });
+        if (auditPlan !== null && mode === 'trace-filter') refuse('cursor.auditPlan is not for trace-filter mode');
         const cursor: CursorStatement = {
           mode,
-          blockNumber: blockNum(c.blockNumber, 'cursor.blockNumber'),
+          blockNumber,
           blockTime: blockNum(c.blockTime, 'cursor.blockTime'),
           watchedShareBps,
+          slowBlockNumber,
+          listFromBlock,
+          auditPlan,
           checkpoints: list(c.checkpoints, MAX_CHECKPOINTS, 'cursor.checkpoints').map((x, i) => {
             const p = obj(x, `cursor.checkpoints[${i}]`);
             onlyKeys(p, ['blockNumber', 'blockHash'], `cursor.checkpoints[${i}]`);
@@ -280,10 +319,11 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
             const a = obj(x, `cursor.audits[${i}]`);
             onlyKeys(a, ['fromBlock', 'toBlock', 'found', 'missed'], `cursor.audits[${i}]`);
             const found = blockNum(a.found, `cursor.audits[${i}].found`);
-            const missed = blockNum(a.missed, `cursor.audits[${i}].missed`);
-            if (missed > found) refuse(`cursor.audits[${i}]: missed is above found`);
+            const missed = optional(a.missed, (x) => blockNum(x, `cursor.audits[${i}].missed`));
+            if (missed !== null && missed > found) refuse(`cursor.audits[${i}]: missed is above found`);
             return { ...range(a, `cursor.audits[${i}]`), found, missed };
           }),
+          records,
         };
         return { ok: true, value: { kind: 'cursor', chainId, cursor } };
       }
@@ -370,30 +410,37 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
   const dep = getDeployment(w.chainId);
   if (!dep) throw new Error(`chain ${w.chainId} has no deployment record`);
   const stmts: D1Stmt[] = [];
+  const insertRecord = (r: FailedTxRecord) =>
+    db.prepare(INSERT_RECORD).bind(
+      w.chainId, r.txHash, r.blockHash, r.blockNumber, r.blockTime, r.txIndex, dep.diamond.toLowerCase(), r.sender, r.contract,
+      r.functionSelector, r.functionName, r.loanId, r.offerId, r.errorSelector, r.errorName, r.errorValues,
+      r.foundBy, r.mode, r.source, r.explanation, r.explanationCut ? 1 : 0, r.unavailable, r.gasUsed, r.gasLimit,
+      r.usedAllGas ? 1 : 0, r.notReproduced ? 1 : 0, r.stateUnreachable ? 1 : 0, now,
+    );
   switch (w.kind) {
     case 'records':
-      for (const r of w.records) {
-        stmts.push(
-          db.prepare(INSERT_RECORD).bind(
-            w.chainId, r.txHash, r.blockHash, r.blockNumber, r.blockTime, r.txIndex, dep.diamond.toLowerCase(), r.sender, r.contract,
-            r.functionSelector, r.functionName, r.loanId, r.offerId, r.errorSelector, r.errorName, r.errorValues,
-            r.foundBy, r.mode, r.source, r.explanation, r.explanationCut ? 1 : 0, r.unavailable, r.gasUsed, r.gasLimit,
-            r.usedAllGas ? 1 : 0, r.notReproduced ? 1 : 0, r.stateUnreachable ? 1 : 0, now,
-          ),
-        );
-      }
+      for (const r of w.records) stmts.push(insertRecord(r));
       break;
     case 'cursor': {
       const c = w.cursor;
+      // The records first, then the cursor and its checkpoint, in one batch.
+      for (const r of c.records) stmts.push(insertRecord(r));
       stmts.push(
         db
           .prepare(
-            `INSERT INTO failed_tx_cursor (chain_id, diamond, mode, block_number, block_time, watched_share_bps, updated_at)
-             VALUES (?1, ?7, ?2, ?3, ?4, ?5, ?6)
+            `INSERT INTO failed_tx_cursor (chain_id, diamond, mode, block_number, block_time, watched_share_bps, slow_block_number,
+               list_from_block, audit_day, audit_from, audit_to, updated_at)
+             VALUES (?1, ?11, ?2, ?3, ?4, ?5, ?6, ?12, ?7, ?8, ?9, ?10)
              ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, mode = excluded.mode, block_number = excluded.block_number,
-               block_time = excluded.block_time, watched_share_bps = excluded.watched_share_bps, updated_at = excluded.updated_at`,
+               block_time = excluded.block_time, watched_share_bps = excluded.watched_share_bps,
+               slow_block_number = excluded.slow_block_number, list_from_block = excluded.list_from_block, audit_day = excluded.audit_day,
+               audit_from = excluded.audit_from, audit_to = excluded.audit_to, updated_at = excluded.updated_at`,
           )
-          .bind(w.chainId, c.mode, c.blockNumber, c.blockTime, c.watchedShareBps, now, dep.diamond.toLowerCase()),
+          .bind(
+            w.chainId, c.mode, c.blockNumber, c.blockTime, c.watchedShareBps, c.slowBlockNumber,
+            c.auditPlan?.day ?? null, c.auditPlan?.fromBlock ?? null, c.auditPlan?.toBlock ?? null, now, dep.diamond.toLowerCase(),
+            c.listFromBlock,
+          ),
       );
       for (const p of c.checkpoints) {
         // A rescanned height takes the new hash and is live again.
@@ -531,6 +578,143 @@ export async function handleFailedTxWrite(
   }
 }
 
+// ─── The pass's own state ────────────────────────────────────────────────
+
+/** Unmarked checkpoints the state read returns, newest first: the replacement walk's reach. */
+export const STATE_CHECKPOINTS = 100;
+/** The widest block range the state read lists recorded transactions for (an audit slice). */
+export const STATE_RECORDED_RANGE = 20_000;
+
+export interface FailedTxPassState {
+  cursor: {
+    mode: string;
+    blockNumber: number;
+    blockTime: number;
+    watchedShareBps: number | null;
+    slowBlockNumber: number | null;
+    listFromBlock: number | null;
+    auditPlan: { day: string; fromBlock: number; toBlock: number } | null;
+  } | null;
+  /** Unmarked checkpoints, newest first. */
+  checkpoints: Array<{ blockNumber: number; blockHash: string }>;
+  /** The highest block of the planned audit window already audited, or null. */
+  auditedTo: number | null;
+  /** Live records in the asked block range, by transaction hash (lowercase). */
+  recorded: string[] | null;
+  /**
+   * The same, less those the audit itself found: what the other sources
+   * covered. The audit compares with this, so a slice read again after an
+   * interrupted run cannot count its own earlier finds as covered.
+   */
+  recordedByOthers: string[] | null;
+}
+
+/**
+ * `GET /internal/failed-tx/state?chainId=N[&from=A&to=B]`: what the pass
+ * itself wrote, read back, under the same token. The pass has no database of
+ * its own, so its cursor, its checkpoints and its audit progress live in its
+ * tables and come back through here. It reads only those three tables.
+ */
+export async function handleFailedTxState(
+  req: Request,
+  db: { prepare(sql: string): D1Stmt },
+  token: string | undefined,
+): Promise<Response> {
+  if (!(await writerAuthorized(req.headers.get('authorization'), token))) return json({ error: 'unauthorized' }, 401);
+  const url = new URL(req.url);
+  const chainId = Number(url.searchParams.get('chainId'));
+  const dep = Number.isSafeInteger(chainId) && chainId > 0 ? getDeployment(chainId) : undefined;
+  if (!dep) return json({ error: 'chainId must name a deployed network' }, 400);
+  // The pass names the Diamond it scans under, as on every write: a pass and
+  // an indexer on different deployment records stop here rather than one
+  // resuming from the other's position.
+  const current = dep.diamond.toLowerCase();
+  const diamond = (url.searchParams.get('diamond') ?? '').toLowerCase();
+  if (diamond !== current) {
+    return json({ error: `${DEPLOYMENT_MISMATCH}: the read names Diamond ${diamond || '(none)'}, and this indexer's deployment record for chain ${chainId} names ${current}` }, 409);
+  }
+  const fromRaw = url.searchParams.get('from');
+  const toRaw = url.searchParams.get('to');
+  let span: { from: number; to: number } | null = null;
+  if (fromRaw !== null || toRaw !== null) {
+    const from = Number(fromRaw);
+    const to = Number(toRaw);
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to - from >= STATE_RECORDED_RANGE) {
+      return json({ error: `from and to must be a block range of at most ${STATE_RECORDED_RANGE} blocks` }, 400);
+    }
+    span = { from, to };
+  }
+  try {
+    // A position written under a retired Diamond is not resumed from: the
+    // pass starts this deployment afresh from its own deploy block.
+    const c = await db
+      .prepare(
+        `SELECT mode, block_number, block_time, watched_share_bps, slow_block_number, list_from_block, audit_day, audit_from, audit_to
+         FROM failed_tx_cursor WHERE chain_id = ?1 AND diamond = ?2`,
+      )
+      .bind(chainId, current)
+      .first<{
+        mode: string; block_number: number; block_time: number; watched_share_bps: number | null; slow_block_number: number | null;
+        list_from_block: number | null; audit_day: string | null; audit_from: number | null; audit_to: number | null;
+      }>();
+    const checkpoints = (
+      (
+        await db
+          .prepare(
+            `SELECT from_block, block_hash FROM failed_tx_range
+             WHERE chain_id = ?1 AND kind = 'checkpoint' AND replaced_at IS NULL ORDER BY from_block DESC LIMIT ?2`,
+          )
+          .bind(chainId, STATE_CHECKPOINTS)
+          .all<{ from_block: number; block_hash: string }>()
+      ).results ?? []
+    ).map((r) => ({ blockNumber: r.from_block, blockHash: r.block_hash }));
+    const plan = c && c.audit_day !== null && c.audit_from !== null && c.audit_to !== null ? { day: c.audit_day, fromBlock: c.audit_from, toBlock: c.audit_to } : null;
+    let auditedTo: number | null = null;
+    if (plan) {
+      const a = await db
+        .prepare(`SELECT MAX(to_block) AS t FROM failed_tx_range WHERE chain_id = ?1 AND kind = 'audit' AND from_block >= ?2 AND to_block <= ?3`)
+        .bind(chainId, plan.fromBlock, plan.toBlock)
+        .first<{ t: number | null }>();
+      auditedTo = a?.t ?? null;
+    }
+    let recorded: string[] | null = null;
+    let recordedByOthers: string[] | null = null;
+    if (span) {
+      const rows =
+        (
+          await db
+            .prepare(`SELECT tx_hash, found_by FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL`)
+            .bind(chainId, span.from, span.to)
+            .all<{ tx_hash: string; found_by: string }>()
+        ).results ?? [];
+      recorded = [...new Set(rows.map((r) => r.tx_hash))];
+      recordedByOthers = [...new Set(rows.filter((r) => r.found_by !== 'audit').map((r) => r.tx_hash))];
+    }
+    const state: FailedTxPassState = {
+      cursor: c
+        ? {
+            mode: c.mode,
+            blockNumber: c.block_number,
+            blockTime: c.block_time,
+            watchedShareBps: c.watched_share_bps,
+            slowBlockNumber: c.slow_block_number,
+            listFromBlock: c.list_from_block,
+            auditPlan: plan,
+          }
+        : null,
+      checkpoints,
+      auditedTo,
+      recorded,
+      recordedByOthers,
+    };
+    return json(state, 200);
+  } catch (e) {
+    // The detail stays in the Worker's log; the caller gets a fixed answer.
+    console.error('[failedTx] state read failed', redactedError(e));
+    return json({ error: 'unavailable' }, 503);
+  }
+}
+
 // ─── Health ──────────────────────────────────────────────────────────────
 
 export interface FailedTxChainHealth {
@@ -544,8 +728,13 @@ export interface FailedTxChainHealth {
   newestCheckpoint: { blockNumber: number; blockHash: string } | null;
   lastReplacement: { fromBlock: number; toBlock: number; foundAt: number; marked: number } | null;
   gaps: { count: number; latest: { fromBlock: number; toBlock: number; reason: string } | null };
-  /** The audit's measured miss rate so far: missed of found, over every window. */
-  audit: { windows: number; found: number; missed: number; missRateBps: number | null };
+  /**
+   * The audit's measured miss rate so far: missed of found, over every slice
+   * the list had been asked about. `unmeasured` counts slices read where the
+   * list was never asked (before its coverage began), whose finds are
+   * recorded but are not misses.
+   */
+  audit: { windows: number; found: number; missed: number; missRateBps: number | null; unmeasured: number };
   recordsLast24h: number;
 }
 
@@ -573,8 +762,9 @@ export async function handleFailedTxHealth(db: { prepare(sql: string): D1Stmt },
        FROM failed_tx_range g WHERE g.kind = 'gap' AND g.recorded_at = (
          SELECT MAX(recorded_at) FROM failed_tx_range h WHERE h.chain_id = g.chain_id AND h.kind = 'gap')`,
     );
-    const audits = await q<{ chain_id: number; windows: number; found: number; missed: number }>(
-      `SELECT chain_id, COUNT(*) AS windows, SUM(found) AS found, SUM(missed) AS missed
+    const audits = await q<{ chain_id: number; windows: number; found: number | null; missed: number | null; unmeasured: number }>(
+      `SELECT chain_id, COUNT(missed) AS windows, SUM(CASE WHEN missed IS NOT NULL THEN found END) AS found, SUM(missed) AS missed,
+         SUM(CASE WHEN missed IS NULL THEN 1 ELSE 0 END) AS unmeasured
        FROM failed_tx_range WHERE kind = 'audit' GROUP BY chain_id`,
     );
     const recent = await q<{ chain_id: number; n: number }>(
@@ -609,7 +799,8 @@ export async function handleFailedTxHealth(db: { prepare(sql: string): D1Stmt },
           windows: a?.windows ?? 0,
           found: a?.found ?? 0,
           missed: a?.missed ?? 0,
-          missRateBps: a && a.found > 0 ? Math.round((a.missed * 10_000) / a.found) : null,
+          missRateBps: a && (a.found ?? 0) > 0 ? Math.round(((a.missed ?? 0) * 10_000) / a.found!) : null,
+          unmeasured: a?.unmeasured ?? 0,
         },
         recordsLast24h: recent.find((x) => x.chain_id === chainId)?.n ?? 0,
       };

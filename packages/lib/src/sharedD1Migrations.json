@@ -99,5 +99,6 @@
   "0118_loan_opening_parties.sql",
   "0119_rental_rights.sql",
   "0121_activity_payload_loan_index.sql",
-  "0123_failed_transactions.sql"
+  "0123_failed_transactions.sql",
+  "0124_failed_tx_pass_state.sql"
 ]
