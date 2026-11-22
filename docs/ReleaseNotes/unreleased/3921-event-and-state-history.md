@@ -1,4 +1,4 @@
-## Troubleshooting — the indexer's event history and the state at a block (PR #<n>)
+## Troubleshooting — the indexer's event history and the state at a block (PR #4016)
 
 The indexer now keeps a full record of what the platform's contracts said on each network, so a past transaction can be explained from what was true at that moment. Advances #3921 (the build history and each row's last event follow in a second PR).
 
