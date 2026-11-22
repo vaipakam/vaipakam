@@ -164,11 +164,13 @@ retirement (section 7).
 Retiring a price version (section 7) is an act on the guard: the guard keeps
 a floor, raised only through its delayed change path, and refuses every "as
 of" read below it. A raise is executed by the platform's main address alone,
-inside the retirement's step (section 7), so no version is retired past that
-step's checks. The Diamond reads the floor. Beside it the Diamond records
-only what a retirement named as its replacement and when its settling time
-ends. A new guard has its own versions and its
-own floor, so versions are never compared across guards.
+inside the retirement's execute (section 7), so no version is retired past
+that step's checks, and it takes effect when the retirement's settling time
+ends. The Diamond reads the floor. Beside it the Diamond records only what a
+retirement named as its replacement and when its settling time ends. A new
+guard has its own versions and its own floor, so versions are never compared
+across guards. A guard never has more unretired versions than a stated most:
+a setting change that would make one more waits for a retirement.
 
 A price version has two parts, the guard's own epoch and its feed
 registry's epoch, and the guard can be pointed at a new registry whose epochs
@@ -322,17 +324,21 @@ not retired here: it is replaced by the guarded step of
     that a retired version has a source for. An asset a retired version
     cannot vouch for fails unless the proposal named it exempt, with the
     reason;
-  - the execute moves the loans and does not raise the floor. For the
-    settling time (two hours proposed), counted from the execute, a step on
-    a moved loan needs both readings to allow it and no sync writes the
-    move. It ends at its fixed time and at no call;
-  - the raise of the floor names its retirement and the exact floor, is
-    proposed no later than the retirement and lapses or is cancelled with
-    it. Once the settling time has passed anyone makes the call that raises
-    it, which the keeper pass backs. The call changes no reading. The floor
-    goes to the named version exactly, whatever version is newest by then;
+  - the raise of the floor names its retirement and the exact floor, which
+    is the named version. It is proposed no later than the retirement, and
+    lapses or is cancelled with it. The execute makes it, with effect from
+    the end of the settling time (two hours proposed), counted from the
+    execute;
+  - until that moment the guard still answers the retired versions, a step
+    on a moved loan needs both readings to allow it, and no sync writes the
+    move. From that moment the guard refuses them and the loan is read at
+    the named version alone. There is no second call;
+  - a setting changed on the guard inside the settling time makes a newer
+    version for new loans, and changes neither the floor nor the version the
+    loans moved to;
   - it is not executed inside the settling time of a replacement of the
-    guard, nor while an earlier retirement's floor is still to be raised;
+    guard or of another retirement, and it stays open while the platform is
+    paused;
   - it carries no second key. After the settling time a moved loan is read
     at the named version alone. A change of feeds that should carry the
     second key is made as a replacement of the guard.
@@ -395,9 +401,8 @@ fallback custody or past default cannot be moved.
   proposed, cancelled and executed, consent given, loan moved. Loans are
   indexed by set so a proposal can be fanned out to both parties.
 - **Keeper.** Try-lists are built against the loan's route set, read from
-  `getLoanSettings`. One new pass executes due retirements, raises the
-  floor after a price retirement's settling time, and moves the loans that
-  hold a retired part.
+  `getLoanSettings`. One new pass executes due retirements and moves the
+  loans that hold a retired part.
 
 ## 11. Tests
 
@@ -424,9 +429,9 @@ fallback custody or past default cannot be moved.
   on two guards are never compared.
 - A price retirement between versions that disagree is refused, passes with
   the asset named exempt, cannot be acted on in its own transaction or
-  inside its settling time, and raises the floor only by the second call,
-  to the named version and by no raise but its own. A sync inside the
-  settling time writes nothing.
+  inside its settling time, and raises the floor to the named version, by
+  no raise but its own, with effect when the settling time ends. A sync
+  inside the settling time writes nothing.
 - A sync of a loan's routes or marketplace after a replacement of the guard
   leaves the guard its record names.
 - A new listing on a loan opened before an executor change uses the loan's
