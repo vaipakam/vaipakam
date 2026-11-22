@@ -97,8 +97,23 @@ export function expectedSelectors(root = REPO_ROOT, out = join(CONTRACTS_DIR, 'o
   return { set, missing };
 }
 
-/** Every address a run created, by chain id, from forge's run-latest journals under `dir`. */
-export function createdAddresses(dir) {
+/**
+ * The peer each messenger names per channel, by the remote chain's record key
+ * (ConfigureCcip._wireChannelPeers): Base names each mirror's contracts, a
+ * mirror names Base's.
+ */
+export const CHANNEL_PEERS = {
+  canonical: { 'vpfi-reward': 'rewardMessenger', 'vpfi-buyback': 'diamond', 'vpfi-reward-budget': 'rewardRemittanceReceiver', 'vpfi-return': 'vpfiReturnSender' },
+  mirror: { 'vpfi-reward': 'rewardMessenger', 'vpfi-buyback': 'buybackRemittanceReceiver', 'vpfi-reward-budget': 'diamond', 'vpfi-return': 'vpfiReturnReceiver' },
+};
+
+/**
+ * Every address a run created, by chain id, from forge's run-latest journals
+ * under `dir`. With `since` (unix seconds), a journal forge stamped earlier
+ * is a previous run's and is left out, as `deploy-testnet.sh`'s
+ * `require_broadcast_ok` does.
+ */
+export function createdAddresses(dir, since) {
   const byChain = new Map();
   if (!dir || !existsSync(dir)) return byChain;
   for (const script of readdirSync(dir)) {
@@ -108,6 +123,11 @@ export function createdAddresses(dir) {
       const p = join(sdir, chainId, 'run-latest.json');
       if (!/^\d+$/.test(chainId) || !existsSync(p)) continue;
       const j = JSON.parse(readFileSync(p, 'utf8'));
+      if (since !== undefined) {
+        let t = Number(j.timestamp ?? 0);
+        if (t > 100000000000) t = Math.floor(t / 1000); // forge stamps milliseconds
+        if (t < since) continue;
+      }
       const list = byChain.get(Number(chainId)) ?? [];
       for (const t of j.transactions ?? []) {
         if (/^CREATE2?$/.test(t.transactionType ?? '') && t.contractAddress) list.push({ address: t.contractAddress, name: t.contractName ?? '', script });
@@ -135,6 +155,8 @@ export function addressesIn(v, out = new Set()) {
  */
 export function readback(d, ctx) {
   const { call, code, records, prior, env, terms, roles, getters, selectors, created, manifest, files, anchor } = ctx;
+  // `created` null: the journals cannot be told apart from earlier runs'.
+  const unscoped = ctx.unscoped ?? 'the run start is unknown: pass --since <unix>';
   const R = [];
   const slugs = Object.keys(d.chains);
   const canon = canonicalOf(d);
@@ -162,6 +184,8 @@ export function readback(d, ctx) {
       R.push(row('records.diamond', s, 'a Diamond in addresses.json', rec ? 'none' : 'no addresses.json', NOT_MET, 'records'));
       continue;
     }
+
+    let swapAdapters = [];
 
     // ── Settings and switches ───────────────────────────────────────────
     cmp('launch.paused', s, 'pause bit after launch', D, 'paused()(bool)', [], ['false']);
@@ -233,6 +257,14 @@ export function readback(d, ctx) {
       const peer = records[t]?.ccipMessenger?.toLowerCase();
       if (!peer) R.push(row(`lane.${t}.peer`, s, `${t}'s messenger`, `no messenger recorded for ${t}`, NOT_MET, 'cross-chain lane'));
       else cmp(`lane.${t}.peer`, s, 'cross-chain lane', msg, 'remoteMessengerOf(uint256)(address)', [String(id)], [peer]);
+      // The business peers on each channel, as ConfigureCcip._wireChannelPeers
+      // sets them: a message on a channel is refused unless it comes from
+      // that peer, so a right transport peer alone is not a working lane.
+      for (const [ch, key] of Object.entries(s === canon ? CHANNEL_PEERS.canonical : CHANNEL_PEERS.mirror)) {
+        const want = records[t]?.[key]?.toLowerCase();
+        if (!want) R.push(row(`lane.${t}.channel.${ch}`, s, `${t}'s ${key}`, `no ${key} recorded for ${t}`, NOT_MET, 'channel peer'));
+        else cmp(`lane.${t}.channel.${ch}`, s, `channel ${ch} peer is ${t}'s ${key}`, msg, 'channelPeerOf(bytes32,uint256)(address)', [ctx.keccak(`vaipakam.ccip.channel.${ch}`), String(id)], [want]);
+      }
     }
 
     // ── Sources ─────────────────────────────────────────────────────────
@@ -256,7 +288,8 @@ export function readback(d, ctx) {
     }
     {
       const r = ask(s, D, 'getSwapAdapters()(address[])');
-      const n = r.ok ? r.w.filter((w) => ADDR_RE.test(w)).length : 0;
+      swapAdapters = r.ok ? r.w.filter((w) => ADDR_RE.test(w)) : [];
+      const n = swapAdapters.length;
       if (!r.ok) R.push(row('sources.swap', s, 'swap routes', r.err, UNREADABLE, 'swap routes'));
       else if (d.chains[s].swapAdapters) R.push(row('sources.swap', s, 'at least one swap route', `${n} routes`, n ? MET : NOT_MET, 'swap routes'));
       else R.push(row('sources.swap', s, 'not stated in the file', `${n} routes`, INFO, 'swap routes'));
@@ -291,10 +324,17 @@ export function readback(d, ctx) {
     }
 
     // ── Records ─────────────────────────────────────────────────────────
+    // Accounted for: an address the records name, one the Diamond's swap
+    // registry names (DeployUniV3Adapter registers its adapter there and
+    // writes no record), or a contract the file lists by name with a reason.
     const known = addressesIn(rec);
-    const made = created.get(CHAINS[s].chainId) ?? [];
-    const unrecorded = made.filter((c) => !known.has(c.address.toLowerCase()) && !Object.prototype.hasOwnProperty.call(d.notRecorded ?? {}, c.name));
-    R.push(row('records.created', s, 'every created address recorded or listed', unrecorded.length ? unrecorded.map((c) => `${c.name || '?'} ${c.address}`).join('; ') : `${made.length} created, all accounted for`, unrecorded.length ? NOT_MET : MET, 'broadcast journals'));
+    for (const a of swapAdapters) known.add(a);
+    if (!created) R.push(row('records.created', s, 'every created address recorded or listed', unscoped, UNREADABLE, 'broadcast journals'));
+    else {
+      const made = created.get(CHAINS[s].chainId) ?? [];
+      const unrecorded = made.filter((c) => !known.has(c.address.toLowerCase()) && !Object.prototype.hasOwnProperty.call(d.notRecorded ?? {}, c.name));
+      R.push(row('records.created', s, 'every created address recorded or listed', unrecorded.length ? unrecorded.map((c) => `${c.name || '?'} ${c.address}`).join('; ') : `${made.length} created, all accounted for`, unrecorded.length ? NOT_MET : MET, 'broadcast journals'));
+    }
     for (const f of ['storage-layout.json', 'storage-layout.anchor.json']) {
       R.push(row(`records.${f}`, s, 'written', files.exists(s, f) ? 'present' : 'missing', files.exists(s, f) ? MET : NOT_MET, 'storage-layout record'));
     }
@@ -320,9 +360,12 @@ export function readback(d, ctx) {
     const want = anchor !== undefined && anchor !== null ? String(anchor) : [...anchors.values()][0];
     for (const [s, v] of anchors) R.push(row('rewards.anchor', s, want, v, vals.size === 1 && v === want ? MET : NOT_MET, 'rewards anchor, equal on every chain'));
   }
-  const sent = [...created.keys()].sort((a, b) => a - b).join(' ');
   const planned = slugs.map((s) => CHAINS[s].chainId).sort((a, b) => a - b).join(' ');
-  R.push(row('records.chains', '*', planned, sent || 'no journals', sent === planned ? MET : NOT_MET, 'chains that received transactions'));
+  if (!created) R.push(row('records.chains', '*', planned, unscoped, UNREADABLE, 'chains that received transactions'));
+  else {
+    const sent = [...created.keys()].sort((a, b) => a - b).join(' ');
+    R.push(row('records.chains', '*', planned, sent || 'no journals', sent === planned ? MET : NOT_MET, 'chains that received transactions'));
+  }
   return R;
 }
 
@@ -336,7 +379,7 @@ function arg(rest, name) {
 export function main(argv = process.argv.slice(2), { env = process.env, log = console.log, err = console.error } = {}) {
   const [file, ...rest] = argv;
   if (!file || file.startsWith('--')) {
-    err('usage: readback.mjs <desired.json> [--records <dir>] [--broadcast <dir>] [--prior-root <dir>] [--env-file <path>] [--rpc <slug>=<url>]... [--anchor <unix>] [--json <path>]');
+    err('usage: readback.mjs <desired.json> [--records <dir>] [--broadcast <dir>] [--prior-root <dir>] [--env-file <path>] [--rpc <slug>=<url>]... [--since <unix>] [--anchor <unix>] [--json <path>]');
     return 2;
   }
   let d;
@@ -351,6 +394,13 @@ export function main(argv = process.argv.slice(2), { env = process.env, log = co
   const bDefault = existsSync(join(recordsRoot, '.forge/broadcast')) ? join(recordsRoot, '.forge/broadcast') : join(CONTRACTS_DIR, 'broadcast');
   const broadcast = resolve(CONTRACTS_DIR, arg(rest, '--broadcast') ?? bDefault);
   const priorRoot = arg(rest, '--prior-root');
+  // The shared contracts/broadcast holds every earlier run's journals too, so
+  // its census needs the run's start; a records root's own .forge/broadcast
+  // (the rehearsal's) holds only this run's.
+  const sinceArg = arg(rest, '--since');
+  const since = sinceArg === undefined ? undefined : Number(sinceArg);
+  if (sinceArg !== undefined && !Number.isInteger(since)) { err(`  ✗ --since must be a unix time in seconds`); return 1; }
+  const journalsScoped = since !== undefined || resolve(broadcast) !== resolve(CONTRACTS_DIR, 'broadcast');
   const rpcs = {};
   rest.forEach((a, i) => { if (a === '--rpc') { const [k, ...v] = String(rest[i + 1]).split('='); rpcs[k] = v.join('='); } });
   const slugs = Object.keys(d.chains);
@@ -397,7 +447,7 @@ export function main(argv = process.argv.slice(2), { env = process.env, log = co
     roles: grantableRoles(),
     getters: [...getters],
     selectors: expectedSelectors(),
-    created: createdAddresses(broadcast),
+    created: journalsScoped ? createdAddresses(broadcast, since) : null,
     manifest,
     files: { exists: (s, f) => existsSync(join(recordsRoot, s, f)) },
     anchor: a === undefined ? d.rewards.anchor ?? undefined : Number(a),

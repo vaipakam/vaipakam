@@ -6,9 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { CHAINS, CONTRACTS_DIR, derivedRewardSources, settingExpect, termsVersions, validate, keeperFlags, addressGetters } from '../../../contracts/script/deploy-plan.mjs';
-import { AWAITING, MET, NOT_MET, UNREADABLE, createdAddresses, failed, grantableRoles, readback, words } from '../../../contracts/script/readback.mjs';
+import { AWAITING, CHANNEL_PEERS, MET, NOT_MET, UNREADABLE, createdAddresses, failed, grantableRoles, readback, words } from '../../../contracts/script/readback.mjs';
 
 // The committed file, with the rate model's entry taken out so each test
 // states the getter rule it exercises on its own.
@@ -33,7 +34,11 @@ function world(d) {
   const w = { roles: {}, owner: {}, paused: {}, settings: {}, getters: {}, selectors: {}, peers: {}, records: {}, prior: {}, files: {}, created: new Map(), manifest: [] };
   slugs.forEach((s, i) => {
     const D = A(0x1000 + i);
-    w.records[s] = { diamond: D, ccipMessenger: A(0x2000 + i), priceGuard: A(0x3000 + i), keeperAddress: A(0x4000) };
+    w.records[s] = {
+      diamond: D, ccipMessenger: A(0x2000 + i), priceGuard: A(0x3000 + i), keeperAddress: A(0x4000),
+      rewardMessenger: A(0xc000 + i), buybackRemittanceReceiver: A(0xc100 + i), rewardRemittanceReceiver: A(0xc200 + i),
+      vpfiReturnSender: A(0xc300 + i), vpfiReturnReceiver: A(0xc400 + i),
+    };
     w.prior[s] = { diamond: A(0x9000 + i), ccipMessenger: A(0x9100 + i), priceGuard: A(0x9200 + i), keeperAddress: A(0x4000) };
     w.manifest.push({ slug: s, diamond: w.prior[s].diamond });
     w.files[s] = new Set(['storage-layout.json', 'storage-layout.anchor.json']);
@@ -56,6 +61,12 @@ function fakeCtx(d, w, over = {}) {
     if (to.toLowerCase() === w.records[s].ccipMessenger.toLowerCase()) {
       const t = slugs.find((x) => CHAINS[x].chainId === Number(args[0]));
       if (sig.startsWith('chainSelectorOf')) return w.selectorsOf?.[`${s}>${t}`] ?? CHAINS[t].ccipSelector;
+      if (sig.startsWith('channelPeerOf')) {
+        const t2 = slugs.find((x) => CHAINS[x].chainId === Number(args[1]));
+        const ch = Object.keys(CHANNEL_PEERS.canonical).find((c) => fakeKeccak(`vaipakam.ccip.channel.${c}`) === args[0]);
+        if (w.channelPeers?.[`${s}>${t2}>${ch}`]) return w.channelPeers[`${s}>${t2}>${ch}`];
+        return w.records[t2][(d.chains[s].role === 'canonical' ? CHANNEL_PEERS.canonical : CHANNEL_PEERS.mirror)[ch]];
+      }
       if (sig.startsWith('remoteMessengerOf')) return w.peers[`${s}>${t}`] ?? w.records[t].ccipMessenger;
     }
     if (to === A(0x6000 + msgIdx) && sig.startsWith('isSanctioned')) return 'false';
@@ -108,7 +119,8 @@ function fakeCtx(d, w, over = {}) {
     ...over,
   };
 }
-const fakeKeccak = (t) => `0x${Buffer.from(t).toString('hex').padEnd(64, '0').slice(0, 64)}`;
+// A stand-in hash: distinct for distinct texts, which is all the fake needs.
+const fakeKeccak = (t) => `0x${createHash('sha256').update(t).digest('hex')}`;
 
 const bad = (rows) => failed(rows).map((r) => `${r.chain} ${r.id}`);
 
@@ -344,4 +356,39 @@ test("the committed file accounts for the mirrors' unset remittance keeper and t
     w.created.get(CHAINS[s].chainId).push({ address: A(0xb000), name: 'DiamondInterfacesInit' });
   }
   assert.deepEqual(bad(readback(d, fakeCtx(d, w, { getters: [...GETTERS, 'getRewardRemittanceKeeper()'] }))), []);
+});
+
+test('a channel peer that names the wrong contract fails, though the transport peer is right', () => {
+  const d = desired();
+  const w = world(d);
+  w.channelPeers = { 'base-sepolia>arb-sepolia>vpfi-return': A(0xbad) };
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['base-sepolia lane.arb-sepolia.channel.vpfi-return']);
+});
+
+test('a contract the Diamond registers as a swap route counts as recorded', () => {
+  const d = desired();
+  const w = world(d);
+  w.created.get(CHAINS['bnb-testnet'].chainId).push({ address: A(0x7000), name: 'UniV3Adapter' });
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), []);
+  w.created.get(CHAINS['bnb-testnet'].chainId).push({ address: A(0x7001), name: 'UniV3Adapter' });
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['bnb-testnet records.created']);
+});
+
+test('journals that cannot be scoped to the run are unreadable, never a census', () => {
+  const d = desired();
+  const rows = readback(d, fakeCtx(d, world(d), { created: null }));
+  assert.deepEqual(bad(rows).sort(), ['* records.chains', 'arb-sepolia records.created', 'base-sepolia records.created', 'bnb-testnet records.created']);
+  assert.ok(failed(rows).every((r) => r.result === UNREADABLE));
+});
+
+test('a journal stamped before the run start is a previous run, left out', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rb-since-'));
+  const put = (script, chain, ts, addr) => {
+    mkdirSync(join(dir, script, String(chain)), { recursive: true });
+    writeFileSync(join(dir, script, String(chain), 'run-latest.json'), JSON.stringify({ timestamp: ts, transactions: [{ transactionType: 'CREATE', contractAddress: addr, contractName: 'X' }] }));
+  };
+  put('Old.s.sol', 11155111, 1700000000000, A(1));
+  put('New.s.sol', 84532, 1800000000000, A(2));
+  assert.deepEqual([...createdAddresses(dir, 1790000000).keys()], [84532]);
+  assert.deepEqual([...createdAddresses(dir).keys()].sort((a, b) => a - b), [84532, 11155111]);
 });
