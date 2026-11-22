@@ -30,6 +30,7 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -128,6 +129,9 @@ contract RedeployFacets is Script {
     /// @notice #3685 - the target Diamond predates the collateral pledged
     ///         total; see {_requireCollateralConcentration}.
     error PredatesCollateralConcentration(address diamond);
+    /// @notice #3864 - the target Diamond predates the network closing
+    ///         switch; see {_requireNetworkClosingHost}.
+    error PredatesNetworkClosing(address diamond);
     /// @notice #1558 - the target Diamond predates the refinance payoff
     ///         permit; see {_requireRefinancePayoffPermit}.
     error PredatesRefinancePayoffPermit(address diamond);
@@ -221,6 +225,9 @@ contract RedeployFacets is Script {
         // #3685 - and one from before the collateral pledged total; see
         // {_requireCollateralConcentration}.
         _requireCollateralConcentration(diamond);
+        // #3864 - and one from before the network closing switch; see
+        // {_requireNetworkClosingHost}.
+        _requireNetworkClosingHost(diamond);
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
@@ -1137,6 +1144,26 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(VPFIDiscountAccumulatorFacet.syncTierRecord.selector)
                 == address(0)
         ) revert PredatesTierRecordSeam(diamond);
+    }
+
+    /// @dev #3864 (Codex #3842) - refuse a Diamond from before the network
+    ///      closing switch. Every opening step (loan creation, the offer
+    ///      book's entry, the position migrations inlined from LibLoan, the
+    ///      Auto-lend slot writes, the in-place extension) now self-calls
+    ///      `LegalFacet.requireMayOpen`, and the previews ask
+    ///      `LegalFacet.openingBlocker`. This curated set refreshes some of
+    ///      those callers but not LegalFacet, so on an older Diamond every
+    ///      refreshed opening step would revert `FunctionDoesNotExist`.
+    ///      Crossing the boundary is a fresh deploy or
+    ///      `RefreshAllFacetsInPlace`, never this refresh. The markers are
+    ///      the routing of both selectors. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireNetworkClosingHost(address diamond) internal view {
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+        if (
+            loupe.facetAddress(LegalFacet.requireMayOpen.selector) == address(0)
+                || loupe.facetAddress(LegalFacet.openingBlocker.selector) == address(0)
+        ) revert PredatesNetworkClosing(diamond);
     }
 
     /// @dev #3685 - refuse a Diamond from before the collateral pledged
