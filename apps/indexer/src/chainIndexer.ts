@@ -4155,10 +4155,10 @@ export async function processSignedOfferLogs(
         `UPDATE signed_offers
          SET status = 'filled',
              filled_amount = CASE WHEN amount_max = '0' THEN amount ELSE amount_max END,
-             updated_at = ?
+             updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
       )
-        .bind(now, chainId, orderHash)
+        .bind(now, ...lastEventBinds(eventPosition(log)), chainId, orderHash)
         .run();
       if ((r.meta?.changes ?? 0) > 0) {
         updates++;
@@ -4190,6 +4190,12 @@ export async function processSignedOfferLogs(
       // failure propagates → the scan aborts → the cursor doesn't advance →
       // this event is re-processed next tick.
       let absFilled: bigint;
+      // #3921 B2 — where the figure came from. A read at the event's block
+      // returns its end, so the row names that read; the poisoned path
+      // rebuilds the cumulative as it stood right after THIS event (the
+      // ledger before the block plus this block's fills so far), so it names
+      // the event.
+      let filledAt: RowPosition;
       try {
         const poisonKey = `${orderHash}|${log.blockNumber}`;
         if (cancelPoisonedBlocks.has(poisonKey)) {
@@ -4209,6 +4215,7 @@ export async function processSignedOfferLogs(
           }
           absFilled = base + (a.fillAmount as bigint);
           poisonedBlockCumulative.set(poisonKey, absFilled);
+          filledAt = eventPosition(log);
         } else {
           absFilled = (await client.readContract({
             address: diamond,
@@ -4217,6 +4224,7 @@ export async function processSignedOfferLogs(
             args: [orderHash],
             blockNumber: log.blockNumber,
           })) as bigint;
+          filledAt = readPosition(log.blockNumber);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -4231,13 +4239,13 @@ export async function processSignedOfferLogs(
       const r = await env.DB.prepare(
         fullyFilled
           ? `UPDATE signed_offers
-             SET status = 'filled', filled_amount = ?, updated_at = ?
+             SET status = 'filled', filled_amount = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
           : `UPDATE signed_offers
-             SET filled_amount = ?, updated_at = ?
+             SET filled_amount = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
       )
-        .bind(absFilled.toString(), now, chainId, orderHash)
+        .bind(absFilled.toString(), now, ...lastEventBinds(filledAt), chainId, orderHash)
         .run();
       if ((r.meta?.changes ?? 0) > 0) updates++;
     } else if (log.eventName === 'SignedCollectionOfferFilled') {
@@ -4279,21 +4287,23 @@ export async function processSignedOfferLogs(
       const done = Number(a.loansLeft) === 0;
       const r = await env.DB.prepare(
         done
-          ? `UPDATE signed_offers SET status = 'filled', filled_amount = ?, updated_at = ?
+          ? `UPDATE signed_offers SET status = 'filled', filled_amount = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
-          : `UPDATE signed_offers SET filled_amount = ?, updated_at = ?
+          : `UPDATE signed_offers SET filled_amount = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
       )
-        .bind(absFilled.toString(), now, chainId, orderHash)
+        // #3921 B2 — the filled amount is read at the event's block (its
+        // end), so the row names that read.
+        .bind(absFilled.toString(), now, ...lastEventBinds(readPosition(log.blockNumber)), chainId, orderHash)
         .run();
       if ((r.meta?.changes ?? 0) > 0) updates++;
     } else if (log.eventName === 'SignedOfferCancelled') {
       const orderHash = (a.orderHash as string).toLowerCase();
       const r = await env.DB.prepare(
-        `UPDATE signed_offers SET status = 'cancelled', updated_at = ?
+        `UPDATE signed_offers SET status = 'cancelled', updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
       )
-        .bind(now, chainId, orderHash)
+        .bind(now, ...lastEventBinds(eventPosition(log)), chainId, orderHash)
         .run();
       if ((r.meta?.changes ?? 0) > 0) {
         updates++;
@@ -4306,10 +4316,10 @@ export async function processSignedOfferLogs(
       const signer = (a.signer as string).toLowerCase();
       const nonce = (a.nonce as bigint).toString();
       const r = await env.DB.prepare(
-        `UPDATE signed_offers SET status = 'nonce_burned', updated_at = ?
+        `UPDATE signed_offers SET status = 'nonce_burned', updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND signer = ? AND nonce = ? AND status = 'active'`,
       )
-        .bind(now, chainId, signer, nonce)
+        .bind(now, ...lastEventBinds(eventPosition(log)), chainId, signer, nonce)
         .run();
       const changed = r.meta?.changes ?? 0;
       if (changed > 0) {
@@ -4331,10 +4341,11 @@ export async function processSignedOfferLogs(
       const below = (rows.results ?? []).filter((r) => BigInt(r.nonce) < floor);
       if (below.length > 0) {
         const stmt = env.DB.prepare(
-          `UPDATE signed_offers SET status = 'nonce_burned', updated_at = ?
+          `UPDATE signed_offers SET status = 'nonce_burned', updated_at = ?, ${LAST_EVENT_SET}
            WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
         );
-        const results = await env.DB.batch(below.map((r) => stmt.bind(now, chainId, r.order_hash)));
+        const at = lastEventBinds(eventPosition(log));
+        const results = await env.DB.batch(below.map((r) => stmt.bind(now, ...at, chainId, r.order_hash)));
         for (const r of results) updates += r.meta?.changes ?? 0;
       } else {
         console.log(

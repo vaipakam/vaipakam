@@ -104,5 +104,6 @@
   "0125_event_and_state_history.sql",
   "0126_service_build_history.sql",
   "0127_offers_loans_last_event.sql",
-  "0128_loan_side_last_event.sql"
+  "0128_loan_side_last_event.sql",
+  "0129_signed_offers_last_event.sql"
 ]
