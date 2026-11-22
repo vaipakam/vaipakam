@@ -127,6 +127,29 @@ test('a creation runs every constructor in the lineage, its initialisers and bas
   assert.equal(raisers['0x33333333'], undefined);
 });
 
+test('a function named by its signature text reaches the facet that routes it; a comparison and an unshipped signature do not', () => {
+  const E = errDef('E', '0xeeeeeeee');
+  const F = errDef('F', '0xffffffff');
+  const sigE = 'charge(uint8,address)';
+  const sigF = 'other()';
+  const host = fn('charge', block(revertWith(E)), { selector: toFunctionSelector(sigE) });
+  const other = fn('other', block(revertWith(F)), { selector: toFunctionSelector(sigF) });
+  const H = contract('HostFacet', [E, F, host, other]);
+  const lit = (v) => ({ nodeType: 'Literal', kind: 'string', value: v });
+  const abiMember = (m) => ({ nodeType: 'MemberAccess', memberName: m, expression: { nodeType: 'Identifier', name: 'abi' } });
+  const hashSig = (v) => call({ nodeType: 'ElementaryTypeNameExpression', typeName: { nodeType: 'ElementaryTypeName', name: 'bytes4' } }, [call({ nodeType: 'Identifier', name: 'keccak256' }, [lit(v)])]);
+  // Through a constant, passed to a call.
+  const SEL = { nodeType: 'VariableDeclaration', id: id(), name: 'SEL', constant: true, value: hashSig(sigE) };
+  const viaConstant = fn('a', block(stmt(call(abiMember('encodeWithSelector'), [ref(SEL)]))), { selector: '0x0000000a' });
+  const viaText = fn('b', block(stmt(call(abiMember('encodeWithSignature'), [lit(sigE)]))), { selector: '0x0000000b' });
+  // A comparison with the other signature's hash is a decode, not a call; an unknown signature reaches nothing.
+  const compare = fn('c', block(stmt({ nodeType: 'BinaryOperation', operator: '==', leftExpression: { nodeType: 'Identifier', name: 'x' }, rightExpression: hashSig(sigF) }), stmt(call(abiMember('encodeWithSignature'), [lit('decimals()')]))), { selector: '0x0000000c' });
+  const C = contract('CallerFacet', [SEL, viaConstant, viaText, compare]);
+  const { raisers } = raisersFrom([unit('src/H.sol', H), unit('src/C.sol', C)], manifest(['HostFacet', 'CallerFacet']));
+  assert.deepEqual(raisers['0xeeeeeeee'], ['CallerFacet.a(0x0000000a)', 'CallerFacet.b(0x0000000b)', `HostFacet.charge(${toFunctionSelector(sigE)})`]);
+  assert.deepEqual(raisers['0xffffffff'], [`HostFacet.other(${toFunctionSelector(sigF)})`]);
+});
+
 test('super.f() is not re-dispatched into the override, and call options are seen through', () => {
   const E = errDef('E', '0xeeeeeeee');
   const baseF = fn('f', block(revertWith(E)), { selector: '0x0000000f', visibility: 'public', virtual: true });

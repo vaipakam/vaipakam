@@ -46,8 +46,12 @@
  *     same rule as a typed external call below (a facet's function reaches
  *     the Diamond's routing; `VaipakamVaultImplementation.grantAllowance`
  *     reaches the vault), plus F in the encoding contract itself when it is
- *     standalone. A low-level call whose failure the caller catches is still
- *     followed: this map states presence, not path feasibility;
+ *     standalone. A function named by its signature TEXT
+ *     (`abi.encodeWithSignature("f(uint256)", ...)`, or
+ *     `bytes4(keccak256("f(uint256)"))` passed to a call, inline or through a
+ *     constant) reaches what an encoding of each src/ declaration with that
+ *     selector reaches. A low-level call whose failure the caller catches is
+ *     still followed: this map states presence, not path feasibility;
  *   - typed external calls to an interface or contract DECLARED IN `src/`
  *     (the protocol's own interfaces), followed into each shipped contract
  *     that implements it: inherits it, or has every function it declares (a
@@ -88,7 +92,7 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CONTRACTS_DIR, REPO_ROOT, FACETS_FILE, loadBuild } from './storage-layout-guard.mjs';
+import { CONTRACTS_DIR, REPO_ROOT, FACETS_FILE, loadBuild, keccak256 } from './storage-layout-guard.mjs';
 import { BUILD_OUT_DIR, oneJobProblems } from './check-measured-delivery.mjs';
 import { indexNodes } from './check-permissionless-steps.mjs';
 
@@ -225,6 +229,32 @@ function functionOfSelector(e, byId) {
   return d?.nodeType === 'FunctionDefinition' ? d : undefined;
 }
 
+/**
+ * The function signature a selector expression names by its TEXT:
+ * `bytes4(keccak256("f(uint256)"))`, inline or through a constant initialised
+ * to it. Returns the 4-byte selector (no `0x`, as solc's `functionSelector`).
+ */
+function selectorOfSignatureExpr(e, byId, depth = 0) {
+  e = unwrap(e);
+  if (!e || depth > 4) return undefined;
+  if (e.nodeType === 'Identifier') {
+    const d = byId.get(e.referencedDeclaration);
+    return d?.nodeType === 'VariableDeclaration' && d.constant && d.value ? selectorOfSignatureExpr(d.value, byId, depth + 1) : undefined;
+  }
+  if (e.nodeType !== 'FunctionCall' || e.expression?.nodeType !== 'ElementaryTypeNameExpression') return undefined;
+  if ((e.expression.typeName?.name ?? e.expression.typeName) !== 'bytes4') return undefined;
+  const h = unwrap(e.arguments?.[0]);
+  if (h?.nodeType !== 'FunctionCall' || h.expression?.nodeType !== 'Identifier' || h.expression.name !== 'keccak256') return undefined;
+  return selectorOfLiteral(h.arguments?.[0]);
+}
+
+/** The selector of a string literal read as a function signature. */
+function selectorOfLiteral(e) {
+  e = unwrap(e);
+  if (e?.nodeType !== 'Literal' || e.kind !== 'string' || typeof e.value !== 'string') return undefined;
+  return keccak256(new TextEncoder().encode(e.value)).slice(2, 10);
+}
+
 /** The error a `.selector` member names, when it names one. */
 function errorOfSelector(e, byId) {
   e = unwrap(e);
@@ -293,6 +323,12 @@ function bodyFacts(fn, byId) {
   // contract or to another platform contract, so the target is resolved from
   // F's declaration at walk time, the same way as a typed external call.
   const encodedDecls = [];
+  // The same, when the function is named by its signature TEXT
+  // (`abi.encodeWithSignature("f(uint256)", ...)`, or
+  // `bytes4(keccak256("f(uint256)"))` passed to a call, inline or through a
+  // constant): the selector, resolved at walk time to the src/ declarations
+  // that carry it.
+  const signatureSelectors = new Set();
   // Contracts this body deploys (`new C(...)`): the creation runs C's
   // constructors, and a revert there reverts this call.
   const created = [];
@@ -345,6 +381,12 @@ function bodyFacts(fn, byId) {
       if (err) raiseError(err);
       const f = functionOfSelector(a, byId);
       if (f?.functionSelector) encodedDecls.push(f);
+      const sig = selectorOfSignatureExpr(a, byId);
+      if (sig) signatureSelectors.add(sig);
+    }
+    if (e?.nodeType === 'MemberAccess' && e.memberName === 'encodeWithSignature' && unwrap(e.expression)?.name === 'abi') {
+      const sig = selectorOfLiteral(args[0]);
+      if (sig) signatureSelectors.add(sig);
     }
     // abi.encodeCall(F, (...)) names F directly.
     if (e?.nodeType === 'MemberAccess' && e.memberName === 'encodeCall' && unwrap(e.expression)?.name === 'abi') {
@@ -370,7 +412,7 @@ function bodyFacts(fn, byId) {
     return undefined;
   });
 
-  return { raises, internal, selfSelectors, externalDecls, encodedDecls, created, unknownErrors };
+  return { raises, internal, selfSelectors, externalDecls, encodedDecls, signatureSelectors, created, unknownErrors };
 }
 
 /**
@@ -476,6 +518,31 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
     return out;
   };
 
+  // A signature named by its text reaches what an encoding of each src/
+  // declaration carrying that selector reaches; with none (a token's
+  // `decimals()`), only the calling contract's own function, when it is
+  // standalone and has one.
+  const srcDeclsBySelector = new Map();
+  for (const [fid, owner] of declaringContract) {
+    if (!owner.path?.startsWith('src/')) continue;
+    const d = byId.get(fid);
+    if (!d?.functionSelector) continue;
+    if (!srcDeclsBySelector.has(d.functionSelector)) srcDeclsBySelector.set(d.functionSelector, []);
+    srcDeclsBySelector.get(d.functionSelector).push(d);
+  }
+  const signatureTargets = (sel, from) => {
+    const out = [];
+    const push = (t) => {
+      if (!out.some((o) => o.fn === t.fn && o.contract === t.contract)) out.push(t);
+    };
+    for (const d of srcDeclsBySelector.get(sel) ?? []) for (const t of encodedTargets(d, from)) push(t);
+    if (from.role !== 'facet' && from.role !== 'proxy') {
+      const own = from.bySelector.get(sel);
+      if (own) push({ contract: from, fn: own });
+    }
+    return out;
+  };
+
   // A creation (`new C(...)`) runs, in C's context, every constructor in C's
   // lineage, the state-variable initialisers and the arguments passed to base
   // contracts. C may be outside src/ (a proxy from OpenZeppelin): the target
@@ -545,6 +612,9 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
       }
       for (const d of ff.encodedDecls) {
         for (const t of encodedTargets(d, c)) if (t.fn.body) stack.push([t.fn, t.contract]);
+      }
+      for (const sel of ff.signatureSelectors) {
+        for (const t of signatureTargets(sel, c)) if (t.fn.body) stack.push([t.fn, t.contract]);
       }
       for (const node of ff.created) {
         const { info, steps } = creation(node);
