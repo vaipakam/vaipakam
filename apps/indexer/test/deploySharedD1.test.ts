@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain ESM script, no type declarations.
-import { admit, isSettled, unapplied, verifyReport, waitsForSchema } from '../scripts/deploy-shared-d1.mjs';
+import { admit, isSettled, rehearsalPaths, rehearsalRoot, unapplied, verifyReport, waitsForSchema } from '../scripts/deploy-shared-d1.mjs';
 
 const pkg = (w: string) =>
   JSON.parse(readFileSync(new URL(`../../${w}/package.json`, import.meta.url), 'utf8')).scripts;
@@ -41,11 +41,12 @@ describe('deploy-shared-d1 — admission', () => {
   it('runs with only its mode', () => {
     expect(admit(['apply'])).toEqual({ ok: true, mode: 'apply' });
     expect(admit(['verify'])).toEqual({ ok: true, mode: 'verify' });
+    expect(admit(['local'])).toEqual({ ok: true, mode: 'local' });
   });
 
   it('refuses ANY argument after the mode, whatever its spelling', () => {
     for (const a of ['--dry-run', '--dry-run=true', '--version', '-v', '-h', '--env', 'staging']) {
-      for (const mode of ['apply', 'verify']) {
+      for (const mode of ['apply', 'verify', 'local']) {
         const r = admit([mode, a]);
         expect(r.ok).toBe(false);
         expect(r.message).toContain('deploy:dry');
@@ -127,5 +128,43 @@ describe('deploy-shared-d1 — what a verify deploy reports (#3115)', () => {
     expect(r.level).toBe('warn');
     expect(r.message).toContain('UNKNOWN');
     expect(r.message).not.toContain('every migration this build carries is recorded');
+  });
+});
+
+describe('deploy-shared-d1 — the deploy rehearsal\'s local database (#3894)', () => {
+  const contractsDir = '/repo/contracts';
+
+  it('is its own package script, never a flag on the deploy', () => {
+    expect(pkg('indexer')['migrate:rehearsal']).toBe('node scripts/deploy-shared-d1.mjs local');
+  });
+
+  it('takes a run folder inside the rehearsal prefix, relative to contracts/', () => {
+    const r = rehearsalRoot('deployments/.forge-test/rehearsal/run-1', { contractsDir });
+    expect(r).toEqual({ ok: true, root: '/repo/contracts/deployments/.forge-test/rehearsal/run-1' });
+    expect(rehearsalPaths(r.root)).toEqual({
+      persistTo: '/repo/contracts/deployments/.forge-test/rehearsal/run-1/d1',
+      manifestPath: '/repo/contracts/deployments/.forge-test/rehearsal/run-1/archive-manifest.json',
+      deploymentsPath: '/repo/contracts/deployments/.forge-test/rehearsal/run-1/.bundle/contracts-pkg/src/deployments.json',
+    });
+  });
+
+  it('refuses an unset root, a parent segment, the prefix itself, or anywhere else', () => {
+    for (const v of [
+      undefined,
+      '',
+      'deployments/.forge-test/rehearsal/../../base-sepolia',
+      'deployments/.forge-test/rehearsal',
+      'deployments/.forge-test/other',
+      'deployments/base-sepolia',
+      '/tmp/run',
+    ]) {
+      expect(rehearsalRoot(v, { contractsDir }).ok).toBe(false);
+    }
+  });
+
+  it('never names the remote database', () => {
+    const src = readFileSync(new URL('../scripts/deploy-shared-d1.mjs', import.meta.url), 'utf8');
+    const body = src.slice(src.indexOf('function rehearsalDatabase'));
+    expect(body.slice(0, body.indexOf('\n}\n'))).not.toMatch(/--remote|REMOTE_D1|wranglerDeploy/);
   });
 });

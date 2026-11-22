@@ -40,7 +40,7 @@ its row in the matrix and, where the reasoning grows, its section here.
 
 **Tier.** CI-Anvil (unit) + live
 
-**Where.** `packages/lib/src/decodeContractError.i18n.test.ts` (English-by-default when no translator; stable key = error name/selector routed through the `translate` hook; catalog key ↔ decoder output parity; gas-estimate rewrite localizable) + `apps/app/src/lib/errors.test.ts` (`submitErrorText` serves lib English by default, a `contractError.<key>` locale bundle overrides by stable key, an untranslated key falls back to English). The #2407 refinance-request refusals (`RefinanceRequestOpen`, `RefinanceRequestNotCancelled`, `RefinanceRequestNotRecorded`, `RefinanceBlockedByOffset`, `RefinanceRequestNotLive`) are selector-mapped with curated copy translated in every locale — the selectors pinned by `decodeContractError.drift.test.ts` against the compiled Diamond ABI, the locales by `check-locale-coverage` (#2424 r10). Live half: with a non-English display language selected, a real revert's plain-language cause shows translated (or falls back to English until that locale's `contractError.*` bundle is filled).
+**Where.** `packages/lib/src/decodeContractError.i18n.test.ts` (English-by-default when no translator; stable key = error name/selector routed through the `translate` hook; catalog key ↔ decoder output parity; gas-estimate rewrite localizable) + `apps/app/src/lib/errors.test.ts` (`submitErrorText` serves lib English by default, a `contractError.<key>` locale bundle overrides by stable key, an untranslated key falls back to English). The #2407 refinance-request refusals (`RefinanceRequestOpen`, `RefinanceRequestNotCancelled`, `RefinanceRequestNotRecorded`, `RefinanceBlockedByOffset`, `RefinanceRequestNotLive`) are selector-mapped with curated copy translated in every locale — the selectors and copy now come from the generated error catalogue (`@vaipakam/contracts/error-catalogue`, #3916), pinned by `decodeContractError.catalogue.test.ts` and the contracts package test, the locales by `check-locale-coverage` (#2424 r10). Live half: with a non-English display language selected, a real revert's plain-language cause shows translated (or falls back to English until that locale's `contractError.*` bundle is filled).
 
 **Live-only reason.** A genuine on-chain revert through the borrow/lend flow isn't reproduced by the Anvil fork (same reason as the row above); the key-routing + fallback logic is unit-tested in CI. Per-locale translation of the messages is a backfill step (English-first).
 
@@ -2021,6 +2021,14 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 **Tier.** Unit: `src/contracts/useTosNotice.test.ts` covers the decision (nothing on a failed read or no terms, small, material for a new version and for a raise of the minimum, quiet after an early accept) and the final-week rule.
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
+
+<a id="cov-alert-phrase-3346"></a>
+
+## Alert phrase (#3346)
+
+The phrase section of the Alerts card talks to three agent routes: set and remove (both signed alert requests with their own texts) and a status read that never returns the phrase. Unit tests cover what the app signs and sends: the signed text names the fingerprint and not the phrase, the phrase rides the request body only, and the copy kept in this browser for a multi-signature approval holds the key but never the phrase, so finishing it requires the phrase again and is checked against the signed fingerprint. The status read is per network, and the card confirms the scope the agent reports: every network for a key's signature, this network only for a contract wallet's approval, with a switch offered to each other network where this browser has Telegram linked (the section is keyed per network and wallet, so the phrase is typed again after a switch).
+
+The rest is the agent's: the phrase rule, the order of phrase requests, the per-chat "last told" record, the notices and the marks on every message are covered by the agent's tests. Live-only because the observable result is a Telegram message from the deployed bot; there is no CI stub for Telegram. No CI-Anvil spec yet: the section reads no chain state, and the agent stub in `tests/38-push-alerts.spec.ts` would need the three routes added, which is a follow-up on the next touch.
 
 ## No platform token, no discount (owner decision 2026-11-20)
 <a id="cov-no-platform-token-no-discount"></a>

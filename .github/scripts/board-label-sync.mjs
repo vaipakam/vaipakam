@@ -2,7 +2,9 @@
 /**
  * Mirror `priority:*`, `stage:*` and `thread:*` issue labels onto the issue
  * fields `Priority`, `Stage` and `Thread`, the account-level issue fields the
- * `@vaipakam-labs` board views group by.
+ * `@vaipakam-labs` board views group by; and fill the two DATE issue fields
+ * `Start date` and `Target date` from each issue's and pull request's own
+ * history (`DATE_FIELDS` states the rules).
  *
  * WHY. Labels are the one place project agents can record priority, stage and
  * ownership, so the labels are the source of truth and the issue fields follow
@@ -24,6 +26,16 @@
  *     https://docs.github.com/en/rest/issues/issue-field-values
  *     (PUT on the same path REPLACES every value on the issue, including fields
  *     this job does not own, so it is never used.)
+ *   - The issue TIMELINE, REST, for an issue's Start date and for the last
+ *       close of a reopened issue or pull request:
+ *       GET /repos/{o}/{r}/issues/{n}/timeline (100 events a page, oldest
+ *       first). Read only for an item that needs it (`timelineReason`), at
+ *       most MAX_TIMELINE_READS requests a run, and never cached: once a
+ *       Start date is written the issue needs no timeline again (apart from
+ *       the bounded recheck `timelineReason` describes).
+ *       https://docs.github.com/en/rest/issues/timeline
+ *     A date value is written as an ISO 8601 date string ("2026-11-22") and
+ *     reads back as `{data_type: "date", value: "2026-11-22"}`.
  *   - Field definitions, GraphQL `Repository.issueFields` ("the repository's
  *     issue fields, inherited from the repository's owner"), added 2026-05-20.
  *     It is used because the REST definition endpoints are owner-scoped
@@ -37,20 +49,24 @@
  *   loudly (never writes) if it may not.
  *
  * WHAT IS PURE AND WHAT IS NOT. `planWrites` decides every write and every
- * report line from plain data, with no I/O, and is what the self-test pins
+ * report line from plain data, with no I/O; `timelineFacts`, `timelineReason`,
+ * `timelineQueue` and `selectWrites` likewise. They are what the self-test pins
  * (`board-label-sync.selftest.mjs`). `listIssueFields` pages the definitions
  * through an injected GraphQL transport, so its pagination is pinned there
  * too. Only the transport (`gh` under `GH_DEBUG=api`) and the paginated REST
  * reads touch the network.
  *
  * Usage (the workflow sets every variable):
- *   node .github/scripts/board-label-sync.mjs              # reconcile every open issue
- *   node .github/scripts/board-label-sync.mjs --issue 123  # one issue (a label event)
+ *   node .github/scripts/board-label-sync.mjs              # reconcile every issue and pull request
+ *   node .github/scripts/board-label-sync.mjs --issue 123  # one item (a label, close or reopen event)
  *
  *   ISSUE_REPO    owner/name: the only repository read or written
  *   GH_TOKEN      the Actions token (`issues: write`)
  *   DRY_RUN=true  plan and report, write nothing
  *   MAX_WRITES    the most field writes one run makes (default 300)
+ *   MAX_TIMELINE_READS   the most timeline requests one run makes (default 100)
+ *   START_RECHECK_HOURS  how recently an issue must have changed for a Start
+ *                 date equal to its creation day to be re-derived (default 2)
  *   RETRY_WAIT_CAP_SECONDS, RETRY_MARGIN_SECONDS  the rate-limit wait bounds
  */
 import { spawnSync } from 'node:child_process';
@@ -89,35 +105,210 @@ export const FAMILIES = [
 
 const lc = (s) => String(s ?? '').trim().toLowerCase();
 
+/**
+ * The two DATE issue fields (owner rules 2026-11-22). Unlike the label
+ * families they are derived from the item's own history, not from a label,
+ * and they reach CLOSED issues and PULL REQUESTS as well as open issues.
+ *
+ *   Start date  — when work began. A pull request: its `created_at`. An
+ *                 issue: the earliest of (a) the `created_at` of a pull
+ *                 request linked to it (a `cross-referenced` timeline event
+ *                 whose source is a pull request — a closing PR produces one
+ *                 too) and (b) the first time `stage:building` was applied
+ *                 (a `labeled` timeline event); with neither, the issue's
+ *                 own `created_at`. Never cleared.
+ *   Target date — a closed issue or pull request: its `closed_at` (for a
+ *                 merged pull request, the merge). An open item: never
+ *                 invented, and a value set by hand is left alone; the one
+ *                 exception is a reopened item whose value equals the date
+ *                 it was last closed — a value this job wrote — which is
+ *                 cleared.
+ *
+ * Every date is the UTC calendar day, YYYY-MM-DD, the form the REST
+ * endpoint documents for a date field.
+ */
+export const DATE_FIELDS = [
+  { key: 'start', field: 'Start date', dataType: 'DATE' },
+  { key: 'target', field: 'Target date', dataType: 'DATE' },
+];
+
+/**
+ * How far a recorded close may sit from the `closed` timeline event. Measured
+ * on #3836: `closed_at` 23:02:17, the event 23:02:18. Across midnight that one
+ * second changes the day, so the event's day AND the day a few seconds before
+ * it both count as "the date it was closed".
+ */
+export const CLOSE_EVENT_SKEW_MS = 5000;
+
+
+// ── the date rules (pure) ───────────────────────────────────────────────────
+
+/** The UTC calendar day of a timestamp (ISO string or epoch ms), or null. */
+export function utcDay(t) {
+  if (t == null || t === '') return null;
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/** A date field's current value as YYYY-MM-DD, or null. A value that is not
+ *  a date is kept as-is, so it compares unequal and is overwritten only where
+ *  the rules would overwrite any value. */
+export function fieldDay(text) {
+  if (text == null) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(text).trim());
+  return m ? m[1] : String(text);
+}
+
+/**
+ * What an issue's timeline says about its dates. `events` is the timeline in
+ * the order GitHub returns it (oldest first). `complete` is false when the
+ * read stopped before the last page: the earliest events are all present, but
+ * the latest close may not be, so `lastClosedAt` is then unknown (null) and
+ * nothing is cleared on its account.
+ *
+ * Counted: `cross-referenced` events whose source is a pull request (any
+ * repository; `source.issue.pull_request` present), by THAT pull request's
+ * `created_at` — not the event's time, because a pull request opened earlier
+ * can mention the issue later (#3836: its first linked PR, #3806, predates the
+ * issue itself) — and `labeled` events for `stage:building`. A `connected`
+ * event (a PR linked in the sidebar) carries no pull request in REST, so it is
+ * not counted; the closing PR's own cross-reference is.
+ */
+export function timelineFacts(events, { complete = true } = {}) {
+  const prDays = [];
+  let firstBuilding = null;
+  let lastClosedAt = null;
+  for (const e of events ?? []) {
+    if (!e || typeof e !== 'object') continue;
+    if (e.event === 'cross-referenced' && e.source?.issue?.pull_request && e.source.issue.created_at) {
+      const d = utcDay(e.source.issue.created_at);
+      if (d) prDays.push(d);
+    } else if (e.event === 'labeled' && lc(e.label?.name) === 'stage:building') {
+      const d = utcDay(e.created_at);
+      if (d && (firstBuilding === null || d < firstBuilding)) firstBuilding = d;
+    } else if (e.event === 'closed' && e.created_at) {
+      lastClosedAt = e.created_at;
+    }
+  }
+  prDays.sort();
+  return { firstPr: prDays[0] ?? null, firstBuilding, lastClosedAt: complete ? lastClosedAt : null, complete };
+}
+
+/** The Start date the rules give. A pull request needs no timeline; an issue
+ *  needs its `facts` (null → unknown, return null). */
+export function chooseStartDate(item, facts) {
+  if (item.isPr) return utcDay(item.createdAt);
+  if (!facts) return null;
+  const candidates = [facts.firstPr, facts.firstBuilding].filter(Boolean).sort();
+  return candidates[0] ?? utcDay(item.createdAt);
+}
+
+/** Whether a Target date equals the day the item was closed at `closedAt`
+ *  (that day, or the day CLOSE_EVENT_SKEW_MS before it). */
+export function isCloseDay(day, closedAt) {
+  if (!day || !closedAt) return false;
+  const t = new Date(closedAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return day === utcDay(t) || day === utcDay(t - CLOSE_EVENT_SKEW_MS);
+}
+
+function resolveField(fields, spec) {
+  return fields.find((x) => lc(x.name) === lc(spec.field) && x.dataType === spec.dataType) ?? null;
+}
+
+function currentValue(item, field) {
+  if (!field) return null;
+  const cur = (item.values ?? []).find((x) => (x.fieldId != null ? x.fieldId === field.dbId : lc(x.fieldName) === lc(field.name)));
+  return cur?.text ?? null;
+}
+
+/**
+ * Why an item needs its timeline read this run, or null. A pull request's
+ * Start and closed Target come from the listing, so a pull request needs one
+ * only for the 'reopen' check below — the same rule as an issue's.
+ *
+ *   'fill'    — no Start date yet. Once one is written this never recurs.
+ *   'recheck' — the Start date equals the issue's own creation day, which is
+ *               what the fallback writes, AND the issue changed within the
+ *               last `recheckHours` (`updated_at`): a pull request or a
+ *               `stage:building` label since may have moved it. Open issues
+ *               only on the sweep (a close arrives as an event, which
+ *               rechecks whatever the state); any state on an event pass.
+ *   'reopen'  — an open item with a Target date, no `closed_at`, changed
+ *               within the window: it may have been reopened, and the old
+ *               close date is only in the timeline.
+ *
+ * A field that does not exist creates no need: nothing is read for a field
+ * nothing could be written to.
+ */
+export function timelineReason(item, fields, ctx = {}) {
+  if (item.values == null) return null;
+  const start = item.isPr ? null : resolveField(fields, DATE_FIELDS[0]);
+  const target = resolveField(fields, DATE_FIELDS[1]);
+  const now = ctx.now ?? Date.now();
+  const windowMs = (ctx.recheckHours ?? 2) * 3600 * 1000;
+  const updated = new Date(item.updatedAt ?? 0).getTime();
+  const recent = Number.isFinite(updated) && updated >= now - windowMs;
+  const open = lc(item.state) === 'open';
+  if (start) {
+    const curStart = fieldDay(currentValue(item, start));
+    if (curStart === null) return 'fill';
+    if (recent && (open || ctx.eventMode) && curStart === utcDay(item.createdAt)) return 'recheck';
+  }
+  if (target && open && recent && !item.closedAt && currentValue(item, target) !== null) return 'reopen';
+  return null;
+}
+
+/**
+ * Order the items that need a timeline read: rechecks and reopen checks first
+ * (their window closes), then fills; open before closed; newest first. The
+ * caller reads in this order until MAX_TIMELINE_READS requests are spent.
+ */
+export function timelineQueue(items, fields, ctx = {}) {
+  const rank = { recheck: 0, reopen: 0, fill: 1 };
+  return items
+    .map((it) => ({ number: it.number, reason: timelineReason(it, fields, ctx), open: lc(it.state) === 'open' }))
+    .filter((x) => x.reason)
+    .sort((a, b) => rank[a.reason] - rank[b.reason] || Number(b.open) - Number(a.open) || b.number - a.number);
+}
+
 // ── the planner (pure) ──────────────────────────────────────────────────────
 
 /**
- * Decide every field write for the given issues.
+ * Decide every field write for the given items.
  *
- * @param {Array<{number:number, state?:string, labels:string[],
- *                values:Array<{fieldId:number|null, fieldName:string, text:string|null}>}>} issues
- *   Issues of this repository with their label names and their current field
- *   values (`valuesFromRest`). Only OPEN ones are planned.
+ * @param {Array<{number:number, state?:string, isPr?:boolean, labels:string[],
+ *                values:Array<{fieldId:number|null, fieldName:string, text:string|null}>|null,
+ *                createdAt?:string, closedAt?:string|null, updatedAt?:string,
+ *                facts?:object}>} issues
+ *   Issues and pull requests of this repository with their label names, their
+ *   current field values (`valuesFromRest`; null when unreadable — a pull
+ *   request only, see `main`) and, for an issue whose timeline was read this
+ *   run, its `timelineFacts`. The label families apply to OPEN ISSUES only;
+ *   the two dates to every item.
  * @param {Array<{dbId:number, name:string, dataType:string, options?:Array<{name:string}>}>} fields
  *   The issue fields available to the repository (`listIssueFields`).
- * @param {{threadValues?:string[]}} context
+ * @param {{threadValues?:string[], now?:number, recheckHours?:number, eventMode?:boolean}} context
  *   `threadValues` lists every `thread:` suffix defined in the repository — a
  *   Thread value counts as one the sync would have written only when it is in
- *   this list (see the clearing rule below).
+ *   this list (see the clearing rule below). `now`, `recheckHours` and
+ *   `eventMode` feed `timelineReason`.
  * @returns {{writes:Array<object>, conflicts:Array<object>, unrecognised:Array<object>,
  *            missingFields:Array<{field:string, dataType:string}>,
- *            missingOptions:Record<string,string[]>, notOpen:number[]}}
+ *            missingOptions:Record<string,string[]>, notOpen:number[], prs:number,
+ *            awaitingTimeline:Record<string,number>, valuesUnknown:number[],
+ *            incompleteHistory:number[]}}
  */
 export function planWrites(issues, fields, context = {}) {
   const threadValues = new Set((context.threadValues ?? []).map(lc));
 
-  // Resolve each family's field by NAME and TYPE. A field of the wrong type is
-  // treated as absent: writing an option name into a text field (or the
-  // reverse) would put the wrong kind of value on every issue.
+  // Resolve each field by NAME and TYPE. A field of the wrong type is treated
+  // as absent: writing an option name into a text field (or the reverse)
+  // would put the wrong kind of value on every issue.
   const resolved = {};
   const missingFields = [];
-  for (const fam of FAMILIES) {
-    const f = fields.find((x) => lc(x.name) === lc(fam.field) && x.dataType === fam.dataType);
+  for (const fam of [...FAMILIES, ...DATE_FIELDS]) {
+    const f = resolveField(fields, fam);
     if (f) resolved[fam.key] = f;
     else missingFields.push({ field: fam.field, dataType: fam.dataType });
   }
@@ -127,13 +318,23 @@ export function planWrites(issues, fields, context = {}) {
   const unrecognised = [];
   const missingOptions = {};
   const notOpen = [];
+  const awaitingTimeline = {};
+  const valuesUnknown = [];
+  const incompleteHistory = [];
+  let prs = 0;
 
   for (const issue of [...issues].sort((a, b) => a.number - b.number)) {
-    // The listing says open; an issue read as anything else is never written.
+    if (issue.isPr) prs += 1;
+    planDates(issue);
+
+    // The label families: open ISSUES only, as before. A closed issue or a
+    // pull request gets its dates and nothing else.
+    if (issue.isPr) continue;
     if (issue.state !== undefined && lc(issue.state) !== 'open') {
       notOpen.push(issue.number);
       continue;
     }
+    if (issue.values == null) { valuesUnknown.push(issue.number); continue; }
 
     for (const fam of FAMILIES) {
       // Distinct values, keyed case-insensitively; a thread keeps its case.
@@ -151,8 +352,7 @@ export function planWrites(issues, fields, context = {}) {
       if (!field) continue; // reported once, in missingFields
       // The current value, matched by the field's id (by name only when the
       // value carries no id).
-      const cur = (issue.values ?? []).find((x) => (x.fieldId != null ? x.fieldId === field.dbId : lc(x.fieldName) === lc(field.name)));
-      const current = cur?.text ?? null;
+      const current = currentValue(issue, field);
 
       if (unique.length > 1) {
         // Two labels of one family: the sync picks neither and leaves the
@@ -194,8 +394,97 @@ export function planWrites(issues, fields, context = {}) {
     }
   }
 
+  /** The two dates for one item. An item whose timeline is needed but was not
+   *  read this run (the MAX_TIMELINE_READS cap) gets NO date write — not even
+   *  a Target date it could have had — so each item is written once, in one
+   *  request, rather than once per field across runs: every write notifies the
+   *  item's subscribers. */
+  function planDates(item) {
+    const start = resolved.start;
+    const target = resolved.target;
+    if (!start && !target) return;
+    if (item.values == null) {
+      if (item.isPr) valuesUnknown.push(item.number);
+      return;
+    }
+    const reason = timelineReason(item, fields, context);
+    if (reason && !item.facts) {
+      awaitingTimeline[reason] = (awaitingTimeline[reason] ?? 0) + 1;
+      return;
+    }
+    // A history read only in part (longer than TIMELINE_PAGE_CAP pages) is
+    // never planned from: a later page can hold a cross-reference from a PR
+    // opened earlier, or the last close. The item stays as it is, its dates
+    // wait, and the summary names it for a date by hand.
+    if (reason && item.facts && item.facts.complete === false) {
+      incompleteHistory.push(item.number);
+      return;
+    }
+    const pending = [];
+    if (start) {
+      const cur = currentValue(item, start);
+      // An issue's Start date is derived only while it is empty or still the
+      // creation-day fallback; any other value is final (a timeline read for
+      // a reopen check must not re-derive it). A pull request's always is.
+      const curDay = fieldDay(cur);
+      const derivable = item.isPr || curDay === null || curDay === utcDay(item.createdAt);
+      const want = derivable ? chooseStartDate(item, item.facts ?? null) : null;
+      // No facts and no need for them: the value stands as written.
+      if (want !== null && fieldDay(cur) !== want) {
+        pending.push({ action: 'set', issue: item.number, field: start.name, fieldId: start.dbId, value: want, from: cur, date: true });
+      }
+    }
+    if (target) {
+      const cur = currentValue(item, target);
+      if (lc(item.state) !== 'open') {
+        const want = utcDay(item.closedAt);
+        if (want !== null && fieldDay(cur) !== want) {
+          pending.push({ action: 'set', issue: item.number, field: target.name, fieldId: target.dbId, value: want, from: cur, date: true });
+        }
+      } else if (cur !== null) {
+        // Open with a value: a hand-set date stays. Only the date the item
+        // was last closed — what this job wrote before a reopen — is cleared.
+        const lastClosed = item.closedAt ?? item.facts?.lastClosedAt ?? null;
+        if (isCloseDay(fieldDay(cur), lastClosed)) {
+          pending.push({ action: 'clear', issue: item.number, field: target.name, fieldId: target.dbId, value: null, from: cur, date: true });
+        }
+      }
+    }
+    writes.push(...pending);
+  }
+
   for (const k of Object.keys(missingOptions)) missingOptions[k].sort();
-  return { writes, conflicts, unrecognised, missingFields, missingOptions, notOpen };
+  return { writes, conflicts, unrecognised, missingFields, missingOptions, notOpen, prs, awaitingTimeline, valuesUnknown, incompleteHistory };
+}
+
+/**
+ * Pick the writes one run makes under MAX_WRITES. Label writes first, in plan
+ * order — they are what the label event exists to show quickly. Then the date
+ * writes, one item at a time and never split (an item's dates go in one
+ * request): first the items whose timeline was read THIS run, so no read is
+ * wasted (nothing is cached; a deferred item is read again next time), then
+ * open before closed, newest first. The first item that does not fit ends the
+ * selection, so the order stays predictable.
+ */
+export function selectWrites(writes, maxWrites, items = []) {
+  const byNo = new Map(items.map((it) => [it.number, it]));
+  const label = writes.filter((w) => !w.date);
+  const groups = new Map();
+  for (const w of writes.filter((x) => x.date)) groups.set(w.issue, [...(groups.get(w.issue) ?? []), w]);
+  const order = [...groups.keys()].sort((a, b) => {
+    const A = byNo.get(a) ?? {};
+    const B = byNo.get(b) ?? {};
+    return Number(Boolean(B.facts)) - Number(Boolean(A.facts))
+      || Number(lc(B.state) === 'open') - Number(lc(A.state) === 'open')
+      || b - a;
+  });
+  const todo = label.slice(0, maxWrites);
+  for (const n of order) {
+    const g = groups.get(n);
+    if (todo.length + g.length > maxWrites) break;
+    todo.push(...g);
+  }
+  return { todo, deferred: writes.length - todo.length };
 }
 
 /**
@@ -362,7 +651,47 @@ export function makeGhTransport(deps, { waitCap = 900, margin = 5 } = {}) {
     body ? JSON.stringify(body) : undefined,
     `${method} ${path.replace(/^repos\/[^/]+\/[^/]+\//, '')}`,
   );
-  return { gql, rest, stats };
+  /** A REST read (the timeline), under the same rule; no API-version pin:
+   *  the timeline is not one of the endpoints that header was chosen for. */
+  const get = (path) => call(['api', path], undefined, `GET ${path.replace(/^repos\/[^/]+\/[^/]+\//, '').replace(/\?.*$/, '')}`);
+  return { gql, rest, get, stats };
+}
+
+/** Timeline events come 100 a page; one item's read stops after this many
+ *  pages (3,000 events) and its facts are marked incomplete, which the planner
+ *  never writes from (see `planWrites`). No item here comes near it; one that
+ *  does is named in the summary for a date set by hand, which ends its need
+ *  for a timeline. */
+export const TIMELINE_PAGE_CAP = 30;
+
+/**
+ * Read the timelines the queue asks for, oldest event first, spending at most
+ * `maxReads` requests in all. An item whose read the budget cuts off part-way
+ * gets no facts — it is planned as still awaiting its timeline, never from a
+ * partial history. `get(path)` is the transport's REST read.
+ *
+ * @returns {Promise<{facts: Map<number, object>, reads: number}>}
+ */
+export async function readTimelines(get, repo, queue, maxReads) {
+  const facts = new Map();
+  let reads = 0;
+  for (const { number } of queue) {
+    if (reads >= maxReads) break;
+    const events = [];
+    let complete = false;
+    let cut = false;
+    for (let page = 1; page <= TIMELINE_PAGE_CAP; page += 1) {
+      if (reads >= maxReads) { cut = true; break; }
+      reads += 1;
+      const batch = await get(`repos/${repo}/issues/${number}/timeline?per_page=100&page=${page}`);
+      if (!Array.isArray(batch)) throw new Error(`timeline of #${number} did not read as a list`);
+      events.push(...batch);
+      if (batch.length < 100) { complete = true; break; }
+    }
+    if (cut) break;
+    facts.set(number, timelineFacts(events, { complete }));
+  }
+  return { facts, reads };
 }
 
 const PARSER = join(dirname(fileURLToPath(import.meta.url)), 'gh-trace-ratelimit-wait.sh');
@@ -409,18 +738,31 @@ function restLines(path, jq) {
 export function renderSummary(plan, outcome) {
   const lines = ['## Issue field label sync', ''];
   lines.push(`- mode: ${outcome.mode}${outcome.dryRun ? ' (dry run — nothing written)' : ''}`);
-  lines.push(`- open issues read: ${outcome.issues}`);
+  lines.push(`- items read: ${outcome.issues} (pull requests among them: ${plan.prs ?? 0})`);
   lines.push(`- field writes planned: ${plan.writes.length}; made: ${outcome.written}; deferred to the next run by MAX_WRITES: ${outcome.deferred}`);
   if (outcome.failed) lines.push(`- writes not confirmed (the next run re-plans them): ${outcome.failed}`);
   lines.push(`- API requests through the rate-limit rule: ${outcome.calls}${outcome.waits ? ', after one rate-limit wait' : ''}`);
+  if (outcome.timelineReads !== undefined) {
+    const waiting = Object.entries(plan.awaitingTimeline ?? {});
+    const total = waiting.reduce((a, [, n]) => a + n, 0);
+    lines.push(`- timeline reads: ${outcome.timelineReads} of MAX_TIMELINE_READS=${outcome.maxTimelineReads}; items still awaiting one (their dates wait for it): ${total}${
+      total ? ` (${waiting.map(([r, n]) => `${r} ${n}`).join(', ')})` : ''}`);
+  }
+  if (plan.incompleteHistory?.length) {
+    lines.push(`- timeline longer than ${TIMELINE_PAGE_CAP} pages, so its dates are left as they are (set them by hand): ${plan.incompleteHistory.map((n) => `#${n}`).join(', ')}`);
+  }
   if (plan.notOpen.length) {
-    lines.push(`- issues read as not open, skipped: ${plan.notOpen.map((n) => `#${n}`).join(', ')}`);
+    lines.push(`- closed issues (dates only; the label rules apply to open issues): ${plan.notOpen.length}`);
+  }
+  if (plan.valuesUnknown?.length) {
+    lines.push(`- items read without issue_field_values, skipped: ${plan.valuesUnknown.slice(0, 50).map((n) => `#${n}`).join(', ')}${plan.valuesUnknown.length > 50 ? ' …' : ''}`);
   }
   const todo = [];
   for (const { field, dataType } of plan.missingFields) {
     const hint = field === 'Priority' ? 'single select, options P1, P2, P3, P4, P5'
       : field === 'Stage' ? `single select, options ${STAGES.join(', ')} (any capitalisation)`
-        : 'text';
+        : dataType === 'DATE' ? 'date'
+          : 'text';
     todo.push(`- Add the issue field **${field}** (${hint}) for the repository's owner, or fix its type (it must be ${dataType}). Its writes are skipped until it exists.`);
   }
   for (const [f, opts] of Object.entries(plan.missingOptions)) {
@@ -452,7 +794,23 @@ export function renderSummary(plan, outcome) {
 // stays well under it.
 const REQUEST_PAUSE_SECONDS = 1;
 
-const ISSUE_JQ = '{number, state, pr: has("pull_request"), labels: [.labels[].name], ifv: .issue_field_values} | tojson';
+const ISSUE_JQ = '{number, state, pr: has("pull_request"), labels: [.labels[].name], ifv: .issue_field_values, created_at, closed_at, updated_at} | tojson';
+
+/** A listing row as a planner item. An ISSUE read without
+ *  `issue_field_values` aborts the run (`valuesFromRest`); a PULL REQUEST
+ *  without it is kept with unknown values and skipped, since whether pull
+ *  requests carry the key is not something the docs promise. */
+export function itemFromRow(r) {
+  let values;
+  if (r.pr && !Array.isArray(r.ifv)) values = null;
+  else values = valuesFromRest(r.ifv, r.number);
+  return {
+    number: r.number, state: r.state, isPr: Boolean(r.pr), labels: r.labels, values,
+    createdAt: r.created_at, closedAt: r.closed_at ?? null, updatedAt: r.updated_at,
+  };
+}
+
+const envInt = (v, dflt) => (v === undefined || v === '' ? dflt : Number(v));
 
 async function main() {
   const args = process.argv.slice(2);
@@ -469,9 +827,14 @@ async function main() {
   const repo = env.ISSUE_REPO;
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) { console.error('::error::ISSUE_REPO is not owner/name'); return 2; }
   const dryRun = env.DRY_RUN === 'true';
-  const maxWrites = Number(env.MAX_WRITES || '300');
+  const maxWrites = envInt(env.MAX_WRITES, 300);
+  const maxTimelineReads = envInt(env.MAX_TIMELINE_READS, 100);
+  const recheckHours = envInt(env.START_RECHECK_HOURS, 2);
+  for (const [k, v] of [['MAX_WRITES', maxWrites], ['MAX_TIMELINE_READS', maxTimelineReads], ['START_RECHECK_HOURS', recheckHours]]) {
+    if (!Number.isInteger(v) || v < 0) { console.error(`::error::${k} must be a whole number`); return 2; }
+  }
   const deps = realDeps();
-  const { gql, rest, stats } = makeGhTransport(deps, {
+  const { gql, rest, get, stats } = makeGhTransport(deps, {
     waitCap: Number(env.RETRY_WAIT_CAP_SECONDS || '900'),
     margin: Number(env.RETRY_MARGIN_SECONDS || '5'),
   });
@@ -481,26 +844,25 @@ async function main() {
   const threadValues = restLines(`repos/${repo}/labels?per_page=100`, '.[].name | select(startswith("thread:")) | tojson')
     .map((n) => n.slice('thread:'.length));
 
-  let rows;
-  if (issueNo === null) {
-    rows = restLines(`repos/${repo}/issues?state=open&per_page=100`, `.[] | ${ISSUE_JQ}`).filter((r) => !r.pr);
-  } else {
-    const [one] = restLines(`repos/${repo}/issues/${issueNo}`, ISSUE_JQ);
-    if (one.pr || one.state !== 'open') {
-      console.log(`#${issueNo} is ${one.pr ? 'a pull request' : 'closed'}; nothing to mirror`);
-      return 0;
-    }
-    rows = [one];
-  }
-  const issues = rows.map((r) => ({ number: r.number, state: r.state, labels: r.labels, values: valuesFromRest(r.ifv, r.number) }));
-  console.log(`open issues: ${issues.length}`);
+  // Every issue AND pull request, open and closed: the dates reach all of
+  // them. A pull request is in this listing too (its `pull_request` key).
+  const rows = issueNo === null
+    ? restLines(`repos/${repo}/issues?state=all&per_page=100`, `.[] | ${ISSUE_JQ}`)
+    : restLines(`repos/${repo}/issues/${issueNo}`, ISSUE_JQ);
+  const items = rows.map(itemFromRow);
+  console.log(`items: ${items.length}`);
 
   const { fields, pages } = await listIssueFields(gql, repo);
   console.log(`issue fields: ${fields.length} over ${pages} page(s)`);
 
-  const plan = planWrites(issues, fields, { threadValues });
-  const todo = plan.writes.slice(0, maxWrites);
-  const deferred = plan.writes.length - todo.length;
+  const ctx = { threadValues, now: Date.now(), recheckHours, eventMode: issueNo !== null };
+  const queue = timelineQueue(items, fields, ctx);
+  const { facts, reads } = await readTimelines(get, repo, queue, maxTimelineReads);
+  for (const it of items) if (facts.has(it.number)) it.facts = facts.get(it.number);
+  console.log(`timelines: ${facts.size} read in ${reads} request(s); ${queue.length - facts.size} left for later runs`);
+
+  const plan = planWrites(items, fields, ctx);
+  const { todo, deferred } = selectWrites(plan.writes, maxWrites, items);
   let written = 0;
   let failed = 0;
   let fatal = null;
@@ -523,9 +885,10 @@ async function main() {
   }
 
   const summary = renderSummary(plan, {
-    mode: issueNo === null ? 'scheduled reconcile' : `label event on #${issueNo}`,
-    dryRun, issues: issues.length,
+    mode: issueNo === null ? 'scheduled reconcile' : `event on #${issueNo}`,
+    dryRun, issues: items.length,
     written, failed, deferred: dryRun ? 0 : deferred, calls: stats.calls, waits: stats.waits,
+    timelineReads: reads, maxTimelineReads,
   });
   console.log(summary);
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, summary);

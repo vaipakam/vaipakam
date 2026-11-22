@@ -31,6 +31,15 @@ const API_INDEX = {
     chainParam:
       "Most endpoints accept ?chainId=<id> (e.g. 84532 for Base Sepolia); omitting it defaults to Base mainnet (8453). Amounts are decimal strings in the asset's smallest unit unless a field says otherwise.",
   },
+  // #3774 — the stable, documented subset for callers outside the
+  // platform. The endpoints below serve the app and may change with it;
+  // build on the feed instead.
+  publicFeed: {
+    path: '/public/v1',
+    description:
+      'A versioned subset of these reads for integrators: each answer is wrapped with the block the indexer had reached, where its figures come from and what they leave out. Rate-limited per IP (120 a minute). GET /public/v1 lists the routes.',
+    docs: 'https://github.com/vaipakam/vaipakam/blob/main/docs/PublicDataFeed.md',
+  },
   endpoints: [
     { method: 'GET', path: '/offers/stats', description: 'Open-offer counts and totals per chain.' },
     { method: 'GET', path: '/offers/active', description: 'The live offer book (paginated).' },
@@ -53,6 +62,12 @@ const API_INDEX = {
     { method: 'GET', path: '/activity', description: 'Recent protocol activity feed. With pending=1, also the events above the chain\'s safe block, marked not final. With wallet=, one wallet\'s whole history: the events on its loans and the events that name it.' },
     { method: 'GET', path: '/claimables/{address}', description: 'Claimable payouts for a wallet.' },
     { method: 'GET', path: '/claim-candidates/{address}', description: 'Claim-candidate hints for a wallet.' },
+    {
+      method: 'GET',
+      path: '/repayment-record/{address}',
+      description:
+        "#3778 — a count of what one address did as a borrower or renter on this platform, from the platform's own events: loans held to the end and how each closed (repaid on time, after the due date, by a sale of collateral on the holder's own route, refinanced, liquidated, defaulted, or unclassified), loans open now, interest periods, interest paid per token, rentals, the first loan, and how many closed loans it opened versus took over. Not a score and not advice: no figure is combined, ranked or coloured. Each answer carries `version`, `asOf` (the block), `historyBegins`, the statements every view must show, and what it leaves out. `feesPaid.stated` is false until the events state each loan's fees.",
+    },
     { method: 'GET', path: '/notifications/{address}', description: "A wallet's loan-update notification feed." },
     {
       method: 'GET',

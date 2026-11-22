@@ -14,6 +14,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRateCandles } from '../src/loanRoutes';
+import { leftOutOfRatesSql, ratesEligibleSql } from '../src/figureRules';
+import { repairOpeningParties } from '../src/chainIndexer';
 import {
   PLACED_IN_TENOR_SQL,
   UNPLACED_COUNT_CAP,
@@ -61,10 +63,10 @@ function makeHarness() {
        lender_current_owner, borrower_current_owner, interest_rate_bps,
        start_time, start_block, start_at, updated_at,
        init_rate_bps, init_duration_days, init_principal,
-       init_terms_unbacked, init_principal_unbacked)
+       init_terms_unbacked, init_principal_unbacked, init_lender, init_borrower)
      VALUES (?, ?, 1, 'active', '0xl', '0xb', '1000', '200', 0, 0, ?, ?,
        ?, '0', '0', '1', '2', '0xl', '0xb', ?, 0, 0, ?, 0,
-       ?, ?, '1000', ?, 0)`,
+       ?, ?, '1000', ?, 0, '0xl', '0xb')`,
   );
   // A seeded fill carries a BACKED initiation snapshot unless `termsUnbacked`
   // is set, in which case the candle route must count it and draw nothing.
@@ -163,6 +165,69 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     expect(body.unplaced).toEqual({ count: 1, capped: false });
   });
 
+  it('reads the candles through the eligible-loans index, so left-out loans are never walked (#3888)', () => {
+    const h = makeHarness();
+    const plan = h.db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT loan_id, start_at FROM loans l
+          WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
+            AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
+            AND asset_type = 0 AND collateral_asset_type = 0 AND start_at >= ?
+            AND ${ratesEligibleSql('l')}
+          ORDER BY start_at DESC, loan_id DESC LIMIT ?`,
+      )
+      .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_rates_eligible_tenor_start_at');
+  });
+
+  it('counts the left-out loans through their own partial index (#3879)', () => {
+    const h = makeHarness();
+    const plan = h.db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT COUNT(*) AS n FROM (
+           SELECT 1 FROM loans l
+            WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
+              AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
+              AND asset_type = 0 AND collateral_asset_type = 0 AND start_at >= ?
+              AND ${leftOutOfRatesSql('l')}
+            LIMIT ?)`,
+      )
+      .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_rates_left_out_tenor_start_at');
+  });
+
+  it('fills unknown opening parties from the ledger, once, and never changes known ones (#3879)', async () => {
+    const h = makeHarness();
+    const A = '0x1111111111111111111111111111111111111111';
+    const B = '0x2222222222222222222222222222222222222222';
+    const ledger = h.db.prepare(
+      `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+       VALUES (?, ?, 0, ?, 'LoanInitiated', ?, ?, 0)`,
+    );
+    const unknown = h.db.prepare('UPDATE loans SET init_lender = NULL, init_borrower = NULL WHERE loan_id = ?');
+    // Loan 1: written by an older Worker, parties unknown, ledger names A to A.
+    h.seed(1, 0, 400);
+    unknown.run(1);
+    ledger.run(CHAIN_ID, 1, '0x' + '01'.repeat(32), 1, JSON.stringify({ loanId: '1', lender: A.toUpperCase().replace('0X', '0x'), borrower: A }));
+    // Loan 2: parties known (A to B); a ledger row naming others must not move them.
+    h.seed(2, 10, 500);
+    h.db.prepare('UPDATE loans SET init_lender = ?, init_borrower = ? WHERE loan_id = 2').run(A, B);
+    ledger.run(CHAIN_ID, 2, '0x' + '02'.repeat(32), 2, JSON.stringify({ loanId: '2', lender: B, borrower: B }));
+    // Loan 3: no ledger record; stays unknown.
+    h.seed(3, 20, 600);
+    unknown.run(3);
+    expect(await repairOpeningParties({ DB: h.d1 } as unknown as Env, CHAIN_ID)).toBe(1);
+    const rows = h.db
+      .prepare('SELECT loan_id, init_lender, init_borrower FROM loans ORDER BY loan_id')
+      .all() as Array<{ loan_id: number; init_lender: string | null; init_borrower: string | null }>;
+    expect(rows).toEqual([
+      { loan_id: 1, init_lender: A, init_borrower: A },
+      { loan_id: 2, init_lender: A, init_borrower: B },
+      { loan_id: 3, init_lender: null, init_borrower: null },
+    ]);
+    expect(await repairOpeningParties({ DB: h.d1 } as unknown as Env, CHAIN_ID)).toBe(0);
+  });
+
   it('range-scans the placed fills through the placement index', () => {
     const h = makeHarness();
     const plan = h.db
@@ -177,13 +242,49 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_placed_tenor_start_at');
   });
 
-  it('reads the candles and the unplaced count in one batch, so both describe one snapshot', async () => {
+  it('reads the candles and both counts in one batch, so all describe one snapshot', async () => {
     const h = makeHarness();
     h.seed(1, 0, 400);
     h.seed(2, 100, 500, 1);
     await h.call();
     expect(h.batches).toHaveLength(1);
-    expect(h.batches[0]).toHaveLength(2);
+    // Candles, the unplaced count, the one-address count (#3879).
+    expect(h.batches[0]).toHaveLength(3);
+  });
+
+  it('leaves one-address loans and loans with unknown opening parties out of the candles, and counts each (#3879)', async () => {
+    const h = makeHarness();
+    const opened = h.db.prepare(
+      'UPDATE loans SET init_lender = ?, init_borrower = ?, lender = ?, borrower = ? WHERE loan_id = ?',
+    );
+    const A = '0x1111111111111111111111111111111111111111';
+    const B = '0x2222222222222222222222222222222222222222';
+    h.seed(1, 0, 400); // A to B
+    opened.run(A, B, A, B, 1);
+    h.seed(2, 10, 9_000); // A to A: a rate nobody else agreed to
+    opened.run(A, A, A, A, 2);
+    // Opened A to B; B later bought the lender side. Stays in.
+    h.seed(3, 20, 500);
+    opened.run(A, B, B, B, 3);
+    // Opened A to A; A later sold the lender side. Stays out.
+    h.seed(4, 30, 9_500);
+    opened.run(A, A, B, A, 4);
+    // Opening parties unknown: never assumed to be two parties. Stays out.
+    h.seed(5, 40, 9_900);
+    opened.run(null, null, A, B, 5);
+    const body = (await h.call()) as CandlesBody & {
+      oneAddress: number;
+      openingPartiesUnknown: number;
+      leftOutAtLeast: boolean;
+      counting: { valueTotal: null; oneAddress: number; openingPartiesUnknown: number };
+    };
+    expect(body.buckets.map((b) => [b.open, b.close, b.fills])).toEqual([[400, 500, 2]]);
+    expect(body.oneAddress).toBe(2);
+    expect(body.openingPartiesUnknown).toBe(1);
+    expect(body.leftOutAtLeast).toBe(false);
+    expect(body.counting.valueTotal).toBeNull();
+    expect(body.counting.oneAddress).toBe(2);
+    expect(body.counting.openingPartiesUnknown).toBe(1);
   });
 
   it('stops counting at the cap and says "more than" past it', async () => {

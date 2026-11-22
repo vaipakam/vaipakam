@@ -23,7 +23,7 @@
  * selector (a facet ABI may not carry the error, as the watcher's RiskFacet
  * ABI does not carry `NoPriceFeed`), then from the message text.
  */
-import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
+import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/revertData';
 
 export type HfReadFailure = 'illiquid' | 'zeroCollateral' | 'noPriceFeed' | 'other';
 

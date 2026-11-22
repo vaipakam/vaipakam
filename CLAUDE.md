@@ -1248,6 +1248,30 @@ the connected app's `isFunctionDoesNotExistRevert` reads the revert data viem
 keeps on `ContractFunctionRevertedError.raw`, decoded or not — and treat any
 text match as a fallback for non-viem errors only.
 
+## Error catalogue (#3916)
+
+Every error the shipped contracts can raise has one row in
+`packages/contracts/src/errorCatalogue.json` (name, selector, values, and
+where written, the plain message, who can act on it and whether it is
+internal), read through `@vaipakam/contracts/error-catalogue`. The shared
+decoder (`packages/lib/src/decodeContractError.ts`) reads it; there is no
+hand-kept selector or message table any more. Which entry functions can raise
+each error is `packages/contracts/src/errorRaisers.json`, derived from the
+compiler's AST by `contracts/script/error-raisers.mjs` (internal calls,
+self-calls through the Diamond, and calls to the platform's own contracts;
+presence, not path feasibility).
+
+- **Add or change an error** → the ABI export rebuilds both files. Write its
+  meaning in `packages/contracts/errors/meanings.json` (keyed by name, or by
+  full signature when the name has several). The export, the package test
+  and the pre-deploy gate (step 1f, raisers) refuse a stale catalogue, a
+  meaning for an error that no longer exists, and a rise in the count of
+  errors without a meaning (`maxErrorsWithoutEntry`, which may only fall).
+- **Internal** (`"internal": true`) means "should be impossible": the apps
+  show the platform-fault copy, never the error as something the user did.
+- **App copy is keyed** by the error name, or by its full signature when two
+  errors share a name, so a translation never crosses meanings.
+
 ## Worker ABI consumption (Stage 3 split)
 
 The Stage 3 source-tree refactor (see
@@ -2631,7 +2655,10 @@ live in `docs/procedures/`.
   (defined for the repository's owner; the values live on the issue and
   the board views group by them): `.github/workflows/board-label-sync.yml`
   mirrors them hourly and on every label change with the workflow's own
-  token, so set the label, never the field. The project's other fields
+  token, so set the label, never the field. The same job fills the DATE
+  issue fields `Start Date` (when work began) and `Target Date` (the close
+  day; never invented for an open item) on every issue and pull request, by
+  the rules in `.github/LABELS.md`. The project's other fields
   (`Module`, `Size`, `Estimate`, `Iteration`) are still set by hand.
 - Issue Templates ([`.github/ISSUE_TEMPLATE/bug.yml`](.github/ISSUE_TEMPLATE/bug.yml)
   + [`.github/ISSUE_TEMPLATE/feature_request.yml`](.github/ISSUE_TEMPLATE/feature_request.yml))

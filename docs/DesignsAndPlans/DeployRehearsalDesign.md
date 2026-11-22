@@ -155,7 +155,12 @@ One scratch folder per run, `contracts/deployments/.forge-test/rehearsal/<run>/`
 
 - **Launcher.** A function in `packages/anvil-harness` starts one node per chain from the chain's RPC at a block a safe depth behind the head, on loopback, with the real chain id, places the marker and impersonates the role addresses. The node prints its fork URL, which carries a provider key, so the launcher captures its output and never echoes it. Every log and the report pass through one redactor that replaces each RPC value from the environment with its variable name.
 - **Clock.** One helper moves every fork to the same time. A plan step that waits for a time becomes a call to it. The forks never drift apart, because reward days on Base and the mirrors are compared across chains.
-- **Prices.** After a clock step, each aggregator the deployment reads is re-stamped: its last answer, unchanged, at the fork's time. The builder chooses the mechanism and the report lists the feeds.
+- **Prices.** After a clock step, each aggregator the deployment reads is re-stamped: its last answer, unchanged, at the fork's time. A mock feed is re-stamped through its setter and a real aggregator by a storage write. Five rules hold it:
+  - The list of feeds is read from the fork: every source the price guard holds for a bound asset (the primary feed, the second source, and the registry's rate and market feeds). It is never kept by hand.
+  - A storage write counts only when it is proven. The driver reads the feed through the guard's own call before and after: the answer, the decimals and the round are equal and only the times moved. A feed whose write cannot be proven has the repository's mock feed code placed at its address with the same answer and decimals, and is listed as replaced. A feed with neither fails the run by name at the clock step, so it never shows up later as a stale-price refusal in a smoke flow.
+  - The sequencer status feed is not re-stamped. Its answer says the sequencer is up, and its start time only has to be old. Moving that time to the fork's time would put the fork inside the recovery window, and every price read would be refused.
+  - A source priced by a signed update with its own publish time cannot be re-stamped as a round. It gets its own named mechanism, or the run is not green while a bound asset needs it.
+  - The report lists each feed with its address, the mechanism, and the answer and time before and after, under the "waiting" difference. The re-stamp exists only in the rehearsal driver and uses calls a real node refuses.
 - **Arbitrum.** The scripts already take the deploy block from the node. The fork's `block.number` difference is a stated limit.
 
 ## 15. The relay between forks
@@ -259,6 +264,6 @@ Build #3891 to #3896 and finish #3111 and #3109, in the order of section 21, wit
 1. Settled 2026-11-22 by the builder's probe: forge's unlocked sending carries two senders in one script run on the pinned version (section 12).
 2. Settled 2026-11-22: the run file cannot move without the cache folder, so both move and the compile cache's index is copied in (section 13).
 3. The ramp versions on each lane and the message format the stand-in must read.
-4. The mechanism for re-stamping a feed, and which feeds a testnet deploy reads from real aggregators.
-5. The 24 hour age of a verdict, if a mainnet deploy day needs a different figure.
-6. Any deploy step found that has no command.
+4. Settled 2026-11-22: the re-stamp mechanism and its five rules (section 14).
+5. Settled 2026-11-22: a verdict is valid for 24 hours on a testnet and on a mainnet (section 8). The figure changes by a change to this design, never by a flag. If a second rehearsal with one chain already live turns out not to be the same deploy, the builder raises it under #3896.
+6. Any deploy step found that has no command. One is settled (2026-11-22): the operating settings the guide restores by hand and that no owner decision records (service capacity and its escrow, the arming fee, the capacity curves, the routing perk, fee entitlement). On a testnet the desired-state file carries the values of the deployment being replaced, each row marked as carried and not an owner decision, checked against what the live chains read, with any difference reported and not resolved silently. On a mainnet each of those rows needs the owner's decision, and the plan refuses a mainnet file that still holds a row marked as carried.

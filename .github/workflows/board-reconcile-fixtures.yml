@@ -73,12 +73,13 @@ jobs:
         with:
           node-version: 22
 
-      # The planner, the issue-field value parsing, the field-definition
-      # pagination, the write requests and the transport's rate-limit rule —
+      # The planner (labels and the two dates), the timeline reading and its
+      # caps, the issue-field value parsing, the field-definition pagination,
+      # the write requests and the transport's rate-limit rule —
       # the last against the REAL trace parser, so this job also fails if that
       # parser changes under the sync.
       - name: Run the fixtures
         run: |
           set -euo pipefail
           node .github/scripts/board-label-sync.selftest.mjs
-          echo "Label sync fixtures OK (planner + field values + write requests + rate-limit rule)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Label sync fixtures OK (planner + dates + field values + write requests + rate-limit rule)." >> "$GITHUB_STEP_SUMMARY"

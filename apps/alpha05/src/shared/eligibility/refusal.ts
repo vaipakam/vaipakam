@@ -5,7 +5,7 @@
  * unrecognised error is STILL a refusal with a stated unknown, never a
  * swallowed one and never an invented reason (RB-FUNDS).
  */
-import { FRIENDLY_ERROR_MESSAGES, KNOWN_ERROR_SELECTORS, extractRevertName, extractRevertSelector, humanizeErrorName } from '@vaipakam/lib/decodeContractError';
+import { KNOWN_ERROR_SELECTORS, contractErrorRow, extractRevertName, extractRevertSelector, friendlyContractError, humanizeErrorName } from '@vaipakam/lib/decodeContractError';
 import { decodeErrorResult, type Hex } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../../content/copy';
@@ -52,7 +52,10 @@ export function refusalFromError(err: unknown, remedy: Refusal['remedy'] = null)
   // (review and send again) is the same everywhere.
   if (name === DEADLINE_PASSED) return { code: name, reason: copy.flow.deadlinePassed.text, reopensAt: null, remedy };
   if (name) {
-    const friendly = FRIENDLY_ERROR_MESSAGES[name] ?? humanizeErrorName(name);
+    // The error catalogue's text (#3916). An internal error is a fault of the
+    // platform, so it is never worded as the protocol refusing the step.
+    const friendly = friendlyContractError({ name, selector }) ?? humanizeErrorName(name);
+    if (contractErrorRow({ name, selector })?.internal) return { code: name, reason: friendly, reopensAt: null, remedy };
     return { code: name, reason: `The protocol refused this step: ${friendly}`, reopensAt: null, remedy };
   }
   if (selector) {
@@ -97,10 +100,11 @@ export function refusalFromData(data: Hex, reopensAt: bigint): Refusal {
   } catch {
     name = null;
   }
+  const selector = data.slice(0, 10);
   if (name) {
-    const friendly = FRIENDLY_ERROR_MESSAGES[name] ?? humanizeErrorName(name);
+    const friendly = friendlyContractError({ name, selector }) ?? humanizeErrorName(name);
+    if (contractErrorRow({ name, selector })?.internal) return { code: name, reason: friendly, reopensAt: lifts, remedy: null };
     return { code: name, reason: `The protocol refuses this for now: ${friendly}`, reopensAt: lifts, remedy: null };
   }
-  const selector = data.slice(0, 10);
   return { code: selector, reason: `The protocol refuses this for a reason this build cannot name (${selector}).`, reopensAt: lifts, remedy: null };
 }
