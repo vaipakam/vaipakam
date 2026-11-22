@@ -1,0 +1,843 @@
+// src/facets/ProfileFacet.sol
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+
+/**
+ * @title ProfileFacet
+ * @author Vaipakam Developer Team
+ * @notice This facet handles user profile management, including country setting for sanctions compliance and tiered KYC verification in the Vaipakam platform.
+ * @dev Part of the Diamond Standard (EIP-2535). Uses shared LibVaipakam storage for userCountry, kycVerified, and kycTier mappings.
+ *      Users can set their country (self-reported ISO code). KYC tier is set by Diamond owner (admin/multi-sig) after off-chain verification.
+ *      Tiered KYC per README Section 16:
+ *        Tier0 — No KYC required (<$1,000 USD)
+ *        Tier1 — Limited KYC required ($1,000–$9,999 USD)
+ *        Tier2 — Full KYC/AML required ($10,000+ USD)
+ *      Required for offer filtering (sanctions) and KYC checks at various transaction thresholds.
+ *      Custom errors, events. No reentrancy as no asset transfers. Pausable for emergencies.
+ *      View functions for queries. The legacy kycVerified flag is kept in sync with tier for backward compatibility.
+ *      Best practices: Nat-spec comments, access control, gas-optimized (minimal storage).
+ */
+contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
+    /// @notice Emitted when a user sets their country.
+    /// @param user The user's address.
+    /// @param country The ISO country code set.
+    /// @custom:event-category informational/config
+    event UserCountrySet(address indexed user, string country);
+
+    /// @notice Emitted when a user's KYC status is updated (legacy boolean flag).
+    /// @param user The user's address.
+    /// @param verified The new KYC verification status.
+    /// @custom:event-category informational/config
+    event KYCStatusUpdated(address indexed user, bool verified);
+
+    /// @notice Emitted when a user's KYC tier is updated.
+    /// @param user The user's address.
+    /// @param tier The new KYC tier level.
+    /// @custom:event-category informational/config
+    event KYCTierUpdated(address indexed user, LibVaipakam.KYCTier tier);
+
+    /// @notice Emitted when trade allowance between two countries is updated.
+    /// @param countryA ISO code for country A.
+    /// @param countryB ISO code for country B.
+    /// @param allowed Whether trade is permitted between the two countries.
+    /// @custom:event-category informational/config
+    event TradeAllowanceSet(string countryA, string countryB, bool allowed);
+
+    /// @notice Emitted when KYC thresholds are updated.
+    /// @param tier0ThresholdUsd New Tier0 ceiling (USD, 1e18-scaled).
+    /// @param tier1ThresholdUsd New Tier1 ceiling (USD, 1e18-scaled).
+    /// @custom:event-category informational/config
+    event KYCThresholdsUpdated(uint256 tier0ThresholdUsd, uint256 tier1ThresholdUsd);
+
+    // Facet-specific errors (CrossFacetCallFailed inherited from IVaipakamErrors)
+    error InvalidCountry();
+    error NotOwner();
+    error AlreadyRegistered();
+    error InvalidThresholds();
+    // Mirrored from OfferFacet for the setOfferKeeperAccess entry point —
+    // Solidity scopes errors per-contract, so each facet that needs to
+    // revert with these must declare them locally. The 4-byte selectors
+    // are identical because the signatures are, so callers decode the
+    // revert the same way regardless of which facet raised it.
+    error InvalidOffer();
+    error OfferAlreadyAccepted();
+
+    /**
+     * @notice Sets the user's country for sanctions compliance.
+     * @dev Callable by anyone for their own address. Validates non-empty string (ISO code assumed off-chain).
+     *      Reverts if paused or already set (to prevent changes; adjustable in Phase 2).
+     *      Emits UserCountrySet.
+     * @param country The ISO country code (e.g., "US").
+     */
+    function setUserCountry(string calldata country) external whenNotPaused {
+        if (bytes(country).length == 0) revert InvalidCountry();
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (bytes(s.userCountry[msg.sender]).length > 0)
+            revert AlreadyRegistered();
+
+        s.userCountry[msg.sender] = country;
+
+        emit UserCountrySet(msg.sender, country);
+    }
+
+    /**
+     * @notice Deprecated. Use updateKYCTier instead, which keeps kycVerified in sync.
+     * @dev Kept for backward compatibility of the selector but reverts unconditionally.
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function updateKYCStatus(address, bool) external pure {
+        revert("Deprecated: use updateKYCTier");
+    }
+
+    // /**
+    //  * @notice Sets a user's country.
+    //  * @dev View function; returns empty string if not set.
+    //  * @param country The user's country.
+    //  */
+    // function setUserCountry(string memory country) external view {
+    //     LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+    //     s.userCountry[msg.sender] = country;
+    // }
+
+    /**
+     * @notice Gets a user's country.
+     * @dev View function; returns empty string if not set.
+     * @param user The user's address.
+     * @return country The ISO country code.
+     */
+    function getUserCountry(
+        address user
+    ) external view returns (string memory country) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return s.userCountry[user];
+    }
+
+    /**
+     * @notice Checks if a user is KYC verified.
+     * @dev View function. Per README §16 Phase 1 pass-through, returns true
+     *      unconditionally while `kycEnforcementEnabled` is false so that
+     *      legacy callers never gate behaviour on KYC. The stored flag is
+     *      still returned once enforcement is re-enabled in a later phase.
+     * @param user The user's address.
+     * @return verified True if KYC verified (or if Phase 1 pass-through is active).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function isKYCVerified(address user) external view returns (bool verified) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.kycEnforcementEnabled) return true;
+        return s.kycVerified[user];
+    }
+
+    /**
+     * @notice Sets trade allowance between two countries.
+     * @dev Owner-only (multi-sig). Calls LibVaipakam.setTradeAllowance.
+     *      Callable when not paused.
+     * @param countryA ISO code for country A.
+     * @param countryB ISO code for country B.
+     * @param allowed True to allow, false to block.
+     */
+    function setTradeAllowance(
+        string calldata countryA,
+        string calldata countryB,
+        bool allowed
+    ) external whenNotPaused onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.setTradeAllowance(countryA, countryB, allowed);
+        emit TradeAllowanceSet(countryA, countryB, allowed);
+    }
+
+    /**
+     * @notice Updates a user's KYC tier (tiered compliance per README Section 16).
+     * @dev Owner-only (admin/multi-sig). Used after off-chain KYC verification.
+     *      Also updates the legacy kycVerified flag: Tier1+ sets it to true, Tier0 sets it to false.
+     *      Emits KYCTierUpdated and KYCStatusUpdated for backward compatibility.
+     * @param user The user's address.
+     * @param tier The new KYC tier (Tier0 = no KYC, Tier1 = limited, Tier2 = full).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function updateKYCTier(
+        address user,
+        LibVaipakam.KYCTier tier
+    ) external whenNotPaused onlyRole(LibAccessControl.KYC_ADMIN_ROLE) {
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.kycTier[user] = tier;
+        // Keep legacy flag in sync: any tier above Tier0 counts as "verified"
+        bool verified = (tier >= LibVaipakam.KYCTier.Tier1);
+        s.kycVerified[user] = verified;
+
+        emit KYCTierUpdated(user, tier);
+        emit KYCStatusUpdated(user, verified);
+    }
+
+    /**
+     * @notice Returns a user's KYC tier level.
+     * @param user The user's address.
+     * @return tier The KYC tier (Tier0, Tier1, or Tier2).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function getKYCTier(
+        address user
+    ) external view returns (LibVaipakam.KYCTier tier) {
+        return LibVaipakam.storageSlot().kycTier[user];
+    }
+
+    /**
+     * @notice Checks whether a user meets the KYC requirement for a given numeraire-quoted transaction value.
+     * @dev Implements the three-tier KYC model (thresholds in the active numeraire,
+     *      scaled to 1e18 — USD by post-deploy default):
+     *        < tier0Threshold  → Tier0 required (always passes)
+     *        tier0–tier1       → Tier1 required
+     *        ≥ tier1Threshold  → Tier2 required
+     *      Values are scaled to 1e18 matching the unit returned by
+     *      `OracleFacet.getAssetPrice` (numeraire-quoted post Numeraire generalization (b1)).
+     *      Used by OfferFacet, DefaultedFacet, and RiskFacet for transaction-level compliance.
+     * @param user The user's address.
+     * @param valueNumeraire The transaction value in the active numeraire scaled to 1e18.
+     * @return meetsRequirement True if the user's KYC tier is sufficient for the given value.
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function meetsKYCRequirement(
+        address user,
+        uint256 valueNumeraire
+    ) external view returns (bool meetsRequirement) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // README §16 Phase 1 pass-through: when enforcement is disabled the
+        // KYC check is a no-op so OfferFacet/LibCompliance/RiskFacet callers
+        // never block. The tier math below remains intact for the moment
+        // governance re-enables enforcement.
+        if (!s.kycEnforcementEnabled) return true;
+
+        LibVaipakam.KYCTier tier = s.kycTier[user];
+        uint256 tier0Threshold = LibVaipakam.getKycTier0Threshold();
+        uint256 tier1Threshold = LibVaipakam.getKycTier1Threshold();
+
+        if (valueNumeraire < tier0Threshold) {
+            // Below Tier0 threshold: no KYC required
+            return true;
+        } else if (valueNumeraire < tier1Threshold) {
+            // Between Tier0 and Tier1 threshold: Tier1 minimum required
+            return tier >= LibVaipakam.KYCTier.Tier1;
+        } else {
+            // Above Tier1 threshold: Tier2 full KYC required
+            return tier >= LibVaipakam.KYCTier.Tier2;
+        }
+    }
+
+    /**
+     * @notice Updates the KYC tier thresholds (numeraire values scaled to 1e18).
+     * @dev Admin-only. Tier0 must be < Tier1. Values of 0 revert to
+     *      compile-time defaults (Tier0 = 1_000 numeraire-units,
+     *      Tier1 = 10_000 numeraire-units; reads as $1k / $10k under
+     *      USD-as-numeraire — the post-deploy default). After
+     *      Generalizing Numeraire (b1) the comparison sites are
+     *      numeraire-vs-numeraire end to end: the getters
+     *      `getKycTier0Threshold` / `getKycTier1Threshold` return raw
+     *      numeraire-units, and `OracleFacet.getAssetPrice` returns
+     *      numeraire-quoted asset prices, so no boundary cast happens
+     *      anywhere along the path.
+     * @param tier0ThresholdNumeraire Max numeraire value for no-KYC tier (default 1_000 * 1e18).
+     * @param tier1ThresholdNumeraire Max numeraire value for limited-KYC tier (default 10_000 * 1e18).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function updateKYCThresholds(
+        uint256 tier0ThresholdNumeraire,
+        uint256 tier1ThresholdNumeraire
+    ) external whenNotPaused onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (tier0ThresholdNumeraire >= tier1ThresholdNumeraire) revert InvalidThresholds();
+        // Setter-range audit (2026-05-02): added absolute floor +
+        // ceiling on both tiers. KYC is OFF on the retail deploy
+        // (per CLAUDE.md), so these are belt-and-suspenders there;
+        // on the industrial fork they cap the tunable to a
+        // credible per-tier numeraire window.
+        if (
+            tier0ThresholdNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
+            tier0ThresholdNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "kycTier0ThresholdNumeraire",
+                tier0ThresholdNumeraire,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            );
+        }
+        if (
+            tier1ThresholdNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
+            tier1ThresholdNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "kycTier1ThresholdNumeraire",
+                tier1ThresholdNumeraire,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            );
+        }
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.kycTier0ThresholdNumeraire = tier0ThresholdNumeraire;
+        s.kycTier1ThresholdNumeraire = tier1ThresholdNumeraire;
+
+        emit KYCThresholdsUpdated(tier0ThresholdNumeraire, tier1ThresholdNumeraire);
+    }
+
+    /**
+     * @notice Returns the current KYC tier thresholds.
+     * @return tier0 The Tier0 threshold in USD (scaled 1e18).
+     * @return tier1 The Tier1 threshold in USD (scaled 1e18).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function getKYCThresholds() external view returns (uint256 tier0, uint256 tier1) {
+        tier0 = LibVaipakam.getKycTier0Threshold();
+        tier1 = LibVaipakam.getKycTier1Threshold();
+    }
+
+    // ─── Keeper / Third-Party Execution Preference ───────────────────────
+
+    /// @notice Emitted when a user updates their keeper/third-party execution preference.
+    /// @param user The user's address.
+    /// @param enabled Whether keeper access is enabled (opt-in) or disabled (default).
+    /// @custom:event-category informational/config
+    event KeeperAccessUpdated(address indexed user, bool enabled);
+
+    /**
+     * @notice Sets the caller's default keeper/third-party execution preference.
+     * @dev Per README §3: non-liquidation third-party execution is off by default.
+     *      Users must explicitly opt-in. This preference is auditable at the user level.
+     *      The preference is also propagated to offers and loans at creation time.
+     * @param enabled True to opt-in to keeper/third-party execution, false to disable.
+     */
+    function setKeeperAccess(bool enabled) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.keeperAccessEnabled[msg.sender] = enabled;
+        emit KeeperAccessUpdated(msg.sender, enabled);
+    }
+
+    /**
+     * @notice Returns whether a user has opted in to keeper/third-party execution.
+     * @param user The user's address.
+     * @return enabled True if keeper access is enabled.
+     */
+    function getKeeperAccess(address user) external view returns (bool enabled) {
+        return LibVaipakam.storageSlot().keeperAccessEnabled[user];
+    }
+
+    /// @notice Emitted when an NFT holder toggles a per-loan keeper enable.
+    /// @param loanId The loan whose flag was updated.
+    /// @param keeper The specific keeper being enabled or disabled.
+    /// @param enabled New flag value.
+    /// @param owner The position holder the caller acted for (#3719): the
+    ///        lender or borrower NFT holder whose manager made the change, so
+    ///        an alert names whose loan it is without a lookup.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanKeeperEnabled(uint256 indexed loanId, address indexed keeper, bool enabled, address owner);
+
+    /**
+     * @notice Enable or disable a specific `keeper` for `loanId` (Phase 6).
+     *
+     * @dev Per-loan keeper selection. Authority follows the current
+     *      Vaipakam position NFT owner on either side (lender NFT holder
+     *      for lender-entitled actions, borrower NFT holder for borrower-
+     *      entitled actions). The same `loanKeeperEnabled[loanId][keeper]`
+     *      mapping backs both sides — per-side authority at call time is
+     *      enforced by the NFT-holder-specific `approvedKeeperActions`
+     *      bitmask, which is independent per user.
+     *
+     *      Callers must own EITHER the lender or borrower NFT for this
+     *      loan. Reverts with {NotNFTOwner} otherwise. A burnt counterparty
+     *      NFT does not block the live side.
+     *
+     *      Keeper execution still additionally requires the NFT holder's
+     *      master `setKeeperAccess(true)` and the keeper being approved
+     *      globally for the relevant action via {approveKeeper}.
+     *
+     * @param loanId  The loan to update.
+     * @param keeper  Keeper address to enable or disable for this loan.
+     * @param enabled True to enable, false to disable.
+     */
+    function setLoanKeeperEnabled(
+        uint256 loanId,
+        address keeper,
+        bool enabled
+    ) external whenNotPaused {
+        if (keeper == address(0)) revert InvalidAddress();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address lenderHolder = LibPositionNFT.holderOrZero(loan.lenderTokenId);
+        address borrowerHolder = LibPositionNFT.holderOrZero(loan.borrowerTokenId);
+
+        // #3526 — each holder's manager (its replacement wallet once retired;
+        // the retired wallet itself may not).
+        if (
+            (lenderHolder == address(0) || msg.sender != LibProtectedAccount.manager(lenderHolder)) &&
+            (borrowerHolder == address(0) || msg.sender != LibProtectedAccount.manager(borrowerHolder))
+        ) revert NotNFTOwner();
+        // The holder the caller acts for, named in the event (#3719).
+        address owner = (lenderHolder != address(0) && msg.sender == LibProtectedAccount.manager(lenderHolder))
+            ? lenderHolder
+            : borrowerHolder;
+
+        s.loanKeeperEnabled[loanId][keeper] = enabled;
+        emit LoanKeeperEnabled(loanId, keeper, enabled, owner);
+    }
+
+    /// @notice Emitted when an offer creator toggles a per-offer keeper enable.
+    /// @param offerId The offer whose flag was updated.
+    /// @param keeper The specific keeper being enabled or disabled.
+    /// @param enabled New flag value.
+    /// @param owner The offer's creator (#3719).
+    /// @custom:event-category state-change/offer-mutation
+    event OfferKeeperEnabled(uint256 indexed offerId, address indexed keeper, bool enabled, address owner);
+
+    /**
+     * @notice Enable or disable a specific `keeper` for `offerId` (Phase 6).
+     *
+     * @dev Pre-acceptance counterpart to {setLoanKeeperEnabled}. Creator-
+     *      only; reverts {InvalidOffer} / {OfferAlreadyAccepted} /
+     *      {NotNFTOwner} as applicable. Flags latch into
+     *      `loanKeeperEnabled[loanId][keeper]` at {OfferFacet.acceptOffer}
+     *      via the creator's approved-keepers list; post-acceptance each
+     *      NFT holder edits the loan-level flag via {setLoanKeeperEnabled}.
+     *
+     * @param offerId The offer to update.
+     * @param keeper  Keeper address to enable or disable for this offer.
+     * @param enabled True to enable, false to disable.
+     */
+    function setOfferKeeperEnabled(
+        uint256 offerId,
+        address keeper,
+        bool enabled
+    ) external whenNotPaused {
+        if (keeper == address(0)) revert InvalidAddress();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.accepted) revert OfferAlreadyAccepted();
+        // #3526 — refused to a creator a replacement retired.
+        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
+        s.offerKeeperEnabled[offerId][keeper] = enabled;
+        emit OfferKeeperEnabled(offerId, keeper, enabled, msg.sender);
+    }
+
+    /// @notice Emitted when an offer creator sets their per-offer Full VPFI
+    ///         fee-entitlement tariff opt-in (#1347).
+    /// @param offerId The offer whose creator-Full authorization changed.
+    /// @param creatorFull Whether the creator opts into the Full tariff.
+    /// @param maxCStar The creator's mandatory absolute `C*` ceiling (VPFI 1e18).
+    /// @param allowDowngrade Whether a failed Full opt-in silently downgrades.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferCreatorFullTariffSet(
+        uint256 indexed offerId,
+        bool creatorFull,
+        uint256 maxCStar,
+        bool allowDowngrade
+    );
+
+    /**
+     * @notice Authorize (or clear) the OFFER CREATOR's per-party Full VPFI
+     *         fee-entitlement tariff opt-in for `offerId` (#1347 M2 PR-5a/5b).
+     *
+     * @dev    The pre-acceptance, creator-signed counterpart to the acceptor's
+     *         `AcceptTerms.acceptorFull` — the two party-scoped halves of the
+     *         Full authorization (rev-15 §3). The creator authorizes draining
+     *         `C*` VPFI from their OWN vault; a counterparty can never set it.
+     *         Same creator-gated, pre-acceptance shape as {setOfferKeeperEnabled}
+     *         (kept off the ~60 `CreateOfferParams` construction sites and out of
+     *         the tight `OfferCreateFacet` bytecode). `OfferAcceptFacet` maps
+     *         creator↔acceptor to borrower↔lender by `offerType` at accept, so
+     *         this authorizes the creator's own side whichever role that is.
+     *
+     *         `maxCStar` is MANDATORY whenever `creatorFull` (rev-15 §3): it
+     *         bounds the worst-case tariff. The whole path is dark until
+     *         `cfgFeeEntitlementEnabled()`; while dark a Full opt-in resolves as
+     *         a failed opt-in at accept (revert unless `allowDowngrade`).
+     *
+     * @param offerId        The offer to authorize. Creator-only, pre-acceptance.
+     * @param creatorFull    True to opt the creator into the Full tariff.
+     * @param maxCStar       Absolute `C*` ceiling in VPFI wei (1e18); required
+     *                       (> 0) when `creatorFull`, ignored otherwise.
+     * @param allowDowngrade True to silently downgrade to HoldOnly/None if the
+     *                       Full opt-in cannot complete, instead of reverting.
+     */
+    function setOfferCreatorFullTariff(
+        uint256 offerId,
+        bool creatorFull,
+        uint256 maxCStar,
+        bool allowDowngrade
+    ) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.accepted) revert OfferAlreadyAccepted();
+        // #3526 — refused to a creator a replacement retired.
+        if (msg.sender != offer.creator && LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
+        if (creatorFull && maxCStar == 0) revert FullTariffMaxCStarRequired();
+        offer.creatorFull = creatorFull;
+        offer.creatorMaxCStar = maxCStar;
+        offer.creatorAllowFullDowngrade = allowDowngrade;
+        emit OfferCreatorFullTariffSet(
+            offerId,
+            creatorFull,
+            maxCStar,
+            allowDowngrade
+        );
+    }
+
+    // ─── Keeper Whitelist (README §3/§9) ──────────────────────────────────
+    //
+    // Each user maintains a small whitelist of keeper addresses they trust
+    // to drive non-liquidation third-party execution on their loans. Per
+    // README §3 lines 176–179, keeper authority is role-scoped: a keeper
+    // authorizes only the entitled side's actions on a given loan — a
+    // lender's whitelist covers lender-entitled keeper actions (e.g.
+    // completeLoanSale), and a borrower's whitelist covers borrower-
+    // entitled keeper actions (e.g. completeOffset). The two sides do
+    // not need to approve each other. The list is capped at
+    // `MAX_APPROVED_KEEPERS` per user to bound gas on list reads and
+    // keep the whitelist intentionally curated.
+
+    /// @notice Emitted when `user` adds `keeper` to their whitelist or
+    ///         updates the keeper's authorised action set.
+    /// @param user The whitelist owner (lender or borrower side, per user).
+    /// @param keeper The keeper address.
+    /// @param actions New action bitmask (see `LibVaipakam.KEEPER_ACTION_*`).
+    /// @param previousActions The bitmask before this change; zero for a
+    ///        keeper newly added (#3719), so an alert can say what was added.
+    /// @custom:event-category informational/config
+    event KeeperActionsUpdated(
+        address indexed user,
+        address indexed keeper,
+        uint16 actions,
+        uint16 previousActions
+    );
+
+    /// @notice Emitted when `user` removes `keeper` from their whitelist.
+    /// @param user The whitelist owner.
+    /// @param keeper The keeper that lost authority.
+    /// @custom:event-category informational/config
+    event KeeperRevoked(address indexed user, address indexed keeper);
+
+    /**
+     * @notice Adds `keeper` to the caller's whitelist with the given
+     *         per-action authorisation bitmask (Phase 6).
+     *
+     * @dev Reverts:
+     *      - {InvalidAddress} if `keeper` is zero.
+     *      - {InvalidKeeperActions} if `actions == 0` or sets bits outside
+     *        `LibVaipakam.KEEPER_ACTION_ALL`.
+     *      - {KeeperAlreadyApproved} if `keeper` is already on the list
+     *        (use {setKeeperActions} to modify bits for an existing entry).
+     *      - {KeeperWhitelistFull} when the list is at
+     *        `LibVaipakam.MAX_APPROVED_KEEPERS`.
+     *
+     *      Adding a keeper only authorises the caller's side of any loan;
+     *      the counterparty's whitelist is independent.
+     *
+     * @param keeper  Keeper address to whitelist (non-zero).
+     * @param actions Bitmask of `LibVaipakam.KEEPER_ACTION_*` bits.
+     */
+    function approveKeeper(address keeper, uint16 actions) external whenNotPaused {
+        if (keeper == address(0)) revert InvalidAddress();
+        _requireValidKeeperActions(actions);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.approvedKeeperActions[msg.sender][keeper] != 0)
+            revert KeeperAlreadyApproved();
+        if (s.approvedKeepersList[msg.sender].length >= LibVaipakam.MAX_APPROVED_KEEPERS)
+            revert KeeperWhitelistFull();
+        s.approvedKeeperActions[msg.sender][keeper] = actions;
+        s.approvedKeepersList[msg.sender].push(keeper);
+        emit KeeperActionsUpdated(msg.sender, keeper, actions, 0);
+    }
+
+    /**
+     * @notice Update the action bitmask for an existing whitelisted keeper.
+     *
+     * @dev Reverts:
+     *      - {KeeperNotApproved} if `keeper` is not currently on the list.
+     *      - {InvalidKeeperActions} if `actions == 0` (use {revokeKeeper}
+     *        to remove the keeper entirely) or sets bits outside
+     *        `LibVaipakam.KEEPER_ACTION_ALL`.
+     *
+     * @param keeper  Keeper to update.
+     * @param actions New action bitmask.
+     */
+    function setKeeperActions(address keeper, uint16 actions) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.approvedKeeperActions[msg.sender][keeper] == 0)
+            revert KeeperNotApproved();
+        _requireValidKeeperActions(actions);
+        uint16 previousActions = s.approvedKeeperActions[msg.sender][keeper];
+        s.approvedKeeperActions[msg.sender][keeper] = actions;
+        emit KeeperActionsUpdated(msg.sender, keeper, actions, previousActions);
+    }
+
+    /**
+     * @notice Removes `keeper` from the caller's whitelist (clears their
+     *         action bitmask to zero).
+     *
+     * @dev Reverts {KeeperNotApproved} if `keeper` isn't currently on the
+     *      list. Uses swap-and-pop on the enumerated list so removal is
+     *      O(list length) but avoids leaving gaps. In-flight keeper-driven
+     *      calls may still see the old flag for the current block; re-
+     *      checked inside LibAuth on every call.
+     *
+     * @param keeper The keeper address to remove.
+     */
+    function revokeKeeper(address keeper) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.approvedKeeperActions[msg.sender][keeper] == 0)
+            revert KeeperNotApproved();
+        address[] storage list = s.approvedKeepersList[msg.sender];
+        uint256 len = list.length;
+        for (uint256 i; i < len; ) {
+            if (list[i] == keeper) {
+                list[i] = list[len - 1];
+                list.pop();
+                break;
+            }
+            unchecked { ++i; }
+        }
+        emit KeeperRevoked(msg.sender, keeper);
+    }
+
+    /**
+     * @notice Returns the current action bitmask authorising `keeper` on
+     *         behalf of `user`. Zero means not approved.
+     * @param user   The whitelist owner.
+     * @param keeper The keeper address to check.
+     * @return actions Bitmask of `LibVaipakam.KEEPER_ACTION_*` bits.
+     */
+    function getKeeperActions(address user, address keeper)
+        external
+        view
+        returns (uint16 actions)
+    {
+        return LibVaipakam.storageSlot().approvedKeeperActions[user][keeper];
+    }
+
+    /**
+     * @notice Backwards-friendly view: whether `keeper` is approved at
+     *         all (any action bit set) on `user`'s whitelist.
+     * @param user   The whitelist owner.
+     * @param keeper The keeper address to check.
+     * @return True iff the keeper has any authorised action.
+     */
+    function isApprovedKeeper(address user, address keeper) external view returns (bool) {
+        return LibVaipakam.storageSlot().approvedKeeperActions[user][keeper] != 0;
+    }
+
+    /**
+     * @notice Returns the full list of `user`'s approved keepers.
+     * @dev Bounded by `LibVaipakam.MAX_APPROVED_KEEPERS`, so the return
+     *      array is always small enough to consume in a single call.
+     * @param user The whitelist owner.
+     * @return The array of whitelisted keeper addresses (possibly empty).
+     */
+    function getApprovedKeepers(address user) external view returns (address[] memory) {
+        return LibVaipakam.storageSlot().approvedKeepersList[user];
+    }
+
+    /**
+     * @notice Returns whether a specific `keeper` is enabled for `loanId`.
+     *         Complements {getKeeperActions} — a keeper must be both
+     *         globally authorised AND enabled for the specific loan.
+     * @param loanId Loan to query.
+     * @param keeper Keeper address to check.
+     * @return True iff the keeper is enabled for this loan.
+     */
+    function isLoanKeeperEnabled(uint256 loanId, address keeper)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().loanKeeperEnabled[loanId][keeper];
+    }
+
+    /**
+     * @notice Returns whether a specific `keeper` is enabled for `offerId`
+     *         (pre-acceptance). Latches into loan-level at acceptance.
+     * @param offerId Offer to query.
+     * @param keeper  Keeper address to check.
+     * @return True iff the keeper is enabled for this offer.
+     */
+    function isOfferKeeperEnabled(uint256 offerId, address keeper)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().offerKeeperEnabled[offerId][keeper];
+    }
+
+    /// @dev Require `actions` is non-zero and only sets bits within the
+    ///      configured action space. Reverts {InvalidKeeperActions}.
+    function _requireValidKeeperActions(uint16 actions) private pure {
+        if (actions == 0 || (actions & ~LibVaipakam.KEEPER_ACTION_ALL) != 0)
+            revert InvalidKeeperActions();
+    }
+
+    // ─── Address-level sanctions (Phase 4.3) ──────────────────────────────
+    //
+    // Country-level sanctions already live above (setUserCountry +
+    // tradeAllowance). Phase 4.3 layers in address-level screening via a
+    // on-chain sanctions oracle (any `ISanctionsList`). The check is a read-through to
+    // the configured oracle contract; on chains where no oracle is
+    // deployed (some l2 testnets), governance leaves the oracle address
+    // zero and the check becomes a no-op.
+    //
+    // Integration points: `OfferFacet.createOffer` and
+    // `OfferFacet.acceptOffer` — i.e. the "entering a new business
+    // relationship" path. Ongoing actions (`repay`, `claim`) are left
+    // unrestricted so a counterparty is never stranded if the other
+    // side lands on a sanctions list mid-loan.
+
+    /**
+     * @notice Reverts when a call from `who` is blocked because the
+     *         configured sanctions oracle has them flagged. Also fires when an
+     *         `acceptOffer` call would pair the acceptor with a
+     *         now-flagged offer creator — the offer author may have
+     *         been clean when they posted but is sanctioned now.
+     */
+    error SanctionedAddress(address who);
+
+    /**
+     * @notice Installs the sanctions oracle address (any
+     *         `ISanctionsList`) for this chain. Passing `address(0)` disables
+     *         the Tier-1 screen (fail-open) — but on a chain that has EVER
+     *         configured an oracle it FREEZES the service-capacity deposit
+     *         surface: every deposit post and withdrawal defers, as in an
+     *         outage, until an oracle is installed again (#2459). Never pass Chainalysis's
+     *         retired on-chain oracle (#2443): it still answers but no
+     *         longer updates; testnets use `TestnetSanctionsOverlay`.
+     * @dev Owner-only (enforced inside `LibVaipakam.setSanctionsOracle`),
+     *      so timelock-gated after the governance handover. Emits
+     *      `LibVaipakam.SanctionsOracleSet`.
+     * @param oracle The sanctions oracle contract address, or zero.
+     */
+    function setSanctionsOracle(address oracle) external {
+        LibVaipakam.setSanctionsOracle(oracle);
+    }
+
+    /// @notice Returns the currently-configured sanctions oracle address.
+    ///         Zero means the Tier-1 screen is off on this chain; if an oracle
+    ///         was ever configured, the capacity-deposit surface is frozen.
+    function getSanctionsOracle() external view returns (address) {
+        return LibVaipakam.storageSlot().sanctionsOracle;
+    }
+
+    /**
+     * @notice Returns true iff the configured sanctions oracle reports
+     *         `who` as currently flagged. Returns false when no oracle
+     *         is configured (screening disabled) or when the oracle
+     *         call itself reverts — fail-open on infrastructure
+     *         failure, since the alternative would brick every
+     *         interaction whenever the oracle has an outage.
+     *
+     *         Intended for UI pre-flight checks so a wallet sees a
+     *         clear "you are on a sanctions list; this action will
+     *         revert" message before signing — rather than a raw
+     *         revert from the subsequent tx.
+     * @param who The address to query.
+     */
+    function isSanctionedAddress(address who) external view returns (bool) {
+        return LibVaipakam.isSanctionedAddress(who);
+    }
+
+    /// @notice The three-way sanctions read for `who` that every authoritative
+    ///         sanctions write uses: `Clean` (0), `Flagged` (1) or
+    ///         `Unavailable` (2). Unlike {isSanctionedAddress}, an oracle outage
+    ///         is reported as `Unavailable` rather than as clean, so an
+    ///         off-chain caller can tell "screened and clean" from "could not
+    ///         be screened" (the keeper's prepay-sale sanctions backstop, #2984).
+    /// @dev    Delegates to `LibVaipakam.sanctionsStatus`, the rule
+    ///         {refreshSanctionsFlag} and the prepay-sale syncs act on, so a
+    ///         caller deciding whether a sync is due reads exactly what the sync
+    ///         will read. `Unavailable` also covers an unset oracle; a caller
+    ///         that must tell the two apart reads {getSanctionsOracle} first.
+    /// @param who The address to query.
+    function sanctionsStatus(address who) external view returns (LibVaipakam.SanctionsRead) {
+        return LibVaipakam.sanctionsStatus(who);
+    }
+
+    /// @notice #1123 — a wallet was (de)registered in the confirmed-flagged
+    ///         registry from an authoritative oracle read.
+    /// @param who     The synced wallet.
+    /// @param flagged True ⇒ registered (blocked from moving a position during an
+    ///                outage); false ⇒ cleared (de-listed).
+    event SanctionsFlagRefreshed(address indexed who, bool flagged);
+
+    /// @notice #1123 — permissionless sync of the confirmed-flagged-wallet
+    ///         registry from the authoritative sanctions oracle. Registers `who`
+    ///         when the oracle (reachable) reports it flagged, and CLEARS it on a
+    ///         confirmed de-list. Reverts `SanctionsOracleUnavailable` when the
+    ///         oracle is unset or its read reverts — a registry mutation must never
+    ///         act on a non-authoritative read (else a mid-outage refresh could
+    ///         wrongly clear a still-flagged wallet). The registry is consulted
+    ///         FAIL-CLOSED by the position-movement restriction, so a confirmed
+    ///         wallet cannot move a position during an oracle outage. Permissionless
+    ///         and griefing-free: it only ever mirrors the authoritative oracle
+    ///         (cannot set a flag the oracle doesn't confirm; de-list is likewise
+    ///         oracle-gated).
+    /// @param who The wallet to (re)sync.
+    function refreshSanctionsFlag(address who) external {
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(who);
+        bool flagged = st == LibVaipakam.SanctionsRead.Flagged;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (flagged) {
+            s.sanctionsConfirmedFlagged[who] = true;
+        } else {
+            delete s.sanctionsConfirmedFlagged[who];
+        }
+        emit SanctionsFlagRefreshed(who, flagged);
+    }
+
+    /// @notice #1123 — whether `who` is in the confirmed-flagged registry
+    ///         (barred from moving a position NFT during an oracle outage).
+    function isSanctionsConfirmedFlagged(address who) external view returns (bool) {
+        return LibVaipakam.storageSlot().sanctionsConfirmedFlagged[who];
+    }
+
+    /// @notice #1144 (S10 Invariant B) — registry-aware "barred from a prepay-sale
+    ///         payout/fill?" read consumed by `CollateralListingExecutor` at fill
+    ///         time (via `IVaipakamSanctionsView`). Combines the authoritative
+    ///         oracle read with the committed registry using the outage-only
+    ///         semantics of {LibVaipakam.isRecipientBarred} — a disabled regime or
+    ///         an oracle-up-clean wallet is never barred by a stale marker.
+    function isRecipientBarred(address who) external view returns (bool) {
+        return LibVaipakam.isRecipientBarred(who);
+    }
+
+    /// @notice #1123 — diamond-internal host for the FAIL-CLOSED position-movement
+    ///         gate. The heavy tri-state oracle-read logic lives here (ProfileFacet
+    ///         has ample bytecode room) so the EIP-170-tight movement facets
+    ///         (`EarlyWithdrawalFacet`, and later `PrecloseFacet` post-split #1124)
+    ///         reach it via a thin `crossFacetCall` stub instead of inlining ~590
+    ///         bytes each. Self-only (`msg.sender == address(this)`), so only the
+    ///         diamond's own movement paths can invoke it.
+    /// @dev    Mutating (self-heal-clears a de-listed party on an authoritative
+    ///         clean read); reverts `SanctionedAddress` on an authoritative flag or
+    ///         a registered wallet during an outage.
+    function enforcePositionMoveNotSanctioned(address from, address to) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.assertPositionMoveNotSanctioned(from, to);
+    }
+
+    /// @notice #1123 — self-only host for the SALE-vehicle movement gate: blocks a
+    ///         flagged/registered SELLER offloading a position, but only REGISTERS
+    ///         a flagged BUYER (their frozen receive completes per #831) so the
+    ///         buyer can't later move the position during an outage.
+    function enforcePositionSaleMove(address seller, address buyer) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.assertPositionSaleMoveNotSanctioned(seller, buyer);
+    }
+
+    /// @notice Mirror of the `onlyDiamondInternal` pattern used by
+    ///         `EncumbranceMutateFacet` / `VaultFactoryFacet`.
+    error OnlyDiamondInternal();
+}
