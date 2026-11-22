@@ -243,11 +243,40 @@ console.log('dates');
     timelineReason(item(26, { updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-05'), val(70, '2026-11-20')] }), DF, C) === 'reopen');
   check('reason: no date fields → nothing is ever read', timelineReason(item(27), FIELDS, C) === null);
 
+  // A reopened pull request: the same reopen rule as an issue's.
+  const prReopened = item(41, { isPr: true, updatedAt: '2026-11-22T11:00:00Z', createdAt: '2026-11-03T05:00:00Z',
+    values: [val(60, '2026-11-03'), val(70, '2026-11-20')] });
+  check('reason: a reopened pull request (open, Target set, changed recently, no closed_at) → reopen',
+    timelineReason(prReopened, DF, C) === 'reopen');
+  check('reason: a pull request never needs a timeline for its Start date (fill or recheck)',
+    timelineReason(item(42, { isPr: true, values: [] }), DF, C) === null &&
+    timelineReason(item(43, { isPr: true, updatedAt: '2026-11-22T11:00:00Z', createdAt: '2026-11-03T05:00:00Z',
+      values: [val(60, '2026-11-03')] }), DF, { ...C, eventMode: true }) === null);
+  const prClosedFacts = timelineFacts([{ event: 'closed', created_at: '2026-11-20T10:00:00Z' }, { event: 'reopened', created_at: '2026-11-22T11:00:00Z' }]);
+  check('a reopened pull request\'s job-written Target date is cleared once its last close is read',
+    same(dw(planWrites([{ ...prReopened, facts: prClosedFacts }], DF, C), 41), [['clear', 'target date', null]]));
+  check('a reopened pull request awaiting its read gets no date write, and is counted',
+    (() => { const pl = planWrites([prReopened], DF, C); return dw(pl, 41).length === 0 && pl.awaitingTimeline.reopen === 1; })());
+  check('a reopened pull request\'s hand-set Target date stays', dw(planWrites([{ ...prReopened,
+    values: [val(60, '2026-11-03'), val(70, '2026-12-31')], facts: prClosedFacts }], DF, C), 41).length === 0);
+
+  // Incomplete history is never written from.
+  const longFacts = timelineFacts([labeled('stage:building', '2026-11-02T00:00:00Z')], { complete: false });
+  const longIssue = item(44, { state: 'closed', closedAt: '2026-11-08T01:00:00Z', facts: longFacts });
+  const pLong = planWrites([longIssue], DF, C);
+  check('a timeline read only in part writes NO Start date (nor Target), and is named for a hand entry',
+    dw(pLong, 44).length === 0 && same(pLong.incompleteHistory, [44]), JSON.stringify(pLong));
+  check('the summary names an item whose timeline was too long', new RegExp(`timeline longer than ${TIMELINE_PAGE_CAP} pages.*#44`).test(
+    renderSummary(pLong, { mode: 'm', dryRun: true, issues: 1, written: 0, failed: 0, deferred: 0, calls: 0, waits: 0 })));
+  check('an incomplete read used for nothing (no reason) does not block the listing-only dates',
+    same(dw(planWrites([{ ...item(45, { isPr: true, state: 'closed', createdAt: '2026-11-03T05:00:00Z', closedAt: '2026-11-04T00:00:00Z' }),
+      facts: longFacts }], DF, C), 45), [['set', 'Start date', '2026-11-03'], ['set', 'target date', '2026-11-04']]));
+
   // Caps.
   const many = [item(30), item(31, { state: 'closed', closedAt: '2026-11-02T00:00:00Z' }), item(32),
     item(33, { updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-01')] }), item(34, { isPr: true })];
   const q = timelineQueue(many, DF, C);
-  check('queue: rechecks first, then fills open before closed, newest first; PRs absent',
+  check('queue: rechecks first, then fills open before closed, newest first; a PR with no Target date absent',
     same(q.map((x) => [x.number, x.reason]), [[33, 'recheck'], [32, 'fill'], [30, 'fill'], [31, 'fill']]), JSON.stringify(q));
   const gets = [];
   const pageOf = (n, len) => Array.from({ length: len }, () => ({ event: 'labeled', created_at: '2026-11-02T00:00:00Z', label: { name: 'stage:building' } }));
@@ -272,8 +301,9 @@ console.log('dates');
   check('MAX_TIMELINE_READS=0 reads nothing', r.reads === 0 && r.facts.size === 0 && gets.length === 0);
   gets.length = 0;
   r = await readTimelines(async (p) => { gets.push(p); return pageOf(0, 100); }, REPO, [{ number: 40 }], 1000);
-  check(`one issue stops at TIMELINE_PAGE_CAP (${TIMELINE_PAGE_CAP}) pages and is marked incomplete`,
-    r.reads === TIMELINE_PAGE_CAP && r.facts.get(40).complete === false);
+  check(`one issue stops at TIMELINE_PAGE_CAP (${TIMELINE_PAGE_CAP}) pages and is marked incomplete, so nothing is written from it`,
+    r.reads === TIMELINE_PAGE_CAP && r.facts.get(40).complete === false &&
+    dw(planWrites([item(40, { facts: r.facts.get(40) })], DF, C), 40).length === 0);
   const planAll = planWrites(many.map((it) => (r.facts.has(it.number) ? { ...it, facts: r.facts.get(it.number) } : it)), DF, C);
   check('the remaining count is reported by reason', same(planAll.awaitingTimeline, { fill: 3, recheck: 1 }), JSON.stringify(planAll.awaitingTimeline));
   const md = renderSummary(planAll, { mode: 'scheduled reconcile', dryRun: true, issues: 5, written: 0, failed: 0, deferred: 0,

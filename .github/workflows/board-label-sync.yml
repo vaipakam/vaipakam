@@ -16,7 +16,8 @@ name: Mirror labels onto the Thread, Priority and Stage issue fields, and fill t
 #     `created_at` of a pull request linked to it (a cross-reference from a PR,
 #     which a closing PR also makes) and the first `stage:building` label,
 #     else the issue's own `created_at`. Read from the issue's timeline, and
-#     only while the issue still needs it (see the cost note below).
+#     only while the issue still needs it (see the cost note below); never
+#     from a timeline read only in part.
 #   - Target date: a closed item's `closed_at` (a merged PR's merge). An open
 #     item never gets one invented, and a value set by hand stays; a reopened
 #     item loses it only when it equals the day the item was last closed — a
@@ -58,10 +59,13 @@ name: Mirror labels onto the Thread, Priority and Stage issue fields, and fill t
 # object already carries its `issue_field_values`; about 17 pages for 1,700
 # items), the `thread:` labels (REST) and the field definitions (one GraphQL
 # request). Then at most MAX_TIMELINE_READS timeline requests (100), only for
-# issues that need one: no Start date yet ('fill'), a Start date still equal to
-# the creation day on an open issue changed within START_RECHECK_HOURS
-# ('recheck'; a PR or label since may have moved it), or an open item with a
-# Target date changed within that window ('reopen'). Nothing is cached in the
+# items that need one: an issue with no Start date yet ('fill'), an open
+# issue whose Start date still equals its creation day, changed within
+# START_RECHECK_HOURS ('recheck'; a PR or label since may have moved it), or
+# an open issue OR pull request with a Target date and no `closed_at`, changed
+# within that window ('reopen': the last close is only in the timeline). A
+# history longer than 30 pages is never written from; the summary names it
+# for a date set by hand. Nothing is cached in the
 # repository; once an issue's Start date is written (and is not the creation
 # day) it needs no timeline again. Then it writes only values that differ: one
 # request per item for all of its sets, one per cleared value, a second apart,
@@ -114,8 +118,9 @@ name: Mirror labels onto the Thread, Priority and Stage issue fields, and fill t
 # the PR's OWN copy of this file on a `refs/pull/...` ref, so the main-only ref
 # check would skip it and it could never write; `pull_request_target` would
 # run main's copy with a write token on events any fork can cause, the trigger
-# zizmor flags as dangerous. A pull request's dates need no timeline and
-# settle within the hour, so no PR trigger is added.
+# zizmor flags as dangerous. A pull request's dates come from the listing
+# (a reopened one's last close from its timeline, as for an issue) and settle
+# within the hour, so no PR trigger is added.
 #
 # OWNER SETUP (done 2026-11-22; this job never creates fields or options): the
 # issue fields `Thread` (text), `Priority` (single select, P1…P5) and `Stage`

@@ -98,9 +98,10 @@ so the count above stays honest:
   cites the documentation for each. It also fills the DATE issue fields
   `Start Date` and `Target Date` on every issue and pull request, open or
   closed (rules in `.github/LABELS.md` and the script's `DATE_FIELDS`): a
-  pull request's dates come from the listing; an issue's Start date from its
-  REST timeline, read only while the issue needs it, at most
-  `MAX_TIMELINE_READS` requests a run, cached nowhere. Its decisions are one pure function,
+  pull request's dates come from the listing; an issue's Start date, and the
+  last close of a reopened issue or pull request, from the REST timeline,
+  read only while the item needs it, at most `MAX_TIMELINE_READS` requests a
+  run, cached nowhere, and never planned from when read only in part. Its decisions are one pure function,
   `planWrites(issues, fields, context)`; the definition listing pages through
   an injected transport; and a failed request is classified by
   `gh-trace-ratelimit-wait.sh` run as-is, so the wait-and-retry-once rule is

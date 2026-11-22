@@ -26,9 +26,10 @@
  *     https://docs.github.com/en/rest/issues/issue-field-values
  *     (PUT on the same path REPLACES every value on the issue, including fields
  *     this job does not own, so it is never used.)
- *   - The issue TIMELINE, REST, for an issue's Start date only:
+ *   - The issue TIMELINE, REST, for an issue's Start date and for the last
+ *       close of a reopened issue or pull request:
  *       GET /repos/{o}/{r}/issues/{n}/timeline (100 events a page, oldest
- *       first). Read only for an issue that needs it (`timelineReason`), at
+ *       first). Read only for an item that needs it (`timelineReason`), at
  *       most MAX_TIMELINE_READS requests a run, and never cached: once a
  *       Start date is written the issue needs no timeline again (apart from
  *       the bounded recheck `timelineReason` describes).
@@ -222,8 +223,9 @@ function currentValue(item, field) {
 }
 
 /**
- * Why an item needs its timeline read this run, or null. Only issues ever
- * need one; a pull request's dates come from the listing.
+ * Why an item needs its timeline read this run, or null. A pull request's
+ * Start and closed Target come from the listing, so a pull request needs one
+ * only for the 'reopen' check below — the same rule as an issue's.
  *
  *   'fill'    — no Start date yet. Once one is written this never recurs.
  *   'recheck' — the Start date equals the issue's own creation day, which is
@@ -240,8 +242,8 @@ function currentValue(item, field) {
  * nothing could be written to.
  */
 export function timelineReason(item, fields, ctx = {}) {
-  if (item.isPr || item.values == null) return null;
-  const start = resolveField(fields, DATE_FIELDS[0]);
+  if (item.values == null) return null;
+  const start = item.isPr ? null : resolveField(fields, DATE_FIELDS[0]);
   const target = resolveField(fields, DATE_FIELDS[1]);
   const now = ctx.now ?? Date.now();
   const windowMs = (ctx.recheckHours ?? 2) * 3600 * 1000;
@@ -294,7 +296,8 @@ export function timelineQueue(items, fields, ctx = {}) {
  * @returns {{writes:Array<object>, conflicts:Array<object>, unrecognised:Array<object>,
  *            missingFields:Array<{field:string, dataType:string}>,
  *            missingOptions:Record<string,string[]>, notOpen:number[], prs:number,
- *            awaitingTimeline:Record<string,number>, valuesUnknown:number[]}}
+ *            awaitingTimeline:Record<string,number>, valuesUnknown:number[],
+ *            incompleteHistory:number[]}}
  */
 export function planWrites(issues, fields, context = {}) {
   const threadValues = new Set((context.threadValues ?? []).map(lc));
@@ -317,6 +320,7 @@ export function planWrites(issues, fields, context = {}) {
   const notOpen = [];
   const awaitingTimeline = {};
   const valuesUnknown = [];
+  const incompleteHistory = [];
   let prs = 0;
 
   for (const issue of [...issues].sort((a, b) => a.number - b.number)) {
@@ -408,6 +412,14 @@ export function planWrites(issues, fields, context = {}) {
       awaitingTimeline[reason] = (awaitingTimeline[reason] ?? 0) + 1;
       return;
     }
+    // A history read only in part (longer than TIMELINE_PAGE_CAP pages) is
+    // never planned from: a later page can hold a cross-reference from a PR
+    // opened earlier, or the last close. The item stays as it is, its dates
+    // wait, and the summary names it for a date by hand.
+    if (reason && item.facts && item.facts.complete === false) {
+      incompleteHistory.push(item.number);
+      return;
+    }
     const pending = [];
     if (start) {
       const cur = currentValue(item, start);
@@ -442,7 +454,7 @@ export function planWrites(issues, fields, context = {}) {
   }
 
   for (const k of Object.keys(missingOptions)) missingOptions[k].sort();
-  return { writes, conflicts, unrecognised, missingFields, missingOptions, notOpen, prs, awaitingTimeline, valuesUnknown };
+  return { writes, conflicts, unrecognised, missingFields, missingOptions, notOpen, prs, awaitingTimeline, valuesUnknown, incompleteHistory };
 }
 
 /**
@@ -645,9 +657,12 @@ export function makeGhTransport(deps, { waitCap = 900, margin = 5 } = {}) {
   return { gql, rest, get, stats };
 }
 
-/** Timeline events come 100 a page; one issue's read stops after this many
- *  pages and its facts are marked incomplete (see `timelineFacts`). */
-export const TIMELINE_PAGE_CAP = 10;
+/** Timeline events come 100 a page; one item's read stops after this many
+ *  pages (3,000 events) and its facts are marked incomplete, which the planner
+ *  never writes from (see `planWrites`). No item here comes near it; one that
+ *  does is named in the summary for a date set by hand, which ends its need
+ *  for a timeline. */
+export const TIMELINE_PAGE_CAP = 30;
 
 /**
  * Read the timelines the queue asks for, oldest event first, spending at most
@@ -732,6 +747,9 @@ export function renderSummary(plan, outcome) {
     const total = waiting.reduce((a, [, n]) => a + n, 0);
     lines.push(`- timeline reads: ${outcome.timelineReads} of MAX_TIMELINE_READS=${outcome.maxTimelineReads}; items still awaiting one (their dates wait for it): ${total}${
       total ? ` (${waiting.map(([r, n]) => `${r} ${n}`).join(', ')})` : ''}`);
+  }
+  if (plan.incompleteHistory?.length) {
+    lines.push(`- timeline longer than ${TIMELINE_PAGE_CAP} pages, so its dates are left as they are (set them by hand): ${plan.incompleteHistory.map((n) => `#${n}`).join(', ')}`);
   }
   if (plan.notOpen.length) {
     lines.push(`- closed issues (dates only; the label rules apply to open issues): ${plan.notOpen.length}`);
