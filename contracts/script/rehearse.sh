@@ -52,13 +52,15 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #                role addresses impersonated, one clock
 #   5. records   the committed records copied into the run's scratch folder
 #   6. steps     the plan, each step's output redacted into the run's logs
-#   7. compare   nothing outside the scratch folder changed
-#   8. verdict   commit, tree digest, input digest, plan digest, chain set,
+#   7. readback  the end state against the desired file the plan's first
+#                line names (script/readback.mjs, #3893); a plan with no
+#                desired file is not covered, so its verdict is never green
+#   8. compare   nothing outside the scratch folder changed
+#   9. verdict   commit, tree digest, input digest, plan digest, chain set,
 #                fork blocks and time; the report lists the limits
 #
-# The relay between forks (#3892), the readback (#3893) and the off-chain
-# runners (#3894, #3895) join as stages when they land; until then the report
-# names each as not run.
+# The relay between forks (#3892) and the off-chain runners (#3894, #3895)
+# join as stages when they land; until then the report names each as not run.
 #
 # Testable with stubs (rehearse.test.sh): every external command is reached
 # through a variable (RH_FORGE, RH_NODE, RH_DEPLOY_SCRIPT, RH_PREDEPLOY, …),
@@ -79,6 +81,7 @@ RH_PREDEPLOY="${RH_PREDEPLOY:-$SCRIPT_DIR/predeploy-check.sh}"
 RH_LAYOUT_GUARD="${RH_LAYOUT_GUARD:-$SCRIPT_DIR/storage-layout-guard.mjs}"
 RH_ENV_FILE="${RH_ENV_FILE:-$CONTRACTS_DIR/.env}"
 RH_MAX_VERDICT_AGE_HOURS="${RH_MAX_VERDICT_AGE_HOURS:-24}"
+RH_READBACK="${RH_READBACK:-$SCRIPT_DIR/readback.mjs}"
 
 PLAN=""
 NETWORK="testnet"
@@ -135,6 +138,9 @@ chain_of() {
 RESULT="fail"
 FAILED_STAGE=""
 STAGES_RUN=()
+DESIRED=""
+DESIRED_SHA=""
+READBACK_SUMMARY=""
 declare -A FORK_URL FORK_BLOCK
 CHAINS=()
 STEP_LINES=()
@@ -220,7 +226,6 @@ JSON
     fi
     echo "## Not run in this rehearsal"
     [ -n "${RH_RELAY:-}" ] || echo "- The relay between forks (#3892): cross-chain messages are not delivered."
-    echo "- The readback against the desired state (#3893)."
     echo "- The indexer, keeper and app against the forks, and the smoke flows (#3894, #3895, #3896)."
     echo
     echo "## Limits (design section 10)"
@@ -236,6 +241,13 @@ JSON
       awk -F'\t' '{ printf "| %s | %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6, $7 }' "$FEEDS_TSV"
       echo
     fi
+    if [ -n "$READBACK_SUMMARY" ]; then
+      echo "## Readback (#3893)"
+      echo "$READBACK_SUMMARY"
+      echo
+      echo "Every row: \`$VAIPAKAM_REHEARSAL_ROOT/readback.json\`"
+      echo
+    fi
     echo "## Logs"
     echo "\`$VAIPAKAM_REHEARSAL_ROOT/logs/\`"
   } > "$SCRATCH/report.md"
@@ -247,6 +259,11 @@ PLAN_DIGEST=$(sha256sum "$PLAN" | cut -d' ' -f1)
 lineno=0
 while IFS= read -r line || [ -n "$line" ]; do
   lineno=$((lineno + 1))
+  # The plan's first line names the desired file and its hash; the readback
+  # reads that file, and only while its hash still matches.
+  if [[ "$line" =~ ^\#\ desired\ ([^[:space:]]+)\ sha256\ ([0-9a-f]{64})$ ]]; then
+    DESIRED="${BASH_REMATCH[1]}"; DESIRED_SHA="${BASH_REMATCH[2]}"
+  fi
   line="${line%%#*}"
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
@@ -505,7 +522,35 @@ for s in "${STEP_LINES[@]}"; do
 done
 log "  ✓ ${#STEP_LINES[@]} steps ran"
 
-# ── 7. compare ─────────────────────────────────────────────────────────
+# ── 7. readback ────────────────────────────────────────────────────────
+# The end state against the desired file, on the state the steps left and
+# before anything else touches it (design sections 6 and 17).
+stage readback
+if [ -z "$DESIRED" ]; then
+  UNCOVERED+=("the readback (#3893): the plan names no desired file (its first line, written by deploy-plan.mjs)")
+  log "  ✗ the plan names no desired file; the readback cannot run"
+else
+  desired_abs="$DESIRED"; [ "${DESIRED#/}" = "$DESIRED" ] && desired_abs="$CONTRACTS_DIR/$DESIRED"
+  [ -f "$desired_abs" ] || { FAILED_STAGE="readback ($DESIRED not found)"; exit 1; }
+  [ "$(sha256sum "$desired_abs" | cut -d' ' -f1)" = "$DESIRED_SHA" ] \
+    || { FAILED_STAGE="readback ($DESIRED changed since the plan was made)"; exit 1; }
+  rb_args=("$desired_abs" --records "$VAIPAKAM_REHEARSAL_ROOT" --json "$SCRATCH/readback.json")
+  [ -f "$RH_ENV_FILE" ] && rb_args+=(--env-file "$RH_ENV_FILE")
+  for c in "${CHAINS[@]}"; do rb_args+=(--rpc "$c=${FORK_URL[$c]}"); done
+  set +e
+  (cd "$CONTRACTS_DIR" && "$RH_NODE" "$RH_READBACK" "${rb_args[@]}") 2>&1 | rh_redact > "$LOGS/readback.log"
+  rb_rc=${PIPESTATUS[0]}
+  set -e
+  READBACK_SUMMARY=$(tail -1 "$LOGS/readback.log" | sed 's/^ *//')
+  if [ "$rb_rc" -ne 0 ]; then
+    grep -E '^(not met|unreadable)' "$LOGS/readback.log" | head -20 | sed 's/^/      /' | tee -a "$LOGS/driver.log"
+    FAILED_STAGE="readback (${READBACK_SUMMARY:-exit $rb_rc})"
+    exit 1
+  fi
+  log "  ✓ $READBACK_SUMMARY"
+fi
+
+# ── 8. compare ─────────────────────────────────────────────────────────
 stage compare
 "$RH_NODE" "$SCRIPT_DIR/rehearsal-tree.mjs" snapshot "$SCRATCH/tree.after.json" --scratch "contracts/$VAIPAKAM_REHEARSAL_ROOT"
 "$RH_NODE" "$SCRIPT_DIR/rehearsal-tree.mjs" compare "$SCRATCH/tree.before.json" "$SCRATCH/tree.after.json" 2>&1 \

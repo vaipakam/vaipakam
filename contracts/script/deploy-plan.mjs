@@ -76,15 +76,33 @@ export function termsVersions(root = REPO_ROOT) {
   return out;
 }
 
+/**
+ * The Diamond's getters that name another deployment contract: views with no
+ * inputs that return one address, read from the combined Diamond ABI (#3893).
+ * The readback refuses a zero answer from any of them unless the desired file
+ * lists it under `notDeployedHere` with a reason.
+ */
+export function addressGetters(root = REPO_ROOT) {
+  const abi = JSON.parse(readFileSync(join(root, 'packages/contracts/src/diamondAbi.json'), 'utf8'));
+  return new Set(
+    abi
+      .filter((f) => f.type === 'function' && ['view', 'pure'].includes(f.stateMutability))
+      .filter((f) => f.inputs.length === 0 && f.outputs.length === 1 && f.outputs[0].type === 'address')
+      .map((f) => `${f.name}()`),
+  );
+}
+
+const MIN_REASON = 20;
+
 /** A setting's setter arguments, getter arguments and expected read-back words. */
 export const settingArgs = (s) => s.args ?? (s.value === undefined ? [] : [s.value]);
 export const settingExpect = (s) => s.expect ?? (s.value === undefined ? [] : [s.value]);
 
-const canonicalOf = (d) => Object.entries(d.chains).find(([, c]) => c.role === 'canonical')?.[0];
-const settingChains = (s, d) => (s.chains === 'all' ? Object.keys(d.chains) : s.chains);
+export const canonicalOf = (d) => Object.entries(d.chains).find(([, c]) => c.role === 'canonical')?.[0];
+export const settingChains = (s, d) => (s.chains === 'all' ? Object.keys(d.chains) : s.chains);
 
 /** Problems with a desired-state file, as strings. Pure over its inputs. */
-export function validate(d, { flags, terms }) {
+export function validate(d, { flags, terms, getters }) {
   const p = [];
   if (!d || typeof d !== 'object') return ['not a JSON object'];
   if (!['testnet', 'mainnet'].includes(d.network)) p.push(`network must be testnet or mainnet`);
@@ -158,6 +176,19 @@ export function validate(d, { flags, terms }) {
       p.push('sanctionsClearance.timelocks must list other chains of the file, each once');
     }
   }
+  // #3893: a deployment getter allowed to answer zero, per chain, with why.
+  for (const [g, e] of Object.entries(d.notDeployedHere ?? {})) {
+    if (getters && !getters.has(g)) p.push(`notDeployedHere.${g}: not a Diamond getter that returns one address (no inputs)`);
+    if (typeof e?.reason !== 'string' || e.reason.trim().length < MIN_REASON) p.push(`notDeployedHere.${g}: needs a reason of at least ${MIN_REASON} characters`);
+    const on = e?.chains === 'all' ? slugs : e?.chains;
+    if (!Array.isArray(on) || !on.length || on.some((c) => !slugs.includes(c))) p.push(`notDeployedHere.${g}: chains must be "all" or a list of the file's chains`);
+  }
+  // #3893: contracts a run creates and deliberately does not record, by name.
+  for (const [name, why] of Object.entries(d.notRecorded ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) p.push(`notRecorded.${name}: must be a contract name`);
+    if (typeof why !== 'string' || why.trim().length < MIN_REASON) p.push(`notRecorded.${name}: needs a reason of at least ${MIN_REASON} characters`);
+  }
+  if (d.terms?.minAgeSec !== undefined && !(Number.isInteger(d.terms.minAgeSec) && d.terms.minAgeSec >= 0)) p.push('terms.minAgeSec must be a whole number of seconds');
   for (const [i, m] of (d.manual ?? []).entries()) {
     if (!m.after || !['configure', 'launch'].includes(m.after)) p.push(`manual[${i}]: after must be configure or launch`);
     if (!m.what || m.what.length < 20) p.push(`manual[${i}]: needs a description (what)`);
@@ -376,7 +407,7 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
 /** 00:00 UTC of the day `nowSec` falls in. */
 export const todayAnchor = (nowSec) => nowSec - (nowSec % 86400);
 
-function readDesired(path) {
+export function readDesired(path) {
   const text = readFileSync(path, 'utf8');
   return { d: JSON.parse(text), digest: createHash('sha256').update(text).digest('hex') };
 }
@@ -396,7 +427,7 @@ export function main(argv = process.argv.slice(2), { now = () => Math.floor(Date
     return 1;
   }
   const terms = termsVersions();
-  const problems = validate(d, { flags: keeperFlags(), terms });
+  const problems = validate(d, { flags: keeperFlags(), terms, getters: addressGetters() });
   for (const p of problems) console.error(`  ✗ ${p}`);
   if (problems.length) return 1;
   if (cmdName === 'check') {

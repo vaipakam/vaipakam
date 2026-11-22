@@ -193,6 +193,35 @@
     ],
     "_why": "Owner decision 2026-11-16: rewire the sanctions delisting route after all three chains are deployed; BNB testnet answers clearance requests for the Base and Arbitrum timelocks (ConfigureSanctionsClearance header)."
   },
+  "notDeployedHere": {
+    "getBaseRewardDeployment()": {
+      "chains": [
+        "base-sepolia"
+      ],
+      "reason": "Base is the canonical reward chain; only a mirror records the Base reward deployment it reports to."
+    },
+    "getRewardRemittanceReceiver()": {
+      "chains": [
+        "base-sepolia"
+      ],
+      "reason": "The reward remittance receiver takes Base's budget on a mirror; Base sends remittances and receives none."
+    },
+    "getBuybackRemittanceReceiver()": {
+      "chains": [
+        "arb-sepolia",
+        "bnb-testnet"
+      ],
+      "reason": "Buyback remittances are received on the canonical chain only; a mirror sends its buyback share to Base."
+    },
+    "getVPFIMinter()": {
+      "chains": [
+        "arb-sepolia",
+        "bnb-testnet"
+      ],
+      "reason": "VPFI is minted on the canonical chain only; a mirror holds the CCIP mirror token, which has no minter on the Diamond."
+    }
+  },
+  "_notDeployedHereWhy": "#3893: the readback refuses a zero answer from any Diamond getter that names a deployment contract unless it is listed here with a reason. These four are zero by design (the canonical/mirror split). Outside venues and our own unwired contracts await a design decision.",
   "manual": [],
   "keeper": {
     "armed": {
