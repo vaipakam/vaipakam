@@ -108,9 +108,13 @@ const SELECTOR = /^0x[0-9a-f]{8}$/;
 const UINT = /^(0|[1-9][0-9]{0,77})$/;
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/;
 
+/** A refusal of the write's shape. Its text is our own, carried as `reason`. */
 class Refusal extends Error {
-  constructor(message: string, readonly status = 400) {
-    super(message);
+  constructor(
+    readonly reason: string,
+    readonly status = 400,
+  ) {
+    super(reason);
   }
 }
 const refuse = (msg: string): never => {
@@ -289,7 +293,7 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
         return refuse('kind must be records, cursor or replaced');
     }
   } catch (e) {
-    if (e instanceof Refusal) return { ok: false, error: e.message, status: e.status };
+    if (e instanceof Refusal) return { ok: false, error: e.reason, status: e.status };
     throw e;
   }
 }
