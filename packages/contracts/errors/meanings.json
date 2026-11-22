@@ -19,6 +19,11 @@
       "actor": "user",
       "message": "Your account does not have the required role for this action."
     },
+    "AlreadyRecorded": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (its order was already recorded, or its record was missing). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
     "AlreadyRegistered()": {
       "actor": "user",
       "message": "Country already registered — cannot change after initial set."
@@ -50,6 +55,11 @@
     "AssetPaused": {
       "actor": "user",
       "message": "This asset is currently paused by governance. Wait for the pause to lift before retrying."
+    },
+    "AuctionEndTimeOverflow": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (an end time too large to store). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
     },
     "BorrowerSanctioned": {
       "actor": "user",
@@ -86,6 +96,16 @@
     "DeadlineRequired": {
       "actor": "user",
       "message": "This action needs a time limit and none was sent. Nothing was done; reload the page and try again."
+    },
+    "DutchModeShapeViolation": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (a falling-price listing with an inconsistent price or end time). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
+    "EndAskPriceOverflow": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (an end price too large to store). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
     },
     "EnforcedPause": {
       "actor": "user",
@@ -135,9 +155,24 @@
       "actor": "user",
       "message": "This NFT does not exist."
     },
+    "FeeLegsTooMany": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (more fee legs than allowed). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
+    "FeeLegZeroAmount": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (a fee leg of zero). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
     "FeeTooHigh": {
       "actor": "user",
       "message": "The fee for this action exceeds the allowed maximum."
+    },
+    "FixedPriceModeShapeViolation": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (a fixed-price listing carrying falling-price fields). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
     },
     "FunctionDisabled": {
       "actor": "user",
@@ -338,6 +373,11 @@
     "ListingHeldAboveReviewed": {
       "actor": "user",
       "message": "More has been set aside for the lender on this loan since you reviewed the listing. Nothing was listed. Review the listing again to see the current figures."
+    },
+    "LoanIdOverflow": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (a loan number too large to store). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
     },
     "LoanInitiationFailed": {
       "actor": "user",
@@ -628,6 +668,11 @@
       "actor": "user",
       "message": "Price data is stale — the oracle has not updated recently."
     },
+    "StartTimeOverflow": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (a start time too large to store). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
     "TooManyOpenOffers": {
       "actor": "user",
       "message": "This wallet already has as many open offers as the protocol allows. Cancel an offer you no longer need (an expired offer counts until you cancel it), then try again."
@@ -639,6 +684,11 @@
     "UnauthorizedCrossFacetCall": {
       "actor": "nobody",
       "message": "A step that only the platform itself may take was called from outside. This is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
+    "UnknownPrepayMode": {
+      "actor": "nobody",
+      "message": "The marketplace listing record refused an order the platform built itself (an unknown listing kind). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
       "internal": true
     },
     "UnsupportedLoanShape": {

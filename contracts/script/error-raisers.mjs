@@ -43,8 +43,10 @@
  *     facet. The call is followed into every facet that implements it;
  *   - typed external calls to an interface or contract DECLARED IN `src/`
  *     (the protocol's own interfaces), followed into each shipped contract
- *     whose inheritance includes it (a price read reaches `PriceGuard`, a
- *     vault step the vault implementation). Calls through standard interfaces
+ *     that implements it: inherits it, or has every function it declares (a
+ *     price read reaches `PriceGuard`, a vault step the vault implementation,
+ *     an `IPositionNFTCore.mint` the `PositionNFT`, which does not inherit
+ *     that interface). Calls through standard interfaces
  *     declared in `lib/` (IERC20, IERC721, ...) are not followed: they reach
  *     tokens the platform does not ship, and following them into the
  *     platform's own token contracts would list those contracts' errors under
@@ -112,9 +114,13 @@ function isSelf(e) {
 function describe(c, role, byId) {
   const lineage = c.linearizedBaseContracts ?? [c.id];
   const bySelector = new Map();
+  // Every selector the contract answers, public state-variable getters
+  // included (they raise nothing, but they count when matching an interface).
+  const answers = new Set();
   let fallback;
   for (const baseId of lineage) {
     for (const n of byId.get(baseId)?.nodes ?? []) {
+      if (n.nodeType === 'VariableDeclaration' && n.functionSelector) answers.add(n.functionSelector);
       if (n.nodeType !== 'FunctionDefinition' || !n.implemented) continue;
       if (n.kind === 'fallback' || n.kind === 'receive') {
         if (n.kind === 'fallback' && !fallback) fallback = n;
@@ -123,9 +129,10 @@ function describe(c, role, byId) {
       if (n.kind !== 'function') continue;
       if (n.visibility !== 'external' && n.visibility !== 'public') continue;
       if (!bySelector.has(n.functionSelector)) bySelector.set(n.functionSelector, n);
+      answers.add(n.functionSelector);
     }
   }
-  return { name: c.name, role, node: c, lineage, bySelector, fallback };
+  return { name: c.name, role, node: c, lineage, bySelector, answers, fallback };
 }
 
 /**
@@ -348,7 +355,7 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
   const { shipped, reachedOnly, missing } = shippedContracts(units, manifest, byId);
   const byName = new Map([...shipped, ...reachedOnly].map((c) => [c.name, c]));
 
-  // The Diamond's routing, and which shipped contracts inherit each src/ declaration's contract.
+  // The Diamond's routing, and where each src/ declaration's function lives.
   const routing = new Map(); // selector → [{contract, fn}]
   for (const c of shipped) {
     if (c.role !== 'facet') continue;
@@ -365,13 +372,32 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
       for (const m of n.nodes ?? []) if (m.nodeType === 'FunctionDefinition') declaringContract.set(m.id, { contract: n, path: u.absolutePath });
     }
   }
+  // A contract implements a src/ interface when it inherits it, or when it has
+  // every function the interface declares: a narrow interface
+  // (IPositionNFTCore for PositionNFT) is often not inherited by the contract it
+  // targets. Matching on the whole interface, not the one selector, keeps a call
+  // through a one-off interface's `transferOwnership` from reaching every
+  // Ownable contract the platform ships.
+  const conformance = new Map();
+  const implementsDeclaring = (c, iface) => {
+    if (c.lineage.includes(iface.id)) return true;
+    const key = `${c.node.id}:${iface.id}`;
+    if (!conformance.has(key)) {
+      const sels = [];
+      for (const m of iface.nodes ?? []) {
+        if (m.nodeType === 'FunctionDefinition' && m.functionSelector) sels.push(m.functionSelector);
+      }
+      conformance.set(key, sels.length > 0 && sels.every((x) => c.answers.has(x)));
+    }
+    return conformance.get(key);
+  };
   const externalTargets = (decl) => {
     const owner = declaringContract.get(decl.id);
     if (!owner || !owner.path?.startsWith('src/') || !decl.functionSelector) return [];
     const out = [];
     for (const c of [...shipped, ...reachedOnly]) {
       if (c.role === 'facet' || c.role === 'proxy') continue;
-      if (!c.lineage.includes(owner.contract.id)) continue;
+      if (!implementsDeclaring(c, owner.contract)) continue;
       const fn = c.bySelector.get(decl.functionSelector);
       if (fn) out.push({ contract: c, fn });
     }

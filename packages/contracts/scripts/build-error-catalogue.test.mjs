@@ -94,6 +94,17 @@ test('raisers must name catalogued errors, and a reached declaration must hash t
   assert.equal(reached.rows.get(sel('R()')).source, 'reached');
 });
 
+test('a reached declaration that collides with a shipped error is refused', () => {
+  // burn(uint256) and collate_propagate_storage(bytes16) share 0x42966c68.
+  const errors = errs('burn(uint256)');
+  const { problems } = buildCatalogue({
+    errors,
+    meanings: meanings({ burn: msg('x') }),
+    raisers: { declarations: { [sel('collate_propagate_storage(bytes16)')]: { signature: 'collate_propagate_storage(bytes16)', inputs: [] } }, raisers: {} },
+  });
+  assert.match(problems.join('\n'), /selector collision 0x42966c68: a shipped interface declares burn\(uint256\) and a reached contract raises collate_propagate_storage\(bytes16\)/);
+});
+
 test('Error(string) and Panic(uint256) are always catalogued; Panic is internal', () => {
   const catalogue = JSON.parse(readFileSync(CATALOGUE_PATH, 'utf8')).errors;
   assert.equal(catalogue[sel('Error(string)')].source, 'builtin');

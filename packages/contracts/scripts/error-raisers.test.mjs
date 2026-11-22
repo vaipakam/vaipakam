@@ -111,6 +111,25 @@ test('a typed call to a src/ interface reaches the shipped contract that impleme
   assert.deepEqual(viaLib['0xeeeeeeee'], ['Reader.read(0x0000aaaa)']);
 });
 
+test('a src/ interface reaches a contract that has all its functions without inheriting it, and not one that has only some', () => {
+  const E = errDef('E', '0xeeeeeeee');
+  const iMint = fn('mint', null, { selector: '0x0000aaaa' });
+  iMint.implemented = false;
+  const iOwner = fn('owner', null, { selector: '0x0000bbbb' });
+  iOwner.implemented = false;
+  const I = contract('INarrow', [iMint, iOwner], { contractKind: 'interface' });
+  // Answers both selectors, `owner` as a public state variable; inherits nothing.
+  const full = contract('Full', [E, fn('mint', block(revertWith(E)), { selector: '0x0000aaaa' }), { nodeType: 'VariableDeclaration', name: 'owner', functionSelector: '0000bbbb' }]);
+  // Answers `mint` only.
+  const F = errDef('F', '0xffffffff');
+  const partial = contract('Partial', [F, fn('mint', block(revertWith(F)), { selector: '0x0000aaaa' })]);
+  const ext = call({ nodeType: 'MemberAccess', memberName: 'mint', expression: { nodeType: 'Identifier', name: 'n' }, referencedDeclaration: iMint.id, typeDescriptions: { typeString: 'function () external' } });
+  const U = contract('User', [fn('use', block(stmt(ext)), { selector: '0x00000003' })]);
+  const { raisers } = raisersFrom([unit('src/I.sol', I), unit('src/Full.sol', full), unit('src/Partial.sol', partial), unit('src/U.sol', U)], manifest(['User'], ['Full', 'Partial']));
+  assert.deepEqual(raisers['0xeeeeeeee'], ['Full.mint(0x0000aaaa)', 'User.use(0x00000003)']);
+  assert.deepEqual(raisers['0xffffffff'], ['Partial.mint(0x0000aaaa)']);
+});
+
 test('an error declaration expands enums, contracts and structs to ABI types', () => {
   const en = { nodeType: 'EnumDefinition', id: id(), name: 'K' };
   const st = { nodeType: 'StructDefinition', id: id(), name: 'S', members: [{ name: 'a', typeName: { nodeType: 'ElementaryTypeName', name: 'uint256' } }] };

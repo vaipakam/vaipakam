@@ -116,7 +116,12 @@ export function buildCatalogue({ errors, meanings, raisers: raisersFile }) {
       problems.push(`errorRaisers.json declares ${d.signature} under ${selector}, which is not its selector`);
       continue;
     }
-    if (!errors.has(selector)) reached.set(selector, { signature: d.signature, name: nameOf(d.signature), inputs: d.inputs });
+    const shipped = errors.get(selector);
+    if (shipped && shipped.signature !== d.signature) {
+      problems.push(`selector collision ${selector}: a shipped interface declares ${shipped.signature} and a reached contract raises ${d.signature}`);
+      continue;
+    }
+    if (!shipped) reached.set(selector, { signature: d.signature, name: nameOf(d.signature), inputs: d.inputs });
   }
   const entries = meanings.entries ?? {};
   const bySignature = new Map();
