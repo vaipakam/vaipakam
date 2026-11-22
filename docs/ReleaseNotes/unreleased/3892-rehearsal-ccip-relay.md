@@ -1,4 +1,4 @@
-## Deploy rehearsal — the CCIP relay between forks (PR #<n>)
+## Deploy rehearsal — the CCIP relay between forks (PR #3903)
 
 The deploy rehearsal can now carry a cross-chain message between its local
 forks of the testnets. On the sending fork nothing is replaced: the
