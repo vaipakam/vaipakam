@@ -265,6 +265,10 @@
     "./txExplainer": {
       "types": "./src/txExplainer.ts",
       "default": "./src/txExplainer.ts"
+    },
+    "./txExplainerNode": {
+      "types": "./src/txExplainerNode.ts",
+      "default": "./src/txExplainerNode.ts"
     }
   },
   "scripts": {

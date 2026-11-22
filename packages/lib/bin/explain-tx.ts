@@ -31,7 +31,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { createPublicClient, http, parseAbi, type Abi, type Hex, type PublicClient } from 'viem';
+import { createPublicClient, http, type Hex, type PublicClient } from 'viem';
 import * as abis from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
@@ -45,49 +45,10 @@ import {
   type ReceiptFacts,
   type TransactionSubject,
 } from '../src/txExplainer';
+import { CALL_TRACER, boundedFailure, platformAbis, receiptFacts } from '../src/txExplainerNode';
 
-const TRACER = { tracer: 'callTracer', tracerConfig: { withLog: true } } as const;
-
-/**
- * The outside interfaces a platform transaction routinely calls: tokens and
- * price feeds. Only what decoding needs; the platform's own ABIs come first.
- */
-const OUTSIDE_ABI = parseAbi([
-  'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
-  'function decimals() view returns (uint8)',
-  'function balanceOf(address account) view returns (uint256)',
-  'function allowance(address owner, address spender) view returns (uint256)',
-  'function transfer(address to, uint256 amount) returns (bool)',
-  'function transferFrom(address from, address to, uint256 amount) returns (bool)',
-  'function approve(address spender, uint256 amount) returns (bool)',
-  'event Transfer(address indexed from, address indexed to, uint256 value)',
-  'event Approval(address indexed owner, address indexed spender, uint256 value)',
-]);
-
-/** Every ABI the platform ships (the Diamond union and each standalone
- *  contract), then the outside interfaces. Built once. */
-let cachedAbis: Abi[] | undefined;
-function platformAbis(): Abi[] {
-  cachedAbis ??= [abis.DIAMOND_ABI_VIEM]
-    .concat(Object.entries(abis).filter(([k, v]) => k.endsWith('ABI') && Array.isArray(v)).map(([, v]) => v as unknown as Abi))
-    .concat([OUTSIDE_ABI as Abi]);
-  return cachedAbis;
-}
-
-/** A failure described without the request (viem's long message carries the URL). */
-function bounded(e: unknown): string {
-  const short = (e as { shortMessage?: unknown })?.shortMessage;
-  if (typeof short === 'string') return short;
-  return e instanceof Error ? e.name : 'an unknown failure';
-}
-
-function receiptFacts(r: { status: string; gasUsed: bigint; logs: ReadonlyArray<{ address: string; topics: readonly string[]; data: string }> }): ReceiptFacts {
-  return {
-    status: r.status === 'success' ? 'success' : 'reverted',
-    gasUsed: r.gasUsed,
-    logs: r.logs.map((l) => ({ address: l.address, topics: [...l.topics], data: l.data })),
-  };
-}
+const TRACER = CALL_TRACER;
+const bounded = boundedFailure;
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

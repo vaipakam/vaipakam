@@ -76,7 +76,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleRepaymentRecord, handleRepaymentRecordPreflight } from './repaymentRecord';
 import { handleIngestHealth } from './healthRoutes';
-import { handleFailedTxHealth, handleFailedTxWrite, pruneOldFailedTx } from './failedTx';
+import { handleFailedTxHealth, handleFailedTxState, handleFailedTxWrite, pruneOldFailedTx } from './failedTx';
 import { handleAssetRankings } from './assetRankings';
 import { handleAssetIssuerPowers } from './issuerPowers';
 import { handlePublicFeed, handlePublicFeedPreflight, isPublicFeedPath } from './publicFeed';
@@ -578,12 +578,18 @@ export default {
     // #3918 — the failed transaction record. The write is the failed-tx
     // pass's ONE route (records, its cursor, a replaced range), under its own
     // token, read from the raw env before any Secrets Store fetch: an
-    // unauthenticated POST is refused from the header alone. The health read
-    // is D1 only, like /health/ingest.
+    // unauthenticated POST is refused from the header alone. Its state read
+    // (#3919: the pass has no database, so its cursor and checkpoints come
+    // back from here) is under the same token and reads only its own tables.
+    // The health read is D1 only, like /health/ingest.
     if (url.pathname === '/internal/failed-tx') {
       if (req.method === 'POST') {
         return handleFailedTxWrite(req, earlyRouteEnv(env).DB, env.FAILED_TX_WRITER_TOKEN, readBodyText);
       }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname === '/internal/failed-tx/state') {
+      if (req.method === 'GET') return handleFailedTxState(req, earlyRouteEnv(env).DB, env.FAILED_TX_WRITER_TOKEN);
       return new Response('Not found', { status: 404 });
     }
     if (url.pathname === '/health/failed-tx') {

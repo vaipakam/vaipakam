@@ -1,0 +1,25 @@
+{
+  "name": "@vaipakam/failed-tx-pass",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The failed transaction pass (#3919): finds failed transactions sent to the platform's contracts, decodes them while the node still holds the state, and writes them through the indexer's /internal/failed-tx route. Runs on the keeper machine as its own unit, with no signing key and no database binding.",
+  "scripts": {
+    "start": "tsx host/main.ts",
+    "build": "esbuild host/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/failed-tx-pass.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*",
+    "viem": "^2.48.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "esbuild": "^0.27.7",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.4"
+  }
+}

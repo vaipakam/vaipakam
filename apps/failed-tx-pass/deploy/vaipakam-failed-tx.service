@@ -1,0 +1,59 @@
+# One run of the failed transaction pass (apps/failed-tx-pass/README.md).
+#
+# A oneshot: it reads each configured network's settled head, finds failed
+# transactions sent to the platform's contracts, decodes them while the node
+# still holds the state, writes them through the indexer's
+# /internal/failed-tx route, and exits. The timer starts it every five
+# minutes; `systemctl start` runs it now. Logs: journalctl -u vaipakam-failed-tx
+#
+# It holds NO signing key and NO database binding: its only write is the
+# indexer route, under its own token. The env file stays root-only (0600) and
+# LoadCredential hands a copy to this run's dynamic user alone; `env -i`
+# starts Node with an EMPTY environment, so the file is the only source of
+# settings.
+#
+# The keeper's files are out of its reach (design condition, #3919): the
+# whole of /etc/vaipakam (every service's env file, the keeper's included) and
+# the keeper's and the sanctions services' state and release trees are made
+# inaccessible to this unit. Its own env file still arrives, because the
+# service manager reads it for LoadCredential before the sandbox is applied.
+
+[Unit]
+Description=Vaipakam failed transaction pass
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/apps/failed-tx-pass/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=vaipakam-failed-tx
+StateDirectoryMode=0700
+LoadCredential=failed-tx.env:/etc/vaipakam/failed-tx.env
+ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-failed-tx CAPABILITY_RESULTS_DIR=/opt/vaipakam-failed-tx/current/ops/node-capability/results /usr/local/bin/node --max-old-space-size=256 --env-file=%d/failed-tx.env /opt/vaipakam-failed-tx/current/apps/failed-tx-pass/dist/failed-tx-pass.mjs
+InaccessiblePaths=-/etc/vaipakam
+InaccessiblePaths=-/opt/vaipakam-keeper -/var/lib/vaipakam-keeper -/var/lib/private/vaipakam-keeper
+InaccessiblePaths=-/opt/vaipakam-sanctions -/var/lib/vaipakam-sanctions-adder -/var/lib/private/vaipakam-sanctions-adder -/var/lib/vaipakam-sanctions-delister -/var/lib/private/vaipakam-sanctions-delister
+# The cap makes an unexpected growth fail THIS run, never the keeper beside
+# it, and the weights give the keeper the machine whenever both want it.
+MemoryMax=384M
+CPUWeight=20
+IOWeight=20
+Nice=10
+# A run is a few hundred node and explorer requests; a run still going after
+# this long is stopped, and the next one starts where it stood.
+TimeoutStartSec=4min
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+# MemoryDenyWriteExecute is deliberately NOT set: V8's JIT needs W+X pages.
+SystemCallArchitectures=native

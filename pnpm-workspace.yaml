@@ -37,6 +37,11 @@
 #                   Wallet-free.
 #   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
 #   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
+#   - apps/failed-tx-pass  the failed transaction pass (#3919): a oneshot
+#                   on the keeper machine (its own unit, user and env
+#                   file; no signing key, no database binding), writing
+#                   only through the indexer's /internal/failed-tx route.
+#                   No hostname.
 #   - apps/keeper  autonomous keeper Worker   → NO public hostname, by
 #                   design. Cron-ONLY but CURRENTLY UNSCHEDULED —
 #                   wrangler.jsonc commits `"crons": []` deliberately

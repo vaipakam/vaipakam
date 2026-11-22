@@ -1,0 +1,15 @@
+# Runs the failed transaction pass every five minutes (§4.3: the explorer's
+# list of the contracts users call directly is read every few minutes; the
+# rest hourly, and the audit window in slices over the day).
+#   systemctl enable --now vaipakam-failed-tx.timer
+
+[Unit]
+Description=Vaipakam failed transaction pass: every five minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

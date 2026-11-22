@@ -15,5 +15,5 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["*.ts", "../src/txExplainer.ts", "../src/txExplainer.test.ts"]
+  "include": ["*.ts", "../src/txExplainer.ts", "../src/txExplainerNode.ts", "../src/txExplainer.test.ts"]
 }

@@ -20,6 +20,13 @@ before it does anything. Read §2 before starting anything.
 | `vaipakam.slice` | (a slice, not a process) | the keeper's own top-level slice, so the keeper's memory protection takes effect |
 | `vaipakam-keeper-update.timer` → `.service` | root, verifying in a throwaway sandbox | every 5 minutes: deploy main's latest keeper build if it is not running (`update.sh`) |
 
+Two other services share the machine and none of the keeper's state: the
+sanctions adder and delister (`ops/sanctions/`), and the failed transaction
+pass (`apps/failed-tx-pass/`, #3919: read-only, no key, writes only through the
+indexer). Each has its own dynamic user, env file and memory cap, is deployed
+by its own `install.sh` from a named commit, and cannot read the keeper's env
+file.
+
 A merge to `main` is the deploy. This machine never builds the keeper: CI
 does ([`keeper-host-release.yml`](../../.github/workflows/keeper-host-release.yml)),
 and the machine downloads what CI published and checks it. Each run of
