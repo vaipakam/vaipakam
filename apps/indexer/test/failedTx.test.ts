@@ -278,6 +278,19 @@ describe('the deployment a write was made under', () => {
     expect(s.rows('SELECT COUNT(*) AS n FROM failed_tx_cursor')).toEqual([{ n: 0 }]);
   });
 
+  it('marks every checkpoint in the range, whichever height the stale one is at', async () => {
+    const s = setup();
+    await s.post({
+      kind: 'cursor',
+      chainId: CHAIN,
+      cursor: { mode: 'trace-filter', blockNumber: 1300, blockTime: NOW, checkpoints: [1000, 1100, 1200, 1300].map((n) => ({ blockNumber: n, blockHash: h64(n) })) },
+    });
+    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 1000, toBlock: 1300, staleCheckpoint: { blockNumber: 1000, blockHash: h64(1000) } });
+    expect(s.rows("SELECT from_block, replaced_at FROM failed_tx_range WHERE kind = 'checkpoint' ORDER BY from_block")).toEqual(
+      [1000, 1100, 1200, 1300].map((n) => ({ from_block: n, replaced_at: NOW })),
+    );
+  });
+
   it('applies a replacement once: a duplicate, even after a rescan, marks nothing new', async () => {
     const s = setup();
     const cursor = (hash: string) => ({ kind: 'cursor', chainId: CHAIN, cursor: { mode: 'trace-filter', blockNumber: 1100, blockTime: NOW, checkpoints: [{ blockNumber: 1100, blockHash: hash }] } });

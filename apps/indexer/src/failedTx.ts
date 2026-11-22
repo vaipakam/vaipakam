@@ -440,8 +440,7 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
       // hash at that height, finds no live stale checkpoint and changes
       // nothing. The count is taken inside the batch, just before the
       // marking, so it is exactly the rows this batch marks.
-      const live = `EXISTS (SELECT 1 FROM failed_tx_range WHERE chain_id = ?1 AND kind = 'checkpoint'
-        AND from_block = ?5 AND to_block = ?5 AND block_hash = ?6 AND replaced_at IS NULL)`;
+      // Each statement spells the guard out (no interpolation) so the SQL-vs-schema guard checks it.
       const binds = [w.chainId, w.fromBlock, w.toBlock, now, w.staleCheckpoint.blockNumber, w.staleCheckpoint.blockHash] as const;
       stmts.push(
         db
@@ -449,18 +448,25 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
             `INSERT INTO failed_tx_range (chain_id, kind, from_block, to_block, marked, recorded_at)
              SELECT ?1, 'replaced', ?2, ?3,
                (SELECT COUNT(*) FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL), ?4
-             WHERE ${live}
+             WHERE EXISTS (SELECT 1 FROM failed_tx_range WHERE chain_id = ?1 AND kind = 'checkpoint'
+               AND from_block = ?5 AND to_block = ?5 AND block_hash = ?6 AND replaced_at IS NULL)
              ON CONFLICT (chain_id, kind, from_block, to_block) DO UPDATE SET marked = failed_tx_range.marked + excluded.marked,
                recorded_at = excluded.recorded_at`,
           )
           .bind(...binds),
         db
-          .prepare(`UPDATE failed_tx SET replaced_at = ?4 WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL AND ${live}`)
+          .prepare(
+            `UPDATE failed_tx SET replaced_at = ?4 WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL
+             AND EXISTS (SELECT 1 FROM failed_tx_range WHERE chain_id = ?1 AND kind = 'checkpoint'
+               AND from_block = ?5 AND to_block = ?5 AND block_hash = ?6 AND replaced_at IS NULL)`,
+          )
           .bind(...binds),
         db
           .prepare(
             `UPDATE failed_tx_range SET replaced_at = ?4
-             WHERE chain_id = ?1 AND kind = 'checkpoint' AND from_block BETWEEN ?2 AND ?3 AND replaced_at IS NULL AND ${live}`,
+             WHERE chain_id = ?1 AND kind = 'checkpoint' AND from_block BETWEEN ?2 AND ?3 AND replaced_at IS NULL
+             AND EXISTS (SELECT 1 FROM failed_tx_range WHERE chain_id = ?1 AND kind = 'checkpoint'
+               AND from_block = ?5 AND to_block = ?5 AND block_hash = ?6 AND replaced_at IS NULL)`,
           )
           .bind(...binds),
       );
