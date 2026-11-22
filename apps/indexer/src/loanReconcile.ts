@@ -1,5 +1,6 @@
 import { withdrawOrphanLoan } from './loanOrphans';
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import { LAST_EVENT_SET, lastEventBinds, readPosition } from './lastEvent';
 
 /**
  * RECONCILING INDEXED LOAN STATUS AGAINST THE CHAIN (#2101 part B).
@@ -812,7 +813,8 @@ export async function reconcileAfterScan(
               SET status = ?, ${repair.mutable.assignments.join(', ')},
                   terminal_block = NULL, terminal_at = NULL, terminal_by_repair = 1,
                   repair_observed_status = ?, repair_observed_block = ?, repair_observed_at = ?,
-                  updated_at = ?
+                  updated_at = ?,
+                  ${LAST_EVENT_SET}
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
@@ -828,6 +830,8 @@ export async function reconcileAfterScan(
           Number(ctx.head),
           ctx.headAt,
           at,
+          // #3921 B2 — not an event: the post-image read at the settled block.
+          ...lastEventBinds(readPosition(ctx.head)),
           chainId,
           loanId,
         );

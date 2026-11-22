@@ -278,7 +278,7 @@ describe('a repair records the holder the chain named, and only that one', () =>
       _verifiedHolderStatements({ DB: h.d1 } as unknown as Env, CHAIN, 40, {
         lender: '0xnewlender',
         borrower: '0xnewborrower',
-      }, 1_700_000_000),
+      }, 1_700_000_000, { block: 500, txIndex: null, logIndex: null }),
     );
     expect(owners(h, 40)).toEqual({ l: '0xnewlender', b: '0xnewborrower' });
   });
@@ -296,6 +296,7 @@ describe('a repair records the holder the chain named, and only that one', () =>
       41,
       { lender: null, borrower: '0xnewborrower' },
       1_700_000_000,
+      { block: 500, txIndex: null, logIndex: null },
     );
     // One statement, not two with a null bound into the first.
     expect(stmts).toHaveLength(1);
@@ -310,7 +311,7 @@ describe('a repair records the holder the chain named, and only that one', () =>
       _verifiedHolderStatements({ DB: h.d1 } as unknown as Env, CHAIN, 42, {
         lender: null,
         borrower: null,
-      }, 1_700_000_000),
+      }, 1_700_000_000, { block: 500, txIndex: null, logIndex: null }),
     ).toEqual([]);
   });
 });

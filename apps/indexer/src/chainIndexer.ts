@@ -173,6 +173,7 @@ import {
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 import { fillSettingsHistory, historyAddresses, historyStatements, type RawLog } from './stateHistory';
+import { LAST_EVENT_SET, UNKNOWN_POSITION, eventPosition, lastEventBinds, readPosition, type RowPosition } from './lastEvent';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -1876,7 +1877,7 @@ export async function _runLoanReconcilePass(input: {
           // A side the chain named is recorded; a side it did not is left
           // exactly as it was — see `_verifiedHolderStatements`.
           const statements: D1PreparedStatement[] = [
-            ..._verifiedHolderStatements(env, chainId, loanId, holders, fingerprint.updatedAt),
+            ..._verifiedHolderStatements(env, chainId, loanId, holders, fingerprint.updatedAt, readPosition(head)),
             // #2195 — and the same verified holders into participation
             // history, which the event path alone writes and the missed
             // window may have skipped. Same transaction, same rule: only a
@@ -3336,6 +3337,10 @@ export interface DecodedLog {
    *  pending lane (#3411); the scan keys rows on (block, position). */
   blockHash?: string | null;
   transactionHash: string;
+  /** The transaction's position in its block, as the provider returned it
+   *  with the log (#3921 B2: the row's last-event columns). Optional because
+   *  test fixtures may not carry it; a row then records it as unknown. */
+  transactionIndex?: number | null;
   logIndex: number;
 }
 
@@ -3352,9 +3357,11 @@ async function processOfferLogs(
   // #3205 — `logIndex` with `blockNumber` is the point the offer opened
   // (`offers.created_log_index`), which a position-bound offer's moved verdict
   // compares against (`positionFlowMoves.ts`).
-  const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint; logIndex: number }[] = [];
-  const accepted: { offerId: bigint; loanId: bigint }[] = [];
-  const cancelled: { offerId: bigint }[] = [];
+  // #3921 B2 — every bucket entry carries its event's position (`pos`), which
+  // each write records as the row's last event (src/lastEvent.ts).
+  const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint; logIndex: number; pos: RowPosition }[] = [];
+  const accepted: { offerId: bigint; loanId: bigint; pos: RowPosition }[] = [];
+  const cancelled: { offerId: bigint; pos: RowPosition }[] = [];
   // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — distinct bucket
   // for the no-loan parallel-sale terminal so the D1 row's status flips
   // to 'consumed_by_sale' (NOT 'cancelled'), with its own
@@ -3362,14 +3369,16 @@ async function processOfferLogs(
   // cancelled-offer retention prune would eventually drop sold-offer
   // history rows the user expects to keep, and the UI couldn't
   // disambiguate "Sold via OpenSea" from a borrower-initiated cancel.
-  const consumedBySale: { offerId: bigint }[] = [];
+  const consumedBySale: { offerId: bigint; pos: RowPosition }[] = [];
   // #2382 r2 — borrower offers a match consumed part of. Their filled amounts
   // are NOT read here: one RPC read per match inside the scan made a burst of
   // matches spend past the invocation allowance before the cursor write.
   // They are marked unread instead (one statement for the whole batch, below)
   // and the detail-refresh lane, which runs after the cursor write, re-reads
   // them; until then the card states the request's floor as "at least".
-  const borrowerFillsStale = new Set<number>();
+  // #3921 B2 — keyed by offer, valued by the latest match's position, which
+  // the mark records as the row's last event.
+  const borrowerFillsStale = new Map<number, RowPosition>();
   // Range-Orders Phase 1 — partial-fill ratchet + terminal close.
   // Both replace the prior cron-driven `OR status = 'active'` refresh
   // sweep with single-field event-driven UPDATEs.
@@ -3378,7 +3387,7 @@ async function processOfferLogs(
     matchAmount: bigint;
     lenderRemainingPostMatch: bigint;
   }[] = [];
-  const closed: { offerId: bigint; reason: number }[] = [];
+  const closed: { offerId: bigint; reason: number; pos: RowPosition }[] = [];
   // #193 / Codex round-1 P1 — OfferModified and OfferMatched MUST be
   // applied in chain log order (not bucketed by type) because
   // `OfferMatched`'s UPDATE reads `amount_max` from the row at apply
@@ -3406,7 +3415,8 @@ async function processOfferLogs(
         // Persisted since migration 0054 added the column; #1149 was this
         // same write landing BEFORE the column existed, which the schema
         // gate (schemaGate.ts) now prevents for every migration.
-        collateralAmountMax: bigint; }
+        collateralAmountMax: bigint;
+        pos: RowPosition; }
     | { kind: 'matched';
         lenderOfferId: bigint;
         // #2382 — the borrower side of the match. Under partial fills its
@@ -3415,7 +3425,8 @@ async function processOfferLogs(
         borrowerOfferId: bigint;
         // #760 — block of the OfferMatched log, for the block-pinned
         // absolute `amountFilled` read in the apply loop below.
-        blockNumber: bigint; }
+        blockNumber: bigint;
+        pos: RowPosition; }
     // #3328 — a collection offer's parent moved: one loan was filled from
     // it (its `amountFilled` grew by the per-loan amount) or its lender
     // lowered the loans left (its `amount` / `amountMax` shrank). Both are
@@ -3433,10 +3444,12 @@ async function processOfferLogs(
         offerType: Number(a.offerType),
         blockNumber: log.blockNumber,
         logIndex: Number(log.logIndex),
+        pos: eventPosition(log),
       });
     } else if (log.eventName === 'OfferAccepted') {
       accepted.push({
         offerId: a.offerId as bigint,
+        pos: eventPosition(log),
         // loanId stays around for Phase B's loans-table seeding —
         // the OfferAccepted event already carries it, so Phase B's
         // loan handler doesn't need a parallel scan of this same
@@ -3444,13 +3457,13 @@ async function processOfferLogs(
         loanId: a.loanId as bigint,
       });
     } else if (log.eventName === 'OfferCanceled') {
-      cancelled.push({ offerId: a.offerId as bigint });
+      cancelled.push({ offerId: a.offerId as bigint, pos: eventPosition(log) });
     } else if (log.eventName === 'OfferConsumedBySale') {
       // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — Scenario A
       // terminal (buyer-side won the race). Distinct from `cancelled`
       // so the D1 row preserves the "Sold via OpenSea" terminal
       // state + escapes the cancelled-offer retention prune.
-      consumedBySale.push({ offerId: a.offerId as bigint });
+      consumedBySale.push({ offerId: a.offerId as bigint, pos: eventPosition(log) });
     } else if (log.eventName === 'OfferMatched') {
       // #193 / Codex round-1 P1 — flow into the log-order pass below
       // (interleaved with OfferModified) instead of the bucketed
@@ -3463,6 +3476,7 @@ async function processOfferLogs(
         // #760 — carried so the matched apply can read the absolute
         // `amountFilled` block-pinned to THIS event (idempotent re-scan).
         blockNumber: log.blockNumber,
+        pos: eventPosition(log),
       });
     } else if (log.eventName === 'CollectionOfferFilled' || log.eventName === 'CollectionOfferReduced') {
       // #3328 — the parent's amounts moved; re-read them in log order with
@@ -3476,6 +3490,7 @@ async function processOfferLogs(
       closed.push({
         offerId: a.offerId as bigint,
         reason: Number(a.reason),
+        pos: eventPosition(log),
       });
     } else if (log.eventName === 'OfferModified') {
       // #193 — full post-image arrives in the event payload so we can
@@ -3490,6 +3505,7 @@ async function processOfferLogs(
         interestRateBpsMax: a.interestRateBpsMax as bigint,
         collateralAmount: a.collateralAmount as bigint,
         collateralAmountMax: a.collateralAmountMax as bigint,
+        pos: eventPosition(log),
       });
     }
   }
@@ -3612,9 +3628,10 @@ async function processOfferLogs(
            is_stub, collateral_range_stale,
            created_at, expires_at, fill_mode,
            refinance_target_loan_id,
-           first_seen_block, created_log_index, first_seen_at, updated_at)
+           first_seen_block, created_log_index, first_seen_at, updated_at,
+           last_event_block, last_event_tx_index, last_event_log_index)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -3669,6 +3686,13 @@ async function processOfferLogs(
           o.logIndex,
           now,
           now,
+          // #3921 B2 — NOT the OfferCreated position: the figures above come
+          // from the unpinned read (#763), which may already reflect a later
+          // amend, match or acceptance, and its block cannot be named. So the
+          // row's provenance is unknown until an event or a pinned read next
+          // writes it (the range heal re-reads every such row at the settled
+          // block, because it is inserted `collateral_range_stale`).
+          ...lastEventBinds(UNKNOWN_POSITION),
         )
         .run();
       if ((result.meta?.changes ?? 0) > 0) newOffers++;
@@ -3689,9 +3713,10 @@ async function processOfferLogs(
          amount, interest_rate_bps, collateral_amount, duration_days,
          creator_current_owner,
          is_stub,
-         first_seen_block, created_log_index, first_seen_at, updated_at)
+         first_seen_block, created_log_index, first_seen_at, updated_at,
+         last_event_block, last_event_tx_index, last_event_log_index)
        VALUES
-        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?, ?)`,
+        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -3705,6 +3730,7 @@ async function processOfferLogs(
         o.logIndex,
         now,
         now,
+        ...lastEventBinds(o.pos),
       )
       .run();
     if ((result.meta?.changes ?? 0) > 0) newOffers++;
@@ -3713,10 +3739,10 @@ async function processOfferLogs(
   let statusUpdates = 0;
   for (const a of accepted) {
     const r = await env.DB.prepare(
-      `UPDATE offers SET status = 'accepted', updated_at = ?
+      `UPDATE offers SET status = 'accepted', updated_at = ?, ${LAST_EVENT_SET}
        WHERE chain_id = ? AND offer_id = ?`,
     )
-      .bind(now, chainId, Number(a.offerId))
+      .bind(now, ...lastEventBinds(a.pos), chainId, Number(a.offerId))
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
@@ -3730,10 +3756,10 @@ async function processOfferLogs(
     // uses this timestamp to drop rows past the operator-chosen
     // window.
     const r = await env.DB.prepare(
-      `UPDATE offers SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+      `UPDATE offers SET status = 'cancelled', cancelled_at = ?, updated_at = ?, ${LAST_EVENT_SET}
        WHERE chain_id = ? AND offer_id = ?`,
     )
-      .bind(now, now, chainId, Number(c.offerId))
+      .bind(now, now, ...lastEventBinds(c.pos), chainId, Number(c.offerId))
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
@@ -3748,10 +3774,10 @@ async function processOfferLogs(
   // persists.
   for (const c of consumedBySale) {
     const r = await env.DB.prepare(
-      `UPDATE offers SET status = 'consumed_by_sale', cancelled_at = ?, updated_at = ?
+      `UPDATE offers SET status = 'consumed_by_sale', cancelled_at = ?, updated_at = ?, ${LAST_EVENT_SET}
        WHERE chain_id = ? AND offer_id = ?`,
     )
-      .bind(now, now, chainId, Number(c.offerId))
+      .bind(now, now, ...lastEventBinds(c.pos), chainId, Number(c.offerId))
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
@@ -3810,15 +3836,18 @@ async function processOfferLogs(
       const r = await env.DB.prepare(
         `UPDATE offers
          SET amount_filled = ?,
-             updated_at = ?
+             updated_at = ?,
+             ${LAST_EVENT_SET}
          WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
       )
-        .bind(absFilled.toString(), now, chainId, Number(ev.lenderOfferId))
+        .bind(absFilled.toString(), now, ...lastEventBinds(readPosition(ev.blockNumber)), chainId, Number(ev.lenderOfferId))
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
       // #2382 r2 — the borrower offer's fills are re-read by the refresh
       // lane (see `borrowerFillsStale`), not here.
-      borrowerFillsStale.add(Number(ev.borrowerOfferId));
+      // Events arrive in log order here, so the last match to name an offer
+      // is its latest.
+      borrowerFillsStale.set(Number(ev.borrowerOfferId), ev.pos);
     } else if (ev.kind === 'collection') {
       // #3328 — the parent's post-image, block-pinned (idempotent re-scan).
       // FAIL-CLOSED like the match read above: a failed read aborts the scan
@@ -3848,7 +3877,8 @@ async function processOfferLogs(
          SET amount = ?,
              amount_max = ?,
              amount_filled = ?,
-             updated_at = ?
+             updated_at = ?,
+             ${LAST_EVENT_SET}
          WHERE chain_id = ? AND offer_id = ?`,
       )
         .bind(
@@ -3856,6 +3886,7 @@ async function processOfferLogs(
           BigInt(od.amountMax).toString(),
           BigInt(od.amountFilled).toString(),
           now,
+          ...lastEventBinds(readPosition(ev.blockNumber)),
           chainId,
           Number(ev.offerId),
         )
@@ -3879,7 +3910,8 @@ async function processOfferLogs(
              interest_rate_bps_max = ?,
              collateral_amount = ?,
              collateral_amount_max = ?,
-             updated_at = ?
+             updated_at = ?,
+             ${LAST_EVENT_SET}
          WHERE chain_id = ? AND offer_id = ?`,
       )
         .bind(
@@ -3890,6 +3922,7 @@ async function processOfferLogs(
           ev.collateralAmount.toString(),
           effectiveCollateralMax(ev.collateralAmount, ev.collateralAmountMax),
           now,
+          ...lastEventBinds(ev.pos),
           chainId,
           Number(ev.offerId),
         )
@@ -3926,18 +3959,18 @@ async function processOfferLogs(
     // Other reasons (fullyFilled / dust) leave cancelled_at NULL.
     if (status === 'cancelled') {
       const r = await env.DB.prepare(
-        `UPDATE offers SET status = ?, cancelled_at = ?, updated_at = ?
+        `UPDATE offers SET status = ?, cancelled_at = ?, updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(status, now, now, chainId, Number(cl.offerId))
+        .bind(status, now, now, ...lastEventBinds(cl.pos), chainId, Number(cl.offerId))
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     } else {
       const r = await env.DB.prepare(
-        `UPDATE offers SET status = ?, updated_at = ?
+        `UPDATE offers SET status = ?, updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(status, now, chainId, Number(cl.offerId))
+        .bind(status, now, ...lastEventBinds(cl.pos), chainId, Number(cl.offerId))
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     }
@@ -3961,18 +3994,33 @@ async function processOfferLogs(
 export async function markBorrowerFillsUnread(
   env: Env,
   chainId: number,
-  offerIds: readonly number[],
+  /** Each offer with the position of the match that consumed part of it. */
+  marks: readonly (readonly [number, RowPosition])[],
 ): Promise<void> {
-  if (offerIds.length === 0) return;
-  const chunks = chunkD1InList(offerIds, { before: [chainId] });
-  await env.DB.batch(
-    chunks.map((c) =>
-      env.DB.prepare(
-        `UPDATE offers SET collateral_amount_filled = NULL, collateral_range_stale = 1
-          WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
-      ).bind(...c.binds),
-    ),
-  );
+  if (marks.length === 0) return;
+  // #3921 B2 — the mark changes the figure (its fill becomes unread), so the
+  // row records the match as its last event. Offers marked by the same match
+  // share one statement; a block's matches are few, and each already costs a
+  // statement of its own for the lender side.
+  const byPosition = new Map<string, { pos: RowPosition; ids: number[] }>();
+  for (const [id, pos] of marks) {
+    const key = lastEventBinds(pos).join(':');
+    const group = byPosition.get(key) ?? { pos, ids: [] };
+    group.ids.push(id);
+    byPosition.set(key, group);
+  }
+  const statements: D1PreparedStatement[] = [];
+  for (const { pos, ids } of byPosition.values()) {
+    for (const c of chunkD1InList(ids, { before: [...lastEventBinds(pos), chainId] })) {
+      statements.push(
+        env.DB.prepare(
+          `UPDATE offers SET collateral_amount_filled = NULL, collateral_range_stale = 1, ${LAST_EVENT_SET}
+            WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
+        ).bind(...c.binds),
+      );
+    }
+  }
+  await env.DB.batch(statements);
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -4549,10 +4597,11 @@ async function refreshOfferDetails(
       `UPDATE offers SET is_stub = 0,
               collateral_amount_filled = COALESCE(collateral_amount_filled, '0'),
               collateral_range_stale = 0,
-              updated_at = ?
+              updated_at = ?,
+              ${LAST_EVENT_SET}
        WHERE chain_id = ? AND offer_id = ?`,
     )
-      .bind(now, chainId, offerId)
+      .bind(now, ...lastEventBinds(readPosition(atBlock)), chainId, offerId)
       .run();
     return false;
   }
@@ -4635,7 +4684,8 @@ async function refreshOfferDetails(
        creator_current_owner = COALESCE(?, NULLIF(creator_current_owner, ''), ?),
        is_stub = 0,
        collateral_range_stale = 0,
-       updated_at = ?
+       updated_at = ?,
+       ${LAST_EVENT_SET}
      WHERE chain_id = ? AND offer_id = ?`,
   )
     .bind(
@@ -4672,6 +4722,9 @@ async function refreshOfferDetails(
       observedOwner,
       o.creator.toLowerCase(),
       now,
+      // #3921 B2 — a read pinned at the pass's settled block: the row now
+      // reflects every event up to the end of it.
+      ...lastEventBinds(readPosition(atBlock)),
       chainId,
       offerId,
     )
@@ -4747,9 +4800,14 @@ export async function settleLoanRow(
   loanId: number,
   block: number | null,
   at: number | null,
+  /** #3921 B2 — what this write is: the LoanSettled event's position, or a
+   *  read of the loan's status pinned at the heal's settled block. */
+  pos: RowPosition,
 ): Promise<boolean> {
   // SET expressions read the row as it WAS, so `status` in each CASE is the
-  // prior status.
+  // prior status. The last-event assignment's plain `?`s take the numbers
+  // after the highest one before them (?4–?6), so the WHERE clause names its
+  // binds ?7 and ?8.
   // `fresh` = this write supplies a block the row does not already name
   // (none recorded, or a different one: the supplied block is the confirmed
   // canonical event, so it replaces an unconfirmed one — #2476 r15).
@@ -4768,8 +4826,9 @@ export async function settleLoanRow(
               WHEN terminal_at_verified = 0 AND ?2 IS NOT NULL THEN 1
               ELSE terminal_at_verified
             END,
-            status = 'settled', terminal_by_repair = 0, updated_at = ?3
-      WHERE chain_id = ?4 AND loan_id = ?5
+            status = 'settled', terminal_by_repair = 0, updated_at = ?3,
+            ${LAST_EVENT_SET}
+      WHERE chain_id = ?7 AND loan_id = ?8
         AND status NOT IN ('active', 'fallback_pending')
         AND (
           status <> 'settled'
@@ -4777,7 +4836,7 @@ export async function settleLoanRow(
           OR (?1 IS NOT NULL AND terminal_block = ?1 AND terminal_at_verified = 0 AND ?2 IS NOT NULL)
         )`,
   )
-    .bind(block, at, Math.floor(Date.now() / 1000), chainId, loanId)
+    .bind(block, at, Math.floor(Date.now() / 1000), ...lastEventBinds(pos), chainId, loanId)
     .run();
   return (r.meta?.changes ?? 0) > 0;
 }
@@ -5024,7 +5083,9 @@ export async function settleFromLedger(
         reached = before;
         break;
       }
-      if (await settleLoanRow(env, chainId, row.loan_id, block, at)) {
+      // The status is the chain's, read at the settled block; the ledger only
+      // dates it.
+      if (await settleLoanRow(env, chainId, row.loan_id, block, at, readPosition(atBlock))) {
         healed.push(row.loan_id);
         if (block === null) undated.push(row.loan_id);
       }
@@ -5283,7 +5344,7 @@ async function canonicalSettlementBlock(
  */
 export async function repairOpeningParties(env: Env, chainId: number): Promise<number> {
   const res = await env.DB.prepare(
-    `UPDATE loans
+    `UPDATE loans /* last-event: unchanged — fills the opening parties from the loan's own LoanInitiated record, which is older than any later event the row names */
         SET init_lender = (
               SELECT LOWER(json_extract(ae.args_json, '$.lender'))
                 FROM activity_events ae
@@ -5329,7 +5390,7 @@ export async function repairOpeningParties(env: Env, chainId: number): Promise<n
  */
 export async function reverifyInitPrincipal(env: Env, chainId: number): Promise<number> {
   const res = await env.DB.prepare(
-    `UPDATE loans
+    `UPDATE loans /* last-event: unchanged — clears a review flag once the LoanInitiated record confirms the stored value; no figure changes */
         SET init_principal_unbacked = 0
       WHERE chain_id = ?
         AND init_principal_unbacked = 1
@@ -5362,7 +5423,7 @@ export async function reverifyInitPrincipal(env: Env, chainId: number): Promise<
  */
 export async function reverifyInitTerms(env: Env, chainId: number): Promise<number> {
   const res = await env.DB.prepare(
-    `UPDATE loans
+    `UPDATE loans /* last-event: unchanged — clears a review flag once the LoanInitiatedDetails record confirms the stored terms; no figure changes */
         SET init_terms_unbacked = 0
       WHERE chain_id = ?
         AND init_terms_unbacked = 1
@@ -5461,7 +5522,8 @@ async function refreshStubLoans(
                           init_rate_bps = COALESCE(init_rate_bps, ?),
                           init_duration_days = COALESCE(init_duration_days, ?),
                           is_stub = 0,
-                          updated_at = ?
+                          updated_at = ?,
+                          ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -5470,6 +5532,8 @@ async function refreshStubLoans(
           Number(detail.interestRateBps),
           Number(detail.durationDays),
           Math.floor(Date.now() / 1000),
+          // #3921 B2 — the read is pinned at the pass's settled block.
+          ...lastEventBinds(readPosition(atBlock)),
           chainId,
           row.loan_id,
         )
@@ -5721,7 +5785,7 @@ export async function processLoanLogs(
   // it — that is the #762 / #766 behaviour this must not regress.
   const deferredStatusEdges = new Map<
     number,
-    { terminal: string; blockNumber: bigint }
+    { terminal: string; blockNumber: bigint; pos: RowPosition }
   >();
   // #2476 r18 — loans whose `LoanSettled` is in THIS scan. The settlement
   // handler owns their Settled edge: it settles a terminal row and leaves an
@@ -5799,8 +5863,9 @@ export async function processLoanLogs(
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
              start_block, start_at, updated_at, init_principal_unbacked, init_terms_unbacked,
-             init_lender, init_borrower)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+             init_lender, init_borrower,
+             last_event_block, last_event_tx_index, last_event_log_index)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -5845,6 +5910,7 @@ export async function processLoanLogs(
             // #3879 — the opening event's two parties, written once (0118).
             lender,
             borrower,
+            ...lastEventBinds(eventPosition(log)),
           );
         // #1130 — seed participation from the current-owner projection at
         // init (lenderOwner/borrowerOwner already resolve a pre-accept
@@ -5937,8 +6003,9 @@ export async function processLoanLogs(
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
              start_block, start_at, updated_at, init_principal_unbacked,
-             init_lender, init_borrower)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+             init_lender, init_borrower,
+             last_event_block, last_event_tx_index, last_event_log_index)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -5985,6 +6052,10 @@ export async function processLoanLogs(
             // read-back is unpinned, and a sale may already have moved a side.
             lender,
             borrower,
+            // #3921 B2 — the figures come from that unpinned read-back, whose
+            // block cannot be named, so the row's provenance is unknown until
+            // an event or a pinned read next writes it.
+            ...lastEventBinds(UNKNOWN_POSITION),
           );
         // #1130 — participation seed via the offer-projection resolution
         // above, written with the row by the pass that writes it, for the
@@ -6018,8 +6089,9 @@ export async function processLoanLogs(
            lender_current_owner, borrower_current_owner,
            is_stub, init_principal,
            start_block, start_at, updated_at, init_principal_unbacked,
-           init_lender, init_borrower)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0, ?, ?)`,
+           init_lender, init_borrower,
+           last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -6037,6 +6109,7 @@ export async function processLoanLogs(
           now,
           lender,
           borrower,
+          ...lastEventBinds(eventPosition(log)),
         );
       // #1130 — participation seed from the event parties (all the stub
       // path has). Same-tx mint Transfers can't attribute these (the stub
@@ -6209,7 +6282,8 @@ export async function processLoanLogs(
             SET interest_rate_bps = ?,
                 start_time = ?,
                 duration_days = ?,
-                updated_at = ?
+                updated_at = ?,
+                ${LAST_EVENT_SET}
           WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -6217,6 +6291,7 @@ export async function processLoanLogs(
           Number(a.newStartTime as bigint),
           Number(a.newDurationDays as bigint),
           Math.floor(Date.now() / 1000),
+          ...lastEventBinds(eventPosition(log)),
           chainId,
           loanId,
         )
@@ -6238,12 +6313,13 @@ export async function processLoanLogs(
       // is immutable history the candle endpoint reads (0032 §2).
       const loanId = Number(a.loanId as bigint);
       const partialRepaid = await env.DB.prepare(
-        `UPDATE loans SET principal = ?, updated_at = ?
+        `UPDATE loans SET principal = ?, updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
           String(a.newPrincipal as bigint),
           Math.floor(Date.now() / 1000),
+          ...lastEventBinds(eventPosition(log)),
           chainId,
           loanId,
         )
@@ -6319,7 +6395,8 @@ export async function processLoanLogs(
            SET principal = ?,
                collateral_amount = ?,
                start_time = ?,
-               updated_at = ?
+               updated_at = ?,
+               ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -6327,6 +6404,7 @@ export async function processLoanLogs(
           detail.collateralAmount.toString(),
           Number(detail.startTime),
           now,
+          ...lastEventBinds(readPosition(log.blockNumber)),
           chainId,
           loanId,
         )
@@ -6368,12 +6446,13 @@ export async function processLoanLogs(
       // instruction drawing the collateral reserve) — loan stays Active, but
       // `collateral_amount` grows. Both events carry `newCollateralAmount`.
       const collateralAdded = await env.DB.prepare(
-        `UPDATE loans SET collateral_amount = ?, updated_at = ?
+        `UPDATE loans SET collateral_amount = ?, updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
           String(a.newCollateralAmount as bigint),
           Math.floor(Date.now() / 1000),
+          ...lastEventBinds(eventPosition(log)),
           chainId,
           Number(a.loanId as bigint),
         )
@@ -6422,7 +6501,8 @@ export async function processLoanLogs(
             SET borrower = ?, borrower_token_id = ?, borrower_current_owner = ?,
                 collateral_amount = ?, collateral_token_id = ?,
                 interest_rate_bps = ?, duration_days = ?, start_time = ?,
-                updated_at = ?
+                updated_at = ?,
+                ${LAST_EVENT_SET}
           WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -6435,6 +6515,7 @@ export async function processLoanLogs(
           Number(term.durationDays),
           Number(term.startTime),
           Math.floor(Date.now() / 1000),
+          ...lastEventBinds(readPosition(log.blockNumber)),
           chainId,
           transferredLoanId,
         )
@@ -6468,10 +6549,10 @@ export async function processLoanLogs(
       const marked = await env.DB.prepare(
         // #3205 — `vehicle_loan_id` binds the sale to the loan's LENDER side,
         // whose moves end it (`positionFlowMoves.ts`).
-        `UPDATE offers SET is_sale_vehicle = 1, vehicle_loan_id = ?, updated_at = ?
+        `UPDATE offers SET is_sale_vehicle = 1, vehicle_loan_id = ?, updated_at = ?, ${LAST_EVENT_SET}
           WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(Number(a.loanId as bigint), Math.floor(Date.now() / 1000), chainId, saleOfferId)
+        .bind(Number(a.loanId as bigint), Math.floor(Date.now() / 1000), ...lastEventBinds(eventPosition(log)), chainId, saleOfferId)
         .run();
       if ((marked.meta?.changes ?? 0) === 0) {
         console.error(
@@ -6497,10 +6578,10 @@ export async function processLoanLogs(
       const marked = await env.DB.prepare(
         // #3205 — `vehicle_loan_id` binds the offset to the loan's BORROWER
         // side, whose moves end it (`positionFlowMoves.ts`).
-        `UPDATE offers SET is_offset_vehicle = 1, vehicle_loan_id = ?, updated_at = ?
+        `UPDATE offers SET is_offset_vehicle = 1, vehicle_loan_id = ?, updated_at = ?, ${LAST_EVENT_SET}
           WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(Number(a.originalLoanId as bigint), Math.floor(Date.now() / 1000), chainId, offsetOfferId)
+        .bind(Number(a.originalLoanId as bigint), Math.floor(Date.now() / 1000), ...lastEventBinds(eventPosition(log)), chainId, offsetOfferId)
         .run();
       if ((marked.meta?.changes ?? 0) === 0) {
         console.error(
@@ -6519,7 +6600,8 @@ export async function processLoanLogs(
       const lenderSold = await env.DB.prepare(
         `UPDATE loans
             SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
-                updated_at = ?
+                updated_at = ?,
+                ${LAST_EVENT_SET}
           WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -6527,6 +6609,7 @@ export async function processLoanLogs(
           String(a.newLenderTokenId as bigint),
           String(a.newLender as string).toLowerCase(),
           Math.floor(Date.now() / 1000),
+          ...lastEventBinds(eventPosition(log)),
           chainId,
           Number(a.loanId as bigint),
         )
@@ -6582,7 +6665,8 @@ export async function processLoanLogs(
       const saleCompleted = await env.DB.prepare(
         `UPDATE loans
             SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
-                updated_at = ?
+                updated_at = ?,
+                ${LAST_EVENT_SET}
           WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -6590,6 +6674,7 @@ export async function processLoanLogs(
           String(d.lenderTokenId),
           newLender,
           Math.floor(Date.now() / 1000),
+          ...lastEventBinds(readPosition(log.blockNumber)),
           chainId,
           loanId,
         )
@@ -6643,6 +6728,7 @@ export async function processLoanLogs(
         deferredStatusEdges.set(Number(a.loanId as bigint), {
           terminal,
           blockNumber: log.blockNumber,
+          pos: eventPosition(log),
         });
       }
     } else if (log.eventName === 'HFLiquidationTriggered') {
@@ -6714,6 +6800,7 @@ export async function processLoanLogs(
         // time is not in hand: unknown, never a guess. (The scan never hands
         // in a block without its time, #2757.)
         blockTimestamps.get(log.blockNumber) ?? null,
+        eventPosition(log),
       );
       if (settled) statusUpdates++;
     } else if (
@@ -6734,10 +6821,10 @@ export async function processLoanLogs(
       // matching the inline-fold event's shape.
       const periodEndAt = Number(a.periodEndAt as bigint);
       const periodAdvanced = await env.DB.prepare(
-        `UPDATE loans SET last_period_settled_at = ?, updated_at = ?
+        `UPDATE loans SET last_period_settled_at = ?, updated_at = ?, ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ?`,
       )
-        .bind(periodEndAt, now, chainId, loanId)
+        .bind(periodEndAt, now, ...lastEventBinds(eventPosition(log)), chainId, loanId)
         .run();
       // PeriodicInterestSettled / AutoLiquidated do NOT flip terminal
       // status — the loan stays active across periodic checkpoints.
@@ -6838,7 +6925,7 @@ export async function processLoanLogs(
             // keeper's claim-time auto-dispatch can FULLY rescue a
             // `fallback_pending` loan straight to `internal_matched` with no
             // later claim event, so that row must be promotable here too.
-            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
+            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?, ${LAST_EVENT_SET} WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
           )
             .bind(
               absPrincipal.toString(),
@@ -6847,6 +6934,7 @@ export async function processLoanLogs(
               Number(log.blockNumber),
               now,
               now,
+              ...lastEventBinds(readPosition(log.blockNumber)),
               chainId,
               loanId,
             )
@@ -6868,12 +6956,13 @@ export async function processLoanLogs(
           // `fallback_pending` loan. Refresh the absolute principal/collateral
           // and DON'T touch status.
           const numbersOnly = await env.DB.prepare(
-            `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
+            `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ?, ${LAST_EVENT_SET} WHERE chain_id = ? AND loan_id = ?`,
           )
             .bind(
               absPrincipal.toString(),
               absCollateral.toString(),
               now,
+              ...lastEventBinds(readPosition(log.blockNumber)),
               chainId,
               loanId,
             )
@@ -7232,7 +7321,8 @@ export async function processLoanLogs(
       const r = await env.DB.prepare(
         `UPDATE loans
            SET status = 'repaid', terminal_block = ?, terminal_at = ?, terminal_at_verified = ?,
-               terminal_by_repair = 0, updated_at = ?
+               terminal_by_repair = 0, updated_at = ?,
+               ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
       )
         .bind(
@@ -7240,6 +7330,7 @@ export async function processLoanLogs(
           blockAt,
           blockAt === null ? 0 : 1,
           now,
+          ...lastEventBinds(eventPosition(log)),
           chainId,
           loanId,
         )
@@ -7341,17 +7432,17 @@ export async function processLoanLogs(
       if (tokenId !== '0') {
         const writes = await env.DB.batch([
           env.DB.prepare(
-            `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+            `UPDATE loans SET lender_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND lender_token_id = ?`,
-          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          ).bind('0x0000000000000000000000000000000000000000', now, ...lastEventBinds(eventPosition(log)), chainId, tokenId),
           env.DB.prepare(
-            `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+            `UPDATE loans SET borrower_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND borrower_token_id = ?`,
-          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          ).bind('0x0000000000000000000000000000000000000000', now, ...lastEventBinds(eventPosition(log)), chainId, tokenId),
           env.DB.prepare(
-            `UPDATE offers SET creator_current_owner = ?, updated_at = ?
+            `UPDATE offers SET creator_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
              WHERE chain_id = ? AND position_token_id = ?`,
-          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          ).bind('0x0000000000000000000000000000000000000000', now, ...lastEventBinds(eventPosition(log)), chainId, tokenId),
         ]);
         if (writes.reduce((n, r) => n + (r.meta?.changes ?? 0), 0) > 0) ownershipTransfers++;
       }
@@ -7391,20 +7482,20 @@ export async function processLoanLogs(
       );
       const ownerWrites = await env.DB.batch([
         env.DB.prepare(
-          `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+          `UPDATE loans SET lender_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
            WHERE chain_id = ? AND lender_token_id = ?
              AND ${liveSideSql('lender_current_owner')}`,
-        ).bind(to, now, chainId, tokenId),
+        ).bind(to, now, ...lastEventBinds(eventPosition(log)), chainId, tokenId),
         env.DB.prepare(
-          `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+          `UPDATE loans SET borrower_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
            WHERE chain_id = ? AND borrower_token_id = ?
              AND ${liveSideSql('borrower_current_owner')}`,
-        ).bind(to, now, chainId, tokenId),
+        ).bind(to, now, ...lastEventBinds(eventPosition(log)), chainId, tokenId),
         env.DB.prepare(
-          `UPDATE offers SET creator_current_owner = ?, updated_at = ?
+          `UPDATE offers SET creator_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
            WHERE chain_id = ? AND position_token_id = ?
              AND ${liveSideSql('creator_current_owner')}`,
-        ).bind(to, now, chainId, tokenId),
+        ).bind(to, now, ...lastEventBinds(eventPosition(log)), chainId, tokenId),
       ]);
       // RPC read-diet PR 0 — count only Transfers that re-pointed a TRACKED
       // row (mint-before-insert Transfers match nothing and are seeded by
@@ -7459,13 +7550,13 @@ export async function processLoanLogs(
   // no longer matches `status IN ('active','fallback_pending')`, so this is a
   // no-op there and only fills a genuine gap. Same predicate as before, moved;
   // see `deferredStatusEdges` for why the move was required.
-  for (const [loanId, { terminal, blockNumber }] of deferredStatusEdges) {
+  for (const [loanId, { terminal, blockNumber, pos }] of deferredStatusEdges) {
     if (terminal === 'settled' && loanSettledInScan.has(loanId)) continue;
     const r = await env.DB.prepare(
-      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
+      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?, ${LAST_EVENT_SET}
        WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
     )
-      .bind(terminal, blockToNumber(blockNumber), now, now, chainId, loanId)
+      .bind(terminal, blockToNumber(blockNumber), now, now, ...lastEventBinds(pos), chainId, loanId)
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     // CLEANUP RUNS WHETHER OR NOT THE UPDATE CHANGED A ROW (#2190 r4
@@ -7491,7 +7582,7 @@ export async function processLoanLogs(
   // same-batch LoanSaleOfferLinked handler above has marked the offer.
   for (const { loanId, offerId } of initiatedPairs) {
     await env.DB.prepare(
-      `UPDATE loans SET is_sale_vehicle = 1
+      `UPDATE loans /* last-event: unchanged — copies the sale-vehicle mark the initiating offer carries; the row's own LoanInitiated insert in this block already names its event */ SET is_sale_vehicle = 1
         WHERE chain_id = ?1 AND loan_id = ?2
           AND EXISTS (SELECT 1 FROM offers o
                        WHERE o.chain_id = ?1 AND o.offer_id = ?3
@@ -7518,10 +7609,10 @@ async function flipLoanStatus(
   const loanId = loanIdOverride ?? Number(args.loanId as bigint);
   const now = Math.floor(Date.now() / 1000);
   const r = await env.DB.prepare(
-    `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
+    `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?, ${LAST_EVENT_SET}
      WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
   )
-    .bind(status, Number(log.blockNumber), now, now, chainId, loanId)
+    .bind(status, Number(log.blockNumber), now, now, ...lastEventBinds(eventPosition(log)), chainId, loanId)
     .run();
   return (r.meta?.changes ?? 0) > 0;
 }
@@ -8094,22 +8185,24 @@ export function _verifiedHolderStatements(
   loanId: number,
   holders: { lender: string | null; borrower: string | null },
   updatedAt: number,
+  /** #3921 B2 — the holders were read at this block (`ownerOf`, pinned). */
+  readAt: RowPosition,
 ): D1PreparedStatement[] {
   const out: D1PreparedStatement[] = [];
   if (holders.lender) {
     out.push(
       env.DB.prepare(
-        `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+        `UPDATE loans SET lender_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
           WHERE chain_id = ? AND loan_id = ?`,
-      ).bind(holders.lender, updatedAt, chainId, loanId),
+      ).bind(holders.lender, updatedAt, ...lastEventBinds(readAt), chainId, loanId),
     );
   }
   if (holders.borrower) {
     out.push(
       env.DB.prepare(
-        `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+        `UPDATE loans SET borrower_current_owner = ?, updated_at = ?, ${LAST_EVENT_SET}
           WHERE chain_id = ? AND loan_id = ?`,
-      ).bind(holders.borrower, updatedAt, chainId, loanId),
+      ).bind(holders.borrower, updatedAt, ...lastEventBinds(readAt), chainId, loanId),
     );
   }
   return out;
