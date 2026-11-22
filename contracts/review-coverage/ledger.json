@@ -1,0 +1,6 @@
+{
+  "_readme": "Review coverage ledger (#3936, ReviewCoveragePassDesign §2, §4). Each key is the sha256 of one declaration's code with comments and spacing removed (contracts/script/review-coverage.mjs hashes). Each entry holds marks only: reader and reviewer are opaque review numbers, commit is the commit the hash was taken at, and readerThread / fixThread / recordedAt feed the entry check. Never a finding or a description. Written by the tool, checked in CI: an entry whose hash matches no declaration at its commit is refused.",
+  "sizeLimit": null,
+  "plantedRuns": [],
+  "entries": {}
+}
