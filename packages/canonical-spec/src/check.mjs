@@ -248,6 +248,11 @@ export function checkSpec(parsed, opts = {}) {
     if (!e.approved && mode === 'folder') add(e.file, e.line, 'approval', `${s.id}: the record entry carries no approval hash; the committed folder holds only approved text (${approvalHash(s)} now)`);
     else if (e.approved && e.approved !== approvalHash(s)) add(s.file, s.line, 'approval', `${s.id}: its text differs from the text the owner approved (record ${e.approved}, now ${approvalHash(s)}); a change needs a new approval`);
   }
+  // The reverse: a live entry whose statement is gone. A statement leaves only
+  // by retirement (§3.1); a held id's statement is in the private records.
+  for (const e of record.entries) {
+    if (!byId.has(e.id) && !retired.has(e.id) && !isHeldId(e.id)) add(e.file, e.line, 'record', `${e.id} has a record entry but no statement; a statement leaves only by retirement`);
+  }
 
   // Item 11: parameters.
   const paramIds = new Set();
@@ -343,8 +348,14 @@ export function checkSpec(parsed, opts = {}) {
     const ans = /\b(refuse|bound|undo|warn only)\b/i.exec(fm);
     if (!ids.length) add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: **For the mistake:** names no mistake id`);
     if (!ans) add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: **For the mistake:** names no answer (refuse, bound, undo or warn only)`);
-    else if (/warn only/i.test(ans[1]) && fm.slice(ans.index + ans[0].length).replace(/[^A-Za-z]/g, '').length < 12) {
-      add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: a warn-only answer needs its reason, since a direct caller never sees the warning`);
+    // Each warn-only answer carries its own reason, whatever answers precede it
+    // in the same part ("VLT-M01, refuse; VLT-M02, warn only: …").
+    for (const w of fm.matchAll(/\bwarn only\b/gi)) {
+      const reason = fm.slice(w.index + w[0].length).split(/;|\b[A-Z]{3}-M\d{2,3}\b/)[0];
+      if (reason.replace(/[^A-Za-z]/g, '').length < 12) {
+        add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: a warn-only answer needs its reason, since a direct caller never sees the warning`);
+        break;
+      }
     }
     for (const id of new Set(ids)) {
       if (!answers.has(id)) answers.set(id, []);

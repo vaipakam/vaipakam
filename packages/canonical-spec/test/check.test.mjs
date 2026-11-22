@@ -365,3 +365,28 @@ test('draft mode reads the wording list beside the draft', () => {
   const quiet = (fn) => { const [l, e] = [console.log, console.error]; console.log = console.error = () => {}; try { return fn(); } finally { console.log = l; console.error = e; } };
   assert.equal(quiet(() => main(['--draft', dir])), 1);
 });
+
+test('an indented statement heading is refused, never dropped', () => {
+  const p = parseFile('vlt.md', ` ${REFUSAL('VLT-001')}`);
+  assert.ok(p.errors.some((e) => e.line === 1 && /indented heading/.test(e.message)), JSON.stringify(p.errors));
+});
+
+test('a live record entry whose statement is gone is refused; retired and held ids are not', () => {
+  const retired = '\n| Id | Retired by |\n| --- | --- |\n| VLT-013 | owner approval 2026-11-22 |\n';
+  const f = run([['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012'], ['VLT-001'], ['VLT-013'], ['VLT-905']], retired)]]);
+  assert.ok(has(f, 'record', /VLT-001 has a record entry but no statement/), JSON.stringify(f));
+  assert.ok(!has(f, 'record', /VLT-013 has a record entry/));
+  assert.ok(!has(f, 'record', /VLT-905 has a record entry/));
+});
+
+test('a model state defined twice is refused', () => {
+  const p = parseFile('vlt.md', MODEL([], [], '- Open (start): no vault exists.\n- Open (end): the vault has been recovered.'));
+  assert.ok(p.errors.some((e) => /the state "Open" is defined twice/.test(e.message)), JSON.stringify(p.errors));
+});
+
+test('every warn-only answer in a part needs its own reason', () => {
+  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n\n### VLT-M02 · b\n\n**Who:** the owner.\n';
+  const mk = (fm) => run([['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', `- **For the mistake:** ${fm}\n- **Tests owed:**`)], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(mk('VLT-M01, refuse; VLT-M02, warn only.'), 'mistake', /warn-only answer needs its reason/));
+  assert.ok(!has(mk('VLT-M01, refuse; VLT-M02, warn only: a contract calling directly gets no prompt.'), 'mistake', /warn-only/));
+});

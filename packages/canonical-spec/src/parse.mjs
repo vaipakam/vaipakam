@@ -168,6 +168,8 @@ function parseModel(file, lines, start, end) {
           continue;
         }
         const state = st[1].trim();
+        // Two states sharing a name would merge in the route check.
+        if (m.states.includes(state)) err(n, `the state "${state}" is defined twice`);
         m.states.push(state);
         if (st[2] === 'start') {
           if (m.start) err(n, `two start states, ${m.start} and ${state}`);
@@ -256,6 +258,10 @@ export function parseFile(file, text) {
     // A statement, mistake or model heading at any level but the third would
     // otherwise be read as plain prose and its block would vanish unchecked.
     const off = /^(#{1,2}|#{4,6}) +(?:[A-Z]{2,4}-[MT]?\d+\b|Model:)/.exec(lines[i].t);
+    // An indented heading is still a heading to Markdown; refuse it rather
+    // than read past it.
+    const indented = /^ {1,3}#{1,6} +(?:[A-Z]{2,4}-[MT]?\d+\b|Model:)/.test(lines[i].t);
+    if (indented) out.errors.push({ file, line: lines[i].n, message: 'an indented heading shaped like a statement, mistake or model; these blocks start at the line\'s first column ("### …")' });
     if (off) out.errors.push({ file, line: lines[i].n, message: `a heading shaped like a statement, mistake or model at level ${off[1].length}; these blocks are level-3 headings ("### …")` });
   }
   headingAt.push(lines.length);
