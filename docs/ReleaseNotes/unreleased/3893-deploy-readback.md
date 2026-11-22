@@ -7,7 +7,7 @@ It checks:
 - The roles: the admin holds every grantable role and owns the Diamond, the deployer holds none, and each bot holds its roles. An admin or deployer address that is not given is a row that cannot be read, never a pass. The treasury is the one the vault code names.
 - The rewards: role, custody activation, the pool funded with the stated amount, the anchor equal on every chain, the first capped day armed, and Base's expected sources.
 - The cross-chain lanes: the destination chain's own CCIP selector, the right peer messenger in each direction, and the peer on each business channel (reward, buyback, reward budget and return), since a channel refuses a message from any other sender.
-- The sources: a sanctions source that has code and answers a screen, and the swap routes.
+- The sources: a sanctions source that has code and answers a screen, the swap routes, and the service capacity escrow bound to the recorded one wherever the file asks for it.
 - The deployment getters: every Diamond getter that names another contract must answer an address, unless the file lists it as not deployed on that chain, with a reason.
 - The code: the routed selector set equals this commit's facets.
 - The records: every address the broadcast journals created is recorded, listed by name with a reason (today only the one-shot initializer that writes the Diamond's interface table), or registered as one of the Diamond's swap routes. Only journals from this run count: the rehearsal keeps its own, and a run against the shared journal folder must give its start time, or those rows cannot be read. The storage-layout record is written, the archive manifest names the retired Diamond, no carried key was dropped, and only the planned chains received transactions.
@@ -18,6 +18,6 @@ A getter may answer zero only when the desired file says why, as a recorded fact
 
 Run against today's live testnets, the readback shows where they differ from the next deploy's desired state. That is expected, since the next deploy sets those values.
 
-> Caveat: not yet covered are the token pools' rate limits and their admin, the token's CCIP registration, the delisting route's clearance source and the feed bindings. The script's header says so.
+> Caveat: not yet covered are the token pools' rate limits and their admin, the token's CCIP registration, the delisting route's clearance source and the feed bindings. The keeper's arming flags live on the keeper machine, not on a chain, so the readback does not read them either. The script's header says so.
 
 Closes #3893

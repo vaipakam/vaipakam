@@ -35,9 +35,9 @@ function world(d) {
   slugs.forEach((s, i) => {
     const D = A(0x1000 + i);
     w.records[s] = {
-      diamond: D, ccipMessenger: A(0x2000 + i), priceGuard: A(0x3000 + i), keeperAddress: A(0x4000),
+      diamond: D, ccipMessenger: A(0x2000 + i), priceGuard: A(0x3000 + i), keeperAddress: d.roles.bots.keeper.address,
       rewardMessenger: A(0xc000 + i), buybackRemittanceReceiver: A(0xc100 + i), rewardRemittanceReceiver: A(0xc200 + i),
-      vpfiReturnSender: A(0xc300 + i), vpfiReturnReceiver: A(0xc400 + i),
+      vpfiReturnSender: A(0xc300 + i), vpfiReturnReceiver: A(0xc400 + i), serviceCapacityEscrow: A(0xc500 + i),
     };
     w.prior[s] = { diamond: A(0x9000 + i), ccipMessenger: A(0x9100 + i), priceGuard: A(0x9200 + i), keeperAddress: A(0x4000) };
     w.manifest.push({ slug: s, diamond: w.prior[s].diamond });
@@ -94,6 +94,7 @@ function fakeCtx(d, w, over = {}) {
       case 'getGovernorCommitState()(uint256,uint256,uint256,uint256)': return '20774\n0\n0\n0';
       case 'getExpectedSourceChainIds()(uint32[])': return `[${derivedRewardSources(d).join(', ')}]`;
       case 'getSanctionsOracle()(address)': return A(0x6000 + msgIdx);
+      case 'getServiceCapacityEscrow()(address,uint64,uint256)': return `${w.escrow?.[s] ?? w.records[s].serviceCapacityEscrow}\n1\n0`;
       case 'getSwapAdapters()(address[])': return `[${A(0x7000)}]`;
       case 'facets()((address,bytes4[])[])': return `[(${A(0x8000)}, [${w.selectors[s].join(', ')}])]`;
       default:
@@ -391,4 +392,18 @@ test('a journal stamped before the run start is a previous run, left out', () =>
   put('New.s.sol', 84532, 1800000000000, A(2));
   assert.deepEqual([...createdAddresses(dir, 1790000000).keys()], [84532]);
   assert.deepEqual([...createdAddresses(dir).keys()].sort((a, b) => a - b), [84532, 11155111]);
+});
+
+test('an unbound service capacity escrow fails where the file asks for one', () => {
+  const d = desired();
+  const w = world(d);
+  w.escrow = { 'arb-sepolia': `0x${'0'.repeat(40)}` };
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['arb-sepolia sources.capacityEscrow']);
+});
+
+test('a recorded keeper address that is not the keeper bot fails', () => {
+  const d = desired();
+  const w = world(d);
+  w.records['bnb-testnet'].keeperAddress = A(0xbad);
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['bnb-testnet records.keeperAddress']);
 });

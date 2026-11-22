@@ -5,7 +5,7 @@
  *
  *   node script/readback.mjs <desired.json> [--records <dir>] [--broadcast <dir>]
  *        [--prior-root <dir>] [--env-file <path>] [--rpc <slug>=<url>]...
- *        [--anchor <unix>] [--json <path>]
+ *        [--since <unix>] [--anchor <unix>] [--json <path>]
  *
  * One readback, used on the rehearsal's forks and on the live chains after the
  * real deploy. Each row is { id, chain, expected, found, result, by }, where
@@ -26,7 +26,9 @@
  *
  * Rows it does not cover yet, stated so a green run is not read as more:
  * the pool rate limits and their admin, the token's CCIP registration, the
- * delisting route's clearance source and the feed bindings. The launch row
+ * delisting route's clearance source and the feed bindings. The keeper's
+ * arming flags (`keeper.armed`) live on the keeper machine, not on a chain,
+ * so this script does not read them either. The launch row
  * reads the pause bit; the launch decision itself (`Launch.s.sol
  * requireLaunched`) is the deploy's own launch phase.
  */
@@ -295,6 +297,15 @@ export function readback(d, ctx) {
       else R.push(row('sources.swap', s, 'not stated in the file', `${n} routes`, INFO, 'swap routes'));
     }
 
+    // ── Service capacity escrow: bound where the file asks, and recorded ─
+    // Its getter returns a tuple, so the deployment-getter rows below do not
+    // reach it; an unbound escrow refuses every capacity deposit.
+    if (d.serviceCapacityEscrow === 'all' || (Array.isArray(d.serviceCapacityEscrow) && d.serviceCapacityEscrow.includes(s))) {
+      const want = rec.serviceCapacityEscrow?.toLowerCase();
+      if (!want) R.push(row('sources.capacityEscrow', s, 'the escrow recorded in addresses.json', 'none recorded', NOT_MET, 'service capacity escrow'));
+      else cmp('sources.capacityEscrow', s, 'service capacity escrow bound to the recorded one', D, 'getServiceCapacityEscrow()(address,uint64,uint256)', [], [want]);
+    }
+
     // ── Deployment getters: every contract the Diamond names is there ───
     for (const g of getters) {
       const nd = d.notDeployedHere?.[g];
@@ -324,6 +335,11 @@ export function readback(d, ctx) {
     }
 
     // ── Records ─────────────────────────────────────────────────────────
+    if (d.records?.keeperAddress) {
+      const want = d.roles.bots?.[d.records.keeperAddress]?.address?.toLowerCase();
+      const got = rec.keeperAddress?.toLowerCase();
+      R.push(row('records.keeperAddress', s, `bot ${d.records.keeperAddress} ${want}`, got ?? 'none recorded', got && got === want ? MET : NOT_MET, 'addresses.json'));
+    }
     // Accounted for: an address the records name, one the Diamond's swap
     // registry names (DeployUniV3Adapter registers its adapter there and
     // writes no record), or a contract the file lists by name with a reason.
