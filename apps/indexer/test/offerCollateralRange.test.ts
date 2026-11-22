@@ -180,7 +180,7 @@ describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
     // Refinance tag already read (#2528), so only the fill marker can queue a row.
     seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0, refinance_target_loan_id: 0 });
     seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0, refinance_target_loan_id: 0 });
-    await markBorrowerFillsUnread({ DB: h.d1 } as unknown as Env, 84532, [1]);
+    await markBorrowerFillsUnread({ DB: h.d1 } as unknown as Env, 84532, [[1, { block: 900, txIndex: 2, logIndex: 7 }]]);
     const rows = h.db
       .prepare('SELECT offer_id, collateral_amount_filled AS f FROM offers ORDER BY offer_id')
       .all() as { offer_id: number; f: string | null }[];
@@ -212,7 +212,11 @@ describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
     const ids = Array.from({ length: 150 }, (_, i) => i + 1);
     for (const i of ids) seed(h, { offer_id: String(i), collateral_amount_filled: '0' });
     const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
-    await markBorrowerFillsUnread(meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, 84532, ids);
+    await markBorrowerFillsUnread(
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      84532,
+      ids.map((id) => [id, { block: 900, txIndex: 2, logIndex: 7 }] as const),
+    );
     expect(budget.internal.limit - budget.internal.remaining).toBe(1);
     const n = h.db.prepare('SELECT COUNT(*) AS n FROM offers WHERE collateral_amount_filled IS NULL').get() as { n: number };
     expect(n.n).toBe(150);
@@ -292,13 +296,14 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
     expect(p).toContain('is_stub, collateral_range_stale,');
     // The eight binds after the two literals: created_at, expires_at,
     // fill_mode, refinance_target_loan_id (#2528), first_seen_block, the
-    // OfferCreated log index (#3205) and the seen/updated stamps.
-    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?, \?, \?\)`/);
+    // OfferCreated log index (#3205), the seen/updated stamps and the three
+    // last-event columns (#3921 B2).
+    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\)`/);
   });
 
   it('has the match handler mark the borrower offer rather than read it', () => {
     const p = fn('async function processOfferLogs(');
-    expect(p).toContain('borrowerFillsStale.add(Number(ev.borrowerOfferId))');
+    expect(p).toContain('borrowerFillsStale.set(Number(ev.borrowerOfferId), ev.pos)');
     expect(p).toContain('await markBorrowerFillsUnread(env, chainId, [...borrowerFillsStale])');
     expect(src).not.toContain('readOfferFillsAt');
   });

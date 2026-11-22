@@ -1279,7 +1279,7 @@ async function messageBatch(
     budget.remaining -= 1; // the checkpoint stamp — D1 is a subrequest
     try {
       await env.DB.prepare(
-        `UPDATE loans SET period_pre_notified_at = ?, updated_at = ?
+        `UPDATE loans /* last-event: unchanged — the reminder's own sent stamp, not a figure an event produced */ SET period_pre_notified_at = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(nextCheckpoint, now, chain.id, row.loan_id)
@@ -1686,7 +1686,7 @@ function isMarkNumber(v: number): boolean {
  * It does not touch `updated_at`: an examination changes nothing about the
  * loan, and that column means the loan's record changed.
  */
-export const MARK_EXAMINED_SQL = `UPDATE loans
+export const MARK_EXAMINED_SQL = `UPDATE loans /* last-event: unchanged — the reminder pass's own examined mark, not a figure an event produced */
    SET prenotify_examined_lap = ?1,
        prenotify_examined_checkpoint = (
          SELECT json_extract(e.value, '$[1]') FROM json_each(?3) AS e

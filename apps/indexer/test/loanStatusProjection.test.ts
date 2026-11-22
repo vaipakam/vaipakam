@@ -92,6 +92,11 @@ const statusOf = (h: SqliteD1, loanId: number) =>
       .get(CHAIN, loanId) as { status: string }
   ).status;
 
+/** #3921 B2 — the position settleLoanRow records: the LoanSettled event at
+ *  that block, or (no block) a read at a later settled block. */
+const settlePos = (block: number | null) =>
+  block === null ? { block: 2_000, txIndex: null, logIndex: null } : { block, txIndex: 0, logIndex: 0 };
+
 describe('processLoanLogs — HF-liquidation status projection (#1293)', () => {
   const run = (h: SqliteD1, logs: ReturnType<typeof hfLog>[]) =>
     processLoanLogs(
@@ -754,7 +759,7 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     ledger(h, 78, 'LoanSettled', 1900, 1);
     await heal(h, chain({}, () => 3, undefined, new Set([1900])));
     expect(row(h, 78)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
-    expect(await settleLoanRow(env(h), CHAIN, 78, 1950, 4242)).toBe(true);
+    expect(await settleLoanRow(env(h), CHAIN, 78, 1950, 4242, settlePos(1950))).toBe(true);
     expect(row(h, 78)).toEqual({ status: 'settled', terminal_block: 1950, terminal_at: 4242 });
   });
 
@@ -923,14 +928,14 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
   it('lets a replay that now has the block time date a settlement recorded undated', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 50, 'internal_matched');
-    expect(await settleLoanRow(env(h), CHAIN, 50, 100, null)).toBe(true);
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, null, settlePos(100))).toBe(true);
     expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: null });
     // Replay after a partial pass, block read succeeded this time.
-    expect(await settleLoanRow(env(h), CHAIN, 50, 100, 500)).toBe(true);
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, 500, settlePos(100))).toBe(true);
     expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: 500 });
     // A dated settlement is never rewritten, and an undated replay changes nothing.
-    expect(await settleLoanRow(env(h), CHAIN, 50, 100, 777)).toBe(false);
-    expect(await settleLoanRow(env(h), CHAIN, 50, 100, null)).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, 777, settlePos(100))).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, null, settlePos(100))).toBe(false);
     expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: 500 });
   });
 
@@ -938,8 +943,8 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 51, 'active');
     seedLoan(h, 52, 'fallback_pending');
-    expect(await settleLoanRow(env(h), CHAIN, 51, 100, 500)).toBe(false);
-    expect(await settleLoanRow(env(h), CHAIN, 52, 100, 500)).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 51, 100, 500, settlePos(100))).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 52, 100, 500, settlePos(100))).toBe(false);
     expect((at(h, 51) as { status: string }).status).toBe('active');
     expect((at(h, 52) as { status: string }).status).toBe('fallback_pending');
   });
@@ -949,19 +954,19 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     const ver = (id: number) =>
       (h.db.prepare('SELECT terminal_at_verified AS v FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as { v: number }).v;
     seedLoan(h, 53, 'internal_matched');
-    expect(await settleLoanRow(env(h), CHAIN, 53, null, null)).toBe(true);
+    expect(await settleLoanRow(env(h), CHAIN, 53, null, null, settlePos(null))).toBe(true);
     expect(at(h, 53)).toEqual({ status: 'settled', b: null, t: null });
-    expect(await settleLoanRow(env(h), CHAIN, 53, 300, null)).toBe(true); // block known, time still not
+    expect(await settleLoanRow(env(h), CHAIN, 53, 300, null, settlePos(300))).toBe(true); // block known, time still not
     expect(at(h, 53)).toEqual({ status: 'settled', b: 300, t: null });
     expect(ver(53)).toBe(0);
     // A DIFFERENT confirmed block replaces the one recorded (an orphaned
     // event's block, say), with its own time.
-    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 7)).toBe(true);
+    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 7, settlePos(999))).toBe(true);
     expect(at(h, 53)).toEqual({ status: 'settled', b: 999, t: 7 });
     expect(ver(53)).toBe(1);
     // A verified time is never rewritten, and an undated replay changes nothing.
-    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 42)).toBe(false);
-    expect(await settleLoanRow(env(h), CHAIN, 53, null, null)).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 42, settlePos(999))).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 53, null, null, settlePos(null))).toBe(false);
     expect(at(h, 53)).toEqual({ status: 'settled', b: 999, t: 7 });
   });
 
@@ -975,7 +980,7 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     };
     const first = await served();
     expect((first.loan ?? first).terminalAt).toBeNull(); // a scan clock is not stated as the settlement time
-    await settleLoanRow(env(h), CHAIN, 55, 400, 1_234);
+    await settleLoanRow(env(h), CHAIN, 55, 400, 1_234, settlePos(400));
     const second = await served();
     expect((second.loan ?? second).terminalAt).toBe(1_234);
   });
@@ -984,7 +989,7 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 54, 'repaid');
     h.db.prepare('UPDATE loans SET terminal_by_repair = 1 WHERE chain_id = ? AND loan_id = 54').run(CHAIN);
-    await settleLoanRow(env(h), CHAIN, 54, 100, 1);
+    await settleLoanRow(env(h), CHAIN, 54, 100, 1, settlePos(100));
     expect((h.db.prepare('SELECT terminal_by_repair AS m FROM loans WHERE chain_id = ? AND loan_id = 54').get(CHAIN) as { m: number }).m).toBe(0);
   });
 });
