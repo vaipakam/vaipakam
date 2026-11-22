@@ -87,18 +87,35 @@ so the count above stays honest:
   the runner took between two reads of `date`.
 
 - `board-label-sync.mjs` is the script behind `board-label-sync.yml`, which
-  mirrors the `priority:*`, `stage:*` and `thread:*` labels onto the board's
-  `Priority`, `Stage` and `Thread` fields. Labels are the source of truth
-  because the board's fields have no API the project agents can write
-  (`.github/LABELS.md`, Owner Labels). Its decisions are one pure function,
-  `planWrites(issues, boardItems, fields, context)`; the board listing pages
-  through an injected transport; and a failed request is classified by
+  mirrors the `priority:*`, `stage:*` and `thread:*` labels onto the issue
+  fields `Priority`, `Stage` and `Thread` — fields defined for the
+  repository's owner, whose values live on each issue and which the
+  `@vaipakam-labs` board views group by. Labels are the source of truth
+  (`.github/LABELS.md`, Owner Labels). It runs on the workflow's own
+  `GITHUB_TOKEN` (`issues: write`): values are read from each issue object
+  and written through the REST issue-field-values endpoints, and the field
+  definitions come from GraphQL `Repository.issueFields`; the script's header
+  cites the documentation for each. It also fills the DATE issue fields
+  `Start Date` and `Target Date` on every issue and pull request, open or
+  closed (rules in `.github/LABELS.md` and the script's `DATE_FIELDS`): a
+  pull request's dates come from the listing; an issue's Start date, and the
+  last close of a reopened issue or pull request, from the REST timeline,
+  read only while the item needs it, at most `MAX_TIMELINE_READS` requests a
+  run, cached nowhere, and never planned from when read only in part. Its decisions are one pure function,
+  `planWrites(issues, fields, context)`; the definition listing pages through
+  an injected transport; and a failed request is classified by
   `gh-trace-ratelimit-wait.sh` run as-is, so the wait-and-retry-once rule is
   the reconcile job's, not a copy. `board-label-sync.selftest.mjs` pins the
-  planner (labels added, changed and removed; two labels of one family; a
-  missing field or option; another repository's card; a closed issue), the
-  pagination, the mutation document and the rate-limit rule, the last against
-  the real parser.
+  planner (labels added, changed and removed; case-insensitive option
+  matching; two labels of one family; a missing field, wrong-typed field or
+  missing option; a closed issue), the dates (Start from a PR, from the first
+  `stage:building` or from neither; pull requests; closed versus open Target;
+  a reopen clearing only the job's own value; no rewrite of an unchanged
+  value; the timeline and write caps and the remaining count), the REST value
+  parsing, the definition
+  pagination, the write requests (sets batched per issue, clears as deletes,
+  never the replace-all PUT) and the rate-limit rule, the last against the
+  real parser.
 
 They run in their OWN workflow, `board-reconcile-fixtures.yml`, not with the
 gates above. Convenience would have put them in theirs; they are an operational

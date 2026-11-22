@@ -60,6 +60,14 @@ import {
   readUnplacedCount,
   unplacedOnPairStatement,
 } from './marketPlacement';
+import {
+  LEFT_OUT_COUNT_CAP,
+  countingStatement,
+  leftOutOfRatesSql,
+  oneAddressLoanSql,
+  partiesUnknownLoanSql,
+  ratesEligibleSql,
+} from './figureRules';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -1248,7 +1256,7 @@ export async function handleClaimCandidates(
  *     active, repaid, defaulted, liquidated, settled, total,  // counts
  *     erc20ActiveLoans, nftRentalsActive,
  *     volumeByAsset: { [lowercaseAddr]: principalSumDecimal },
- *     averageInterestRateBps: number | null,
+ *     counting: CountingStatement,  // #3879, see figureRules.ts
  *     liquidators: LiquidatorStats,  // #3366, see liquidatorStats.ts
  *     indexer: { lastBlock, updatedAt } | null,
  *   }
@@ -1360,8 +1368,13 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
         // to. Every aggregate in this handler now excludes vehicles —
         // the previous commit fixed one query and left these two, which
         // is the third time this exact omission has been found.
-        `SELECT lending_asset, principal, interest_rate_bps
-         FROM loans WHERE chain_id = ? AND is_sale_vehicle = 0`,
+        // #3879: each row says whether it had one address on both sides
+        // when it opened (figureRules.ts), so the response can count those
+        // loans on their own line.
+        `SELECT l.lending_asset, l.principal,
+                CASE WHEN ${oneAddressLoanSql('l')} THEN 1 ELSE 0 END AS one_address,
+                CASE WHEN ${partiesUnknownLoanSql('l')} THEN 1 ELSE 0 END AS parties_unknown
+         FROM loans l WHERE l.chain_id = ? AND l.is_sale_vehicle = 0`,
       )
         .bind(chainId),
       env.DB.prepare(
@@ -1412,9 +1425,16 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     // `volume_by_asset` materialised view.
     const volumeByAsset: Record<string, bigint> = {};
     const loansByAsset: Record<string, number> = {};
-    let aprSum = 0;
-    let aprCount = 0;
-    for (const row of (volumeRows.results ?? []) as { lending_asset: string; principal: string; interest_rate_bps: number }[]) {
+    let oneAddress = 0;
+    let partiesUnknown = 0;
+    for (const row of (volumeRows.results ?? []) as {
+      lending_asset: string;
+      principal: string;
+      one_address: number;
+      parties_unknown: number;
+    }[]) {
+      if (row.one_address === 1) oneAddress += 1;
+      if (row.parties_unknown === 1) partiesUnknown += 1;
       // Drop rows with unset / malformed `lending_asset` (legacy
       // testnet bookkeeping wrote `0x` for some NFT-rental loans
       // before the indexer normalised the column). Keeps the per-
@@ -1432,16 +1452,11 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
         // Malformed principal (shouldn't happen with the indexer's
         // BigInt-safe writer, but guard anyway). Skip the row.
       }
-      if (typeof row.interest_rate_bps === 'number') {
-        aprSum += row.interest_rate_bps;
-        aprCount += 1;
-      }
     }
     const volumeByAssetSerialized: Record<string, string> = {};
     for (const [k, v] of Object.entries(volumeByAsset)) {
       volumeByAssetSerialized[k] = v.toString();
     }
-    const averageInterestRateBps = aprCount > 0 ? aprSum / aprCount : null;
     const liquidators = summariseLiquidators(
       (liquidatorRows.results ?? []) as LiquidatorRow[],
       getDeployment(chainId)?.keeperAddress,
@@ -1481,7 +1496,12 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       nftRentalsActive,
       volumeByAsset: volumeByAssetSerialized,
       loansByAsset,
-      averageInterestRateBps,
+      // #3879: no value total and no rate here. The former
+      // `averageInterestRateBps` was one mean over every loan, mixing
+      // lending assets and terms, and counted one-address loans; nothing
+      // read it, and a mean across assets is not a figure this platform
+      // states. `counting` says how the figures above were counted.
+      counting: countingStatement(oneAddress, partiesUnknown),
       // Deploy provenance (version-metadata binding): every deploy —
       // Workers Builds auto-deploys and manual wrangler alike — mints a
       // new version id, so "is the merged code live?" is answerable
@@ -1917,12 +1937,17 @@ export async function handleLoansRateCandles(
     // batch, so both describe the same snapshot: a loan whose flag clears
     // between two separate reads would otherwise be counted by both or by
     // neither. `range=all` counts from the epoch.
-    const [rows, unplacedRows] = await env.DB.batch([
+    // #3879: a loan with one address on both sides when it opened is no
+    // agreed rate between two parties, and a loan whose opening parties
+    // are unknown cannot be shown to be one, so both are left out of the
+    // candles and counted beside them, in the same snapshot.
+    const leftOutSql = leftOutOfRatesSql('l');
+    const [rows, unplacedRows, leftOutRows] = await env.DB.batch([
       env.DB.prepare(
         `SELECT loan_id, start_at, init_rate_bps,
                 init_principal, init_principal_unbacked
-         FROM loans
-         WHERE ${conds.join(' AND ')}
+         FROM loans l
+         WHERE ${conds.join(' AND ')} AND ${ratesEligibleSql('l')}
          ORDER BY start_at DESC, loan_id DESC
          LIMIT ?`,
       ).bind(...binds, CANDLE_SCAN_CAP + 1),
@@ -1933,6 +1958,17 @@ export async function handleLoansRateCandles(
         market.collateralAsset,
         since ?? 0,
       ),
+      env.DB.prepare(
+        // Bounded like the unplaced count, through the partial index whose
+        // WHERE is `leftOutSql`: past the cap the response says "at least"
+        // (`leftOutAtLeast`) instead of scanning the range.
+        `SELECT COUNT(*) AS n,
+                COALESCE(SUM(CASE WHEN ${partiesUnknownLoanSql('l')} THEN 1 ELSE 0 END), 0) AS unknown
+           FROM (
+             SELECT l.init_lender, l.init_borrower FROM loans l
+              WHERE ${conds.join(' AND ')} AND ${leftOutSql}
+              LIMIT ?) l`,
+      ).bind(...binds, LEFT_OUT_COUNT_CAP + 1),
     ]);
     const fills = (rows.results ?? []) as CandleFillRow[];
     const truncated = fills.length > CANDLE_SCAN_CAP;
@@ -1952,9 +1988,26 @@ export async function handleLoansRateCandles(
     const buckets =
       truncated && folded.length > 1 ? folded.slice(1) : folded;
     const unplaced = readUnplacedCount(unplacedRows as D1Result<{ n: number }>);
-    return jsonResponse({ chainId, buckets, unplaced, truncated }, 200, {
-      'Cache-Control': 'public, max-age=60',
-    });
+    const lo = (leftOutRows.results?.[0] ?? {}) as { n?: number; unknown?: number };
+    const leftOutSeen = Number(lo.n ?? 0);
+    const openingPartiesUnknown = Number(lo.unknown ?? 0);
+    const oneAddress = leftOutSeen - openingPartiesUnknown;
+    // Past the cap both counts are lower bounds of what the range holds.
+    const leftOutAtLeast = leftOutSeen > LEFT_OUT_COUNT_CAP;
+    return jsonResponse(
+      {
+        chainId,
+        buckets,
+        unplaced,
+        truncated,
+        oneAddress,
+        openingPartiesUnknown,
+        leftOutAtLeast,
+        counting: countingStatement(oneAddress, openingPartiesUnknown),
+      },
+      200,
+      { 'Cache-Control': 'public, max-age=60' },
+    );
   } catch (err) {
     console.error('[loanRoutes] rate-candles failed', redactedError(err));
     return jsonResponse({ error: 'rate-candles-failed' }, 500);
