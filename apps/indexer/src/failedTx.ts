@@ -525,7 +525,9 @@ export async function handleFailedTxWrite(
     const written = await applyFailedTxWrite(db, parsed.value, now());
     return json({ ok: true, written }, 200);
   } catch (e) {
-    return json({ error: `write failed: ${redactedError(e)}` }, 503);
+    // The detail stays in the Worker's log; the caller gets a fixed answer.
+    console.error('[failedTx] write failed', redactedError(e));
+    return json({ error: 'write failed; retry later' }, 503);
   }
 }
 
@@ -614,6 +616,8 @@ export async function handleFailedTxHealth(db: { prepare(sql: string): D1Stmt },
     });
     return json({ chains: out }, 200);
   } catch (e) {
-    return json({ error: 'unavailable', detail: redactedError(e) }, 503);
+    // A public route: the detail stays in the Worker's log.
+    console.error('[failedTx] health read failed', redactedError(e));
+    return json({ error: 'unavailable' }, 503);
   }
 }
