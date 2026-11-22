@@ -87,15 +87,15 @@
       "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B"
     }
   ],
-  "manual": [
-    {
-      "after": "launch",
-      "chains": [
-        "base-sepolia"
-      ],
-      "what": "Close, finalize and broadcast the first reward day on the canonical chain after it launched (closeDay, finalizeDay, broadcastGlobal, or the keeper day-close pass), so each mirror launch finds the broadcast carrying the armed day. The exact calls and the reward grace wait are not yet written down (guide 5.5 step 5, UNVERIFIED)."
-    }
-  ],
+  "sanctionsClearance": {
+    "attestor": "bnb-testnet",
+    "timelocks": [
+      "base-sepolia",
+      "arb-sepolia"
+    ],
+    "_why": "Owner decision 2026-11-16: rewire the sanctions delisting route after all three chains are deployed; BNB testnet answers clearance requests for the Base and Arbitrum timelocks (ConfigureSanctionsClearance header)."
+  },
+  "manual": [],
   "keeper": {
     "armed": {
       "base-sepolia": [

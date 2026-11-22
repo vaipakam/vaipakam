@@ -64,6 +64,7 @@ test('validation refuses the mistakes the file invites', () => {
     [(d) => { d.rewards.anchor = 1795305601; }, /00:00 UTC/],
     [(d) => { d.roles.bots.keeper.roles = ['keeper']; }, /\*_ROLE names/],
     [(d) => { d.records.keeperAddress = 'nobody'; }, /not under roles.bots/],
+    [(d) => { d.sanctionsClearance.timelocks = ['bnb-testnet']; }, /sanctionsClearance.timelocks/],
   ];
   for (const [mutate, re] of cases) {
     const d = real();
@@ -103,6 +104,25 @@ test('the reward steps run in the guide order: fund, anchor canonical first, arm
   assert.match(lines[fund - 2], /TREASURY "\$V" 'transfer\(address,uint256\)' "\$\(vk_role_address ADMIN\)" 100000000000000000000000 /);
 });
 
+test('the canonical chain closes, finalizes and broadcasts the day before the armed day, after the reward grace', () => {
+  const lines = plan().split('\n');
+  const at = (re) => lines.findIndex((l) => re.test(l));
+  const close = at(/'closeDay\(uint256\)'/);
+  const wait = at(/^clock \+43201$/);
+  const fin = at(/'finalizeDay\(uint256\)'/);
+  const bc = at(/'broadcastGlobal\(uint256\)' "\$P" --value "\$F"/);
+  assert.ok(at(/^step base-sepolia launch/) < close && close < wait && wait < fin && fin < bc && bc < at(/^relay /));
+  assert.ok([close, fin, bc].every((i) => lines[i].startsWith('cmd base-sepolia ')));
+});
+
+test('the sanctions clearance is rewired attestor first, after every chain is configured', () => {
+  const lines = plan().split('\n');
+  const runs = lines.map((l, i) => [l, i]).filter(([l]) => l.includes('ConfigureSanctionsClearance'));
+  assert.deepEqual(runs.map(([l]) => l.split(' ')[1]), ['bnb-testnet', 'base-sepolia', 'arb-sepolia']);
+  assert.ok(runs.every(([l]) => /SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID=97 SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS=84532,421614 /.test(l)));
+  assert.ok(runs[0][1] > lines.indexOf('step bnb-testnet configure'));
+});
+
 test('every setting is applied and read back on its own chains only', () => {
   const lines = plan().split('\n');
   const grace = lines.filter((l) => l.includes('RewardGraceSeconds'));
@@ -125,8 +145,9 @@ test('hand steps sign through vk_cast_send and never carry a key or a literal RP
 });
 
 test('a manual step without a command is printed as manual, one with a command as cmd', () => {
-  const lines = plan().split('\n');
-  assert.ok(lines.some((l) => /^manual base-sepolia -- Close, finalize and broadcast/.test(l)));
+  const d0 = real();
+  d0.manual = [{ after: 'launch', chains: ['base-sepolia'], what: 'a step nobody has written a command for yet' }];
+  assert.ok(plan(d0).split('\n').some((l) => /^manual base-sepolia -- a step nobody has written/.test(l)));
   const d = real();
   d.manual = [{ after: 'configure', chains: 'all', what: 'top up the broadcast budget on each chain', run: "vk_cast_send ADMIN \"$D\" 'f()' --rpc-url \"$R\"" }];
   const l2 = plan(d).split('\n').filter((l) => l.includes("'f()'"));

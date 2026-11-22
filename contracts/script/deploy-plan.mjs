@@ -127,6 +127,13 @@ export function validate(d, { flags, terms }) {
     if ((list ?? []).length && !(list ?? []).includes('KEEPER_ENABLED')) p.push(`keeper.armed.${s}: KEEPER_ENABLED is needed for any pass to run`);
   }
 
+  if (d.sanctionsClearance !== undefined) {
+    const { attestor, timelocks } = d.sanctionsClearance ?? {};
+    if (!slugs.includes(attestor)) p.push('sanctionsClearance.attestor must be one of the file\'s chains');
+    if (!Array.isArray(timelocks) || !timelocks.length || timelocks.some((t) => !slugs.includes(t) || t === attestor) || new Set(timelocks).size !== timelocks.length) {
+      p.push('sanctionsClearance.timelocks must list other chains of the file, each once');
+    }
+  }
   for (const [i, m] of (d.manual ?? []).entries()) {
     if (!m.after || !['configure', 'launch'].includes(m.after)) p.push(`manual[${i}]: after must be configure or launch`);
     if (!m.what || m.what.length < 20) p.push(`manual[${i}]: needs a description (what)`);
@@ -182,6 +189,8 @@ export function envDisagreements(d, env) {
   return p;
 }
 
+/** ConfigureRewardReporter's default when REWARD_GRACE_SECONDS is unset. */
+const DEFAULT_REWARD_GRACE_SECONDS = 14400;
 const PAUSABLE_SLOT = '0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400';
 const VPFI_DECIMALS = 18n;
 
@@ -256,6 +265,15 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
     }
   }
 
+  const sc = d.sanctionsClearance;
+  if (sc) {
+    const ids = sc.timelocks.map((x) => CHAINS[x].chainId).join(',');
+    say(`Rewire the sanctions delisting clearance: the attestor on ${sc.attestor} first, then each timelock chain (guide 5.1).`);
+    for (const s of [sc.attestor, ...sc.timelocks]) {
+      cmd(s, `${on(s)} SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID=${CHAINS[sc.attestor].chainId} SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS=${ids} forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$R" --broadcast --slow`);
+    }
+  }
+
   for (const m of (d.manual ?? []).filter((x) => x.after === 'configure')) {
     for (const s of m.chains === 'all' ? ordered : m.chains) m.run ? cmd(s, `${on(s)} ${m.run}`) : manual(s, m.what);
   }
@@ -279,6 +297,20 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
   step(canon, 'launch');
   for (const m of (d.manual ?? []).filter((x) => x.after === 'launch')) {
     for (const s of m.chains === 'all' ? ordered : m.chains) m.run ? cmd(s, `${on(s)} ${m.run}`) : manual(s, m.what);
+  }
+  if (mirrors.length) {
+    // A mirror launches only once the canonical chain's broadcast carrying the
+    // armed day has landed. The mirrors are still paused, so they send no
+    // report, and the canonical chain finalizes the closed day only after the
+    // reward grace has run from its own report (guide 5.5 step 5).
+    const graceSetting = (d.settings ?? []).find((x) => x.setter === 'setRewardGraceSeconds(uint64)' && settingChains(x, d).includes(canon));
+    const grace = Number(graceSetting?.value ?? DEFAULT_REWARD_GRACE_SECONDS);
+    say(`Close, finalize and broadcast the day before the armed day on ${canon}, so the mirrors learn it (guide 5.5 step 5).`);
+    const prev = `P=$(( $(cast call "$D" 'getInteractionCurrentDay()(uint256,bool)' --rpc-url "$R" | head -1 | cut -d' ' -f1) - 1 ));`;
+    cmd(canon, `${on(canon)} ${prev} vk_cast_send ADMIN "$D" 'closeDay(uint256)' "$P" --rpc-url "$R"`);
+    L.push(`clock +${grace + 1}`);
+    cmd(canon, `${on(canon)} ${prev} vk_cast_send ADMIN "$D" 'finalizeDay(uint256)' "$P" --rpc-url "$R"`);
+    cmd(canon, `${on(canon)} ${prev} F=$(cast call "$D" 'quoteBroadcastGlobal(uint256)(uint256)' "$P" --rpc-url "$R" | cut -d' ' -f1); vk_cast_send ADMIN "$D" 'broadcastGlobal(uint256)' "$P" --value "$F" --rpc-url "$R"`);
   }
   for (const s of mirrors) L.push(`relay ${canon} ${s}`);
   for (const s of mirrors) step(s, 'launch');
