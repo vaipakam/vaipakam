@@ -321,6 +321,23 @@ else
   FAIL=1
 fi
 
+# ── 1e3. Review coverage (#3936) ──────────────────────────────────────
+# The review coverage pass's ledger (contracts/review-coverage/ledger.json):
+# every hash must be a declaration at the commit its entry names, carry only
+# the allowed fields, and keep a reader's thread apart from the thread that
+# wrote the fix (ReviewCoveragePassDesign §10). A bad entry fails. The
+# coverage report itself is printed as a warning until the audit freeze.
+# Parses contracts/src on its own (solc stopAfter parsing), so it needs no
+# build artifacts.
+echo
+echo "[predeploy 1e3/4] review coverage ledger (#3936)"
+if node "$SCRIPT_DIR/review-coverage.mjs" check; then
+  node "$SCRIPT_DIR/review-coverage.mjs" report || true
+else
+  echo "  ✗ review-coverage ledger refused an entry (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1f. Error raisers ─────────────────────────────────────────────────
 # The error catalogue's "raised by" lists come from the same AST artifacts
 # as 1d/1e (#3916). The catalogue itself (names, values, meanings) is checked

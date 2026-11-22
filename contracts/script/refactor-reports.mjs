@@ -231,6 +231,39 @@ function constantTarget(declId, ctx) {
 }
 
 /**
+ * The routed function one AST node names as a call through the Diamond, or
+ * undefined. The one rule for "this code reaches that facet function", shared
+ * by `reach` and the review-coverage unit tool: a call on `this` to an
+ * external function, `abi.encodeCall(X.f, ...)`,
+ * `abi.encodeWithSignature("f(...)")`, `X.f.selector`, or a selector constant
+ * (see {constantTarget}). Returns `{ fn, contract }`.
+ */
+export function routedCallAt(n, ctx) {
+  if (n.nodeType === 'FunctionCall') {
+    const e = n.expression;
+    if (e?.nodeType === 'MemberAccess' && isSelf(e.expression)) {
+      const d = ctx.byId.get(e.referencedDeclaration);
+      if (d?.nodeType === 'FunctionDefinition' && ['external', 'public'].includes(d.visibility)) return routedTarget(d.id, ctx);
+    }
+    if (e?.nodeType === 'MemberAccess' && e.expression?.name === 'abi') {
+      const a = n.arguments?.[0];
+      if (e.memberName === 'encodeCall' && (a?.nodeType === 'MemberAccess' || a?.nodeType === 'Identifier')) {
+        return routedTarget(a.referencedDeclaration, ctx);
+      }
+      if (e.memberName === 'encodeWithSignature' && a?.nodeType === 'Literal' && a.kind === 'string') {
+        return ctx.routes.get(keccak256Hex(a.value).slice(0, 8));
+      }
+    }
+    return undefined;
+  }
+  if (n.nodeType === 'MemberAccess' && n.memberName === 'selector') return routedTarget(n.expression?.referencedDeclaration, ctx);
+  if ((n.nodeType === 'Identifier' || n.nodeType === 'MemberAccess') && n.referencedDeclaration !== undefined) {
+    return constantTarget(n.referencedDeclaration, ctx).target;
+  }
+  return undefined;
+}
+
+/**
  * Walk the code one function reaches. Calls `visitNode(node, fnFrame)` for
  * every node of every reached body, where `fnFrame` is the reached function.
  * Returns `{ functions: Set<id>, unknown: string[] }`.
@@ -272,22 +305,7 @@ export function reach(rootFn, rootContract, ctx, visitNode, { selfCalls = true }
             if (!external || library) {
               const target = e.nodeType === 'Identifier' ? mostDerived(d, lineage, ctx) : d;
               if (target.body) queue.push({ fn: target, lineage: library ? undefined : lineage });
-            } else if (selfCalls && e.nodeType === 'MemberAccess' && isSelf(e.expression)) {
-              const r = routedTarget(d.id, ctx);
-              if (r) queue.push({ fn: r.fn, lineage: r.contract.linearizedBaseContracts });
             }
-          }
-          // abi.encodeCall(X.f, (...)).
-          if (selfCalls && e?.nodeType === 'MemberAccess' && e.memberName === 'encodeCall' && e.expression?.name === 'abi') {
-            const f = n.arguments?.[0];
-            const r = f && (f.nodeType === 'MemberAccess' || f.nodeType === 'Identifier') ? routedTarget(f.referencedDeclaration, ctx) : undefined;
-            if (r) queue.push({ fn: r.fn, lineage: r.contract.linearizedBaseContracts });
-          }
-          // abi.encodeWithSignature("f(uint256)", ...).
-          if (selfCalls && e?.nodeType === 'MemberAccess' && e.memberName === 'encodeWithSignature' && e.expression?.name === 'abi') {
-            const lit = n.arguments?.[0];
-            const r = lit?.nodeType === 'Literal' && lit.kind === 'string' ? ctx.routes.get(keccak256Hex(lit.value).slice(0, 8)) : undefined;
-            if (r) queue.push({ fn: r.fn, lineage: r.contract.linearizedBaseContracts });
           }
           // A low-level call on this contract whose data names no selector.
           const ll = e?.nodeType === 'FunctionCallOptions' ? e.expression : e;
@@ -306,14 +324,8 @@ export function reach(rootFn, rootContract, ctx, visitNode, { selfCalls = true }
             if (!named) unknown.push(`a low-level ${ll.memberName} on this contract in ${fn.name} names no selector`);
           }
         }
-        // A selector constant anywhere in reachable code.
-        if (selfCalls && (n.nodeType === 'Identifier' || n.nodeType === 'MemberAccess') && n.referencedDeclaration !== undefined) {
-          const { target } = constantTarget(n.referencedDeclaration, ctx);
-          if (target) queue.push({ fn: target.fn, lineage: target.contract.linearizedBaseContracts });
-        }
-        // X.f.selector anywhere in reachable code.
-        if (selfCalls && n.nodeType === 'MemberAccess' && n.memberName === 'selector') {
-          const r = routedTarget(n.expression?.referencedDeclaration, ctx);
+        if (selfCalls) {
+          const r = routedCallAt(n, ctx);
           if (r) queue.push({ fn: r.fn, lineage: r.contract.linearizedBaseContracts });
         }
         return undefined;
