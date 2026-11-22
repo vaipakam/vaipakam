@@ -37,6 +37,7 @@
 -- Wallet addresses: `sender` is the transaction's sender, as public as the
 -- transaction itself. The record is for operators; the public data feed's
 -- address rules apply before any of it is shared outside.
+-- Kept 400 days: the indexer cron prunes older records and range rows.
 -- Additive: new tables and their indexes only.
 CREATE TABLE IF NOT EXISTS failed_tx (
   chain_id          INTEGER NOT NULL,
@@ -77,6 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_failed_tx_block ON failed_tx (chain_id, block_num
 CREATE INDEX IF NOT EXISTS idx_failed_tx_loan ON failed_tx (chain_id, diamond, loan_id) WHERE loan_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_failed_tx_offer ON failed_tx (chain_id, diamond, offer_id) WHERE offer_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_failed_tx_error ON failed_tx (chain_id, error_selector, block_number);
+CREATE INDEX IF NOT EXISTS idx_failed_tx_time ON failed_tx (block_time);
 
 -- The pass's position per network: the highest block it has finished, its
 -- mode, and the time of that block (the health route's age).
@@ -118,3 +120,4 @@ CREATE TABLE IF NOT EXISTS failed_tx_range (
   PRIMARY KEY (chain_id, kind, from_block, to_block)
 );
 CREATE INDEX IF NOT EXISTS idx_failed_tx_range_recent ON failed_tx_range (chain_id, kind, recorded_at);
+CREATE INDEX IF NOT EXISTS idx_failed_tx_range_age ON failed_tx_range (recorded_at);

@@ -76,7 +76,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleRepaymentRecord, handleRepaymentRecordPreflight } from './repaymentRecord';
 import { handleIngestHealth } from './healthRoutes';
-import { handleFailedTxHealth, handleFailedTxWrite } from './failedTx';
+import { handleFailedTxHealth, handleFailedTxWrite, pruneOldFailedTx } from './failedTx';
 import { handleAssetRankings } from './assetRankings';
 import { handleAssetIssuerPowers } from './issuerPowers';
 import { handlePublicFeed, handlePublicFeedPreflight, isPublicFeedPath } from './publicFeed';
@@ -380,6 +380,13 @@ export default {
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldCancelledOffers pass failed:', redactedError(err));
+      }),
+    );
+    // #3918 — the failed transaction record is kept 400 days.
+    runPass(
+      pruneOldFailedTx(resolved.DB).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] pruneOldFailedTx pass failed:', redactedError(err));
       }),
     );
     // #757 — prune the webhook delivery dedupe table (short retention window).

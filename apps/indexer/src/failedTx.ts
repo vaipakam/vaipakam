@@ -301,6 +301,7 @@ export interface D1Stmt {
   bind(...values: unknown[]): D1Stmt;
   all<T = unknown>(): Promise<{ results?: T[] }>;
   first<T = unknown>(): Promise<T | null>;
+  run(): Promise<unknown>;
 }
 
 const SOURCE_RANK_SQL = (col: string) => `CASE ${col} WHEN 'trace' THEN 3 WHEN 'rebuilt' THEN 3 WHEN 'replay' THEN 2 ELSE 1 END`;
@@ -422,6 +423,22 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
   }
   const results = await db.batch(stmts);
   return results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+}
+
+// ─── Retention ───────────────────────────────────────────────────────────
+
+/** How long the record is kept (TroubleshootingPictureDesign.md §3, Default 400 days). */
+export const FAILED_TX_RETENTION_DAYS = 400;
+
+/**
+ * Drops records whose block is older than the retention, and the pass's range
+ * statements recorded before it. The pass itself never deletes; this is the
+ * indexer's own scheduled prune, on the cron like the other retention prunes.
+ */
+export async function pruneOldFailedTx(db: { prepare(sql: string): D1Stmt }, now: number = Math.floor(Date.now() / 1000)): Promise<void> {
+  const cutoff = now - FAILED_TX_RETENTION_DAYS * 86_400;
+  await db.prepare('DELETE FROM failed_tx WHERE block_time < ?1').bind(cutoff).run();
+  await db.prepare('DELETE FROM failed_tx_range WHERE recorded_at < ?1').bind(cutoff).run();
 }
 
 // ─── The route ───────────────────────────────────────────────────────────

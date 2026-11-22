@@ -14,6 +14,8 @@ import {
   handleFailedTxHealth,
   handleFailedTxWrite,
   parseFailedTxWrite,
+  pruneOldFailedTx,
+  FAILED_TX_RETENTION_DAYS,
   writerAuthorized,
   type D1Write,
 } from '../src/failedTx';
@@ -238,5 +240,17 @@ describe('parseFailedTxWrite', () => {
   it('lowercases hashes and addresses', () => {
     const p = parseFailedTxWrite({ kind: 'records', chainId: CHAIN, records: [record({ sender: addr(0xabc).toUpperCase().replace('0X', '0x') })] });
     expect(p.ok && p.value.kind === 'records' && p.value.records[0]!.sender).toBe(addr(0xabc));
+  });
+});
+
+describe('pruneOldFailedTx', () => {
+  it('drops records and range rows past the retention and keeps the rest', async () => {
+    const s = setup();
+    const cutoff = NOW - FAILED_TX_RETENTION_DAYS * 86_400;
+    await s.post({ kind: 'records', chainId: CHAIN, records: [record({ txHash: h64(1), blockTime: cutoff - 1 }), record({ txHash: h64(2), blockTime: cutoff + 1 })] });
+    s.db.prepare("INSERT INTO failed_tx_range (chain_id, kind, from_block, to_block, recorded_at) VALUES (?, 'gap', 1, 2, ?), (?, 'gap', 3, 4, ?)").run(CHAIN, cutoff - 1, CHAIN, cutoff + 1);
+    await pruneOldFailedTx(s.d1 as unknown as Parameters<typeof pruneOldFailedTx>[0], NOW);
+    expect(s.rows('SELECT tx_hash FROM failed_tx')).toEqual([{ tx_hash: h64(2) }]);
+    expect(s.rows('SELECT from_block FROM failed_tx_range')).toEqual([{ from_block: 3 }]);
   });
 });
