@@ -99,17 +99,18 @@ contract RehearsalOffRampTest is Test {
     Router internal router;
     StubRegistry internal registry;
     RehearsalOffRamp internal ramp;
+    RMNRemote internal rmn;
     RecordingReceiver internal receiver;
 
     function setUp() public {
-        RMNRemote rmn = new RMNRemote(DST, IRMN(address(0)));
+        rmn = new RMNRemote(DST, IRMN(address(0)));
         RMNProxy proxy = new RMNProxy(address(rmn));
         router = new Router(makeAddr("weth"), address(proxy));
         registry = new StubRegistry();
 
         // Install as the rehearsal does: deploy, then copy the runtime code
         // (immutables included) over the real off-ramp's address.
-        RehearsalOffRamp built = new RehearsalOffRamp(address(router), address(registry), DST, EXACT_CHECK, relayer);
+        RehearsalOffRamp built = new RehearsalOffRamp(address(router), address(registry), DST, EXACT_CHECK, address(proxy), relayer);
         vm.etch(realOffRamp, address(built).code);
         ramp = RehearsalOffRamp(realOffRamp);
 
@@ -228,6 +229,24 @@ contract RehearsalOffRampTest is Test {
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(RehearsalOffRamp.OnRampNotAllowed.selector, SRC, m.onRampAddress));
         ramp.execute(_encode(m));
+    }
+
+    /// @dev `OffRamp 2.0.0` checks the source chain's curse on its RMNRemote
+    ///      before it executes; a cursed lane must not deliver here either.
+    function test_RefusesACursedSourceChain() public {
+        rmn.curse(bytes16(uint128(SRC)));
+        MessageV1Codec.MessageV1 memory m = _message(200_000, hex"05");
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(RehearsalOffRamp.CursedByRMN.selector, SRC));
+        ramp.execute(_encode(m));
+    }
+
+    function test_DeliversWhenAnotherChainIsCursed() public {
+        rmn.curse(bytes16(uint128(SRC + 1)));
+        MessageV1Codec.MessageV1 memory m = _message(200_000, hex"05");
+        vm.prank(relayer);
+        ramp.execute(_encode(m));
+        assertTrue(ramp.executed(keccak256(_encode(m))));
     }
 
     function test_RefusesAnotherDestination() public {

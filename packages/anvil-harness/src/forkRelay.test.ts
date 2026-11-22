@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, keccak256, parseAbi, type Address, type Hex } from 'viem';
-import { chooseOffRamp, FORK_RELAY_LIMITS, OFF_RAMP_VERSION, ON_RAMP_VERSION, requireVersion, selectSentMessages } from './forkRelay';
+import { chooseOffRamp, FORK_RELAY_LIMITS, OFF_RAMP_VERSION, ON_RAMP_VERSION, requireMinedOnFork, requireVersion, selectSentMessages } from './forkRelay';
 
 // The deployed OnRamp 2.0.0 event, written out here so the test does not
 // need a forge build; the relay itself reads the compiled declaration.
@@ -138,5 +138,16 @@ describe('FORK_RELAY_LIMITS', () => {
     expect(text).toMatch(/verification is not rehearsed/);
     expect(text).toMatch(/delays are not rehearsed/);
     expect(text).toMatch(/Manual execution is not rehearsed/);
+  });
+});
+
+describe('requireMinedOnFork', () => {
+  const tx = `0x${'ab'.repeat(32)}` as const;
+  it('refuses a transaction mined before the fork point', () => {
+    expect(() => requireMinedOnFork(99n, 100n, tx, 'base-sepolia')).toThrow(/before the fork point 100/);
+  });
+  it('accepts a transaction mined at or after the fork point', () => {
+    expect(() => requireMinedOnFork(100n, 100n, tx, 'base-sepolia')).not.toThrow();
+    expect(() => requireMinedOnFork(150n, 100n, tx, 'base-sepolia')).not.toThrow();
   });
 });

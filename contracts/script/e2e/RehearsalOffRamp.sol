@@ -104,6 +104,14 @@ interface IRehearsalRampReads {
 }
 
 /**
+ * @dev The one `RMNRemote` read the stand-in makes: the source-chain curse
+ *      `OffRamp 2.0.0` checks before it executes a message.
+ */
+interface IRMNRemoteCurse {
+    function isCursed(bytes16 subject) external view returns (bool);
+}
+
+/**
  * @dev The 2.0.0 token pool interface, declared only so its ERC-165 id is the
  *      deployed one (the id is the XOR of exactly these six selectors). The
  *      stand-in calls `releaseOrMint` on a pool that declares it, as
@@ -185,8 +193,9 @@ interface IRehearsalPoolV2 {
  *         WHAT IT KEEPS of `OffRamp 2.0.0`'s `execute` and
  *         `executeSingleMessage`: the message is the encoded bytes the source
  *         on-ramp emitted, decoded by the 2.0.0 codec, and its id is their
- *         hash; the destination selector, the addressed off-ramp (this
- *         address), the on-ramp (one the real off-ramp allowed for that
+ *         hash; the destination selector, the source chain is not cursed
+ *         on the real `RMNRemote` (the subject the real ramp checks), the
+ *         addressed off-ramp (this address), the on-ramp (one the real off-ramp allowed for that
  *         source, recorded at install) and the lane (the router names this
  *         address for that source) are checked; the token goes through the
  *         registry's pool and the pool's real `releaseOrMint` (2.0.0 or 1.0
@@ -214,6 +223,7 @@ contract RehearsalOffRamp {
     error NotAddressedHere(bytes offRampAddress);
     error OnRampNotAllowed(uint64 sourceChainSelector, bytes onRampAddress);
     error LaneNotRouted(uint64 sourceChainSelector);
+    error CursedByRMN(uint64 sourceChainSelector);
     error InvalidEVMAddress(bytes encodedAddress);
     error AlreadyExecuted(bytes32 messageId);
     error NotACompatiblePool(address pool);
@@ -255,6 +265,10 @@ contract RehearsalOffRamp {
     uint64 public immutable localChainSelector;
     /// @notice The real off-ramp's `gasForCallExactCheck`, read before install.
     uint16 public immutable gasForCallExactCheck;
+    /// @notice The real off-ramp's `rmnRemote`, read before install. A source
+    ///         chain it curses is refused before anything is delivered, as
+    ///         `OffRamp 2.0.0` refuses it.
+    IRMNRemoteCurse public immutable rmnRemote;
     /// @notice The only account that may hand this ramp a message or allow an
     ///         on-ramp: the harness relay's key.
     address public immutable relayer;
@@ -264,12 +278,14 @@ contract RehearsalOffRamp {
         address registry_,
         uint64 localChainSelector_,
         uint16 gasForCallExactCheck_,
+        address rmnRemote_,
         address relayer_
     ) {
         router = IRouter(router_);
         registry = ITokenAdminRegistry(registry_);
         localChainSelector = localChainSelector_;
         gasForCallExactCheck = gasForCallExactCheck_;
+        rmnRemote = IRMNRemoteCurse(rmnRemote_);
         relayer = relayer_;
     }
 
@@ -312,6 +328,9 @@ contract RehearsalOffRamp {
         RehearsalOffRampStorage storage s = _s();
 
         if (message.destChainSelector != localChainSelector) revert WrongDestination(message.destChainSelector);
+        if (rmnRemote.isCursed(bytes16(uint128(message.sourceChainSelector)))) {
+            revert CursedByRMN(message.sourceChainSelector);
+        }
         if (message.offRampAddress.length != 20 || address(bytes20(message.offRampAddress)) != address(this)) {
             revert NotAddressedHere(message.offRampAddress);
         }

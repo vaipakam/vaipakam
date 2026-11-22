@@ -78,6 +78,19 @@ export interface ForkEnd {
   fromBlock: bigint;
 }
 
+/**
+ * Refuse a source transaction mined before the fork point. It was sent on the
+ * real chain, so the real network delivers it, never this relay; delivering
+ * it on the fork would replay a message the rehearsal did not send.
+ */
+export function requireMinedOnFork(blockNumber: bigint, fromBlock: bigint, txHash: Hex, chainName: string): void {
+  if (blockNumber < fromBlock) {
+    throw new Error(
+      `relay: transaction ${txHash} on ${chainName} was mined at block ${blockNumber}, before the fork point ${fromBlock}; it is not this rehearsal's`,
+    );
+  }
+}
+
 /** The ramps found for one direction of one lane. */
 export interface LaneRamps {
   from: string;
@@ -300,6 +313,7 @@ export class ForkCcipRelay {
       await control.setBalance(relayer.address, 100n * 10n ** 18n);
       const stat = (await d.readContract({ address: inst.offRamp, abi: abis.reads, functionName: 'getStaticConfig' } as never)) as {
         gasForCallExactCheck: number;
+        rmnRemote: Address;
         tokenAdminRegistry: Address;
       };
       const wallet = createWalletClient({ account: relayer, chain: chainOf(end), transport: http(end.url) });
@@ -307,7 +321,7 @@ export class ForkCcipRelay {
         data: encodeDeployData({
           abi: abis.standIn,
           bytecode: creation,
-          args: [end.router, stat.tokenAdminRegistry, BigInt(end.chainSelector), stat.gasForCallExactCheck, relayer.address],
+          args: [end.router, stat.tokenAdminRegistry, BigInt(end.chainSelector), stat.gasForCallExactCheck, stat.rmnRemote, relayer.address],
         }),
       } as never);
       const deployed = await d.waitForTransactionReceipt({ hash: deployTx, timeout: 60_000 });
@@ -375,12 +389,14 @@ export class ForkCcipRelay {
   /**
    * Deliver the messages one source transaction sent toward `toChainId`: what
    * a plan step that waits for a message calls before it continues. Throws if
-   * the transaction sent none, or if any was already delivered.
+   * the transaction was mined before the fork point, sent none, or if any was
+   * already delivered.
    */
   async deliverFromTx(fromChainId: number, toChainId: number, txHash: Hex): Promise<ForkRelayedMessage[]> {
     const src = this.end(fromChainId);
     const lane = this.lane(fromChainId, toChainId);
     const receipt = await client(src).getTransactionReceipt({ hash: txHash });
+    requireMinedOnFork(receipt.blockNumber, src.fromBlock, txHash, src.name);
     const sent = selectSentMessages(receipt.logs, lane.onRamp, BigInt(this.end(toChainId).chainSelector), this.abis.onRampEvents);
     if (sent.length === 0) throw new Error(`relay: transaction ${txHash} on ${src.name} sent no message toward chain ${toChainId}`);
     const pending = await this.undelivered(toChainId, lane.offRamp, sent);
