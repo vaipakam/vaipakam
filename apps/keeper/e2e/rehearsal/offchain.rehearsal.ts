@@ -38,7 +38,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { anvilControl } from '@vaipakam/anvil-harness/rpc';
 import { configuredScanChains, getChainConfigs as indexerChains, rpcBindingFor, type Env as IndexerEnv } from '../../../indexer/src/env';
 import { handleIngestHealth } from '../../../indexer/src/healthRoutes';
-import { getChainConfigs as keeperChains, type Env, type WorkerEnv } from '../../src/env';
+import { getChainConfigs as keeperChains, resolveEnv, type WorkerEnv } from '../../src/env';
 import { KEEPER_PASSES, runDeadline } from '../../src/passSchedule';
 import { runKeeperTick } from '../../src/tick';
 import { disarmEpochFence } from '../../src/epochFence';
@@ -108,21 +108,28 @@ it('rehearses the indexer and every keeper pass on this fork', async () => {
 
     // 4. The keeper: the tick's real setup, then each pass once.
     const keeperDb = createKeeperD1();
-    const env = {
+    // The tick reads the RPC and the signing key as secret bindings, as the
+    // Worker and the machine host hand them over (`buildHostEnv` wraps the
+    // same keys); a plain string there has no `.get()` and reads as unset.
+    const secret = (value: string) => ({ get: async () => value });
+    const tickEnv = {
       DB: shared.d1,
       KEEPER_DB: keeperDb.d1,
-      [binding.binding]: url,
+      [binding.binding]: secret(url),
       KEEPER_ENABLED: 'true',
-      KEEPER_PRIVATE_KEY: bots.keeperKey,
+      KEEPER_PRIVATE_KEY: secret(bots.keeperKey),
       KEEPER_RUNNER_ID: RUNNER_ID,
       ...Object.fromEntries(flags.map((f) => [f, 'true'])),
     } as unknown as WorkerEnv;
-    const kchains = keeperChains(env as unknown as Env);
+    // The passes run on the resolved env, as the tick hands it to them; the
+    // chain set is checked on that same env, not on the raw bindings.
+    const env = await resolveEnv(tickEnv);
+    const kchains = keeperChains(env);
     if (kchains.length !== 1 || kchains[0].id !== chainId) {
       throw new Error(`rehearsal: the keeper resolves ${kchains.map((c) => c.id).join(', ') || 'no chain'}, not chain ${chainId} alone`);
     }
     const launched: string[] = [];
-    const setup = await captureConsole(() => runKeeperTick(env, Date.now(), (name) => void launched.push(name)));
+    const setup = await captureConsole(() => runKeeperTick(tickEnv, Date.now(), (name) => void launched.push(name)));
     // The tick launches its rebroadcast step only once every setup step above
     // it succeeded; a declined tick returns early and launches nothing.
     if (setup.error !== undefined || !launched.includes('privateRebroadcast')) {
@@ -133,9 +140,9 @@ it('rehearses the indexer and every keeper pass on this fork', async () => {
       const now = Date.now();
       const started = Date.now();
       // eslint-disable-next-line no-await-in-loop
-      const run = await captureConsole(() => pass.run(env as unknown as Env, { scheduledTimeMs: now, deadlineMs: runDeadline(pass, now) }));
+      const run = await captureConsole(() => pass.run(env, { scheduledTimeMs: now, deadlineMs: runDeadline(pass, now) }));
       const threw = run.error === undefined ? null : { message: redactUrl(String((run.error as Error)?.message ?? run.error), url) };
-      outcomes.push(classifyPass(pass.name, Date.now() - started, threw, narrowed.take(), run.lines));
+      outcomes.push(classifyPass(pass.name, Date.now() - started, threw, narrowed.take(), run.lines.map((l) => redactUrl(l, url)), run.errorLines.map((l) => redactUrl(l, url))));
     }
     for (const o of outcomes) if (o.result === 'failed') failures.push(`keeper pass ${o.pass}: ${o.detail}`);
   } catch (err) {

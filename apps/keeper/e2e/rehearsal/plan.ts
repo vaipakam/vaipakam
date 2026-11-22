@@ -135,7 +135,12 @@ export type PassOutcome =
  * that tried to reach anything else could not finish what it does in
  * production; it is reported as not rehearsed, naming each service it tried,
  * whether it then threw or carried on. A pass that threw without trying an
- * outside service failed: that is a fault the rehearsal exists to find.
+ * outside service failed: that is a fault the rehearsal exists to find. So did
+ * one that wrote an error-level line: passes catch a chain's failure and log
+ * it (`[keeper] <step> chain=<id> failed: …`) rather than throw, so a run that
+ * returned normally can still have failed. Every error line counts, not only
+ * ones carrying the pass's name, because a pass logs under its step's name
+ * (`runLiquidityConfidence`, not `liquidityConfidence`).
  */
 export function classifyPass(
   pass: string,
@@ -143,16 +148,22 @@ export function classifyPass(
   threw: { message: string } | null,
   blockedOrigins: readonly string[],
   logLines: readonly string[] = [],
+  errorLines: readonly string[] = [],
 ): PassOutcome {
   const skipPrefix = `[keeper] ${pass} skipped: `;
   const skipped = logLines.find((l) => l.startsWith(skipPrefix));
-  if (skipped !== undefined && !threw && blockedOrigins.length === 0) {
+  if (skipped !== undefined && !threw && blockedOrigins.length === 0 && errorLines.length === 0) {
     return { pass, result: 'not-armed', ms, detail: skipped.slice(skipPrefix.length) };
   }
   if (blockedOrigins.length > 0) {
     return { pass, result: 'not-rehearsed', ms, services: [...new Set(blockedOrigins)].sort(), detail: threw?.message ?? null };
   }
   if (threw) return { pass, result: 'failed', ms, detail: threw.message };
+  if (errorLines.length > 0) {
+    const shown = errorLines.slice(0, 3).join(' | ');
+    const more = errorLines.length > 3 ? ` (and ${errorLines.length - 3} more)` : '';
+    return { pass, result: 'failed', ms, detail: `reported failure: ${shown}${more}` };
+  }
   return { pass, result: 'ran', ms };
 }
 

@@ -160,6 +160,24 @@ describe('rehearsal off-chain stage — reading a pass', () => {
     expect(stagePassed([classifyPass('matcher', 1, null, [])])).toBe(true);
   });
 
+  it('a pass that caught and logged its own failure failed, even though it returned', () => {
+    const line = '[keeper] runLiquidityConfidence chain=84532 failed: execution reverted';
+    const o = classifyPass('liquidityConfidence', 4, null, [], [line], [line]);
+    expect(o).toEqual({ pass: 'liquidityConfidence', result: 'failed', ms: 4, detail: `reported failure: ${line}` });
+    expect(stagePassed([o])).toBe(false);
+  });
+
+  it('an error line outweighs a skip line, and many error lines are summarised', () => {
+    const skip = '[keeper] graceDefault skipped: GRACE_DEFAULT_ENABLED unset';
+    expect(classifyPass('graceDefault', 1, null, [], [skip, 'x'], ['x']).result).toBe('failed');
+    const errs = ['a', 'b', 'c', 'd', 'e'];
+    expect(classifyPass('matcher', 1, null, [], errs, errs)).toMatchObject({ result: 'failed', detail: 'reported failure: a | b | c (and 2 more)' });
+  });
+
+  it('a refused outside service still reads as not rehearsed when the pass also logged an error', () => {
+    expect(classifyPass('watcher', 2, null, ['https://agent.example'], ['e'], ['e']).result).toBe('not-rehearsed');
+  });
+
   it('every scheduled pass has a distinct name to read its skip line by', () => {
     const names = KEEPER_PASSES.map((p) => p.name);
     expect(new Set(names).size).toBe(names.length);

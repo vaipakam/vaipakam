@@ -50,21 +50,29 @@ export function narrowFetchTo(allowedUrl: string): NarrowedFetch {
 /**
  * The console lines a pass writes while it runs, captured for the report and
  * still printed. Lines are joined as the console would join its arguments.
+ * `errorLines` are the ones written at error level: a pass that catches its
+ * own failure (a chain's run refused, a send reverted) reports it there and
+ * returns normally, so the stage reads those as the pass's failure.
  */
-export async function captureConsole<T>(run: () => Promise<T>): Promise<{ value: T | undefined; error: unknown; lines: string[] }> {
+export async function captureConsole<T>(
+  run: () => Promise<T>,
+): Promise<{ value: T | undefined; error: unknown; lines: string[]; errorLines: string[] }> {
   const lines: string[] = [];
+  const errorLines: string[] = [];
   const methods = ['log', 'warn', 'error', 'info'] as const;
   const saved = methods.map((m) => console[m]);
   methods.forEach((m, i) => {
     console[m] = (...args: unknown[]) => {
-      lines.push(args.map(describeArg).join(' '));
+      const line = args.map(describeArg).join(' ');
+      lines.push(line);
+      if (m === 'error') errorLines.push(line);
       saved[i].apply(console, args);
     };
   });
   try {
-    return { value: await run(), error: undefined, lines };
+    return { value: await run(), error: undefined, lines, errorLines };
   } catch (error) {
-    return { value: undefined, error, lines };
+    return { value: undefined, error, lines, errorLines };
   } finally {
     methods.forEach((m, i) => {
       console[m] = saved[i];
