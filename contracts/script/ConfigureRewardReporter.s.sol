@@ -8,6 +8,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {IRewardMessenger, ChainDayReport} from "../src/interfaces/IRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev Minimal local interface for `VaipakamRewardMessenger.diamond()`.
@@ -109,7 +110,7 @@ contract ConfigureRewardReporter is Script {
     }
 
     function run() external {
-        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         // Read prior deploy artifacts. Diamond reads from
         // deployments/<chain>/addresses.json with chain-prefixed env
         // fallback. The reward messenger (`VaipakamRewardMessenger`,
@@ -264,7 +265,7 @@ contract ConfigureRewardReporter is Script {
             console.log("Cutoff gap:    ", uint256(dispatchCutoffGap));
         }
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(adminSigner);
         RewardReporterFacet rr = RewardReporterFacet(diamond);
         // No `setLocalEid` — a chain's identity is `block.chainid`.
         rr.setBaseChainId(baseChainId);

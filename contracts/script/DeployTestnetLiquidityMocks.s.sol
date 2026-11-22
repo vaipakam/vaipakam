@@ -13,6 +13,7 @@ import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {TestnetFeedRegistration} from "./lib/TestnetFeedRegistration.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title DeployTestnetLiquidityMocks
@@ -147,8 +148,8 @@ contract DeployTestnetLiquidityMocks is Script {
             "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, 97, 421614, 11155420, or 31337)"
         );
 
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address weth;
         if (cid == 84532) {
             weth = vm.envOr("BASE_SEPOLIA_WETH_ADDRESS", BASE_WETH_DEFAULT);
@@ -182,12 +183,12 @@ contract DeployTestnetLiquidityMocks is Script {
         console.log("=== Deploy Testnet Liquidity Mocks ===");
         console.log("Chain id:   ", cid);
         console.log("Diamond:    ", diamond);
-        console.log("Deployer:   ", vm.addr(deployerKey));
-        console.log("Admin:      ", vm.addr(adminKey));
+        console.log("Deployer:   ", deployerSigner.addr);
+        console.log("Admin:      ", adminSigner.addr);
         console.log("WETH:       ", weth);
 
         // ── Step 1: Deployer-side: deploy mocks ────────────────────────
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
 
         // Anvil-only: when ANVIL_WETH is unset, mint a mock WETH inline
         // so the rest of the wiring is identical to the testnet flow.
@@ -201,8 +202,8 @@ contract DeployTestnetLiquidityMocks is Script {
         ERC20Mock mWbtc = new ERC20Mock("Mock WBTC", "mWBTC", 8);
         // Mint initial supply to the deployer; seeders later transfer
         // sub-balances to lender / borrower / treasury accounts.
-        mUsdc.mint(vm.addr(deployerKey), MUSDC_INITIAL_SUPPLY);
-        mWbtc.mint(vm.addr(deployerKey), MWBTC_INITIAL_SUPPLY);
+        mUsdc.mint(deployerSigner.addr, MUSDC_INITIAL_SUPPLY);
+        mWbtc.mint(deployerSigner.addr, MWBTC_INITIAL_SUPPLY);
 
         MockChainlinkPairFeed mUsdcFeed = new MockChainlinkPairFeed(MUSDC_USD_PRICE, 8, "mUSDC / USD");
         MockChainlinkPairFeed mWbtcFeed = new MockChainlinkPairFeed(MWBTC_USD_PRICE, 8, "mWBTC / USD");
@@ -238,7 +239,7 @@ contract DeployTestnetLiquidityMocks is Script {
             address(registry).code.length != 0,
             "DeployTestnetLiquidityMocks: no feedRegistry recorded for this chain - run DeployFeedRegistry first"
         );
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         {
             TestnetFeedRegistration.Feed[] memory feeds = new TestnetFeedRegistration.Feed[](3);
             feeds[0] = TestnetFeedRegistration.Feed(address(mUsdc), USD_DENOM, address(mUsdcFeed), "mUSDC / USD");

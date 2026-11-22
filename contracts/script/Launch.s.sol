@@ -7,6 +7,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {LibLaunchReadiness, ILaunchReadableDiamond, ILaunchPriceGuard} from "../src/governance/LibLaunchReadiness.sol";
 import {ILaunchGate} from "../src/interfaces/ILaunchGate.sol";
 import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
@@ -178,10 +179,9 @@ contract Launch is Script {
     uint64 private _proofCalls;
 
     function run() external returns (Outcome) {
-        uint256 adminKey = vm.envOr("ADMIN_PRIVATE_KEY", uint256(0));
         address diamond_ = Deployments.readDiamond();
-        return launch(
-            diamond_, declaredFromEnv(diamond_), Deployments.readTimelockOptional(), _adminFromEnv(), adminKey
+        return _launch(
+            diamond_, declaredFromEnv(diamond_), Deployments.readTimelockOptional(), _adminFromEnv(), Signers.roleOr("ADMIN")
         );
     }
 
@@ -267,13 +267,28 @@ contract Launch is Script {
         public
         returns (Outcome)
     {
+        Signer memory adminSigner;
+        if (adminKey != 0) adminSigner = Signers.fromKey("ADMIN", adminKey);
+        return _launch(diamond, declared, timelock, admin, adminSigner);
+    }
+
+    /// @dev The body of {run} and {launch}. `adminSigner.addr` is zero when the
+    ///      run holds no admin signer: no key in a real run, no `ADMIN_ADDRESS`
+    ///      in a rehearsal (#3891), and then it never broadcasts.
+    function _launch(
+        address diamond,
+        LibLaunchReadiness.Declared memory declared,
+        address timelock,
+        address admin,
+        Signer memory adminSigner
+    ) internal returns (Outcome) {
         bool production = Deployments.requiresProductionGovernance();
         bool local = block.chainid == 31337;
         console.log("Launch readiness");
         console.log("  diamond: ", diamond);
         console.log("  mode:    ", production ? "production (Timelock unpauses)" : local ? "local anvil" : "testnet");
 
-        Decision memory d = decide(diamond, declared, timelock, admin, adminKey != 0);
+        Decision memory d = decide(diamond, declared, timelock, admin, adminSigner.addr != address(0));
         _printChecks(d.checks);
         _printNotChecked();
         if (d.path == Path.Refuse) revert(d.reason);
@@ -290,7 +305,7 @@ contract Launch is Script {
         }
         // Bound to the epoch the decision read, so a pause recorded between
         // that read and the broadcast makes the transaction revert.
-        vm.broadcast(adminKey);
+        Signers.broadcastNext(adminSigner);
         AdminFacet(diamond).unpauseIfPauseEpoch(d.epoch);
         console.log("Unpaused by the admin key:", admin);
         return Outcome.Unpaused;
@@ -705,13 +720,15 @@ contract Launch is Script {
     /// @dev Whether the run holds the admin's private key: a known
     ///      `ADMIN_ADDRESS` alone cannot unpause, so it never makes the
     ///      report or the verdict expect an admin unpause.
+    ///      In a rehearsal the impersonated `ADMIN_ADDRESS` is the signer the
+    ///      real key will be (`Signers`, #3891), so it counts the same way.
     function _adminKeyGiven() internal view returns (bool) {
-        return vm.envOr("ADMIN_PRIVATE_KEY", uint256(0)) != 0;
+        return Signers.roleOr("ADMIN").addr != address(0);
     }
 
     function _adminFromEnv() internal view returns (address) {
-        uint256 adminKey = vm.envOr("ADMIN_PRIVATE_KEY", uint256(0));
-        return adminKey != 0 ? vm.addr(adminKey) : vm.envOr("ADMIN_ADDRESS", address(0));
+        address signer = Signers.roleOr("ADMIN").addr;
+        return signer != address(0) ? signer : vm.envOr("ADMIN_ADDRESS", address(0));
     }
 
     function _printChecks(LibLaunchReadiness.Check[] memory checks) internal pure {

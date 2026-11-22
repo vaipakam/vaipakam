@@ -5,6 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {TestnetChains} from "../../src/compliance/TestnetChains.sol";
+import {Signers, Signer} from "./Signers.sol";
 import {Deployments} from "./Deployments.sol";
 import {AdminControl} from "./AdminControl.sol";
 import {ArtifactDeploy} from "./ArtifactDeploy.sol";
@@ -107,8 +108,14 @@ library FeedRegistryDeployment {
 
     /// @notice Deploy (or reuse) the chain's registry; see the library notes.
     function deploy(uint256 deployerKey, uint256 adminKey) internal returns (VaipakamFeedRegistry reg) {
+        return deploy(Signers.fromKey("DEPLOYER", deployerKey), Signers.fromKey("ADMIN", adminKey));
+    }
+
+    /// @notice {deploy} with the signers resolved by `Signers` (#3891): a real
+    ///         run signs with the keys, a rehearsal as the impersonated addresses.
+    function deploy(Signer memory deployer, Signer memory adminSigner) internal returns (VaipakamFeedRegistry reg) {
         bool testnet = TestnetChains.isTestnet(block.chainid);
-        address admin = VM.addr(adminKey);
+        address admin = adminSigner.addr;
         address guardian = guardianFor(admin);
 
         address recorded = recordedFor(admin);
@@ -117,7 +124,7 @@ library FeedRegistryDeployment {
             reg = VaipakamFeedRegistry(recorded);
             console.log("Reusing the recorded VaipakamFeedRegistry");
         } else {
-            VM.broadcast(deployerKey);
+            Signers.broadcastNext(deployer);
             reg = new VaipakamFeedRegistry(admin, guardian);
             deployed = true;
         }
@@ -125,7 +132,7 @@ library FeedRegistryDeployment {
         if (testnet) {
             uint64 want = uint64(VM.envOr("FEED_REGISTRY_DELAY_SECONDS", uint256(0)));
             if (reg.delay() != want) {
-                VM.broadcast(adminKey);
+                Signers.broadcastNext(adminSigner);
                 reg.setDelay(want);
             }
         }

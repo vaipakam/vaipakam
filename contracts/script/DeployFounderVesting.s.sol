@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {VaipakamVestingWallet} from "../src/token/VaipakamVestingWallet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title DeployFounderVesting
@@ -43,7 +44,7 @@ contract DeployFounderVesting is Script {
     uint64 internal constant DEFAULT_CLIFF_DAYS = 365; // 1 year
 
     function run() external returns (address vestingWallet) {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
         address beneficiary = vm.envAddress("VESTING_BENEFICIARY");
         uint256 grantVpfi = vm.envUint("VESTING_GRANT_VPFI");
 
@@ -69,7 +70,7 @@ contract DeployFounderVesting is Script {
         console.log("Cliff (s):       ", cliffSeconds);
         console.log("Fund now:        ", fund);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
         VaipakamVestingWallet wallet = new VaipakamVestingWallet(
             beneficiary,
             start,

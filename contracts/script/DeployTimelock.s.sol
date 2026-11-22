@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamTimelock} from "../src/governance/VaipakamTimelock.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title DeployTimelock
@@ -102,7 +103,7 @@ contract DeployTimelock is Script {
             vm.envOr("TIMELOCK_CANCELLER", address(0)) == address(0),
             "DeployTimelock: TIMELOCK_CANCELLER is retired - the canceller is PAUSER_ADDRESS; unset it"
         );
-        c.deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        c.deployerKey = Signers.role("DEPLOYER").key; // zero in a rehearsal (#3891)
         c.minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
         c.proposer = vm.envAddress("TIMELOCK_PROPOSER");
         c.executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));
@@ -116,7 +117,8 @@ contract DeployTimelock is Script {
     /// @notice Checks `c` and deploys the Timelock. Every refusal happens
     ///         before anything is broadcast.
     function runWith(Config memory c) public returns (address timelock) {
-        uint256 deployerKey = c.deployerKey;
+        Signer memory deployer =
+            c.deployerKey != 0 ? Signers.fromKey("DEPLOYER", c.deployerKey) : Signers.role("DEPLOYER");
         uint256 minDelay = c.minDelay;
         address proposer = c.proposer;
         address executor = c.executor;
@@ -171,7 +173,7 @@ contract DeployTimelock is Script {
         address[] memory cancellers = new address[](1);
         cancellers[0] = canceller;
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployer);
         VaipakamTimelock tl = new VaipakamTimelock(
             minDelay,
             proposers,

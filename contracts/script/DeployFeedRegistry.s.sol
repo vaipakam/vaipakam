@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
 
 /**
@@ -21,6 +22,6 @@ import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
  */
 contract DeployFeedRegistry is Script {
     function run() external returns (address) {
-        return address(FeedRegistryDeployment.deploy(vm.envUint("DEPLOYER_PRIVATE_KEY"), vm.envUint("ADMIN_PRIVATE_KEY")));
+        return address(FeedRegistryDeployment.deploy(Signers.role("DEPLOYER"), Signers.role("ADMIN")));
     }
 }

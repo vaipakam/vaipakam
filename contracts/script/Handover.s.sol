@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {HandoverPlan} from "./lib/HandoverPlan.sol";
 
 /**
@@ -146,6 +147,8 @@ contract Handover is Script {
     ///         broadcast. `run()` builds it from the environment and the
     ///         chain's `addresses.json`; a test builds it directly.
     struct Config {
+        /// @dev The admin's key, or zero in a deploy rehearsal, where the
+        ///      admin signs as its impersonated `ADMIN_ADDRESS` ({_adminSigner}).
         uint256 adminKey;
         address admin;
         address governanceSafe;
@@ -171,7 +174,7 @@ contract Handover is Script {
     ///      the admin key or silently unheld. Set it to the zero address to
     ///      leave the role unheld on purpose.
     function _loadConfig() internal returns (Config memory c) {
-        c.adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        c.adminKey = Signers.role("ADMIN").key; // zero in a rehearsal (#3891)
         c.admin = vm.envAddress("ADMIN_ADDRESS");
         // D1 renamed the Safe's variable: it no longer receives
         // DEFAULT_ADMIN_ROLE. Refuse the old name outright — a stale .env
@@ -200,8 +203,16 @@ contract Handover is Script {
         c.cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
     }
 
+    /// @dev The admin signer for `c`: its key when the config carries one (a
+    ///      real run, or a test), else the impersonated `ADMIN_ADDRESS` of a
+    ///      deploy rehearsal (`Signers`, #3891).
+    function _adminSigner(Config memory c) internal view returns (Signer memory) {
+        return c.adminKey != 0 ? Signers.fromKey("ADMIN", c.adminKey) : Signers.role("ADMIN");
+    }
+
     /// @dev The whole handover for one resolved `Config`.
     function _execute(Config memory c) internal {
+        Signer memory adminSigner = _adminSigner(c);
         _preflight(c);
         _rotateDiamond(c);
         _rotateGuardians(c);
@@ -222,7 +233,7 @@ contract Handover is Script {
         // gate refuses until it is moved.
         for (uint256 i; i < c.targets.length; ++i) {
             if (c.targets[i].addr == address(0)) continue; // warned in _preflight
-            _transferCrossChainOwnership(c.adminKey, c.targets[i].addr, c.targets[i].label, c.timelock);
+            _transferCrossChainOwnership(adminSigner, c.targets[i].addr, c.targets[i].label, c.timelock);
         }
 
         // ── CCT admin → Timelock ────────────────────────────────────────
@@ -232,7 +243,7 @@ contract Handover is Script {
         // when CCIP_TOKEN_ADMIN_REGISTRY is unset, or when ADMIN is not the
         // current administrator (CCT registration may have been done by a
         // separate token owner — see ConfigureCcip `_registerCct`).
-        bool cctRotated = _transferCctAdmin(c.adminKey, c.cctRegistry, c.vpfiToken, c.timelock);
+        bool cctRotated = _transferCctAdmin(adminSigner, c.cctRegistry, c.vpfiToken, c.timelock);
 
         _printAcceptSteps(c, cctRotated);
     }
@@ -258,7 +269,7 @@ contract Handover is Script {
                 IOwnable2Step(t.addr).owner() == c.admin,
                 string.concat(t.label, ": its guardian is not the Pauser Safe and the admin no longer owns it to rotate it")
             );
-            vm.broadcast(c.adminKey);
+            Signers.broadcastNext(_adminSigner(c));
             IFeedRegistryGuardian(t.addr).setGuardian(c.pauserSafe);
             console.log(string.concat(t.label, " guardian -> Pauser Safe:"), c.pauserSafe);
         }
@@ -396,7 +407,7 @@ contract Handover is Script {
         bytes32[] memory bots = HandoverPlan.botRoles();
         string[] memory botEnv = HandoverPlan.botRoleEnvNames();
 
-        vm.startBroadcast(c.adminKey);
+        Signers.start(_adminSigner(c));
 
         // a. Grant DEFAULT_ADMIN_ROLE to the Timelock FIRST (D1, #934).
         //    ADMIN keeps it too until the very last call, so if any later
@@ -517,7 +528,7 @@ contract Handover is Script {
 
     /// @dev Transfer a CCIP cross-chain contract's `Ownable2Step`
     ///      ownership to `newOwner` if (and only if) the EOA matching
-    ///      `signingKey` is currently the on-chain owner. On mismatch,
+    ///      `signing` signer is currently the on-chain owner. On mismatch,
     ///      log a clear skip + the operator's recovery path. Each
     ///      successful transfer broadcasts in its own single-tx window —
     ///      Foundry sequences the broadcasts as separate transactions,
@@ -525,7 +536,7 @@ contract Handover is Script {
     ///      `transferOwnership` (Multicall3 batching would set
     ///      msg.sender = Multicall3 and revert).
     function _transferCrossChainOwnership(
-        uint256 signingKey,
+        Signer memory signing,
         address target,
         string memory label,
         address newOwner
@@ -535,7 +546,7 @@ contract Handover is Script {
             // on a mirror chain, or vice-versa) — silently skip.
             return;
         }
-        address signer = vm.addr(signingKey);
+        address signer = signing.addr;
         address currentOwner = IOwnable2Step(target).owner();
         if (currentOwner != signer) {
             console.log("  SKIP ownership transfer:", label);
@@ -545,7 +556,7 @@ contract Handover is Script {
             console.log("    transferOwnership must be run from the current owner.");
             return;
         }
-        vm.broadcast(signingKey);
+        Signers.broadcastNext(signing);
         IOwnable2Step(target).transferOwnership(newOwner);
         console.log("  transferOwnership pending:", label);
         console.log("    address:    ", target);
@@ -556,9 +567,9 @@ contract Handover is Script {
     ///      `token` to `newAdmin`, first leg of a two-step transfer.
     ///      Returns true iff the transfer was broadcast. Skips — never
     ///      reverts — when the registry / token is unknown or when the
-    ///      `signingKey` EOA is not the current administrator.
+    ///      `signing` signer is not the current administrator.
     function _transferCctAdmin(
-        uint256 signingKey,
+        Signer memory signing,
         address registry,
         address token,
         address newAdmin
@@ -571,7 +582,7 @@ contract Handover is Script {
             console.log("  SKIP CCT admin transfer: no VPFI token in addresses.json.");
             return false;
         }
-        address signer = vm.addr(signingKey);
+        address signer = signing.addr;
         address currentAdmin =
             ITokenAdminRegistry(registry).getTokenConfig(token).administrator;
         if (currentAdmin != signer) {
@@ -581,7 +592,7 @@ contract Handover is Script {
             console.log("    transferAdminRole must be run from the current admin.");
             return false;
         }
-        vm.broadcast(signingKey);
+        Signers.broadcastNext(signing);
         ITokenAdminRegistry(registry).transferAdminRole(token, newAdmin);
         console.log("  CCT transferAdminRole pending:", token);
         console.log("    pending to:", newAdmin);

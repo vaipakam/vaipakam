@@ -9,6 +9,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
@@ -44,9 +45,9 @@ import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
  */
 contract UpgradeOracleFacet is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
         address diamond = Deployments.readDiamond();
 
         console.log("Diamond:", diamond);
@@ -60,7 +61,7 @@ contract UpgradeOracleFacet is Script {
         PriceGuardCrossing.requireRecorded(diamond);
 
         // ── Deployer: fund admin gas (if low) + deploy new facet ────────
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
         if (admin.balance < 0.01 ether) {
             payable(admin).transfer(0.01 ether);
             console.log("Topped up admin with 0.01 ETH");
@@ -90,7 +91,7 @@ contract UpgradeOracleFacet is Script {
             });
         }
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         vm.stopBroadcast();
 

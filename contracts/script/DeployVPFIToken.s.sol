@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /**
@@ -176,7 +177,7 @@ contract DeployVPFIToken is Script {
     }
 
     function _deployToken() internal returns (address token) {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address treasury = vm.envAddress("TREASURY_ADDRESS");
         address diamond = Deployments.readDiamond();
@@ -206,7 +207,7 @@ contract DeployVPFIToken is Script {
             console.log("Orphaning prior recorded token (FORCE or --fresh):", existing);
         }
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
         VPFIToken impl = new VPFIToken();
         bytes memory initData =
             abi.encodeCall(VPFIToken.initialize, (admin, treasury, diamond));

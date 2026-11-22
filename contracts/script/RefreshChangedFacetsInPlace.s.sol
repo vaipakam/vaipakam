@@ -5,6 +5,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
@@ -105,7 +106,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
 
     function refreshChanged() external {
         _refreshChanged(
-            Deployments.readDiamond(), vm.envUint("ADMIN_PRIVATE_KEY"), vm.envOr("EXPECT_CHANGED", string(""))
+            Deployments.readDiamond(), Signers.role("ADMIN"), vm.envOr("EXPECT_CHANGED", string(""))
         );
     }
 
@@ -114,17 +115,17 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
     ///         read from the environment (the process environment is shared by
     ///         parallel test threads; see `RedeployFacets.runWith`).
     function refreshChangedWith(address diamond, uint256 ownerKey, string memory expectChanged) external {
-        _refreshChanged(diamond, ownerKey, expectChanged);
+        _refreshChanged(diamond, Signers.fromKey("ADMIN", ownerKey), expectChanged);
     }
 
-    function _refreshChanged(address diamond, uint256 ownerKey, string memory expectChanged) internal {
+    function _refreshChanged(address diamond, Signer memory owner, string memory expectChanged) internal {
         uint256 cid = block.chainid;
         require(
             cid == 84532 || cid == 421614 || cid == 97 || cid == 11155111 || cid == 11155420 || cid == 31337,
             "RefreshChangedFacetsInPlace: testnet only"
         );
         require(
-            vm.addr(ownerKey) == IOwnable(diamond).owner(),
+            owner.addr == IOwnable(diamond).owner(),
             "RefreshChangedFacetsInPlace: the signing key is not the diamond owner"
         );
         _requireSlice3Diamond(diamond);
@@ -193,7 +194,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         bool recordWasCurrent = stampedV0 == requiredV0 && stampedR0 == currentR0;
 
         // ── 3. pause, deploy ────────────────────────────────────────────────
-        vm.startBroadcast(ownerKey);
+        Signers.start(owner);
         bool wasPaused = AdminFacet(diamond).paused();
         (,,, uint64 epochBeforeOurPause) =
             LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));

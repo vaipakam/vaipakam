@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {console} from "forge-std/console.sol";
 import {LaunchGate} from "../src/governance/LaunchGate.sol";
 import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
@@ -24,12 +25,17 @@ import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
  */
 contract DeployLaunchGate is Script {
     function run() external returns (address) {
-        return deploy(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        return _deploy(Signers.role("DEPLOYER"));
     }
 
     /// @notice Deploys the gate from `deployerKey` unless it is already at
     ///         its address. Returns that address.
     function deploy(uint256 deployerKey) public returns (address gate) {
+        return _deploy(Signers.fromKey("DEPLOYER", deployerKey));
+    }
+
+    /// @dev The body of {run} and {deploy}; broadcasts through `Signers` (#3891).
+    function _deploy(Signer memory deployer) internal returns (address gate) {
         gate = LaunchGateDeployment.predicted();
         if (gate.code.length != 0) {
             console.log("LaunchGate already deployed at", gate);
@@ -39,7 +45,7 @@ contract DeployLaunchGate is Script {
             LaunchGateDeployment.CREATE2_FACTORY.code.length != 0,
             "DeployLaunchGate: the deterministic-deployment proxy is not on this chain"
         );
-        vm.broadcast(deployerKey);
+        Signers.broadcastNext(deployer);
         (bool ok,) = LaunchGateDeployment.CREATE2_FACTORY.call(
             abi.encodePacked(LaunchGateDeployment.SALT, type(LaunchGate).creationCode)
         );

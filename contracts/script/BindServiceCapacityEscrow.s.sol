@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script, console} from "forge-std/Script.sol";
 import {VmSafe} from "forge-std/Vm.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -56,7 +57,7 @@ import {RewardCustodyHolder} from "../src/RewardCustodyHolder.sol";
  */
 contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
     function run() external {
-        bindWith(Deployments.readDiamond(), vm.envUint("ADMIN_PRIVATE_KEY"));
+        _bindWith(Deployments.readDiamond(), Signers.role("ADMIN"));
     }
 
     function stage() external view {
@@ -70,16 +71,21 @@ contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
     // ── parameterised entries (tests drive these, not the environment) ──────
 
     function bindWith(address diamond, uint256 adminKey) public {
+        _bindWith(diamond, Signers.fromKey("ADMIN", adminKey));
+    }
+
+    /// @dev The body of {run} and {bindWith}; broadcasts through `Signers` (#3891).
+    function _bindWith(address diamond, Signer memory adminSigner) internal {
         _requireArtifactDiamond(diamond);
         _requireUnbound(diamond);
-        address admin = vm.addr(adminKey);
+        address admin = adminSigner.addr;
         require(
             AccessControlFacet(diamond).hasRole(LibAccessControl.ADMIN_ROLE, admin),
             "BindServiceCapacityEscrow: ADMIN_PRIVATE_KEY does not hold ADMIN_ROLE -- after governance handover use stage() / record()"
         );
         console.log("=== Service-capacity escrow (bind, direct) ===");
         console.log("Diamond:", diamond);
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         ServiceCapacityFacet(diamond).bindServiceCapacityEscrow();
         vm.stopBroadcast();
         console.log("bind submitted; once it has confirmed, run record() to publish the escrow");

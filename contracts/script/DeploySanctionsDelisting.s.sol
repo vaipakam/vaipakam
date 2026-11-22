@@ -7,6 +7,7 @@ import {SanctionsList} from "../src/compliance/SanctionsList.sol";
 import {SanctionsDelistingTimelock} from "../src/compliance/SanctionsDelistingTimelock.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
 import {SanctionsRecords} from "./lib/SanctionsRecords.sol";
@@ -69,8 +70,8 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
             "DeploySanctionsDelisting: mainnet refused - the SanctionsList adder host is undecided (#2443)"
         );
         bool writes = Deployments.artifactWritesEnabled();
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
 
         address listAddr = Deployments.readSanctionsListOptional();
         require(listAddr.code.length != 0, "DeploySanctionsDelisting: no SanctionsList recorded - run DeploySanctionsList first");
@@ -87,7 +88,7 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         bool needsRemover = !list.isRemover(address(tl));
         bool needsProposer = !tl.isProposer(proposer);
         if (needsRemover || needsProposer) {
-            vm.startBroadcast(adminKey);
+            Signers.start(adminSigner);
             if (needsRemover) list.setRemover(address(tl), true);
             if (needsProposer) tl.setProposer(proposer, true);
             vm.stopBroadcast();
@@ -138,7 +139,7 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
             }
             console.log("The recorded timelock serves another list, or the admin does not alone control it; deploying a new one");
         }
-        vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        Signers.start(Signers.role("DEPLOYER"));
         SanctionsDelistingTimelock tl = new SanctionsDelistingTimelock(admin, list);
         vm.stopBroadcast();
         return (tl, true);

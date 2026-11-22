@@ -17,6 +17,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
 
 /**
@@ -313,8 +314,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
     // ─── Direct ─────────────────────────────────────────────────────────────
 
     function run() external {
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
         (address diamond, address holder) = _boundNotActivated();
         _requireNoPendingRecord(KIND);
         AccessControlFacet acl = AccessControlFacet(diamond);
@@ -344,7 +345,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         console.log("Role:   ", f.role);
         _logFigures(f, a);
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         AdminFacet(diamond).pause(); // always, immediately before: counted, so the activation states epoch + 1
         if (funding != 0) IERC20(vpfi).approve(diamond, funding);
         _applyAnswers(diamond, a);

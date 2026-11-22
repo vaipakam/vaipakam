@@ -220,6 +220,8 @@ source "$SCRIPT_DIR/lib/ccip-lanes.sh"
 source "$SCRIPT_DIR/lib/artifact-code-check.sh"
 # shellcheck source=lib/handover-proof.sh
 source "$SCRIPT_DIR/lib/handover-proof.sh"
+# shellcheck source=lib/rehearsal.sh
+source "$SCRIPT_DIR/lib/rehearsal.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -357,8 +359,12 @@ fi
 #
 # Placed after the usage guard so `--help` and a no-argument run still exit
 # without requiring a `.env`.
+# A rehearsal (#3891) is decided before the load, so the loader can leave
+# every key variable out of this shell.
+rehearsal_prescan "$@"
 if [ -f "$CONTRACTS_DIR/.env" ]; then
-  load_env_file "$CONTRACTS_DIR/.env"
+  # shellcheck disable=SC2046 # zero or one option, never with spaces
+  load_env_file "$CONTRACTS_DIR/.env" $(rehearsal_env_load_flags)
 else
   echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1
@@ -383,6 +389,9 @@ while [ $# -gt 0 ]; do
       ;;
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --fresh)                         FRESH=1 ;;
+    # #3891 — a deploy rehearsal on a local fork of the mainnet chain. Set
+    # already by rehearsal_prescan; entered (or refused) once the RPC is known.
+    --rehearse)                      REHEARSE=1 ;;
     # #884 — per-RUN opt-in to pricing VPFI. Deliberately a flag rather
     # than an env var: the wrappers source a shared .env, so an exported
     # CONFIGURE_VPFI_PEG=1 from another deploy would otherwise change this
@@ -465,10 +474,23 @@ esac
 
 
 RPC="${!RPC_VAR:-}"
+# A rehearsal reaches the chain's fork on loopback, never the chain's RPC.
+if [ "$REHEARSE" = 1 ]; then
+  RPC="${VAIPAKAM_REHEARSAL_RPC_URL:-}"
+  if [ -z "$RPC" ]; then
+    echo "Error: --rehearse needs VAIPAKAM_REHEARSAL_RPC_URL (the fork script/rehearse.sh started)." >&2
+    exit 1
+  fi
+fi
 if [ -z "$RPC" ]; then
   echo "Error: \$$RPC_VAR not set in .env." >&2
   exit 1
 fi
+
+# ── Rehearsal or real run (#3891, design §11-§13) ─────────────────────
+rehearsal_set_roots "$CONTRACTS_DIR"
+rehearsal_enter "$RPC" "$CONTRACTS_DIR" "$CONTRACTS_DIR/.env" || exit 1
+rehearsal_refuse_marker_node "$RPC" || exit 1
 
 # Per-chain CCIP infrastructure dispatch. The CCIP scripts read a
 # single CCIP_ROUTER / CCIP_RMN_PROXY (the `contracts` phase) and
@@ -507,7 +529,7 @@ done
 # landed prints a loud notice (instead of silently re-broadcasting
 # txs that would mint a duplicate Diamond etc.).
 
-DEPLOY_DIR="$CONTRACTS_DIR/deployments/$CHAIN_SLUG"
+DEPLOY_DIR="$RECORDS_ROOT/$CHAIN_SLUG"
 MARKERS_DIR="$DEPLOY_DIR/.markers"
 HISTORY_DIR="$DEPLOY_DIR/.history"
 mkdir -p "$DEPLOY_DIR" "$MARKERS_DIR" "$HISTORY_DIR"
@@ -581,7 +603,13 @@ EOF
 # The critical gate every broadcasting phase runs first.
 _preflight_gate() {
   _assert_rpc_chain
-  _assert_mainnet_hw_signer
+  # A rehearsal holds no key, so there is no signing path to attest; the
+  # real run that follows it still must.
+  if [ "$REHEARSE" = 1 ]; then
+    echo "  · rehearsal: no key is loaded, so the hardware-signer attestation is the real run's"
+  else
+    _assert_mainnet_hw_signer
+  fi
 }
 
 # ── Phase: preflight ──────────────────────────────────────────────────
@@ -596,7 +624,11 @@ phase_preflight() {
 
   # 2. Required env vars
   MISSING=()
-  for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
+  # A rehearsal holds no key; it needs the role ADDRESSES instead (Signers).
+  if [ "$REHEARSE" = 1 ]; then _signer_vars="DEPLOYER_ADDRESS ADMIN_ADDRESS"
+  else _signer_vars="DEPLOYER_PRIVATE_KEY DEPLOYER_ADDRESS ADMIN_PRIVATE_KEY ADMIN_ADDRESS"; fi
+  # shellcheck disable=SC2086 # a fixed list of names
+  for v in $_signer_vars TREASURY_ADDRESS \
            VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
            TIMELOCK_PROPOSER PAUSER_ADDRESS CCIP_ROUTER CCIP_RMN_PROXY; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
@@ -631,7 +663,7 @@ phase_preflight() {
   echo "  ✓ Required env vars present"
 
   # 3. Deployer balance
-  DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
+  DEPLOYER_ADDR=$(vk_role_address DEPLOYER 2>/dev/null || echo "?")
   BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC" 2>/dev/null || echo "?")
   echo "  ✓ Deployer:  $DEPLOYER_ADDR    balance: $BAL wei"
 
@@ -668,7 +700,7 @@ phase_preflight() {
 # the archive before anything is moved.
 append_archive_manifest() {
   local chain_slug="$1" stamp="$2" addr="$3"
-  local manifest="$CONTRACTS_DIR/deployments/archive-manifest.json"
+  local manifest="$RECORDS_ROOT/archive-manifest.json"
   local writer="$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs"
   [ -f "$addr" ] || { echo "  (no addresses.json to record)"; return 0; }
   command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
@@ -684,7 +716,7 @@ append_archive_manifest() {
 # retired Diamond unrecorded forever (Codex #2070 r9 P1). Idempotent.
 reconcile_unrecorded_archives() {
   local chain_slug="$1"
-  local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
+  local deploy_dir="$RECORDS_ROOT/$chain_slug"
   [ -d "$deploy_dir/.archive" ] || return 0
   local d
   for d in "$deploy_dir"/.archive/*/; do
@@ -696,7 +728,7 @@ reconcile_unrecorded_archives() {
 
 archive_chain_state() {
   local chain_slug="$1"
-  local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
+  local deploy_dir="$RECORDS_ROOT/$chain_slug"
   local stamp
   stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
   local archive="$deploy_dir/.archive/$stamp"
@@ -944,7 +976,14 @@ EOF
   # shell-script lint + committed-ABI sync. `--full` additionally runs
   # the entire regression suite — a mainnet deploy must not ship red
   # contracts. A failure aborts the deploy before any broadcast.
-  bash "$SCRIPT_DIR/predeploy-check.sh" --full
+  # A rehearsal (#3891) runs the check once per tree, in its driver, before
+  # the first step; running it again per chain would repeat a gate whose
+  # verdict is a property of the tree, not of the chain.
+  if [ "$REHEARSE" = 1 ]; then
+    echo "  · rehearsal: the driver ran the pre-deploy check for this tree"
+  else
+    bash "$SCRIPT_DIR/predeploy-check.sh" --full
+  fi
 
   # Arbitrum L2-block override (#853 Codex P2): forge sim can't emulate
   # `ArbSys(0x64)`, so `Deployments.currentL2Block()` reverts on Arbitrum unless
@@ -1023,7 +1062,7 @@ EOF
     echo "ERROR: DEPLOY_SKIP_ARTIFACTS=${DEPLOY_SKIP_ARTIFACTS} is set — a live deploy MUST publish its artifact (the census inventory is built from it); unset it" >&2; exit 1
   fi
   LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"   # durable per-deploy token: only THIS deploy can end what it began (Codex #2070 r25 P1)
-  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
+  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$RECORDS_ROOT/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
     || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
   export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
   echo "[2] DeployDiamond.s.sol"
@@ -1097,13 +1136,13 @@ EOF
   # written; this only fails to RECORD it, which the operator must fix before
   # committing (the manifest must be committed with the deploy either way).
   if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
-    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "${LIVE_PUB_TOKEN:-none}" "$DEPLOY_DIR/addresses.json" \
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$RECORDS_ROOT/archive-manifest.json" "$CHAIN_SLUG" "${LIVE_PUB_TOKEN:-none}" "$DEPLOY_DIR/addresses.json" \
       || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (node packages/contracts/scripts/archive-manifest.mjs live-end ...)" >&2
   fi
   # Write deployment_source.json (commit + deployer + timestamp) —
   # same shape as deploy-chain.sh writes, so the operator can see
   # at a glance which monorepo commit is live on this chain.
-  DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
+  DEPLOYER_ADDR=$(vk_role_address DEPLOYER 2>/dev/null || echo "?")
   # Records the hash pinned WITH the opening snapshot, not a fresh read
   # (Codex #1495 r2 P2). A late `rev-parse` would name whatever HEAD is by
   # the time the deploy finishes, which is not necessarily the commit whose
@@ -1819,6 +1858,20 @@ phase_abi_sync() {
   # positions) can't recur because every Worker now imports the
   # Solidity-compiler-emitted JSON instead of hand-typed `as const`
   # arrays.
+  # A rehearsal (#3891) builds the bundle in its scratch folder, from a copy
+  # of the package, and publishes nothing outside it.
+  if [ "$REHEARSE" = 1 ]; then
+    local pkg="$RECORDS_ROOT/.bundle/contracts-pkg"
+    rm -rf "$pkg"
+    mkdir -p "$pkg"
+    cp -R "$REPO_ROOT/packages/contracts/src" "$REPO_ROOT/packages/contracts/scripts" \
+      "$REPO_ROOT/packages/contracts/package.json" "$pkg/"
+    CONTRACTS_PKG_DIR="$pkg" bash "$SCRIPT_DIR/exportFrontendAbis.sh"
+    CONTRACTS_PKG_DIR="$pkg" bash "$SCRIPT_DIR/exportFrontendDeployments.sh"
+    echo "  · rehearsal: bundle built at ${pkg#"$CONTRACTS_DIR/"}; the keeper-bot and tenderly exports are skipped"
+    mark_phase_done "abi-sync"
+    return 0
+  fi
   bash "$SCRIPT_DIR/exportFrontendAbis.sh"
   bash "$SCRIPT_DIR/exportFrontendDeployments.sh"
 
@@ -2080,7 +2133,7 @@ phase_verify() {
   echo "deploy-mainnet.sh — verify  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
-  DIAMOND=$(jq -r '.diamond // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  DIAMOND=$(jq -r '.diamond // empty' "$RECORDS_ROOT/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
   if [ -z "$DIAMOND" ]; then
     echo "FAIL: no diamond address in deployments/$CHAIN_SLUG/addresses.json — was --phase contracts run?"
     exit 1
@@ -2140,8 +2193,8 @@ phase_verify() {
   # one CCIP lane must be configured (per-lane limits cannot exist
   # without a lane). A missing or wrong wiring means `--phase ccip-wire`
   # has not run — fail-hard and refuse to mark verify done.
-  POOL=$(jq -r '.vpfiTokenPool // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-  GOVERNOR=$(jq -r '.vpfiPoolRateGovernor // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  POOL=$(jq -r '.vpfiTokenPool // empty' "$RECORDS_ROOT/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  GOVERNOR=$(jq -r '.vpfiPoolRateGovernor // empty' "$RECORDS_ROOT/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
   echo
   echo "[4] CCIP TokenPool rate-limit wiring"
   # The contracts phase deploys the TokenPool + governor on EVERY chain,
@@ -2242,6 +2295,16 @@ phase_verify() {
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────
+
+# A rehearsal (#3891) never runs a Cloudflare phase: those publish to the
+# real account. Its own runners stand in for them.
+if [ "$REHEARSE" = 1 ]; then
+  case "$PHASE" in
+    cf-*)
+      echo "Error: --phase $PHASE publishes to the real Cloudflare account; a rehearsal runs the off-chain stack locally (script/rehearse.sh)." >&2
+      exit 1 ;;
+  esac
+fi
 
 case "$PHASE" in
   preflight)     phase_preflight ;;

@@ -76,6 +76,20 @@ fi
 
 CONTRACTS_PKG_DIR="$(cd "$CONTRACTS_PKG_DIR" && pwd)"
 DEPLOYMENTS_DIR="$CONTRACTS_DIR/deployments"
+# A deploy rehearsal (#3891) folds its OWN records, in its scratch folder; its
+# driver points CONTRACTS_PKG_DIR at a scratch copy of the package as well.
+if [ "${VAIPAKAM_REHEARSAL:-}" = 1 ]; then
+  case "${VAIPAKAM_REHEARSAL_ROOT:-}" in
+    deployments/.forge-test/rehearsal/?*) : ;;
+    *) echo "Error: a rehearsal export needs VAIPAKAM_REHEARSAL_ROOT under deployments/.forge-test/rehearsal/" >&2; exit 1 ;;
+  esac
+  case "/$VAIPAKAM_REHEARSAL_ROOT/" in */../*) echo "Error: VAIPAKAM_REHEARSAL_ROOT has a '..' segment" >&2; exit 1 ;; esac
+  DEPLOYMENTS_DIR="$CONTRACTS_DIR/$VAIPAKAM_REHEARSAL_ROOT"
+  case "$CONTRACTS_PKG_DIR/" in
+    "$DEPLOYMENTS_DIR"/*) : ;;
+    *) echo "Error: a rehearsal export writes only inside its scratch folder (CONTRACTS_PKG_DIR)" >&2; exit 1 ;;
+  esac
+fi
 FRONTEND_OUT_DIR="$CONTRACTS_PKG_DIR/src"
 
 # ── Provenance snapshot — after the OUTPUT PATHS are resolved, before any write ──

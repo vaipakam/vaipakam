@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title BootstrapAnvil
@@ -43,7 +44,7 @@ contract BootstrapAnvil is Script {
             "BootstrapAnvil: refusing to run outside anvil (chainid != 31337)"
         );
 
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         require(
             diamond != address(0),
@@ -53,9 +54,9 @@ contract BootstrapAnvil is Script {
         console.log("=== Bootstrap Anvil (Range Orders Phase 1) ===");
         console.log("Chain id: ", block.chainid);
         console.log("Diamond:  ", diamond);
-        console.log("Admin:    ", vm.addr(adminKey));
+        console.log("Admin:    ", adminSigner.addr);
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         ConfigFacet cfg = ConfigFacet(diamond);
         // Ranged offers need no flag: they are always on (#2812). The
         // matcher is the one switch.

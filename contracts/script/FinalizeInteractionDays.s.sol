@@ -7,6 +7,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title FinalizeInteractionDays
@@ -65,7 +66,7 @@ contract FinalizeInteractionDays is Script {
             "FinalizeInteractionDays: testnets only"
         );
 
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         uint256 fromDay = vm.envOr("FINALIZE_FROM_DAY", uint256(0));
         uint256 maxDays = vm.envOr("FINALIZE_MAX_DAYS", uint256(30));
@@ -97,7 +98,7 @@ contract FinalizeInteractionDays is Script {
         console.log("Current day:", today);
         console.log("(days 0 ..", today - 1, "are elapsed and finalizable)");
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
 
         // ── Step 1+2: single-chain reward-mesh identity (idempotent) ──
         rr.setIsCanonicalRewardChain(true);

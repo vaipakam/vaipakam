@@ -13,6 +13,7 @@ import {SanctionsClearanceAttestor} from "../src/compliance/SanctionsClearanceAt
 import {TestnetSanctionsOracleStandIn} from "../src/compliance/TestnetSanctionsOracleStandIn.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
 import {SanctionsRecords} from "./lib/SanctionsRecords.sol";
@@ -182,8 +183,8 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     address[] public carriedFlags;
 
     function run() external {
-        address admin = vm.rememberKey(vm.envUint("ADMIN_PRIVATE_KEY"));
-        address deployer = vm.rememberKey(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        address admin = Signers.remember(Signers.role("ADMIN"));
+        address deployer = Signers.remember(Signers.role("DEPLOYER"));
         standInRefresher = vm.envOr("SANCTIONS_STANDIN_REFRESHER", address(0));
         replaceAttestor = vm.envOr("SANCTIONS_CLEARANCE_REPLACE_ATTESTOR", address(0));
         carryFromBlock = vm.envOr("SANCTIONS_STANDIN_CARRY_FROM_BLOCK", uint256(0));
@@ -242,7 +243,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         attestor = address(a);
         address[] memory carry = _flagsToCarry(m, s, a);
 
-        vm.startBroadcast(admin);
+        Signers.startAs(admin);
         if (standInRefresher != address(0) && s.refresher() != standInRefresher) {
             s.setRefresher(standInRefresher);
             console.log("  stand-in: refresher named", standInRefresher);
@@ -403,7 +404,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     /// @dev A new stand-in owned by the admin (recorded by the caller once
     ///      the run has succeeded).
     function _deployStandIn(address admin, address deployer) internal returns (TestnetSanctionsOracleStandIn) {
-        vm.startBroadcast(deployer);
+        Signers.startAs(deployer);
         TestnetSanctionsOracleStandIn s = new TestnetSanctionsOracleStandIn(admin);
         vm.stopBroadcast();
         return s;
@@ -446,7 +447,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         internal
         returns (SanctionsClearanceAttestor)
     {
-        vm.startBroadcast(deployer);
+        Signers.startAs(deployer);
         SanctionsClearanceAttestor a =
             new SanctionsClearanceAttestor(ISanctionsList(address(s)), ICrossChainMessenger(address(m)));
         vm.stopBroadcast();
@@ -472,7 +473,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
             "ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR names the attestor the artifact records - it would replace nothing"
         );
 
-        vm.startBroadcast(admin);
+        Signers.startAs(admin);
         _ensureLane(m, attestorChainId);
         _ensureHandler(m, address(tl));
         _ensurePeer(m, attestorChainId, a);

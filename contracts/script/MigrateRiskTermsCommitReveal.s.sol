@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
@@ -57,7 +58,7 @@ import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
  */
 contract MigrateRiskTermsCommitReveal is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
         address diamond = Deployments.readDiamond();
         console.log("Diamond:", diamond);
         // #2092 item 1 — refuse code that drops a storage-layout fact this
@@ -86,7 +87,7 @@ contract MigrateRiskTermsCommitReveal is Script {
         uint256 nReplace = _countRouted(loupe, surface, true);
         uint256 nAdd = surface.length - nReplace;
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
 
         RiskAccessFacet riskAccessFacet = RiskAccessFacet(ArtifactDeploy.deploy(type(RiskAccessFacet).name));
         console.log("New RiskAccessFacet:", address(riskAccessFacet));

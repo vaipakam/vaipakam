@@ -10,6 +10,7 @@ import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {MockUniswapV3Factory, MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol";
 import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
 import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
 
@@ -174,8 +175,8 @@ contract RepriceTestnetMock is Script {
 
         string memory assetKey = vm.envString("REPRICE_ASSET");
         uint256 newPrice8 = vm.envUint("REPRICE_USD_E8");
-        uint256 ownerKey = vm.envOr("MOCK_OWNER_PRIVATE_KEY", uint256(0));
-        address sender = ownerKey == 0 ? msg.sender : vm.addr(ownerKey);
+        Signer memory owner = Signers.roleOr("MOCK_OWNER");
+        address sender = owner.addr == address(0) ? msg.sender : owner.addr;
 
         RepriceTarget memory t = _resolveTarget(assetKey);
         _preflight(t, sender);
@@ -195,8 +196,8 @@ contract RepriceTestnetMock is Script {
 
         console.log("Sends 3 transactions; not atomic - re-run to finish a partial run.");
 
-        if (ownerKey == 0) vm.startBroadcast();
-        else vm.startBroadcast(ownerKey);
+        if (owner.addr == address(0)) Signers.startCliSender();
+        else Signers.start(owner);
         _applyReprice(t, newPrice8, newSpot);
         vm.stopBroadcast();
 

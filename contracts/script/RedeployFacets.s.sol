@@ -43,6 +43,7 @@ import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
@@ -143,12 +144,11 @@ contract RedeployFacets is Script {
     error PredatesValidUntilEntries(address diamond);
 
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         // Read from deployments/<chain>/addresses.json with chain-prefixed
         // env fallback. Replaces the previous unprefixed `DIAMOND_ADDRESS`
         // env which was inconsistent with sibling scripts and risked
         // broadcasting against the wrong Diamond if env state was stale.
-        runWith(Deployments.readDiamond(), deployerKey);
+        _redeployWith(Deployments.readDiamond(), Signers.role("DEPLOYER"));
     }
 
     /**
@@ -166,6 +166,13 @@ contract RedeployFacets is Script {
      *         than a copy of it.
      */
     function runWith(address diamond, uint256 deployerKey) public {
+        _redeployWith(diamond, Signers.fromKey("DEPLOYER", deployerKey));
+    }
+
+    /// @dev The body of {run} and {runWith}: every broadcast goes through
+    ///      `Signers` (#3891), so a rehearsal signs as the impersonated
+    ///      deployer address and a real run with the key.
+    function _redeployWith(address diamond, Signer memory deployer) internal {
         console.log("Diamond:", diamond);
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`); the
@@ -231,7 +238,7 @@ contract RedeployFacets is Script {
         _requireTreasuryFeeFloor(diamond);
         _requireVaultOutflowPolicy(diamond);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployer);
 
         RiskFacet riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
         // #658 — the split liquidation path (triggerLiquidationSplit) got the

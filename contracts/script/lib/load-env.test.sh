@@ -53,6 +53,25 @@ check '--fill-gaps: an unset name is filled' 0 'from-file' \
 check '--fill-gaps: an exported EMPTY value is filled' 0 'from-file' \
   'RPC_X=from-file' 'load_env_file "$ENVF" --fill-gaps && printf %s "$RPC_X"' RPC_X=
 
+# --drop-key-vars (#3891, a deploy rehearsal): no key variable is exported,
+# every other name is, and a malformed file is still refused.
+check '--drop-key-vars: key variables are not loaded' 0 'unset|unset|rpc' \
+  $'DEPLOYER_PRIVATE_KEY=0xabc\nADMIN_PRIVATE_KEY=0xdef\nRPC_X=rpc' \
+  'load_env_file "$ENVF" --drop-key-vars && printf %s "${DEPLOYER_PRIVATE_KEY:-unset}|${ADMIN_PRIVATE_KEY:-unset}|$RPC_X"'
+
+check '--drop-key-vars combines with --fill-gaps' 0 'unset|exported' \
+  $'DEPLOYER_PRIVATE_KEY=0xabc\nRPC_X=from-file' \
+  'load_env_file "$ENVF" --fill-gaps --drop-key-vars && printf %s "${DEPLOYER_PRIVATE_KEY:-unset}|$RPC_X"' RPC_X=exported
+
+check '--drop-key-vars still refuses a malformed key line' 1 '' \
+  'DEPLOYER_PRIVATE_KEY="0xabc' 'load_env_file "$ENVF" --drop-key-vars'
+
+check 'a rehearsal variable in .env is refused' 1 '' \
+  'VAIPAKAM_REHEARSAL=1' 'load_env_file "$ENVF"'
+
+check 'an unknown option is refused' 1 '' \
+  'RPC_X=rpc' 'load_env_file "$ENVF" --nope'
+
 # The mode decides which acceptable value wins, never whether a refused name
 # is let through.
 check '--fill-gaps still refuses a startup hook' 1 '' \

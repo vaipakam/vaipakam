@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 
 import {FlashLoanLiquidator} from "../src/keeper/FlashLoanLiquidator.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title  DeployFlashLoanLiquidator
@@ -127,7 +128,7 @@ contract DeployFlashLoanLiquidator is Script {
 
     function run() external {
         // ── Resolve constructor args ────────────────────────────
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
 
         address ownerEoa = vm.envAddress("KEEPER_BOT_OWNER");
         require(ownerEoa != address(0), "KEEPER_BOT_OWNER unset");
@@ -150,7 +151,7 @@ contract DeployFlashLoanLiquidator is Script {
         console.log("  balancerV2Vault :", balancerV2Vault);
 
         // ── Deploy ─────────────────────────────────────────────
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
         FlashLoanLiquidator liq = new FlashLoanLiquidator(
             ownerEoa,
             diamond,

@@ -27,6 +27,7 @@ import {VpfiReturnSender} from "../src/crosschain/VpfiReturnSender.sol";
 import {VpfiReturnReceiver} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /// @dev The slice of OZ/Chainlink `Ownable2Step` this script drives — the
@@ -87,7 +88,7 @@ interface IOwnable2Step {
  */
 contract DeployCrosschain is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address router = vm.envAddress("CCIP_ROUTER");
         address rmnProxy = vm.envAddress("CCIP_RMN_PROXY");
@@ -114,7 +115,7 @@ contract DeployCrosschain is Script {
         console.log("CCIP router:", router);
         console.log("RMN proxy:  ", rmnProxy);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
 
         // ── CcipMessenger — every chain. Router is immutable on the impl. ──
         CcipMessenger messengerImpl = new CcipMessenger(router);
@@ -198,7 +199,7 @@ contract DeployCrosschain is Script {
         address buybackReceiverImpl;
         address buybackReceiver;
         if (canonical) {
-            vm.startBroadcast(deployerKey);
+            Signers.start(deployerSigner);
             BuybackRemittanceReceiver brImpl = new BuybackRemittanceReceiver();
             buybackReceiverImpl = address(brImpl);
             buybackReceiver = address(
@@ -222,7 +223,7 @@ contract DeployCrosschain is Script {
         address rewardReceiverImpl;
         address rewardReceiver;
         if (!canonical) {
-            vm.startBroadcast(deployerKey);
+            Signers.start(deployerSigner);
             RewardRemittanceReceiver rrImpl = new RewardRemittanceReceiver();
             rewardReceiverImpl = address(rrImpl);
             rewardReceiver = address(
@@ -249,7 +250,7 @@ contract DeployCrosschain is Script {
         address returnReceiverImpl;
         address returnReceiver;
         if (canonical) {
-            vm.startBroadcast(deployerKey);
+            Signers.start(deployerSigner);
             VpfiReturnReceiver vrImpl = new VpfiReturnReceiver();
             returnReceiverImpl = address(vrImpl);
             returnReceiver = address(
@@ -264,7 +265,7 @@ contract DeployCrosschain is Script {
             vm.stopBroadcast();
             console.log("VpfiReturnReceiver:       ", returnReceiver);
         } else {
-            vm.startBroadcast(deployerKey);
+            Signers.start(deployerSigner);
             VpfiReturnSender vsImpl = new VpfiReturnSender();
             returnSenderImpl = address(vsImpl);
             returnSender = address(

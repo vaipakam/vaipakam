@@ -1,0 +1,17 @@
+{
+  "_comment": "Paths a deploy rehearsal's tree check leaves out (#3891, design section 13). Every other file in the working tree, ignored ones included, is compared before and after the run. An entry may never be at or under contracts/deployments, a broadcast folder, a forge cache folder or contracts/out; rehearsal-tree.test.mjs refuses one.",
+  "leftOut": [
+    {
+      "name": "node_modules",
+      "reason": "Installed dependencies, not deploy state; the rehearsal's off-chain runners may install into them, and hashing them would cost minutes per run."
+    },
+    {
+      "path": "graphify-out",
+      "reason": "The local knowledge graph, rebuilt by an editor session at any time; never read or written by a deploy."
+    },
+    {
+      "path": "contracts/out-storage-layout",
+      "reason": "The storage-layout guard's own compile output, which its build step rewrites by design; the guard checks it against the sources itself."
+    }
+  ]
+}

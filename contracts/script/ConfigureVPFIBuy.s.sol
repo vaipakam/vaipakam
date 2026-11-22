@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title ConfigureVPFIBuy (VPFI fee-discount price config)
@@ -51,7 +52,7 @@ contract ConfigureVPFIBuy is Script {
     }
 
     function run() external {
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         address ethPriceAsset = _ethPriceAsset();
 
@@ -66,7 +67,7 @@ contract ConfigureVPFIBuy is Script {
         // Pre-flight role check. VPFIDiscountFacet setters enforce
         // `onlyRole(LibAccessControl.ADMIN_ROLE)`. Without ADMIN_ROLE
         // the broadcasted txs revert on-chain with no useful surface.
-        address broadcaster = vm.addr(adminKey);
+        address broadcaster = adminSigner.addr;
         bool hasAdmin = AccessControlFacet(diamond).hasRole(
             keccak256("ADMIN_ROLE"),
             broadcaster
@@ -81,7 +82,7 @@ contract ConfigureVPFIBuy is Script {
         );
         console.log("Pre-flight: broadcaster holds ADMIN_ROLE");
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         VPFIDiscountFacet v = VPFIDiscountFacet(diamond);
         v.setVPFIDiscountETHPriceAsset(ethPriceAsset);
         v.setVPFIDiscountRate(weiPerVpfi);

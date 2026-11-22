@@ -23,7 +23,14 @@
 # described the allowlist for two rounds after it was removed, which is the
 # documentation-drift defect this session merged #1926 to fix.
 #
-# USAGE: load_env_file FILE [--fill-gaps]
+# USAGE: load_env_file FILE [--fill-gaps] [--drop-key-vars]
+#
+# `--drop-key-vars` is a deploy rehearsal's mode (#3891, design §12): every
+# name ending in `PRIVATE_KEY` is parsed like any other line (so a malformed
+# file is still refused) and then NOT exported, and the count is printed with
+# no name or value. The rehearsal pins those names to zero itself afterwards,
+# because forge reads `.env` on its own and a value already in the
+# environment is the one it keeps.
 #
 # By default a name the operator exported is REPLACED by the file's value, the
 # rule the three deploy wrappers were written against. `--fill-gaps` keeps a
@@ -43,16 +50,19 @@ load_env_file() {
     echo "       statement of the calling script, before any assignment." >&2
     return 1
   fi
-  local __lenv_file="$1" __lenv_fill=0 __lenv_line __lenv_name __lenv_value __lenv_no=0
+  local __lenv_file="$1" __lenv_fill=0 __lenv_drop_keys=0 __lenv_dropped=0 __lenv_opt __lenv_line __lenv_name __lenv_value __lenv_no=0
   local __lenv_q __lenv_rest __lenv_i __lenv_decl
   local __lenv_names=() __lenv_vals=()
 
-  case "${2-}" in
-    '') : ;;
-    --fill-gaps) __lenv_fill=1 ;;
-    *) echo "Error: load_env_file: unknown option (expected --fill-gaps)." >&2
-       return 1 ;;
-  esac
+  shift
+  for __lenv_opt in "$@"; do
+    case "$__lenv_opt" in
+      --fill-gaps) __lenv_fill=1 ;;
+      --drop-key-vars) __lenv_drop_keys=1 ;;
+      *) echo "Error: load_env_file: unknown option (expected --fill-gaps or --drop-key-vars)." >&2
+         return 1 ;;
+    esac
+  done
 
   [ -f "$__lenv_file" ] || { echo "Error: $__lenv_file not found." >&2; return 1; }
 
@@ -175,6 +185,15 @@ load_env_file() {
       esac
     fi
 
+    # A deploy rehearsal's declared differences (#3891) come from its driver,
+    # never from a file: `.env` naming one could point a rehearsal's records
+    # or node somewhere the driver did not choose, or switch the mode on.
+    case "$__lenv_name" in VAIPAKAM_REHEARSAL*)
+      echo "Error: $__lenv_file:$__lenv_no sets a rehearsal variable, which only" >&2
+      echo "       script/rehearse.sh may set — refusing." >&2
+      return 1 ;;
+    esac
+
     case "$__lenv_name" in __lenv_*)
       echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which is this loader's" >&2
       echo "       own internal namespace — refusing." >&2
@@ -289,6 +308,13 @@ load_env_file() {
     esac
     __lenv_value="${__lenv_value%"${__lenv_value##*[![:space:]]}"}"
 
+    if [ "$__lenv_drop_keys" -eq 1 ]; then
+      case "$__lenv_name" in *PRIVATE_KEY)
+        __lenv_dropped=$((__lenv_dropped + 1))
+        continue ;;
+      esac
+    fi
+
     __lenv_names[${#__lenv_names[@]}]="$__lenv_name"
     __lenv_vals[${#__lenv_vals[@]}]="$__lenv_value"
   done < "$__lenv_file"
@@ -321,6 +347,9 @@ load_env_file() {
     fi
     __lenv_i=$((__lenv_i + 1))
   done
+  if [ "$__lenv_drop_keys" -eq 1 ]; then
+    echo "  · rehearsal: $__lenv_dropped key variable(s) in $(basename "$__lenv_file") not loaded" >&2
+  fi
 }
 
 # Assert that a declaration read as a boolean uses the documented vocabulary.

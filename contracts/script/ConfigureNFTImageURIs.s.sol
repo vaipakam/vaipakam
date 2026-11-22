@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title ConfigureNFTImageURIs
@@ -46,7 +47,7 @@ import {Deployments} from "./lib/Deployments.sol";
  */
 contract ConfigureNFTImageURIs is Script {
     function run() external {
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         require(
             diamond != address(0),
@@ -56,11 +57,11 @@ contract ConfigureNFTImageURIs is Script {
         console.log("=== Configure NFT Image URIs ===");
         console.log("Chain id:    ", block.chainid);
         console.log("Diamond:     ", diamond);
-        console.log("Admin:       ", vm.addr(adminKey));
+        console.log("Admin:       ", adminSigner.addr);
 
         VaipakamNFTMetadataFacet nft = VaipakamNFTMetadataFacet(diamond);
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
 
         // Per-side defaults
         string memory lenderDefault =

@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 
 import {KeeperBackupUpkeep} from "../src/keeper/KeeperBackupUpkeep.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 interface ITreasuryRead {
     function getTreasury() external view returns (address);
@@ -33,7 +34,7 @@ interface ITreasuryRead {
  */
 contract DeployKeeperBackupUpkeep is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
         address owner = vm.envAddress("KEEPER_BACKUP_OWNER");
         require(owner != address(0), "KEEPER_BACKUP_OWNER unset");
 
@@ -48,7 +49,7 @@ contract DeployKeeperBackupUpkeep is Script {
         console.log("  treasury :", treasury);
         console.log("  owner    :", owner);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
         KeeperBackupUpkeep backup = new KeeperBackupUpkeep(diamond, treasury, owner);
         vm.stopBroadcast();
 
