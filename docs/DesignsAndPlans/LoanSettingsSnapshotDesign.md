@@ -171,22 +171,24 @@ price takes the lender-first in-kind path, and a distrusted price refuses.
 The cure for a price version whose source has died is an announced
 retirement (section 7).
 
-**Priced or unpriced for the loan's life** (owner decision 2026-11-22). A
-loan holds each of its assets as priced or as unpriced, as the asset stood
-when the loan opened, and that holds for the loan's whole life. No price
-version, retirement, replacement of the guard, move by consent or extension
-changes it, in either direction. A loan opened on an asset with no price
-never becomes one that a price can liquidate, since nobody agreed to that,
-and a loan opened as priced never takes the route for an asset with no
-price. A new loan is the way to change either. Three things follow:
+**Priced or unpriced for the loan's life** (owner decisions 2026-11-22). A
+loan has one standing, priced or unpriced, fixed when it opens. It is priced
+only where both of its assets were recorded liquid then, and its lien holds
+the collateral as priced only then (`LiquidityTiersAndExposureDesign.md`,
+section 3). The standing holds for the loan's whole life. No price version,
+retirement, replacement of the guard, move by consent or extension changes
+it, in either direction. A loan opened as unpriced never becomes one that a
+price can liquidate, since nobody agreed to that, and a loan opened as
+priced never takes the route for an asset with no price. A new loan is the
+way to change either. Three things follow:
 
 - an offer, a signed offer, a refinance request and an Auto-lend slot are
   agreed before the loan opens. Each carries the standing every asset had
   when it was made, and a fill is refused where an asset's standing then
   differs. The maker posts again;
-- a move by consent or an extension that would put a priced asset on a
-  version with no source for it is refused, and both holders are told ahead
-  when an extension they planned will be refused for that reason;
+- a move by consent or an extension that would put an asset of a priced
+  loan on a version with no source for it is refused, and both holders are
+  told ahead when an extension they planned will be refused for that reason;
 - the vault holds the same line by its own check (below).
 
 **The last resort is decided in principle only.** For a priced asset whose
@@ -258,7 +260,10 @@ most lenient version the guard still answers, and one of those may be from
 before the asset's source was added. At such a version the vault's read is a
 refusal, never the route for an asset with no price. The lien carries that
 one standing, written when the lien is made and never changed. It is not a
-stamp of settings, and it names no guard and no version.
+stamp of settings, and it names no guard and no version. A lien holds the
+collateral as the loan stands: as priced in a priced loan, and only there.
+The collateral of an unpriced loan is held as unpriced, also where the asset
+by itself has a price, and its hand-over is that loan's own route.
 
 The vault does not order versions and holds no per-lien stamp. An earlier
 draft had the vault stamp settings into the lien row and restamp on a move;
