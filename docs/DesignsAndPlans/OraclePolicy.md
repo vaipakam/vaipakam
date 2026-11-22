@@ -11,7 +11,7 @@ CI gates.
 Every price read the protocol consumes must satisfy ALL of:
 
 1. A live Chainlink aggregator returned it.
-2. Its age is under a bound — two-tier by default, per-feed overrideable.
+2. Its age is within the freshness rule below, which a per-feed override can tighten.
 3. Its value is above a configured floor — zero by default, per-feed overrideable.
 4. The Soft 2-of-N quorum check passes against the configured secondary
    sources (Tellor / API3 / DIA). See "Secondary sources — Soft 2-of-N
@@ -34,16 +34,24 @@ directly via Feed Registry `(asset, USD)` or via the `(asset, ETH)` ×
 `(ETH, USD)` fallback route. Assets without either route are classified
 Illiquid and cannot back a loan.
 
-**Two-tier staleness defaults (global):**
+**Freshness (owner decision 2026-11-22):**
 
-| Tier | Cap | Applies to |
-|---|---|---|
-| Volatile | 2 hours | Any feed whose answer does not sit near a peg ($1 USD, registered fiat/commodity references) |
-| Stable (peg-aware) | 25 hours | 8-decimal feeds whose answer is within 3% of $1 USD OR any registered `stableFeedBySymbol` reference (EUR, JPY, XAU, etc.) |
+- An answer inside the general limit of 2 hours is fresh.
+- Past the general limit, an answer is used up to its feed's own update
+  window plus a margin where a secondary source with a fresh reading agrees
+  with it. Where no secondary source has a reading for the asset, the
+  answer rests on its feed alone, and that fact is disclosed per asset. A
+  feed's own update window is recorded with the feed and is never above 24
+  hours.
+- A secondary source that disagrees always refuses the answer.
+- A stable asset is checked against its peg as the price rules state.
+- An answer that is not fresh is a distrusted price. The step that needs it
+  refuses. It is never read as an asset with no price.
 
-The 25h ceiling exists because stablecoin aggregators and fiat/commodity
-reference feeds publish on 24-hour heartbeats by design — forcing a
-2-hour window on them would fail-closed under normal operation.
+Many aggregators publish on 24-hour heartbeats by design and only sooner
+when their price moves, so a calm price can be hours old and correct. The
+rule above lets such an answer be used while something independent still
+agrees with it, and says so where nothing does.
 
 **L2 sequencer circuit breaker.** On L2 chains, `getAssetPrice` reads
 the Chainlink sequencer-uptime feed first and reverts if the sequencer
@@ -52,19 +60,19 @@ stale-price execution on an L2 resumption edge.
 
 ## Per-feed overrides (Phase 3.1)
 
-Governance can tighten or relax either bound on a specific feed via
+Governance can tighten either bound on a specific feed via
 `OracleAdminFacet.setFeedOverride(feed, maxStaleness, minValidAnswer)`:
 
 - `maxStaleness` in seconds. Zero clears the override (both fields
-  reset) and the global two-tier ceiling resumes.
+  reset) and the freshness rule above resumes.
 - `minValidAnswer` in the aggregator's own decimals. When set, any
   reading below the floor reverts — protects against compromised
   aggregators returning ~zero values during incidents.
 
-When an override is active, the stable-peg relaxation (25h ceiling
-when the answer is near $1) is bypassed. Operators who set an
-override are taking explicit responsibility for the freshness budget
-on that feed.
+An override can only make a feed stricter. Its limit applies beside the
+freshness rule above and can only shorten what that rule allows.
+Operators who set an override are taking explicit responsibility for the
+freshness budget on that feed.
 
 ## Secondary sources — Soft 2-of-N quorum (Phase 7b.2)
 
@@ -132,6 +140,12 @@ forced close-out that would act on a distrusted price refuses with the
 read's own error instead of taking the oracle-unavailable branch (#666).
 `tryGetAssetPrice` folds the last two into one `ok = false`, so settlement
 code that must tell them apart reads the status view.
+
+**Where the line lies (owner decision 2026-11-22).** "Unavailable" means the
+guard has no source for the asset, and nothing else. A primary answer that
+is too old, nil or less, or a source whose read fails, is a distrusted
+price: the step that needs it refuses, and a loan never takes the route of
+an asset with no price because a source went quiet.
 
 Effect: a single secondary source compromise can no longer push a
 disagreeing price through the gate; an attacker would have to

@@ -4,7 +4,8 @@ Status: design, approved by the owner on 2026-11-22 with the recommended answer 
 open points (see Recommendation). Amended the same day for the last review points (#3989), and
 again for the owner's answers of that day on the price rules: what "vouches" means when a feed
 publishes once a day, that only silence ends a second key, and the assets in use defined by
-their purpose. Nothing here is built.
+their purpose. The same change states those price rules in `OraclePolicy.md`,
+`PriceGuardDesign.md` and `RatePricedCollateralDesign.md`. Nothing here is built.
 
 ## Why
 
@@ -290,8 +291,9 @@ The second key is bounded two ways, so that it never becomes a way to hold a liq
   line, measured as a share of the line's own figure. A loan the new guard reads further under
   water is liquidated on that reading alone.
 - **An end when the old guard is silent.** Anyone may record that the old guard, at one of its
-  price versions, is silent for an asset: a source on the asset's route gave no reply, its read
-  failed, or its answer is older than its own update window and margin. If it is still silent
+  price versions, is silent for an asset: a source on the asset's route gave no reply, the call
+  to that source failed, or its answer is older than its own update window and margin. Silence
+  is the source's own failure and nothing else. If it is still silent
   when a stated time has passed (proposed at two hours), the key is over for every loan that
   names the asset and is read on that guard at that version. The record and its effect are
   keyed by guard, price version and asset: silence at one version never ends the key of a loan
@@ -310,7 +312,9 @@ wrongly is the exemption, not its controls.
 A record lives for twice the stated time and then lapses unconfirmed. Anyone may clear it before
 then by a read that shows the old guard is not silent. Neither a record nor the step that
 confirms it counts while the network's sequencer is down or inside the recovery time after an
-outage. A read that ran out of gas is never silence (below). A keeper pass backs these steps.
+outage. A read that ran out of gas is never silence (below). Nor is a read that fails for want
+of a signed reading the caller should bring: a record of silence made without that reading is
+refused, so nobody ends a key by leaving a reading out. A keeper pass backs these steps.
 
 The band, not this end, is what bounds the lender's side: at no moment can the old guard hold a
 loan out of liquidation that the new guard reads more than the band under water. The end only
@@ -907,7 +911,8 @@ Precondition: the reward ceiling worked out per unit of the network's coin is re
     floor's wait; a setting change tried at the most versions, and the alert one below it;
     an old guard held unable to vouch by a disagreement, by a missing reading and by a mute
     for longer than the stated time, with the key still running, and one silent for that
-    time, with the key ended; a check page run without a reading its asset needs, and again
+    time, with the key ended; a record of silence tried without the signed reading the asset
+    needs, refused; a check page run without a reading its asset needs, and again
     with one; a guard that reports no state of the sequencer proposed where the platform's
     reports one; an asset named only by each kind of record a later step values, at the apply.
 13. The guarded retirement of a price version (section 5): the floor's executor fixed in the
