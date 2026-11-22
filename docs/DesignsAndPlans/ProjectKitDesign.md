@@ -1,6 +1,6 @@
 # The project kit: for token projects and NFT rental projects
 
-**Status:** functional and technical design, 2026-11-22. Approved in outline by the owner on 2026-11-22: one kit with a guide on the site, and a track for NFT rental beside the token track. Nothing here changes a contract.
+**Status:** functional and technical design, 2026-11-22. Approved in outline by the owner on 2026-11-22: one kit with a guide on the site, and a track for NFT rental beside the token track. The kit itself changes no contract. Writing the pause rule down showed one contract change, #3887. The design differs from the approved outline in one place: the per-asset pause rule has a second reason (guard 3 in section 8), because the incident runbook already relies on it.
 
 **Related:** `FeaturesOverExistingPartsDesign.md` sections 6 (renting access, #3772), 7 (the embedded lending kit, #3773) and 8 (the public data feed, #3774), `IntegratorFeeShareDesign.md` section 5, `ProgressiveRiskAccessDesign.md`, the issuer powers check (#3433, #3875, #3876) and the launch list (#3824).
 
@@ -78,7 +78,7 @@ A public page of the app where anyone enters a network and an address and sees w
 | Tier now | The tier measured on chain, the tier the relay has confirmed, and the tier a new loan uses, which is the lower | `getLiquidityTier`, `getKeeperTier`, `getEffectiveLiquidityTier` |
 | What holds it there | One of: no usable price; no pool passed the platform's depth and price tests; the relay has not confirmed a higher tier; nothing, it is at the top tier | Worked out from the two rows above |
 | What that tier allows | The opening limit for the tier. For tier 0: valued at zero, usable only in a hand-made offer under each party's standing consent, refused by Auto-lend slots and the instant market | `getEffectiveTierMaxInitLtvBps`, fixed text |
-| New positions | Open, or paused for this asset (exits stay open) | `isAssetPaused` |
+| New positions | Open, or paused for this asset (every close-out stays open; a sale waits for the pause to lift) | `isAssetPaused` |
 | Share already pledged | The concentration reading and whether it lowers the opening limit now | `getConcentration` |
 | Issuer powers | Each check as found, not found or could not be told | The shared check (#3433), run in the reader's browser |
 | Public lists | Each list's rank for this address and the time of the list, or "not ranked", with the existing possible-copy line | The index's rankings read |
@@ -169,11 +169,17 @@ Two more points, stated plainly:
 The kit invites more unfamiliar assets, so these go with it.
 
 1. **Public figures say how unfamiliar assets are counted.** For every public figure (the feed's totals and rates, the rate curve of #3751, the totals on the app's analytics page):
-   - An asset with no usable price is shown in its own units on its own line. It is never added into a value total. A total says it covers priced assets only and gives the number of positions left out.
-   - A loan or a rental with one address on both sides is left out of rate and rent figures and counted on its own line. The rule sees one address on both sides only. It cannot see two wallets of one person, and the figure says so.
+   - The index reads no price, and none is added for these figures. Its figures therefore carry no value total: each asset's amounts are given in that asset's own units, and the answer says "no value total; each asset in its own units". A surface that has its own price read and shows a value total covers priced assets only, says so, gives the number of positions left out, and shows an asset with no usable price in its own units on its own line.
+   - No figure is a mean across assets or across terms. A rate figure is given per lending asset and per term range. The single mean rate the loan statistics route returns today is removed, from that route and from the feed's fields.
+   - A loan or a rental opened with one address on both sides is left out of rate and rent figures and counted on its own line. The test is the two parties named when the loan was opened, because the rate was set then. A later sale or change of holder moves a loan neither into the figures nor out of them. A figure taken from a sale or a takeover applies the same test to that event's own two parties. The rule sees one address on both sides only. It cannot see two wallets of one person, and the figure says so.
    - Each figure states its block and what it leaves out.
 2. **The access wait is never zero on a mainnet** (#3266, with the deploy check of #3717). The guide's token page does not ship before #3266 is done.
-3. **A written rule for the per-asset pause.** It is the one place the platform acts on a named asset. The rule: it is used only where an asset's own code is shown to take, freeze or block what vaults hold, or to break a close-out. It is never used for an asset's price, its reputation, or at anyone's request. Exits stay open. Each use is published with its reason. Lifting it goes through the delayed route.
+3. **A written rule for the per-asset pause.** It is the one place the platform acts on a named asset. The rule:
+   - It is used for one of two reasons only. The first: the asset's own code is shown to take, freeze or block what vaults hold, or to break a close-out. The second: the platform's own reading of the asset (its price sources, its liquidity reading, or a limit taken from an outside reading) is shown to be wrong or under manipulation, so that new positions would open on false numbers. A pause for the second reason lasts while the reading is wrong. After the handover the per-asset pause is the only step that acts on one asset at once, which is why the second reason is in the rule: without it a faulty reading of one asset could be answered at once only by pausing the whole platform.
+   - It is never used because an asset's market price rose or fell, for an asset's reputation or its issuer's conduct, or at anyone's request.
+   - The rule says what the pause stops as the code has it. It stops new positions in the asset. A lender's exit by sale is one of them, because a sale opens the position for a buyer, so a sale waits for the pause to lift. Every close-out stays open: repayment, claims, withdrawal, default, liquidation, cancelling an offer and taking capital out of a slot.
+   - Steps that only add the borrower's own backing to an open loan or pay it down are to stay open as well: adding collateral, funding a loan's reserves, and the standing top-up, interest payment and repayment at the due date. The code refuses or skips them under the pause today. #3887 changes that, and until it is built the written rule says what the code does.
+   - Each use is published with its reason. Lifting it is the admin's or the unpauser's step, which after the handover goes through the delayed route. Before the handover the admin lifts it directly, and the rule says so.
 4. **The steps where a user takes on an asset show the same facts as the check page.** One facts panel, used by the check page, the standing consent for a pair, the first posting of an asset (#3875) and a rental listing or acceptance (#3772). One component, so the four cannot differ.
 5. **Names in rental listings are cleaned** with the label cleaner used for tokens, shown as the collection's own claim, with the address beside the name and a link to the check page. No public ranking of collections is read, so no copied-name line is shown for a collection. The page says a name proves nothing.
 6. **The check page keeps no result** (section 4).
@@ -215,22 +221,34 @@ The app's existing trust line, issuer powers line and NFT standard read stay as 
 **Two routes in the public data feed** (`/public/v1`, with #3774's rules for the catalogue, the limit, the parameter list and the field-name test):
 
 - `GET /public/v1/rentals/by-collection?chainId=&collection=[&tokenId=][&cursor=]`: each active rental's token id, user, expiry, quantity, rental id and owner, with the block the answer is true at. Active means not cleared and not past its expiry at that block's time.
-- `GET /public/v1/rentals/may-use?chainId=&collection=&user=[&tokenId=]`: the active rentals in one collection that name one address as user. This read takes an address, and this design names it as public for that reason: it always carries a collection, and no route lists an address's rentals across collections or lists the addresses that rent.
+- `GET /public/v1/rentals/may-use?chainId=&collection=&user=[&tokenId=]`: the active rentals in one collection that name one address as user.
 
-Both answer from the one table. Neither returns anything the app keeps privately for a wallet.
+**Why both routes are public.** They return only what the chain already makes public. Every row comes from a `VaultRentalUpdated` event, and an ERC-721 renter can also be read from the lender's vault. The routes are a convenience over that data and add nothing to it. This design does not claim that they hide who rents: the by-collection route lists every renter of a collection, and anyone can read every collection, or the events themselves, and work out everything one address rents.
 
-**The figure rules of guard 1** are applied in the reads behind the feed's totals and rates, the rate curve and the analytics totals: a priced-only value total with the count left out, own-unit lines for assets with no usable price, a separate line for one-address loans and rentals, and a "leaves out" statement in each answer. Whether an asset has a usable price is taken from the same read the index already uses to value a row. Where that read is missing for an asset, the asset counts as having no usable price.
+**What the routes never do.** They never join anything the platform keeps privately for a wallet: an alert link, a subscription, an app setting, or anything else that is not rebuilt from chain events. Both answer from the one rental table and from nothing else, and a test holds that (section 15, test 7). Each takes exactly one collection, and `may-use` exactly one address. Neither takes a list of addresses or a wildcard.
+
+**The figure rules of guard 1** are applied in the reads behind the feed's totals and rates, the loan statistics, the offer statistics, the rate candles and the rate curve. The index reads no price today and gets no price read for this, so each of those answers gives amounts per asset in the asset's own units with the "no value total" line. The mean rate field leaves the loan statistics route. Loans opened with one address on both sides leave the rate figures and the rate candles and are counted on their own line. The opening parties are taken from the loan's opening event and stored with the loan row, so a later change of lender or borrower does not change the answer. The rental table of this section follows the same rule when a rent figure is first built from it. Each answer carries its "leaves out" statement.
 
 ## 13. The site
 
 - Four routes under `/for-projects`, with content beside the user guides, in English first and then the nine other languages, and included in the prerender, the sitemap and the plain-text index like the guides.
 - One component renders the fixed statement, so every page carries the same sentence in every language.
+- The guide's rental pages and the site's privacy page say plainly that renting is public on chain, like any other wallet activity: the collection, the item, the renter's address and the end time can be read by anyone, from the chain and from the public data feed.
+- The word check and the claim ledger are built by #3886, before or together with these pages.
 - Each claim on a page has a row in the claim ledger of the site wording build, naming the feature it rests on: rentals, the check page, each link kind, each feed route, the access category, the integrator registry, and the non-zero access wait. A page is published when its rows are true.
 - Links to the check page and to the kit's link formats use the app's origin from the site's existing configuration.
 
 ## 14. The per-asset pause rule
 
-Written into the incident runbook, the admin keys and pause guide, and the threat model by the governance thread, in the words of guard 3. Where the runbook already names a use of the per-asset pause that the rule does not cover, the governance thread reports it before changing either. Publication of each use is a public note with the asset, the time and the reason. The contract's event carries no reason and is not changed.
+Written into the incident runbook, the admin keys and pause guide, and the threat model by the governance thread, in the words of guard 3. Publication of each use is a public note with the asset, the time and the reason. The contract's event carries no reason and is not changed.
+
+What the governance thread found on main, and what is done with each:
+
+- The incident runbook offers the per-asset pause as the step that acts at once when the narrower switches are behind the delay, for incidents that include a wrong price reading and a manipulated outside reading. That use is kept, as the rule's second reason. The runbook's note is rewritten to name the two reasons and nothing wider.
+- The admin keys and pause guide calls it a "reserve pause / blacklist". Both words go. It is "the per-asset pause", with a pointer to the rule. It is not a list of refused assets, and "reserve" has one meaning on this platform.
+- Older design documents call it a way to remove an asset or to exclude a bad actor. They stay as records. Each gets one line at that place saying the rule replaces that reading: the pause is never used for an asset's reputation or for anyone's conduct.
+- One older design lists it as a step that stops a liquidation route. The runbook already corrects this, because the pause does not stop a liquidation. That design gets a pointer to the correction.
+- The pause refuses a lender's sale and, today, the steps that add backing or pay a loan down. Guard 3 states the first as the rule and #3887 opens the second.
 
 ## 15. Tests
 
@@ -240,10 +258,10 @@ Written into the incident runbook, the admin keys and pause guide, and the threa
 4. The four steps of guard 4 render the same panel from the same reads.
 5. The kit: the two new link forms round-trip through the builder and the parser; a link with an unknown field is refused by name; the field-coverage test covers the new fields; the share rule table has a row for every action.
 6. The rental table: an opening, a daily update, a clearing, two concurrent ERC-1155 rentals of one token, a reorganisation that removes an update, and an expiry with no clearing event (the row stops being active by time).
-7. The feed routes: the route list, parameters and field names pinned; a parameter not listed is refused; `may-use` without a collection is refused; the table-source test accepts the rental table.
+7. The feed routes: the route list, parameters and field names pinned; a parameter not listed is refused; `may-use` without a collection or without a user is refused, and so is a list of addresses or a wildcard in either parameter; the table-source test allows the event-built rental table behind both routes and nothing else, so a join to a table that holds anything kept privately for a wallet fails the build.
 8. The reference code agrees with the feed and with the chain for each case of test 6.
-9. The figure rules: a total with an unpriced asset present, a one-address loan and rental, and the "leaves out" text.
-10. The site: the fixed statement is present on each page in each language; a claim whose ledger row is false fails the build; the word check passes.
+9. The figure rules: amounts per asset in own units with the "no value total" line; no mean-rate field in the loan statistics or the feed; a loan opened with one address on both sides is out of the rate figures and the candles and on its own line; a loan sold to its own borrower after opening stays in; a loan opened one-address and later sold stays out; the "leaves out" text.
+10. The site: the fixed statement is present on each page in each language; a claim whose ledger row is false fails the build; the word check passes; the "renting is public on chain" statement is present on the rental pages and the privacy page.
 
 ## 16. What is built, by whom, and in what order
 
@@ -251,11 +269,13 @@ Written into the incident runbook, the admin keys and pause guide, and the threa
 | --- | --- | --- |
 | The figure rules of guard 1 | The index, with #3774 and #3751 | #3879 |
 | The per-asset pause rule | Runbook, pause guide, threat model | #3880 |
+| Steps that add backing or pay a loan down stay open under the per-asset pause | Contracts, with the batch | #3887 |
 | The facts library, the check page and the facts panel at the consent steps | `@vaipakam/lib` and the app, after the issuer powers store and #3875 | #3881 |
 | The rental rights table and the two feed routes | The index, with #3774 | #3882 |
 | The two new links, the rental reading code and the kit's documentation | The kit package and the app's `/kit` page | #3883 |
-| The four guide pages and their translations | The site, after the site wording build's word check and claim ledger | #3884 |
-| Contracts | None | |
+| The site's word check and claim ledger | The site's typecheck | #3886 |
+| The four guide pages and their translations | The site, after or together with #3886 | #3884 |
+| Contracts | None for the kit itself. #3887 is a change the pause rule showed to be needed. | |
 
 **Order.** The figure rules and the pause rule first, because they are guards. Then the check page and the rental table with its routes. Then the kit's additions. The guide pages last, each when the parts it describes work.
 
@@ -270,12 +290,14 @@ Written into the incident runbook, the admin keys and pause guide, and the threa
 - **A small reader contract outside the Diamond for the ERC-721 cases.** Not built now: the two reads it would wrap are short, and the written steps cover them. It can be carded later if projects that enforce on chain ask for one address to call.
 - **A per-user read on the vault for ERC-1155 rentals.** Not built now: the vault's code has no room. It can be considered when the vault's code is split for the Stage B3 work.
 - **An index of rentals by renter kept on chain.** Rejected: a write on every rental step for a question the event answers.
-- **A feed route listing everything an address rents.** Rejected: the feed lists no addresses by activity. The `may-use` route is tied to one collection.
+- **A feed route listing everything an address rents across collections.** Not built: a project asks about its own collection, so nothing needs it. This is not a privacy line. The same facts are public in the chain's events and anyone can assemble that list.
+- **Keeping the rental routes behind a key or out of the public feed.** Rejected: it would suggest the data is private when the chain publishes it, and it would stand between a project and a read it needs.
+- **A per-asset pause rule with the first reason only.** Rejected: after the handover the narrower switches wait for the delay, so a faulty reading of one asset could be answered at once only by pausing the whole platform.
 - **A wrapped rental token issued by the platform, a hosted marketplace per project, a rental royalty.** Rejected: the vault is already the adapter, the kit's links already keep users on a project's site up to the review, and fees stay as they are.
 
 ## 18. Recommendation
 
-Build the kit as six pieces in the order of section 16, with no contract change. Every piece is a display of facts that already exist or a documented way to read them.
+Build the kit as the pieces in the order of section 16. The kit itself changes no contract; #3887 is the one contract change, and it comes from writing the pause rule down. Every piece is a display of facts that already exist or a documented way to read them.
 
 ## 19. What is not built
 
@@ -283,8 +305,8 @@ A listing programme, an application form or a "verified" mark. A score or a rati
 
 ## 20. Open items for the builders to raise, not decide silently
 
-- Which read the index uses today to decide that an asset has a usable price, and whether it can state "no usable price" for every asset in a total.
+- Answered by the builder's scout: the index reads no price, so its figures carry no value total (guard 1).
 - Whether the app's read-only client can run every issuer powers check the check page needs without a wallet, and what the page says for a check it cannot run.
 - The exact form of the "list for rent" hand-off for an ERC-1155 quantity.
 - Any place where the site's configuration does not yet know the app's origin per network.
-- Any existing use of the per-asset pause in the runbook that guard 3's rule would forbid.
+- Answered by the governance thread's scout: see section 14.
