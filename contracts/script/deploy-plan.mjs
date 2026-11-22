@@ -42,15 +42,18 @@ export const REPO_ROOT = join(CONTRACTS_DIR, '..');
  * The chains the deploy scripts know. `canonicalReward` marks the chain
  * `Deployments.isCanonicalRewardChainId` names: the configure step makes it
  * the canonical reward chain whatever a desired-state file says, so the file's
- * role must agree (a test pins this set to that function).
+ * role must agree (a test pins this set to that function). `ccipSelector` is
+ * the CCIP chain selector `Deployments.ccipSelectorForChainId` maps the chain
+ * to, which the configure step stores on each messenger's lane (a test pins
+ * these to that function too).
  */
 export const CHAINS = {
-  'base-sepolia': { chainId: 84532, prefix: 'BASE_SEPOLIA', network: 'testnet', canonicalReward: true },
-  sepolia: { chainId: 11155111, prefix: 'SEPOLIA', network: 'testnet' },
-  'arb-sepolia': { chainId: 421614, prefix: 'ARB_SEPOLIA', network: 'testnet' },
-  'op-sepolia': { chainId: 11155420, prefix: 'OP_SEPOLIA', network: 'testnet' },
-  'bnb-testnet': { chainId: 97, prefix: 'BNB_TESTNET', network: 'testnet' },
-  'polygon-amoy': { chainId: 80002, prefix: 'POLYGON_AMOY', network: 'testnet' },
+  'base-sepolia': { chainId: 84532, prefix: 'BASE_SEPOLIA', network: 'testnet', ccipSelector: '10344971235874465080', canonicalReward: true },
+  sepolia: { chainId: 11155111, prefix: 'SEPOLIA', network: 'testnet', ccipSelector: '16015286601757825753' },
+  'arb-sepolia': { chainId: 421614, prefix: 'ARB_SEPOLIA', network: 'testnet', ccipSelector: '3478487238524512106' },
+  'op-sepolia': { chainId: 11155420, prefix: 'OP_SEPOLIA', network: 'testnet', ccipSelector: '5224473277236331295' },
+  'bnb-testnet': { chainId: 97, prefix: 'BNB_TESTNET', network: 'testnet', ccipSelector: '13264668187771770619' },
+  'polygon-amoy': { chainId: 80002, prefix: 'POLYGON_AMOY', network: 'testnet', ccipSelector: '16281711391670634445' },
 };
 
 /** The source of a testnet setting copied from the deployment being replaced (design ruling 2026-11-22, item 6b). */
@@ -76,15 +79,33 @@ export function termsVersions(root = REPO_ROOT) {
   return out;
 }
 
+/**
+ * The Diamond's getters that name another deployment contract: views with no
+ * inputs that return one address, read from the combined Diamond ABI (#3893).
+ * The readback refuses a zero answer from any of them unless the desired file
+ * lists it under `notDeployedHere` with a reason.
+ */
+export function addressGetters(root = REPO_ROOT) {
+  const abi = JSON.parse(readFileSync(join(root, 'packages/contracts/src/diamondAbi.json'), 'utf8'));
+  return new Set(
+    abi
+      .filter((f) => f.type === 'function' && ['view', 'pure'].includes(f.stateMutability))
+      .filter((f) => f.inputs.length === 0 && f.outputs.length === 1 && f.outputs[0].type === 'address')
+      .map((f) => `${f.name}()`),
+  );
+}
+
+const MIN_REASON = 20;
+
 /** A setting's setter arguments, getter arguments and expected read-back words. */
 export const settingArgs = (s) => s.args ?? (s.value === undefined ? [] : [s.value]);
 export const settingExpect = (s) => s.expect ?? (s.value === undefined ? [] : [s.value]);
 
-const canonicalOf = (d) => Object.entries(d.chains).find(([, c]) => c.role === 'canonical')?.[0];
-const settingChains = (s, d) => (s.chains === 'all' ? Object.keys(d.chains) : s.chains);
+export const canonicalOf = (d) => Object.entries(d.chains).find(([, c]) => c.role === 'canonical')?.[0];
+export const settingChains = (s, d) => (s.chains === 'all' ? Object.keys(d.chains) : s.chains);
 
 /** Problems with a desired-state file, as strings. Pure over its inputs. */
-export function validate(d, { flags, terms }) {
+export function validate(d, { flags, terms, getters }) {
   const p = [];
   if (!d || typeof d !== 'object') return ['not a JSON object'];
   if (!['testnet', 'mainnet'].includes(d.network)) p.push(`network must be testnet or mainnet`);
@@ -158,6 +179,42 @@ export function validate(d, { flags, terms }) {
       p.push('sanctionsClearance.timelocks must list other chains of the file, each once');
     }
   }
+  // #3893: a deployment getter allowed to answer zero, per chain (design
+  // ruling 2026-11-22). Two kinds: `venue`, an outside contract that does not
+  // exist on the chain, recorded with the venue's own published deployment
+  // list and the date it was read; `byDesign`, a zero the canonical/mirror
+  // split explains. It is a recorded fact, never a default. On mainnet every
+  // entry needs the owner's recorded acceptance.
+  for (const [g, e] of Object.entries(d.notDeployedHere ?? {})) {
+    const at = `notDeployedHere.${g}`;
+    if (getters && !getters.has(g)) p.push(`${at}: not a Diamond getter that returns one address (no inputs)`);
+    if (typeof e?.reason !== 'string' || e.reason.trim().length < MIN_REASON) p.push(`${at}: needs a reason of at least ${MIN_REASON} characters`);
+    const on = e?.chains === 'all' ? slugs : e?.chains;
+    if (!Array.isArray(on) || !on.length || on.some((c) => !slugs.includes(c))) p.push(`${at}: chains must be "all" or a list of the file's chains`);
+    if (!['venue', 'byDesign'].includes(e?.kind)) p.push(`${at}: kind must be venue or byDesign`);
+    if (e?.kind === 'venue') {
+      if (!/^https:\/\/\S+$/.test(e.evidence?.list ?? '')) p.push(`${at}: a venue entry needs evidence.list, the venue's published deployment list (https URL)`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.evidence?.checked ?? '')) p.push(`${at}: a venue entry needs evidence.checked, the date the list was read (YYYY-MM-DD)`);
+    }
+    if (d.network === 'mainnet' && !(/^\d{4}-\d{2}-\d{2}$/.test(e?.ownerAccepted?.on ?? '') && typeof e?.ownerAccepted?.ref === 'string' && e.ownerAccepted.ref.length >= 10)) {
+      p.push(`${at}: on mainnet a zero is allowed only with the owner's recorded acceptance (ownerAccepted.on, ownerAccepted.ref)`);
+    }
+  }
+  // #3893: a getter whose zero is awaiting a design ruling: reported, neither
+  // met nor failed. Refused on mainnet, where every row must be decided.
+  for (const [g, e] of Object.entries(d.awaitingRuling ?? {})) {
+    const at = `awaitingRuling.${g}`;
+    if (getters && !getters.has(g)) p.push(`${at}: not a Diamond getter that returns one address (no inputs)`);
+    if (typeof e?.reason !== 'string' || e.reason.trim().length < MIN_REASON) p.push(`${at}: needs a reason of at least ${MIN_REASON} characters`);
+    if (d.notDeployedHere?.[g]) p.push(`${at}: also listed under notDeployedHere`);
+    if (d.network === 'mainnet') p.push(`${at}: a mainnet file may hold no getter awaiting a ruling`);
+  }
+  // #3893: contracts a run creates and deliberately does not record, by name.
+  for (const [name, why] of Object.entries(d.notRecorded ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) p.push(`notRecorded.${name}: must be a contract name`);
+    if (typeof why !== 'string' || why.trim().length < MIN_REASON) p.push(`notRecorded.${name}: needs a reason of at least ${MIN_REASON} characters`);
+  }
+  if (d.terms?.minAgeSec !== undefined && !(Number.isInteger(d.terms.minAgeSec) && d.terms.minAgeSec >= 0)) p.push('terms.minAgeSec must be a whole number of seconds');
   for (const [i, m] of (d.manual ?? []).entries()) {
     if (!m.after || !['configure', 'launch'].includes(m.after)) p.push(`manual[${i}]: after must be configure or launch`);
     if (!m.what || m.what.length < 20) p.push(`manual[${i}]: needs a description (what)`);
@@ -376,7 +433,7 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
 /** 00:00 UTC of the day `nowSec` falls in. */
 export const todayAnchor = (nowSec) => nowSec - (nowSec % 86400);
 
-function readDesired(path) {
+export function readDesired(path) {
   const text = readFileSync(path, 'utf8');
   return { d: JSON.parse(text), digest: createHash('sha256').update(text).digest('hex') };
 }
@@ -396,7 +453,7 @@ export function main(argv = process.argv.slice(2), { now = () => Math.floor(Date
     return 1;
   }
   const terms = termsVersions();
-  const problems = validate(d, { flags: keeperFlags(), terms });
+  const problems = validate(d, { flags: keeperFlags(), terms, getters: addressGetters() });
   for (const p of problems) console.error(`  ✗ ${p}`);
   if (problems.length) return 1;
   if (cmdName === 'check') {

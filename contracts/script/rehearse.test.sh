@@ -53,13 +53,26 @@ drive() {
   RUNDIR="$CONTRACTS_DIR/deployments/.forge-test/rehearsal/t-$name-$$"
   OUT=$(env "$@" RH_SKIP_FORKS=1 RH_FAKE_FORKS="base-sepolia=http://127.0.0.1:1 arb-sepolia=http://127.0.0.1:2" \
     RH_FORGE="$WORK/bin/stub-ok" RH_PREDEPLOY="$WORK/bin/stub-ok" RH_LAYOUT_GUARD="$WORK/bin/stub-ok.mjs" \
-    RH_NODE=node RH_DEPLOY_SCRIPT="$WORK/deploy" RH_ENV_FILE="$WORK/.env" \
+    RH_NODE=node RH_DEPLOY_SCRIPT="$WORK/deploy" RH_ENV_FILE="$WORK/.env" RH_READBACK="$WORK/bin/readback.mjs" \
     bash "$HERE/rehearse.sh" --plan "$WORK/plan-$name" --run "t-$name-$$" 2>&1)
   RC=$?
 }
 echo 'process.exit(0)' > "$WORK/bin/stub-ok.mjs"
+# The readback stub records its arguments and fails on STUB_READBACK_FAIL.
+cat > "$WORK/bin/readback.mjs" <<'S'
+console.log(`ARGS ${process.argv.slice(2).join(' ')}`);
+if (process.env.STUB_READBACK_FAIL) {
+  console.log('not met    base-sepolia  launch.paused  expected false | found true');
+  console.log('\n  2 rows: 1 met or info, 1 not met or unreadable');
+  process.exit(1);
+}
+console.log('\n  2 rows: 2 met or info, 0 not met or unreadable');
+S
+echo '{"network":"testnet"}' > "$WORK/desired.json"
+DESIRED_LINE="# desired $WORK/desired.json sha256 $(sha256sum "$WORK/desired.json" | cut -d' ' -f1)"
 
-GOOD='chains base-sepolia arb-sepolia
+GOOD="$DESIRED_LINE"'
+chains base-sepolia arb-sepolia
 step base-sepolia preflight
 step base-sepolia contracts --confirm-i-have-multisig-ready
 step arb-sepolia contracts --confirm-i-have-multisig-ready
@@ -85,11 +98,31 @@ grep -q "ROOT deployments/.forge-test/rehearsal/t-good-$$" "$log1" && ok "each s
 [ -f "$RUNDIR/base-sepolia/contracts.json" ] && ok "a step writes inside the scratch folder" || bad "no scratch write"
 if grep -rq SECRETKEY "$RUNDIR" 2>/dev/null; then bad "an RPC value reached the run folder"; else ok "no RPC value reaches the logs, report or verdict"; fi
 d1=$(node -e 'console.log(require(process.argv[1]).planDigest)' "$RUNDIR/verdict.json")
+rb="$RUNDIR/logs/readback.log"
+grep -q "ARGS $WORK/desired.json --records deployments/.forge-test/rehearsal/t-good-$$ --json $RUNDIR/readback.json --env-file $WORK/.env --rpc base-sepolia=http://127.0.0.1:1 --rpc arb-sepolia=http://127.0.0.1:2" "$rb" \
+  && ok "the readback reads the plan's desired file, the scratch records and every fork" || bad "readback arguments: $(head -1 "$rb" 2>/dev/null)"
+grep -q "2 rows: 2 met or info" "$RUNDIR/report.md" && ok "the report carries the readback's summary" || bad "no readback summary in the report"
+
+drive rbfail "$GOOD" STUB_READBACK_FAIL=1
+[ "$RC" -ne 0 ] && grep -q '"failedStage": "readback' "$RUNDIR/verdict.json" \
+  && ok "a readback row not met fails the run" || bad "a failing readback passed: rc $RC"
+echo "$OUT" | grep -q "launch.paused" && ok "the failing rows are shown" || bad "failing rows not shown"
+
+drive nodesired $'chains base-sepolia\nstep base-sepolia preflight'
+[ "$RC" -ne 0 ] && grep -q "the plan names no desired file" "$RUNDIR/verdict.json" "$RUNDIR/report.md" \
+  && ok "a plan naming no desired file is not covered, never green" || bad "a plan without a desired file passed: rc $RC"
+
+printf '%s\n' "$GOOD" > "$WORK/plan-moved"
+echo '{"network":"testnet","changed":1}' > "$WORK/desired.json"
+drive moved "$GOOD"
+[ "$RC" -ne 0 ] && grep -q "changed since the plan was made" "$RUNDIR/verdict.json" \
+  && ok "a desired file changed after the plan is refused" || bad "a changed desired file was read: rc $RC"
+echo '{"network":"testnet"}' > "$WORK/desired.json"
 
 drive fail "$GOOD" STUB_FAIL_PHASE=contracts
 [ "$RC" -ne 0 ] && ok "a failing step fails the run" || bad "a failing step passed"
 grep -q '"result": "fail"' "$RUNDIR/verdict.json" && ok "the verdict records the failure" || bad "no failing verdict"
-grep -q "plan:3 base-sepolia contracts" "$RUNDIR/verdict.json" && ok "the failure names the plan line" || bad "failure not located: $(grep failedStage "$RUNDIR/verdict.json")"
+grep -q "plan:4 base-sepolia contracts" "$RUNDIR/verdict.json" && ok "the failure names the plan line" || bad "failure not located: $(grep failedStage "$RUNDIR/verdict.json")"
 [ ! -f "$RUNDIR/logs/004-arb-sepolia-contracts.log" ] && ok "no step runs after a failure" || bad "a later step ran"
 
 made_markers=0
@@ -115,7 +148,7 @@ cat > "$WORK/bin/relay" <<'S'
 echo "RELAY $*"
 S
 chmod +x "$WORK/bin/relay"
-drive relay $'chains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia' RH_RELAY="$WORK/bin/relay"
+drive relay "$DESIRED_LINE"$'\nchains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia' RH_RELAY="$WORK/bin/relay"
 [ "$RC" -eq 0 ] && grep -q "RELAY base-sepolia http://127.0.0.1:1 arb-sepolia http://127.0.0.1:2" "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" \
   && ok "a relay step runs the relay with both forks" || { bad "relay step: rc $RC"; echo "$OUT" | tail -5; }
 
