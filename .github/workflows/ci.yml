@@ -377,7 +377,7 @@ jobs:
           # already matched), the error-raisers derivation (#3916), and for the
           # restore converter, which the indexer's table-classification guard
           # imports (#1481).
-          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|contracts/script/check-loan-collateral-writer\.mjs$|contracts/script/check-loan-start-term-writer\.mjs$|contracts/script/check-raw-payouts\.mjs$|contracts/script/check-permissionless-steps\.mjs$|contracts/script/error-raisers\.mjs$|contracts/script/check-signer-seam\.mjs$|contracts/script/(rehearsal-tree|rehearsal-inputs|deploy-plan|readback|refactor-reports|review-coverage|check-entry-gates)\.mjs$|contracts/src/libraries/LibAccessControl\.sol$|contracts/script/lint-event-categories\.js$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|contracts/script/check-loan-collateral-writer\.mjs$|contracts/script/check-loan-start-term-writer\.mjs$|contracts/script/check-raw-payouts\.mjs$|contracts/script/check-permissionless-steps\.mjs$|contracts/script/check-gas-budgets\.mjs$|contracts/gas-suite/|contracts/script/error-raisers\.mjs$|contracts/script/check-signer-seam\.mjs$|contracts/script/(rehearsal-tree|rehearsal-inputs|deploy-plan|readback|refactor-reports|review-coverage|check-entry-gates)\.mjs$|contracts/src/libraries/LibAccessControl\.sol$|contracts/script/lint-event-categories\.js$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -1262,6 +1262,32 @@ jobs:
           git fetch --depth=1 origin "$BASE"
           pnpm --filter @vaipakam/app exec tsx \
             scripts/check-baselines-shrink-only.ts --base "$BASE"
+
+      # A gas budget may be raised only with a changed reason (#3915). The
+      # rule needs the budgets as they stood at the base, and no measurement,
+      # so it runs here on every change rather than only in the pre-deploy
+      # full run. Same trusted base as the step above.
+      - name: Gas budgets raised only with a reason
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${PR_BASE_SHA}"
+          else
+            BASE="${PUSH_BEFORE_SHA}"
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              echo "First push to this ref — no prior budgets to compare."
+              exit 0
+            fi
+          fi
+          git fetch --depth=1 origin "$BASE"
+          if ! git cat-file -e "$BASE:contracts/gas-suite/budgets.json" 2>/dev/null; then
+            echo "contracts/gas-suite/budgets.json is new since the base — nothing to compare."
+            exit 0
+          fi
+          git show "$BASE:contracts/gas-suite/budgets.json" > "$RUNNER_TEMP/gas-budgets-base.json"
+          node contracts/script/check-gas-budgets.mjs --raises-only --base "$RUNNER_TEMP/gas-budgets-base.json"
 
       # `pnpm -r test` is intentionally NOT wired into this required-check
       # workflow. The suites that matter gate elsewhere and per-workspace:

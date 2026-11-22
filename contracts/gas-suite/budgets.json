@@ -1,0 +1,215 @@
+{
+  "blocking": false,
+  "lowerAt": 0.8,
+  "actions": {
+    "claim_borrower": {
+      "gas": 512000,
+      "reason": "the borrower claims the collateral back after repaying; measured at the first build, plus 10%"
+    },
+    "claim_lender": {
+      "gas": 495000,
+      "reason": "the lender claims a repaid loan into the vault; measured at the first build, plus 10%"
+    },
+    "close_default_time_based": {
+      "gas": 1877000,
+      "reason": "a liquid loan past grace defaulted, its collateral sold to the lender; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "close_fallback_entry": {
+      "gas": 1538000,
+      "reason": "a default whose every swap route fails, entering the in-kind fallback; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "close_liquidation_hf": {
+      "gas": 1583000,
+      "reason": "a loan below health factor 1 liquidated by a third party through the swap route; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "collateral_add": {
+      "gas": 462000,
+      "reason": "collateral added to an open loan by its borrower; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "collateral_withdraw_surplus": {
+      "gas": 462000,
+      "reason": "surplus collateral withdrawn from an open loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "exit_preclose": {
+      "gas": 819000,
+      "reason": "the borrower closes a loan early; measured at the first build, plus 10%"
+    },
+    "exit_sale_direct": {
+      "gas": 1663000,
+      "reason": "the lender sells the loan into a standing lender offer in one transaction; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "exit_sale_listing": {
+      "gas": 1605000,
+      "reason": "the lender lists the loan for sale with a sale offer; measured at the first build, plus 10%"
+    },
+    "exit_sale_listing_accept": {
+      "gas": 4022000,
+      "reason": "a buyer accepts a listed loan sale and the sale settles in the same transaction; measured at the first build, plus 10%"
+    },
+    "instant_borrow_1": {
+      "gas": 7047000,
+      "reason": "instant borrow taking 1 Auto-lend slot, each its own loan; measured at the first build, plus 10%"
+    },
+    "instant_borrow_1_skip_early": {
+      "gas": 7118000,
+      "reason": "instant borrow with one source skipped (refused early: no instant consent) before one fill; measured at the first build, plus 10%"
+    },
+    "instant_borrow_1_skip_late": {
+      "gas": 8248000,
+      "reason": "instant borrow with one source skipped (refused late: at loan creation) before one fill; measured at the first build, plus 10%"
+    },
+    "instant_borrow_2": {
+      "gas": 12621000,
+      "reason": "instant borrow taking 2 Auto-lend slots, each its own loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "instant_borrow_4": {
+      "gas": 23649000,
+      "reason": "instant borrow taking 4 Auto-lend slots, each its own loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "instant_borrow_8": {
+      "gas": 45714000,
+      "reason": "instant borrow taking 8 Auto-lend slots, each its own loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "instruction_reserve_fund": {
+      "gas": 210000,
+      "reason": "a loan reserve funded by the borrower; measured at the first build, plus 10%"
+    },
+    "instruction_run_due_repay": {
+      "gas": 1029000,
+      "reason": "a repayment at the due date run from the payment reserve; measured at the first build, plus 10%"
+    },
+    "instruction_run_interest": {
+      "gas": 816000,
+      "reason": "an interest payment run from the payment reserve; measured at the first build, plus 10%"
+    },
+    "instruction_run_topup": {
+      "gas": 431000,
+      "reason": "a collateral top-up run from the reserve when health falls under the trigger; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "instruction_set": {
+      "gas": 177000,
+      "reason": "standing instructions set on an open loan; measured at the first build, plus 10%"
+    },
+    "loan_accept_erc20": {
+      "gas": 3405000,
+      "reason": "an ERC-20 lender offer accepted: the loan opened, both tokens and the initiation fee; measured at the first build, plus 10%"
+    },
+    "loan_match_offers": {
+      "gas": 4134000,
+      "reason": "a lender and a borrower offer matched by a third party into one loan; measured at the first build, plus 10%"
+    },
+    "offer_cancel": {
+      "gas": 551000,
+      "reason": "an open offer cancelled after the cancel delay, its token burned and assets released; measured at the first build, plus 10%"
+    },
+    "offer_change": {
+      "gas": 248000,
+      "reason": "an open offer's amount changed by its creator; measured at the first build, plus 10%"
+    },
+    "offer_post": {
+      "gas": 1554000,
+      "reason": "a lender offer posted from the wallet, with its position token and book entry; measured at the first build, plus 10%"
+    },
+    "refinance_accept": {
+      "gas": 4658000,
+      "reason": "a refinance offer accepted: the old loan repaid and a new one opened; measured at the first build, plus 10%"
+    },
+    "rental_accept": {
+      "gas": 2322000,
+      "reason": "an NFT rental offer accepted, the renter set and the fee prepaid; measured at the first build, plus 10%"
+    },
+    "rental_day_deduct": {
+      "gas": 759000,
+      "reason": "one day of an NFT rental fee deducted; measured at the first build, plus 10%"
+    },
+    "repay_full": {
+      "gas": 802000,
+      "reason": "an open ERC-20 loan repaid in full by its borrower; measured at the first build, plus 10%"
+    },
+    "repay_partial": {
+      "gas": 939000,
+      "reason": "part of an open ERC-20 loan repaid by its borrower; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "slot_cancel": {
+      "gas": 137000,
+      "reason": "an Auto-lend slot cancelled by its owner; measured at the first build, plus 10%"
+    },
+    "slot_fund": {
+      "gas": 708000,
+      "reason": "an Auto-lend slot funded from the wallet; measured at the first build, plus 10%"
+    },
+    "slot_match": {
+      "gas": 5604000,
+      "reason": "a borrower offer filled from an Auto-lend slot by a keeper; measured at the first build, plus 10%"
+    },
+    "slot_set": {
+      "gas": 714000,
+      "reason": "an Auto-lend slot set by its owner; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
+    },
+    "vault_deposit": {
+      "gas": 288000,
+      "reason": "an ERC-20 deposit into the owner's vault; measured at the first build, plus 10%"
+    },
+    "vault_withdraw": {
+      "gas": 228000,
+      "reason": "an ERC-20 withdrawal from the owner's vault to the wallet; measured at the first build, plus 10%"
+    }
+  },
+  "instantBorrow": {
+    "actionPrefix": "instant_borrow_",
+    "sources": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "headroom": 0.8,
+    "maxSources": 0,
+    "deployBound": 2,
+    "guardReadBudget": 500000,
+    "_guardReadBudgetWhy": "Design re-ruling 2026-11-22 (instant borrow source cap): the gas the Diamond hands each guard read (LibPriceGuard GUARD_READ_GAS). Handed, not spent: unused gas comes back. The transaction must still hold it once for its last read, so the rule adds it once per transaction.",
+    "guardSourceCosts": {
+      "_why": "Cold cost of one call to each outside source the mainnet guard reads, as a caller sees it, measured on live forks by test/fork/GuardSourceReadCostFork.t.sol on 2026-11-22. Each kind takes the dearest call measured for it. Re-measure when a source changes.",
+      "chainlinkFeed": {
+        "gas": 18474,
+        "where": "Arbitrum One, Chainlink ETH/USD proxy latestRoundData (proxy plus aggregator, both cold)"
+      },
+      "feedRegistry": {
+        "gas": 10753,
+        "where": "Base Sepolia feed registry pairBase; the Ethereum mainnet Chainlink registry getFeed measured 8,057"
+      },
+      "sequencer": {
+        "gas": 16395,
+        "where": "Arbitrum One, Chainlink L2 sequencer uptime feed latestRoundData"
+      },
+      "pyth": {
+        "gas": 10843,
+        "where": "Arbitrum One, Pyth getPriceUnsafe ETH/USD"
+      },
+      "tellor": {
+        "gas": 18653,
+        "where": "Arbitrum One, Tellor getDataBefore ETH/USD"
+      },
+      "api3": {
+        "gas": 7694,
+        "where": "Arbitrum One, API3 readDataFeedWithDapiNameHash ETH/USD"
+      },
+      "dia": {
+        "gas": 6004,
+        "where": "Arbitrum Sepolia, DIA getValue ETH/USD (DIA has no getValue oracle on Arbitrum One)"
+      }
+    },
+    "skipAllowance": 1,
+    "_skipAllowanceWhy": "Design re-ruling 2026-11-22: until the one-price-per-asset-per-transaction root fix, a list may carry one source beyond the fill bound, counted at the dearest measured skip (a late skip at its own cost).",
+    "skipActions": [
+      "instant_borrow_1_skip_early",
+      "instant_borrow_1_skip_late"
+    ],
+    "networkTxGasLimits": {
+      "ethereum": {
+        "gas": 16777216,
+        "why": "EIP-7825 caps one transaction at 2^24 gas; the lowest cap among the Phase-1 networks recorded here. Add a network whose cap is lower."
+      }
+    }
+  }
+}

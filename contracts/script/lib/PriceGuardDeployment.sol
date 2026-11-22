@@ -132,18 +132,28 @@ library PriceGuardDeployment {
         require(actual.length == expected.length, "PriceGuardDeployment: reader code is not this tree's build");
         string[] memory ids = VM.parseJsonKeys(json, ".deployedBytecode.immutableReferences");
         for (uint256 i; i < ids.length; ++i) {
-            ImmutableRef[] memory refs = abi.decode(
-                VM.parseJson(json, string.concat(".deployedBytecode.immutableReferences.", ids[i])),
-                (ImmutableRef[])
-            );
-            for (uint256 j; j < refs.length; ++j) {
-                for (uint256 k; k < refs[j].length; ++k) {
-                    actual[refs[j].start + k] = 0;
-                    expected[refs[j].start + k] = 0;
-                }
-            }
+            _blankImmutables(actual, expected, json, ids[i]);
         }
         require(keccak256(actual) == keccak256(expected), "PriceGuardDeployment: reader code is not this tree's build");
+    }
+
+    /// @dev Zeroes, in both copies, every byte one immutable occupies. Its own
+    ///      function so the decode's temporaries and the two loop counters do
+    ///      not share {requireArtifactCode}'s frame with every caller's.
+    function _blankImmutables(bytes memory actual, bytes memory expected, string memory json, string memory id)
+        private
+        view
+    {
+        ImmutableRef[] memory refs = abi.decode(
+            VM.parseJson(json, string.concat(".deployedBytecode.immutableReferences.", id)), (ImmutableRef[])
+        );
+        for (uint256 j; j < refs.length; ++j) {
+            uint256 end = refs[j].start + refs[j].length;
+            for (uint256 p = refs[j].start; p < end; ++p) {
+                actual[p] = 0;
+                expected[p] = 0;
+            }
+        }
     }
 
     /// @notice The guard's identity, delay and starting entries for this chain.

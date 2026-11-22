@@ -7,6 +7,8 @@ out-storage-layout/
 # The measured-delivery check's own build (script/check-measured-delivery.mjs).
 cache-measured-delivery/
 out-measured-delivery/
+# The gas suite's measured rows (test/gas/, #3915).
+out-gas-suite/
 
 # Ignores development broadcast logs
 /broadcast

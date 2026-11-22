@@ -421,6 +421,9 @@ if [ "$MODE_FULL" -eq 1 ]; then
   # and every OTHER step runs in full, so each shard is a complete preflight
   # over 1/N of the regression. A green shard is not a green regression:
   # `run-regression.sh --verify-shards` over every shard's `--manifest` is.
+  # The gas suite (test/gas/, #3915) writes its measurements during this run;
+  # a leftover from an earlier run must not stand in for one this run skipped.
+  (( ${#REGRESSION_ARGS[@]} )) || rm -rf "$CONTRACTS_DIR/out-gas-suite"
   if bash "$SCRIPT_DIR/run-regression.sh" ${REGRESSION_ARGS[@]+"${REGRESSION_ARGS[@]}"}; then
     if (( ${#REGRESSION_ARGS[@]} )); then
       echo "  ✓ this shard of the full regression passes (verify every shard before relying on it)"
@@ -430,6 +433,46 @@ if [ "$MODE_FULL" -eq 1 ]; then
   else
     echo "  ✗ regression failed — do not deploy red contracts" >&2
     FAIL=1
+  fi
+
+  echo
+  echo "[predeploy 2a/4] gas budgets per user action (#3915)"
+  # A warning until the refactor pass ends (gas-suite/budgets.json
+  # "blocking": false); a raised budget with an unchanged reason fails always.
+  # A shard holds only some of the suite's chunks, so a sharded run cannot
+  # say whether every action is within budget: it says so and checks nothing.
+  #
+  # The raise rule needs the budgets as they stood before this change: the
+  # file at GAS_BUDGETS_BASE_REF (default: where HEAD left origin/main). CI
+  # checks it on every pull request too; here it covers a deploy from a
+  # branch, and an uncommitted edit to the file on main. A base that cannot
+  # be resolved fails the step: the rule is never skipped silently.
+  if (( ${#REGRESSION_ARGS[@]} )); then
+    echo "  · sharded run: the gas budgets are checked by an unsharded --full run"
+  else
+    gas_base_ref="${GAS_BUDGETS_BASE_REF:-}"
+    if [[ -z "$gas_base_ref" ]]; then
+      gas_base_ref="$(git -C "$CONTRACTS_DIR" merge-base HEAD origin/main 2>/dev/null || true)"
+    fi
+    gas_base_file="$(mktemp)"
+    if [[ -z "$gas_base_ref" ]]; then
+      echo "  ✗ no base for the gas budgets: fetch origin/main or set GAS_BUDGETS_BASE_REF" >&2
+      FAIL=1
+    elif ! git -C "$CONTRACTS_DIR" cat-file -e "$gas_base_ref:contracts/gas-suite/budgets.json" 2>/dev/null; then
+      # The file is new since the base: there is no earlier budget to raise.
+      echo "  · gas-suite/budgets.json is new since $gas_base_ref: no earlier budgets to compare"
+      if ! node "$SCRIPT_DIR/check-gas-budgets.mjs" --dir "$CONTRACTS_DIR/out-gas-suite"; then
+        echo "  ✗ gas budget check failed" >&2
+        FAIL=1
+      fi
+    elif ! git -C "$CONTRACTS_DIR" show "$gas_base_ref:contracts/gas-suite/budgets.json" > "$gas_base_file"; then
+      echo "  ✗ could not read the base gas budgets at $gas_base_ref" >&2
+      FAIL=1
+    elif ! node "$SCRIPT_DIR/check-gas-budgets.mjs" --dir "$CONTRACTS_DIR/out-gas-suite" --base "$gas_base_file"; then
+      echo "  ✗ gas budget check failed" >&2
+      FAIL=1
+    fi
+    rm -f "$gas_base_file"
   fi
 else
   echo "[predeploy 2/4] deploy-sanity forge suite (test/deploy/*)"
