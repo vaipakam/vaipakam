@@ -11,7 +11,8 @@ decisions of 2026-05-13, two of which this design replaces),
 graded response, to which this design adds a limit), `LoanSettingsSnapshotDesign.md`
 (what a loan fixes at its opening), `PriceGuardDesign.md` and
 `FeedRegistryDesign.md` (where prices and feeds are kept),
-`LiquiditySpoofingThreatModel.md`.
+`LiquiditySpoofingThreatModel.md`, `RiskFiguresDesign.md` (the figures each
+tier gives, and the figures of collateral with no tier).
 
 ## 1. Why
 
@@ -102,8 +103,14 @@ real sale routes, which can show what the depth on the chain cannot.
   confirmed that step's depth, with no gap, for the whole time at depth
   (24 hours proposed). Steps come one at a time, so the third tier comes after
   three times that.
-- The keeper lowers a tier at once, by any number of steps, and so may
-  governance. The way back is earned again.
+- The keeper lowers a tier at once, by any number of steps. The way back is
+  earned again.
+- Governance may lower a tier at once too, and its lowering stands until
+  governance lifts it. While it stands, no renewal, no step of the keeper and
+  no passing of time raises the tier above the one governance set. Each
+  lowering is published with its grounds, as a pause of an asset is, and so
+  is each lifting. Lifting gives nothing back: the tier is then earned again
+  from the tier governance set, a step at a time.
 - **A tier that is not renewed lapses.** A held tier whose last renewal is
   older than the confidence age (2 hours proposed) reads as none. A lapse is
   not a step down: the next renewal restores the step at once, with no new
@@ -137,8 +144,8 @@ lending on every new asset and in every outage.)
 - Its figures are no better than the most conservative tier's, in every
   figure, judged figure by figure whatever the order of the tiers: the cap on
   the loan, the liquidation line, the floor of a forced sale and the size its
-  concentration is measured against. The figures are stated with the risk
-  figures.
+  concentration is measured against. The figures are in
+  `RiskFiguresDesign.md`, section 6.
 - It is liquid only by the floor test, which is measured live and asks nothing
   of the keeper. So a keeper's silence takes credit away and never adds any.
 - A loan opened on it is recorded as opened with no tier, for its whole life.
@@ -171,7 +178,8 @@ second. A third threshold refuses:
   new loan, a refinance, an extension on new terms, and every fill (an
   Auto-lend slot, the instant market, a signed offer, a collection offer). A
   loan that replaces a loan in one transaction counts only the increase in
-  what is pledged.
+  what is pledged. An extension pledges nothing new, and counts only
+  collateral added with it.
 - **Never refused.** A top-up of collateral, a cure and a repayment are never
   refused by the limit, at any level of what is pledged. An open loan is never
   changed by a later rise in what is pledged or a later fall in depth.
@@ -207,7 +215,11 @@ The platform keeps no list of permitted assets. Beside the pause of an asset,
 these steps act on a named asset, and each only takes away or records what the
 asset earned by the one rule every asset is held to: the mute of a rate
 source, the confirmation of a fall of an exchange rate, the guardian's stop of
-one asset's price, and the keeper's step of a confidence tier.
+one asset's price, the keeper's step of a confidence tier, governance's
+lowering of a confidence tier (section 4), and the step by which governance
+sets an asset's pledged amount right (`RiskFiguresDesign.md`, section 8). No
+setting gives a named asset a figure of its own (`RiskFiguresDesign.md`,
+section 11).
 
 ## 9. Figures
 
@@ -232,6 +244,9 @@ The figures are proposed and are confirmed with the parameters table.
 - A tier read one second before and after the confidence age, a renewal that
   restores it, and a renewal after the time at depth.
 - A confidence tier set above the measured tier, by each actor.
+- Renewals across the time at depth while a lowering by governance stands, a
+  step of the keeper tried then, and the tier earned again after the lifting.
+- An extension past the limit that adds no collateral, and one that adds some.
 - Collateral with no tier set against every figure a tier gives, with the
   tiers in each order. A loan opened with no tier, put to the discounted route
   at every later tier.
@@ -276,10 +291,11 @@ section 9 confirmed first.
 
 ## 13. Open items
 
-- The figures that collateral with no tier gets, and the figures each tier
-  gives, are stated with the risk figures.
 - The keeper's published rule for a confidence tier, and its alert, are
   stated with the keeper's passes.
-- How an extension counts toward the limit. It pledges nothing new, so the
-  proposal is that it counts only collateral added with it. This is with the
-  owner.
+
+Settled since this design was written, by the owner's approval of the risk
+figures on 2026-11-22: the figures that collateral with no tier gets and the
+figures each tier gives (`RiskFiguresDesign.md`), how an extension counts
+toward the limit (section 6), and what a lowering by governance does
+(section 4).

@@ -13,6 +13,15 @@ starts at Tier 1 (it starts with no confidence tier and earns each step over
 time), a confidence tier that is not renewed lapses, and a liquid asset with
 no tier still backs a new loan on the most conservative terms.
 
+**Amended again 2026-11-22 (owner decision on the risk figures).**
+`RiskFiguresDesign.md` is the design of record for the figures a tier gives.
+It replaces three points wherever the sections below state them (§4.2, §4.3
+and §5 decisions 2 and 11): with `depthTieredLtvEnabled` off a tier's cap
+still holds and the `HF ≥ 1.5` floor is added to it, so the switch admits no
+loan that the caps refuse; no setting gives one asset a figure of its own,
+so the per-asset ceiling on the cap goes; and governance may lower an asset's
+confidence tier, a lowering that stands until governance lifts it.
+
 Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
 - **§4.4 step 1 — Piece A — SHIPPED & deployed** (base-sepolia
   `a1eb9fcb`): the widget on OfferBook, auto min-collateral, deep-link to
@@ -920,6 +929,9 @@ liquidator bot has been hardened for it.
     default `false`. ✅** While off, the init gate is exactly today's
     `HF ≥ 1.5`; flip per chain after that chain's census + the relay
     being live.
+    *Amended 2026-11-22: while off, a tier's cap still holds and the
+    `HF ≥ 1.5` floor is added to it. Turning the caps off acts at once, and
+    turning them on waits as a setting does (`RiskFiguresDesign.md` §4).*
 
 ### 9.ii — the keeper liquidity-confidence relay, in detail
 
