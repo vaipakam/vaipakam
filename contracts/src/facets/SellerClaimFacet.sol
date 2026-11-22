@@ -11,6 +11,7 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
@@ -517,8 +518,10 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         return ok && _liquidValue(asset, pay) >= owedValue;
     }
 
+    /// @dev Best-effort: a refused valuation reads as 0, but a read that ran
+    ///      short of gas reverts {LibPriceGuard.PriceReadOutOfGas} (#3504).
     function _liquidValue(address asset, uint256 amount) private view returns (uint256 value) {
-        (bool ok, bytes memory ret) = address(this).staticcall(
+        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeCall(NumeraireValueFacet.getLiquidNumeraireValue, (asset, amount))
         );
         if (ok && ret.length >= 32) value = abi.decode(ret, (uint256));
