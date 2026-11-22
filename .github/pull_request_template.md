@@ -30,6 +30,22 @@ The motivation. What problem does this solve? Why now? If this is
 a follow-up to a prior PR / issue / Codex finding, link it.
 -->
 
+## Statements
+
+<!--
+The canonical statements this change implements (docs/CanonicalSpec/),
+by id, one per line, e.g. a vault statement's id. If it changes no
+behaviour, write "No behaviour change". If it changes behaviour that no
+canonical section covers yet, write "No canonical section covers this
+change" (docs/FunctionalSpecs/ still states that intent, and builders do
+not edit it: out-of-date lines go on the owner's list).
+
+A design that changes a canonical statement brings the statement change
+to the owner with the design. The folder changes only after approval,
+and only by the thread that keeps it; a pull request never edits it.
+The merge check on main reads this section.
+-->
+
 ## What's deferred (intentional)
 
 <!--

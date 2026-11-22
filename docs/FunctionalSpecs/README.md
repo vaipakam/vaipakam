@@ -167,20 +167,38 @@ epic; see below). One doc per functional domain:
 
 This list is a starting proposal; the baseline epic may re-slice it.
 
+## Sections replaced by the canonical specification
+
+[`docs/CanonicalSpec/`](../CanonicalSpec/README.md) states intended
+behaviour one numbered statement at a time. Where one of its sections is
+canonical, it wins over this folder for what that section covers; this
+folder stays in force for everything else, until every domain is
+canonical and these files move to `docs/OlderDocs/`.
+
+| Canonical domain and sections | Replaces here |
+| --- | --- |
+| PLT, the platform's rules | DESIGN-THREAD: the parts of `ProjectDetailsREADME.md` it replaces |
+| VLT, vaults, sections 1 to 3 | DESIGN-THREAD: the parts of `VaultOperations.md` and `ProjectDetailsREADME.md` it replaces |
+| PRC, prices, sections 1 to 7 | DESIGN-THREAD: the parts of `ProjectDetailsREADME.md` it replaces |
+
+This table changes only with the canonical folder, by the thread that
+keeps it.
+
 ## How the corpus stays current — the maintenance rule
 
-**Every behaviour-changing PR updates the relevant
-`docs/FunctionalSpecs/<domain>.md` in the same diff as its release-note
-fragment.** The author writes the **intended** behaviour they set out to
-build — *stating intent* — and never transcribes the code they just
-wrote. (If that code has a bug, the spec stays correct, and the
-divergence audit catches `code ≠ spec` later.)
+**Pull requests do not edit this folder.** Intended behaviour changes
+first in a design the owner approves. Where a canonical section covers the
+behaviour, the design brings its statement changes and the thread that
+keeps the canonical folder writes them. Where none does, a line found out
+of date here goes on the owner's list of specification lines, which the
+design thread keeps (CanonicalSpecDesign §15).
 
-The release-note fragment is the "what changed" lens; the Functional
-Spec edit is the "intended current behaviour" lens. A non-blocking CI
-check (`.github/workflows/release-notes-drift.yml`) warns in the Actions
-tab if a merge changed `contracts/src/` or `apps/` but touched no
-`docs/FunctionalSpecs/` doc.
+A behaviour-changing pull request names the canonical statements it
+implements in its description, or says "No behaviour change", or "No
+canonical section covers this change". A non-blocking check
+(`.github/workflows/release-notes-drift.yml`) reads the merged pull
+request's description and warns in the Actions tab when none of the three
+is there. The release-note fragment stays the "what changed" lens.
 
 ## Baseline
 

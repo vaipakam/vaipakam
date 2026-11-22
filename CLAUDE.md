@@ -36,9 +36,10 @@ cleaner one both satisfy the request, the cleaner one is the requirement.
   changes what a user sees or may do, the surface says the config exists.
   Hiding a capability behind a flag without telling the reader is the failure
   this rule prevents.
-- **Docs vs code divergence resolves toward intent.** `docs/FunctionalSpecs/`
-  states what the platform is MEANT to do; when it and the code disagree, the
-  code is the candidate bug. Resolving a divergence by rewriting the spec to
+- **Docs vs code divergence resolves toward intent.** `docs/CanonicalSpec/`
+  (where a section is canonical) and `docs/FunctionalSpecs/` (everywhere
+  else) state what the platform is MEANT to do; when one and the code
+  disagree, the code is the candidate bug. Resolving a divergence by rewriting the spec to
   match the implementation requires an explicit recorded human decision —
   see `_CodeVsDocsAudit.md`.
 - **Prefer the honest expensive answer to the cheap confident one.** Copy
@@ -3000,43 +3001,54 @@ merge → release notes + tick the related `docs/ToDo.md` entry + the
 `@vaipakam-labs` card moves to Done (automatic, via `Closes #<issue>` in
 the PR body). Never batch the release-notes update.
 
-## Functional specs — per-PR domain updates
+## Specification — the canonical folder and the functional specs
 
-`docs/FunctionalSpecs/` is the **code-free, implementation-independent**
-specification of what the platform is **intended** to do — the test
-oracle. **Load-bearing rule: it is sourced from the documents, never
-transcribed from the contract code.** A spec derived from the code
-cannot catch a bug — it would just confirm "the code does what the code
-does" and lock real bugs in. The code is the thing *under test*, never
-the *source* of the spec.
+The platform's intended behaviour is stated in two places while the move
+between them runs, and **neither is ever sourced from the code**: a
+specification derived from the code can only confirm "the code does what the
+code does" and locks real bugs in. The code is the thing *under test*.
 
-It is kept current the same way release notes are: **every
-behaviour-changing PR updates the relevant
-`docs/FunctionalSpecs/<domain>.md` in the same diff as its release-note
-fragment** — not as a post-merge step (a separate step drifts).
+- **`docs/CanonicalSpec/`** states intent one numbered statement at a time
+  (`VLT-001` and the like), each with a permanent id, its tests and its record.
+  Where a section there is **canonical** (owner-approved; the folder's README
+  lists the status of every domain), it is the statement of intent for what
+  it covers, and wins over `docs/FunctionalSpecs/`. Design:
+  [`docs/DesignsAndPlans/CanonicalSpecDesign.md`](docs/DesignsAndPlans/CanonicalSpecDesign.md),
+  section 15 for these rules.
+- **`docs/FunctionalSpecs/`** stays in force for everything no canonical
+  section covers, until every domain is canonical; its README lists the
+  sections the canonical folder has replaced. Then its files move to
+  `docs/OlderDocs/`.
 
-- The release-note fragment is the *changelog* ("PR #N changed X"); the
-  Functional Spec edit is the *intended-behaviour* view ("the platform
-  is meant to do X"). The author **states the intent** they set out to
-  build — never transcribes the code just written. If that code has a
-  bug, the spec stays correct and the divergence audit catches it.
-- Code-free — plain English, observable/testable behaviour. No Solidity,
-  TypeScript, or ABIs.
-- `docs/FunctionalSpecs/_CodeVsDocsAudit.md` records code-vs-spec
-  divergences (candidate bugs / stale docs). Code-observed behaviour
-  enters the spec **only** via an explicit human intent-decision — never
-  silently.
-- The drift check in `.github/workflows/release-notes-drift.yml` warns
-  (non-blocking) if a merge changed `contracts/src/` or `apps/` but
-  touched no `docs/FunctionalSpecs/` doc — same backstop the release-note
-  fragments have.
-- See [`docs/FunctionalSpecs/README.md`](docs/FunctionalSpecs/README.md)
-  for the doc set, the domain slicing, the conflict-precedence rule, and
-  the full rules.
+The rules (owner decision, CanonicalSpecDesign §15):
 
-Release notes, design docs (`docs/DesignsAndPlans/`), and functional
-specs stay separate on purpose: changelog vs. design exploration vs.
-intended-behaviour spec.
+- **Builders edit neither folder.** A line found out of date in
+  `docs/FunctionalSpecs/` goes on the owner's list of specification lines,
+  which the design thread keeps.
+- **A design that changes behaviour a canonical section covers brings its
+  statement changes to the owner with the design**, as text: this statement
+  changed to read so, this one dropped, this one new. The folder changes only
+  after the owner's approval, and only by the thread that keeps it (the
+  design thread). A pull request never edits it.
+- **A pull request that changes behaviour names the statements it
+  implements**, by id, in its description's "Statements" section — or says
+  "No behaviour change", or "No canonical section covers this change". The
+  drift check in `.github/workflows/release-notes-drift.yml` reads the merged
+  pull request's description and warns (non-blocking) when none of the three
+  is there, or when an id names no statement in the folder
+  (`.github/scripts/statement-ids.mjs`).
+- **Divergences resolve toward intent.** Where the code and a statement
+  disagree, the code is the candidate bug;
+  `docs/procedures/FunctionalSpecsCodeVsDocsAudit.md` records the divergences
+  against the functional specs. Code-observed behaviour enters either folder
+  **only** through a recorded owner decision.
+- **The wording rules bind the canonical folder**: it is public, so its
+  product words and refused words are in `docs/CanonicalSpec/wording.json`,
+  and the folder check enforces them.
+
+The release-note fragment stays the *changelog* ("PR #N changed X"); the
+statements are the *intended-behaviour* view. Release notes, design docs
+(`docs/DesignsAndPlans/`) and the specification stay separate on purpose.
 
 ## Dependabot — off-chain only
 

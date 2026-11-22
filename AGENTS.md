@@ -36,6 +36,26 @@ What this means in practice, for reviews and for implementation alike:
 
 Applies to `#2072` and to every future intent decision of the same shape.
 
+## The specification — what a review checks a change against
+
+The platform's intended behaviour is stated in `docs/CanonicalSpec/`, one
+numbered statement at a time (`VLT-001` and the like), wherever a section
+there is canonical (its README lists each domain's status), and in
+`docs/FunctionalSpecs/` for everything no canonical section covers yet.
+Neither is ever written from the code. The rules (CanonicalSpecDesign §15):
+
+- **A pull request that changes behaviour names the statements it
+  implements** in its description's "Statements" section, or says "No
+  behaviour change", or "No canonical section covers this change". A review
+  checks the change against the statements it names, and flags a behaviour
+  change that names none.
+- **No pull request edits either folder.** A change to a canonical statement
+  is approved by the owner with its design and written by the thread that
+  keeps the folder; out-of-date lines in `docs/FunctionalSpecs/` go on the
+  owner's list.
+- **Where the code and a statement disagree, the code is the candidate
+  bug**, as the standing principle above says.
+
 ## GitHub Review Commands
 
 Use these command conventions when a PR, issue, or project card asks for an
