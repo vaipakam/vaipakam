@@ -45,6 +45,9 @@ import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title  FeeEntitlementFacetTest
@@ -695,7 +698,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // survive it, because the numeraire guard catches the rental anyway.
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 stamped = keccak256(
-            "FeeEntitlementStamped(uint256,uint8,uint8,uint256,uint256,uint256)"
+            "FeeEntitlementStamped(uint256,uint8,uint8,uint256,uint256,uint256,uint256)"
         );
         for (uint256 i = 0; i < logs.length; i++) {
             assertTrue(
@@ -813,6 +816,155 @@ contract FeeEntitlementFacetTest is SetupTest {
         assertEq(uint256(fe.openDays), 30, "a mirror plain loan carries its cap");
         assertEq(fe.cStarOpen, _cStar());
         assertGt(uint256(fe.loanSideRewardCapOpen), 0, "the per-side ceiling is cached");
+    }
+
+    // ─── #3360 — the reward cap never exceeds the kept initiation fee ──────
+
+    /// @dev A lender ERC-20 offer like {_createLenderErc20Offer} at a chosen
+    ///      principal and term.
+    function _createLenderErc20OfferAt(uint256 amount, uint256 termDays) internal returns (uint256 oid_) {
+        ERC20Mock(mockERC20).mint(lender, amount);
+        LibVaipakam.CreateOfferParams memory p;
+        p.offerType = LibVaipakam.OfferType.Lender;
+        p.lendingAsset = mockERC20;
+        p.amount = amount;
+        p.amountMax = amount;
+        p.interestRateBps = 500;
+        p.interestRateBpsMax = 500;
+        p.collateralAsset = mockCollateralERC20;
+        p.collateralAmount = amount * 2;
+        p.collateralAmountMax = amount * 2;
+        p.durationDays = termDays;
+        p.assetType = LibVaipakam.AssetType.ERC20;
+        p.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        p.creatorRiskAndTermsConsent = true;
+        p.prepayAsset = mockERC20;
+        p.fillMode = LibVaipakam.FillMode.Partial;
+        vm.prank(lender);
+        oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_);
+    }
+
+    /// @dev The stamped invariant every #3360 test checks: each side's cap is
+    ///      half of the lower of `C*` and the kept fee after the snapshotted
+    ///      haircut, so both sides together never exceed the kept fee less the
+    ///      haircut, and the view names the figure that binds.
+    function _assertKeptFeeBound(uint256 loanId) internal view returns (LibVaipakam.FeeEntitlement memory fe) {
+        fe = _feFacet().getFeeEntitlement(loanId);
+        uint256 h = fe.rewardHaircutBpsAtOpen;
+        uint256 base = fe.cStarOpen < fe.keptFeeNumeraire18 ? fe.cStarOpen : fe.keptFeeNumeraire18;
+        assertEq(uint256(fe.loanSideRewardCapOpen), Math.mulDiv(base, 10_000 - h, 10_000) / 2, "cap = half the lower figure");
+        assertLe(
+            2 * uint256(fe.loanSideRewardCapOpen),
+            Math.mulDiv(fe.keptFeeNumeraire18, 10_000 - h, 10_000),
+            "both sides together never exceed the kept fee less the haircut"
+        );
+        (uint256 c, uint256 k, uint256 cap, bool keptBinds) = _feFacet().getLoanRewardCapBasis(loanId);
+        assertEq(c, fe.cStarOpen);
+        assertEq(k, fe.keptFeeNumeraire18);
+        assertEq(cap, uint256(fe.loanSideRewardCapOpen));
+        assertEq(keptBinds, k < c, "the view names the figure that binds");
+    }
+
+    /// @dev Every combination of hold discount and fee shares reaches the
+    ///      stamp as one measured figure: what the fee host received. Fuzz that
+    ///      figure (anything from nothing to the whole list fee) with the term
+    ///      and the size, and the bound holds for each.
+    function testFuzz3360_CapNeverExceedsKeptFeeLessHaircut(uint256 amount, uint256 termDays, uint256 kept)
+        public
+    {
+        amount = bound(amount, 1_000 ether, 40_000 ether); // the borrower posts twice it in collateral
+        termDays = bound(termDays, 7, 365);
+        (uint256 listFee,,) = FeeLevelsFacet(address(diamond)).quoteLoanInitiationFee(amount, termDays);
+        kept = bound(kept, 0, listFee);
+        uint256 offerId = _createLenderErc20OfferAt(amount, termDays);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(ITreasuryFeeHost.collectFeeFromVault.selector),
+            abi.encode(kept)
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        vm.clearMockedCalls();
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        // The figure is the host's measured receipt, clamped to what was handed
+        // to the host: the list fee less the accepting caller's matcher share
+        // (1% of the part above the floor, so the handed amount is at least 99%
+        // of the list fee). Below that the measured figure is recorded as is.
+        assertLe(fe.keptFeeOpen, kept, "never more than the host reported");
+        assertLe(fe.keptFeeOpen, listFee, "never more than the list fee");
+        if (kept * 100 <= listFee * 99) assertEq(fe.keptFeeOpen, kept, "the kept fee is the host's measured figure");
+    }
+
+    /// @dev A real accept with the borrower at a fuzzed hold-discount tier:
+    ///      the kept fee recorded is exactly what reached the treasury, and the
+    ///      bound holds.
+    function testFuzz3360_DiscountTier_KeptFeeIsWhatTheTreasuryReceived(uint256 stake, uint256 termDays) public {
+        stake = bound(stake, 0, PARTY_VPFI_STAKE);
+        termDays = bound(termDays, 7, 365);
+        if (stake != 0) {
+            _stakeVpfi(borrower, stake);
+            vm.prank(borrower);
+            VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+            vm.warp(block.timestamp + 31 days);
+        }
+        uint256 offerId = _createLenderErc20OfferAt(PRINCIPAL, termDays);
+        uint256 before = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        assertEq(fe.keptFeeOpen, IERC20(mockERC20).balanceOf(treasuryRecipient) - before, "measured, not recomputed");
+    }
+
+    /// @dev Where `C*` is the lower figure, the cap is exactly what it was
+    ///      before the kept-fee bound.
+    function test3360_CStarLower_CapUnchanged() public {
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20Offer());
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        assertLt(fe.cStarOpen, fe.keptFeeNumeraire18, "fixture: a short term leaves C* lower");
+        uint256 today = Math.mulDiv(fe.cStarOpen, 10_000 - fe.rewardHaircutBpsAtOpen, 10_000) / 2;
+        assertEq(uint256(fe.loanSideRewardCapOpen), today, "the cap equals the C*-only cap");
+    }
+
+    /// @dev Where the kept fee is the lower figure, it binds.
+    function test3360_KeptFeeLower_Binds() public {
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20OfferAt(PRINCIPAL, 365));
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        (,,, bool keptBinds) = _feFacet().getLoanRewardCapBasis(loanId);
+        assertTrue(keptBinds, "a long term leaves the kept fee lower");
+        assertGt(fe.keptFeeNumeraire18, 0);
+    }
+
+    /// @dev #3360 — a fee host that reports more than it was handed can never
+    ///      raise the cap: the kept fee is clamped to the amount passed to it.
+    function test3360_OverReportedReceipt_ClampedToTheAmountPassed() public {
+        uint256 offerId = _createLenderErc20Offer();
+        (uint256 listFee,,) = FeeLevelsFacet(address(diamond)).quoteLoanInitiationFee(PRINCIPAL, 30);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(ITreasuryFeeHost.collectFeeFromVault.selector),
+            abi.encode(listFee * 1000)
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        vm.clearMockedCalls();
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        assertGt(fe.keptFeeOpen, 0);
+        assertLe(fe.keptFeeOpen, listFee, "never more than the fee handed to the host");
+    }
+
+    /// @dev A kept fee of zero gives a cap of zero: no floor, nothing paid.
+    function test3360_ZeroKeptFee_CapIsZero() public {
+        uint256 offerId = _createLenderErc20Offer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(ITreasuryFeeHost.collectFeeFromVault.selector),
+            abi.encode(uint256(0))
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        vm.clearMockedCalls();
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        assertGt(fe.cStarOpen, 0, "the loan has a notional C*");
+        assertEq(fe.keptFeeNumeraire18, 0);
+        assertEq(uint256(fe.loanSideRewardCapOpen), 0, "no kept fee, no reward");
+        assertEq(uint256(fe.openDays), 30, "still stamped, so the zero cap binds");
     }
 
     function testDark_FullOptIn_RevertsClosed() public {

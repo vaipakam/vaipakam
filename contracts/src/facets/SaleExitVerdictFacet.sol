@@ -9,6 +9,7 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -160,6 +161,19 @@ contract SaleExitVerdictFacet {
                 LibPausable.manuallyPaused() ? 0 : uint64(LibPausable.pausedUntil())
             );
             if (_full(r)) return _trim(r);
+        }
+
+        // #3864 — a closing network opens no new position, and the buyer or
+        // incoming slot takes one: the position move refuses every sale and
+        // takeover there (`LibLoan.migrateLenderPosition`). Reported here so
+        // the previews and the exit chooser say so. Lifts only by the
+        // Unpauser's decision, so no reopening time.
+        {
+            uint64 closingSince = LibTerms.closingSince(s);
+            if (closingSince != 0) {
+                _add(r, abi.encodeWithSelector(LibTerms.NetworkClosing.selector, closingSince), 0);
+                if (_full(r)) return _trim(r);
+            }
         }
 
         // Tier-1 screen of the submitting address (fail-open, as at the entry).

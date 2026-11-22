@@ -134,6 +134,40 @@ library LibPriceGuard {
     ///         budget. Raise the transaction's gas limit; nothing was read.
     error PriceReadOutOfGas();
 
+    /// @notice The gas one read of an outside contract that feeds a price or
+    ///         liquidity verdict is given ({venueRead}): a pool's `slot0`,
+    ///         `liquidity` or `observe`, a factory's `getPool`, a token's
+    ///         `decimals`, a peer market's collateral factors. Exactly this
+    ///         much, never more and never less. A cold `observe` on a full
+    ///         Uniswap V3 observation ring is a binary search of about 16
+    ///         cold slots, near 45,000 gas; the rest cost a few thousand. A
+    ///         contract that needs more than this reads as failing the
+    ///         probe (fail closed), the same verdict for every caller.
+    uint256 internal constant VENUE_READ_GAS = 150_000;
+
+    /// @notice A static call to an outside contract whose failure the caller
+    ///         reads as a fact about that contract (no pool, no oracle
+    ///         history, unreadable decimals). Reverts {PriceReadOutOfGas}
+    ///         unless the call is sure to receive {VENUE_READ_GAS}, then
+    ///         makes it with exactly that.
+    /// @dev    Without the cap, a failed call that ran out of gas reads the
+    ///         same as one the contract refused, so an asset could read as
+    ///         illiquid, or a value as unpriced, only because the
+    ///         transaction's gas limit was low. The cheaper path that
+    ///         follows succeeds, and a gas estimate then finds the limit at
+    ///         which the probe is skipped, below the one at which the
+    ///         transaction does what it was sent to do (#3504, found by the
+    ///         app's offer-seeding e2e). With the cap the probe's answer
+    ///         depends on the chain's state only.
+    /// @param  target The outside contract.
+    /// @param  data   The ABI-encoded call.
+    /// @return ok     Whether the call returned.
+    /// @return ret    What it returned, or its revert data.
+    function venueRead(address target, bytes memory data) internal view returns (bool ok, bytes memory ret) {
+        if (gasleft() < (VENUE_READ_GAS * 64) / 63 + CALL_OVERHEAD_GAS) revert PriceReadOutOfGas();
+        (ok, ret) = target.staticcall{gas: VENUE_READ_GAS}(data);
+    }
+
     /// @notice {guard}, for a read the caller is about to make with
     ///         `{gas: GUARD_READ_GAS}`. Reverts {PriceReadOutOfGas} unless
     ///         that read is sure to receive its whole budget, checked before

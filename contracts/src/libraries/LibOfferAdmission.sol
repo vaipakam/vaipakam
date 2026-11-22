@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPriceGuard} from "./LibPriceGuard.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
 
@@ -142,10 +143,13 @@ library LibOfferAdmission {
     /// @dev The same liquidity read as {valueBelowFloor}, then the inverse
     ///      of its valuation, rounded up: the smallest amount whose value,
     ///      rounded down, reaches the floor. A price read that reverts reads
-    ///      as no price, exactly as {valueBelowFloor} admits it.
+    ///      as no price, exactly as {valueBelowFloor} admits it, except a
+    ///      read that ran short of gas, which reverts
+    ///      {LibPriceGuard.PriceReadOutOfGas} (#3504: a gas estimate must
+    ///      never find the limit at which the floor is skipped).
     function minAdmittedAmount(address lendingAsset) internal view returns (bool binds, uint256 amount) {
         if (!_isLiquid(lendingAsset)) return (false, 0);
-        (bool ok, bytes memory ret) = address(this).staticcall(
+        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeCall(
                 NumeraireValueFacet.getAmountForNumeraireValue,
                 (lendingAsset, LibVaipakam.cfgMinOfferValueNumeraire(), true)
@@ -157,8 +161,13 @@ library LibOfferAdmission {
 
     /// @dev True when the oracle reads `asset` as liquid. A reverting or
     ///      malformed read is not liquid, so the floor never binds on it.
+    ///      A read that ran short of gas is NOT a refusal: it reverts
+    ///      {LibPriceGuard.PriceReadOutOfGas} through {LibPriceRead.trySelfRead}
+    ///      (#3504). Read as "not liquid", it let a gas estimate settle on
+    ///      the limit at which the floor is skipped, and the transaction sent
+    ///      with that limit then ran out of gas further on.
     function _isLiquid(address asset) private view returns (bool) {
-        (bool ok, bytes memory ret) = address(this).staticcall(
+        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeCall(OracleFacet.checkLiquidity, (asset))
         );
         if (!ok || ret.length < 32) return false;

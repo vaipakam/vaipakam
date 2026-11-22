@@ -7,6 +7,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 
 /**
  * @title CollateralConcentrationFacet
@@ -243,12 +244,11 @@ contract CollateralConcentrationFacet is DiamondAccessControl {
             c.pledgedValue = NumeraireValueFacet(address(this)).getNumeraireValue(asset, c.pledged, false);
             c.priced = true;
         } else {
-            try NumeraireValueFacet(address(this)).getNumeraireValue(asset, c.pledged, false) returns (uint256 v) {
-                c.pledgedValue = v;
-                c.priced = true;
-            } catch {
-                return c;
-            }
+            // A starved read reverts by name (#3504), never reads as unpriced.
+            (bool ok, uint256 v) = LibNumeraireValueRead.tryValue(asset, c.pledged, false);
+            if (!ok) return c;
+            c.pledgedValue = v;
+            c.priced = true;
         }
         c.ratioX100 = Math.mulDiv(c.pledgedValue, 100, c.depthRef);
         if (c.ratioX100 >= c.highX100) c.level = LibVaipakam.CONCENTRATION_HIGH;

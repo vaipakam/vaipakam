@@ -132,7 +132,18 @@ interface IRepatriationInstructionIngress {
 ///      the older shapes and no mirror needs to read them. Kinds 2 and 5 are
 ///      RETIRED like kind 12: an inbound one reverts `UnknownMessageType`, and
 ///      neither number is ever reused.
-uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 8;
+///      Generation 9 (#903) = generation 8 with a new messenger-to-Diamond
+///      call: the day broadcast ingress is now
+///      `onRewardBroadcastV3Received(uint256 sourceChainId, RewardBroadcastV3)`,
+///      so the mirror Diamond can refuse a broadcast whose source is not the
+///      chain it takes day broadcasts from. The wire to the remote chain is
+///      unchanged, but the selector the messenger calls on its own Diamond
+///      changed: a generation-8 messenger beside a refreshed Diamond calls a
+///      selector the Diamond no longer routes, and every day broadcast
+///      reverts `FunctionDoesNotExist`. Raising the generation is what makes
+///      `RefreshAllFacetsInPlace._probeUpgradeRewardMessenger` install this
+///      implementation in the same refresh.
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 9;
 
 contract VaipakamRewardMessenger is
     Initializable,
@@ -1328,7 +1339,9 @@ contract VaipakamRewardMessenger is
             RewardBroadcastV3 memory b3 =
                 abi.decode(payload[32:], (RewardBroadcastV3));
             emit BroadcastV3Received(sourceChainId, b3.v2.dayId);
-            IRewardReporterIngressV3(diamond).onRewardBroadcastV3Received(b3);
+            IRewardReporterIngressV3(diamond).onRewardBroadcastV3Received(
+                sourceChainId, b3
+            );
         } else if (msgType == MSG_TYPE_COMP_QUOTE) {
             // #1434 P2-w3 — mirror → Base quote. Canonical-only like every
             // mirror→Base kind; no legacy shape precedes kind-11, so no

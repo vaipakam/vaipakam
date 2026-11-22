@@ -3221,8 +3221,9 @@ library LibVaipakam {
         uint256 borrowerTariffPaid; // VPFI C* pulled from borrower vault (0 unless borrowerMode == Full)
         uint256 lenderTariffPaid; // VPFI C* pulled from lender vault (0 unless lenderMode == Full)
         uint256 cStarOpen; // notional C* at open (full term); loan-side reward-cap base (PR-5c)
-        // #1353 (M2 PR-5c) — REQUIRED cache of the per-side lifetime reward
-        // ceiling at open: `½ × cStarOpen × (BPS − rewardHaircutBpsAtOpen) / BPS`.
+        // #1353 (M2 PR-5c), #3360 — REQUIRED cache of the per-side lifetime
+        // reward ceiling at open:
+        // `½ × min(cStarOpen, keptFeeNumeraire18) × (BPS − rewardHaircutBpsAtOpen) / BPS`.
         // Recompute only as a consistency check, never as the sole source (rev 15).
         // May round to 0 for a STAMPED dust `C*` (even `cStarOpen` itself can
         // floor to 0 on a genuinely-priced tiny loan); such a loan is still
@@ -3232,6 +3233,22 @@ library LibVaipakam {
         // ceiling — do not reintroduce a `cStarOpen == 0` or
         // `loanSideRewardCapOpen == 0` skip (Codex #1371 r4/r5).
         uint128 loanSideRewardCapOpen;
+        /// @dev #3360 — the initiation fee the platform KEPT from this loan,
+        ///      in lending-asset wei: what the fee host measured as received
+        ///      for the loan's initiation fee, i.e. the fee charged after the
+        ///      payer's hold discount less every share actually paid away
+        ///      (matcher, integrator, inviter). The treasury and reserve parts
+        ///      both count. Written once by the charge
+        ///      (`OfferAcceptFeeFacet`) in the accept, before the stamp reads
+        ///      it; 0 when no initiation fee was charged.
+        uint256 keptFeeOpen;
+        /// @dev #3360 — `keptFeeOpen` priced to the numeraire by the same
+        ///      conversion and on the same scale as the list fee behind
+        ///      `cStarOpen`. Each side's lifetime cap is half of
+        ///      `min(cStarOpen, keptFeeNumeraire18)` after the haircut, so the
+        ///      two sides together never earn more than the kept fee less the
+        ///      haircut. 0 (no kept fee, or unpriced) gives a 0 cap.
+        uint256 keptFeeNumeraire18;
     }
 
     /**
@@ -9039,6 +9056,50 @@ library LibVaipakam {
         // rate is band-checked with the request's acknowledgement.
         bool instantTakerActive;
         bool instantRateFarAck; // Appended — append-only.
+        /// @dev #1856 — when `user`'s latest tier push was committed
+        ///      (`ProtocolBroadcastFacet._commit`), beside the committed
+        ///      tuple in `lastEffectiveTier` and its siblings. An unchanged,
+        ///      non-zero tuple is committed again once this is
+        ///      `TIER_PUSH_RENEWAL_AGE_SEC` old, so a steady holding can renew
+        ///      a mirror cache before the mirror's maximum age retires it.
+        ///      Written only there. Base-only. Appended — append-only.
+        mapping(address => uint40) lastTierCommitSec;
+        /// @dev #3849 — the backstop's daily lending limit, as a share in
+        ///      basis points of its lending capital in each asset. 0 = never
+        ///      set, read as `LibBackstopDailyLimit.DEFAULT_BPS` (never as no
+        ///      limit). Written only by `BackstopFacet.setBackstopDailyLimitBps`.
+        uint16 backstopDailyLimitBps;
+        /// @dev #3849 — per lending asset, what the backstop lent on the UTC
+        ///      day it names. Written only by `LibBackstopDailyLimit.consume`,
+        ///      from `MarketLedgerFacet.onSlotFilled`.
+        mapping(address => BackstopDayUse) backstopDayUse;
+        /// @dev #3849 — per lending asset, the backstop's lending capital:
+        ///      the sum over its (lending, collateral) pairs of `backstopPairCapital`.
+        ///      Written only by `LibBackstopDailyLimit.syncPair`, from
+        ///      `MarketLedgerFacet`'s slot sync.
+        mapping(address => uint256) backstopCapital;
+        /// @dev #3849 — per (lending, collateral) pair, the backstop slot's
+        ///      reserved capital plus its live principal as last synced.
+        ///      Written only by `LibBackstopDailyLimit.syncPair`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => uint256)) backstopPairCapital;
+        /// @dev #3864 — when this network began closing (0 = open). While it
+        ///      is non-zero no step may commit a wallet's money or standing
+        ///      consent to a new position here; every position already open
+        ///      runs to its own end. Written only by `LegalFacet`'s switch
+        ///      (`setNetworkClosing`), read by the opening rule's host
+        ///      (`LegalFacet.requireMayOpen`, through `LibTerms`). Appended —
+        ///      append-only.
+        uint64 networkClosingSince;
+    }
+
+    /// @notice #3849 — what the backstop lent in one lending asset on one UTC
+    ///         day. `day` is the day number (`block.timestamp / 1 days`);
+    ///         `used` is the principal opened on it. A record for an earlier
+    ///         day reads as zero used today.
+    struct BackstopDayUse {
+        uint64 day;
+        uint192 used;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -9682,7 +9743,9 @@ library LibVaipakam {
         uint32 sourceChainId;
         /// @dev 1 = budget delivery, 2 = compensation, 3 = stranded return,
         ///      4 = recovery-ceremony inflow (no transport packet: keyed by
-        ///      its ceremony reference).
+        ///      the per-source sequence under source 0, its ceremony
+        ///      reference in `remitId`), 5 = planned-surplus repatriation
+        ///      return (Mode A, #2204; its authorization id in `remitId`).
         uint8 kind;
         uint64 arrivedAt;
         address remitter;
@@ -12614,6 +12677,56 @@ library LibVaipakam {
             : RewardRole.Unconfigured;
     }
 
+    /// @notice #903 — the chain this deployment takes Base's reward word
+    ///         from, by kind of traffic.
+    ///         - A Mirror takes both kinds (tier traffic and the day
+    ///           broadcast) from its configured `baseChainId`.
+    ///         - A Detached deployment takes the DAY BROADCAST ONLY, and only
+    ///           from the base it detached from
+    ///           (`rewardDetachedFromBaseChainId`): a day the old Base
+    ///           finalized before the detach must still land. Tier traffic
+    ///           there has no authorised source; it is refused and stays a
+    ///           failed, re-executable CCIP message.
+    ///         - A canonical or never-configured deployment receives no
+    ///           Base-to-mirror reward traffic of either kind.
+    /// @param s Diamond storage.
+    /// @param dayBroadcast True for the day broadcast, false for tier
+    ///        traffic (tier push, tier-table version bump).
+    /// @return The authorised source chain id, or 0 when there is none.
+    function rewardBaseSourceChainId(
+        Storage storage s,
+        bool dayBroadcast
+    ) internal view returns (uint32) {
+        RewardRole role = rewardRole(s);
+        if (role == RewardRole.Mirror) return s.baseChainId;
+        if (role == RewardRole.Detached && dayBroadcast) {
+            return s.rewardDetachedFromBaseChainId;
+        }
+        return 0;
+    }
+
+    /// @notice #903 — the ONE source-chain rule for every Base-to-mirror
+    ///         reward ingress. The messenger authenticates the CCIP lane and
+    ///         the remote peer; this binds the message to the Base chain the
+    ///         deployment answers to for that kind of traffic
+    ///         (`rewardBaseSourceChainId`), so a second Diamond misconfigured
+    ///         as canonical and wired as a peer can neither write tiers nor
+    ///         install a day's denominators here. Fails closed when there is
+    ///         no such chain.
+    /// @param s Diamond storage.
+    /// @param sourceChainId The CCIP source chain the messenger authenticated.
+    /// @param dayBroadcast True for the day broadcast, false for tier traffic.
+    function requireRewardBaseSource(
+        Storage storage s,
+        uint256 sourceChainId,
+        bool dayBroadcast
+    ) internal view {
+        uint32 expected = rewardBaseSourceChainId(s, dayBroadcast);
+        if (expected == 0 || sourceChainId != expected) {
+            revert IVaipakamErrors.WrongSourceChain(sourceChainId, expected);
+        }
+    }
+
     /// @notice Read-through helper: true iff the configured oracle
     ///         reports `who` as currently sanctioned. Returns false
     ///         when no oracle is configured (the gate is disabled)
@@ -13172,6 +13285,20 @@ library LibVaipakam {
     ///      the current holding never reaches further back than this.
     uint8 internal constant TWA_RING_DAYS = 30;
     uint32 internal constant DEFAULT_MIRROR_TIER_MAX_AGE_SEC = 5_184_000; // 60 days
+    /// @dev The bounds `ConfigFacet.setMirrorTierMaxAgeSec` enforces (30 and
+    ///      180 days). Named so the renewal age below is pinned against the
+    ///      lower one (#1856).
+    uint32 internal constant MIN_MIRROR_TIER_MAX_AGE_SEC = 2_592_000; // 30 days
+    uint32 internal constant MAX_MIRROR_TIER_MAX_AGE_SEC = 15_552_000; // 180 days
+    /// @dev #1856 — how old a delivered non-zero tier push may be before an
+    ///      unchanged tuple is owed again as a renewal. Half the LOWEST
+    ///      maximum age a mirror may be configured with
+    ///      (`MIN_MIRROR_TIER_MAX_AGE_SEC`), so a holder whose tier has
+    ///      not moved can always renew with at least 15 days to spare, on
+    ///      every mirror whatever its configuration. A renewal extends a
+    ///      discount, so like any raise it goes out on the caller's value
+    ///      (`ProtocolBroadcastFacet._budgetPays`), at most once per this age.
+    uint32 internal constant TIER_PUSH_RENEWAL_AGE_SEC = 15 days;
 
     function cfgTwaRecentDaysEffective() internal view returns (uint8) {
         uint8 v = storageSlot().cfgTwaRecentDays;

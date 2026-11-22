@@ -18,6 +18,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -31,6 +32,8 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -45,8 +48,8 @@ import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 /**
  * @title ReplaceStaleFacets
  * @notice Redeploys a curated facet set — OfferCreate, OfferAccept, Oracle,
- *         VaultFactory, Config, NumeraireConfig, OracleAdmin, and (since #1649)
- *         RiskPreview + OfferPreview — and re-cuts every selector they own,
+ *         VaultFactory, Config, NumeraireConfig, OracleAdmin, (since #1649)
+ *         RiskPreview + OfferPreview, and (since #3843) SaleAdmission + IntentPreview — and re-cuts every selector they own,
  *         choosing Add or Replace per selector from the target Diamond's live
  *         routing. Originally targeted the createOffer failure surfacing
  *         `CrossFacetCallFailed(string)` (0x573c3147) on Sepolia — that legacy
@@ -107,6 +110,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #3685 - the target Diamond predates the collateral pledged
     ///         total; see {_requireCollateralConcentration}.
     error PredatesCollateralConcentration(address diamond);
+    /// @notice #3864 - the target Diamond predates the network closing
+    ///         switch; see {_requireNetworkClosingHost}.
+    error PredatesNetworkClosing(address diamond);
     /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
     error PredatesVaultBeacon(address diamond);
     /// @notice #3205 - the target Diamond predates the PositionNFT core. Fresh deploy only.
@@ -176,6 +182,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3685 - and one from before the collateral pledged total; see
         // {_requireCollateralConcentration}.
         _requireCollateralConcentration(diamond);
+        // #3864 - and one from before the network closing switch; see
+        // {_requireNetworkClosingHost}.
+        _requireNetworkClosingHost(diamond);
         // #3204 - a Diamond from before the VaultBeacon is fresh-deploy only.
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
             revert PredatesVaultBeacon(diamond);
@@ -213,7 +222,8 @@ contract ReplaceStaleFacets is DeployDiamond {
         NumeraireConfigFacet numeraireConfigFacet = NumeraireConfigFacet(ArtifactDeploy.deploy(type(NumeraireConfigFacet).name));
         // #1649 — #1503 gave the sale branch of `OfferAcceptFacet.acceptOffer`
         // (the binding check for a resting sale listing) a cross-facet call to
-        // `RiskPreviewFacet.saleAdmission`, a NEW selector. Refreshing
+        // `RiskPreviewFacet.saleAdmission` (on `SaleAdmissionFacet` since
+        // #3843, deployed and cut below), a NEW selector. Refreshing
         // OfferAcceptFacet without routing it installs an accept path that
         // calls an unrouted selector, so every listing accept reverts
         // `FunctionDoesNotExist` through the fallback — new code live and
@@ -281,14 +291,15 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Thirteen facets, so at most two cuts each, plus THREE retired-selector
-        // Removes (#2459 r4's previewIntent; #2489's tariff setter; #2812's
-        // range flags) — 29 at most
+        // Fifteen facets (SaleAdmissionFacet and IntentPreviewFacet joined in
+        // #3843), so at most two cuts each, plus THREE retired-selector Removes
+        // (#2459 r4's previewIntent; #2489's tariff setter; #2812's range
+        // flags) — 33 at most
         // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](33);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -430,6 +441,26 @@ contract ReplaceStaleFacets is DeployDiamond {
             address(riskPreviewFacet),
             _getRiskPreviewFacetSelectors()
         );
+        // #3843 — the sale classifier moved off RiskPreviewFacet to its own
+        // facet; the refreshed accept path's `LibSaleSolvency` self-calls its
+        // `saleAdmission`, so it rides here for the #1649 reason above. On a
+        // Diamond cut before #3843 its selectors are routed to RiskPreviewFacet
+        // and partition to Replace, which moves them.
+        {
+            address saleAdmissionFacet = ArtifactDeploy.deploy(type(SaleAdmissionFacet).name);
+            console.log("SaleAdmissionFacet:  ", saleAdmissionFacet);
+            n = _appendPartitioned(staging, n, diamond, saleAdmissionFacet, _getSaleAdmissionSelectors());
+        }
+        // #3843 — `previewIntent` moved off RiskPreviewFacet too. It inlines
+        // the match core, whose `initRiskBounds` self-call the RiskPreviewFacet
+        // cut above carries; without this cut the selector would stay on the
+        // old RiskPreviewFacet bytecode. On a Diamond cut before #3843 it is
+        // routed to RiskPreviewFacet and partitions to Replace, which moves it.
+        {
+            address intentPreviewFacet = ArtifactDeploy.deploy(type(IntentPreviewFacet).name);
+            console.log("IntentPreviewFacet:  ", intentPreviewFacet);
+            n = _appendPartitioned(staging, n, diamond, intentPreviewFacet, _getIntentPreviewSelectors());
+        }
         // #1649 — `previewAccept` was carved out of OfferAcceptFacet in #980, so
         // on a pre-#980 Diamond it is routed to the OLD host and this re-points
         // it; on a current one it is already this facet's selector.
@@ -547,6 +578,26 @@ contract ReplaceStaleFacets is DeployDiamond {
         if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
             revert PredatesInterestLedger(diamond);
         }
+    }
+
+    /// @dev #3864 (Codex #3842) - refuse a Diamond from before the network
+    ///      closing switch. Every opening step (loan creation, the offer
+    ///      book's entry, the position migrations inlined from LibLoan, the
+    ///      Auto-lend slot writes, the in-place extension) now self-calls
+    ///      `LegalFacet.requireMayOpen`, and the previews ask
+    ///      `LegalFacet.openingBlocker`. This curated set refreshes some of
+    ///      those callers but not LegalFacet, so on an older Diamond every
+    ///      refreshed opening step would revert `FunctionDoesNotExist`.
+    ///      Crossing the boundary is a fresh deploy or
+    ///      `RefreshAllFacetsInPlace`, never this refresh. The markers are
+    ///      the routing of both selectors. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireNetworkClosingHost(address diamond) internal view {
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+        if (
+            loupe.facetAddress(LegalFacet.requireMayOpen.selector) == address(0)
+                || loupe.facetAddress(LegalFacet.openingBlocker.selector) == address(0)
+        ) revert PredatesNetworkClosing(diamond);
     }
 
     /// @dev #3685 - refuse a Diamond from before the collateral pledged

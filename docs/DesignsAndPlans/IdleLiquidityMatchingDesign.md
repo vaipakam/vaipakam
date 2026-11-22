@@ -128,7 +128,7 @@ Where the gap is something the maker can change, one tap opens the existing edit
 Indexer: one route with two forms.
 
 - **By offer id:** the closest opposite-side offers on its pair, with the differing dimension named. The app confirms the top candidate with `previewMatch`, so the stated reason is the protocol's own.
-- **By intent key** (owner, lending asset, collateral asset): the closest borrower requests on the pair. An intent has no resting offer id (its lender slice exists only inside a fill), so `previewMatch` cannot answer for it. The app confirms with `RiskPreviewFacet.previewIntent`, naming a candidate fill amount (sized as the keeper sizes it: within the intent's minimum fill, exposure headroom and un-lent capital, and the request's bounds) and the solver context the fill would run under. That preview reports the intent-specific refusals (exposure, capital, longest term, lend-until, interest mode, partial repayment, keeper authorization), which is what the intent card shows.
+- **By intent key** (owner, lending asset, collateral asset): the closest borrower requests on the pair. An intent has no resting offer id (its lender slice exists only inside a fill), so `previewMatch` cannot answer for it. The app confirms with `IntentPreviewFacet.previewIntent`, naming a candidate fill amount (sized as the keeper sizes it: within the intent's minimum fill, exposure headroom and un-lent capital, and the request's bounds) and the solver context the fill would run under. That preview reports the intent-specific refusals (exposure, capital, longest term, lend-until, interest mode, partial repayment, keeper authorization), which is what the intent card shows.
 
 ### Alternatives considered
 

@@ -662,6 +662,15 @@ contract RepatriationFacet is
      *         RELOCATION (Ā-excluded): it was absorbed exactly once on the
      *         mirror, so crediting it as new absorption would double-count
      *         the §7 #8 composition.
+     *
+     *         #2204 — like every other value-bearing reward arrival, the
+     *         return is recorded as an ingress packet (kind
+     *         `PACKET_KIND_REPATRIATION_RETURN`) under its transport
+     *         identity before it is credited: the audit record, and the
+     *         stamp replay guard that refuses a second landing whole.
+     * @param transportMessageId The transport's message id, forwarded by
+     *        the receiver; zero for a transport that carries none, which
+     *        keys the packet by a per-source sequence instead.
      */
     function onRepatriationReturnReceived(
         uint256 authId,
@@ -669,7 +678,8 @@ contract RepatriationFacet is
         uint32 sourceChainId,
         address token,
         uint256 declaredAmount,
-        uint256 actualReceived
+        uint256 actualReceived,
+        bytes32 transportMessageId
     ) external nonReentrant onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address receiver = s.repatriationReceiver;
@@ -698,6 +708,19 @@ contract RepatriationFacet is
         auth.status = AUTH_SETTLED;
         uint256 shortfall = declaredAmount - actualReceived;
         if (shortfall != 0) s.repatShortfall[authId] = shortfall;
+        // The whole arrival is recycled value (it was absorbed on the
+        // mirror), so the packet carries it as its recycled share. No
+        // receipt: the kind is above the delivery kinds that write one.
+        LibRewardCustody.callRecordIngressPacket(
+            sourceChainId,
+            transportMessageId,
+            LibRewardCustody.PACKET_KIND_REPATRIATION_RETURN,
+            actualReceived,
+            0,
+            actualReceived,
+            address(this),
+            authId
+        );
         LibVpfiRecycle.creditCustodyRelocated(
             authId,
             actualReceived,
@@ -1297,7 +1320,13 @@ contract RepatriationFacet is
         if (amount == 0) revert UntypedReturnBadAmount();
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
         bytes32 batchId = p.batchId;
-        if (p.arrivedAt == 0 || batchId == bytes32(0)) revert UntypedReturnNoRemainder(packetHash);
+        // #2204 — only a budget packet holds a transport remainder, and only
+        // its source is a real issuing chain: a ceremony inflow is keyed
+        // under source 0 and must never be "returned" there.
+        if (
+            p.arrivedAt == 0 || batchId == bytes32(0)
+                || p.kind != LibRewardCustody.PACKET_KIND_BUDGET
+        ) revert UntypedReturnNoRemainder(packetHash);
         {
             LibVaipakam.StrandedRecovery storage sr =
                 s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];

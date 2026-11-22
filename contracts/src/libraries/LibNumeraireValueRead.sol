@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 
 /**
  * @title LibNumeraireValueRead
@@ -27,10 +28,19 @@ import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
  *         scale and an arithmetic overflow, and an unrouted selector on a
  *         Diamond that does not carry the rule. A short answer reads as a
  *         failure too, never as a value.
+ *
+ *         One failure is NOT caught: a read that ran short of gas reverts
+ *         {LibPriceGuard.PriceReadOutOfGas}, through
+ *         {LibPriceRead.trySelfRead} (#3504). Read as "unpriced", it made a
+ *         gas estimate settle on the limit at which the valuation is skipped,
+ *         and the transaction sent with that limit then ran out of gas
+ *         further on.
  */
 library LibNumeraireValueRead {
     /// @notice Value of `amount` base units of `asset`, in 1e18 numeraire,
-    ///         by the shared rule, never reverting.
+    ///         by the shared rule. Reverts only
+    ///         {LibPriceGuard.PriceReadOutOfGas}, when too little gas is held
+    ///         to read the price.
     /// @param asset   Token to value. The zero address is never valued.
     /// @param amount  Amount in `asset`'s base units. Zero is valued like any
     ///                other amount (0 when the asset is priced), so a caller
@@ -46,7 +56,7 @@ library LibNumeraireValueRead {
         returns (bool ok, uint256 value)
     {
         if (asset == address(0)) return (false, 0);
-        (bool success, bytes memory ret) = address(this).staticcall(
+        (bool success, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeCall(NumeraireValueFacet.getNumeraireValue, (asset, amount, roundUp))
         );
         if (!success || ret.length < 32) return (false, 0);

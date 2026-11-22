@@ -2015,6 +2015,11 @@
   },
   {
     "type": "error",
+    "name": "PriceReadOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "WindowTooLong",
     "inputs": [
       {

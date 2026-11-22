@@ -9,6 +9,8 @@ import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -197,6 +199,33 @@ contract InstantMarketTest is InstantMarketBase {
         _borrow(_req(1000 ether, 2000 ether, 700, 1000 ether), srcs);
         uint256 fee = (1000 ether * LibVaipakam.LOAN_INITIATION_FEE_BPS) / LibVaipakam.BASIS_POINTS;
         assertEq(_vaultBal(taker, mockERC20) - before, 1000 ether - fee, "net principal only");
+    }
+
+    /// @dev #3360 — an instant fill names no matcher, so no match share
+    ///      leaves the fee: each loan records the whole initiation fee as kept,
+    ///      exactly what the treasury received, for a slot fill and an offer
+    ///      fill alike.
+    function test3360_keptFee_noMatcher_wholeFeeKept() public {
+        _slot(lender, 500, 1000 ether, true);
+        uint256 offerId = _lenderOffer(lender2, 550, false);
+        _age();
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](2);
+        srcs[0] = _src(lender);
+        srcs[1] = _offerSrc(offerId);
+        address treasury = makeAddr("instantTreasury");
+        LibTestVaultBeacon.setTreasury(address(diamond), treasury);
+        uint256 t0 = ERC20(mockERC20).balanceOf(treasury);
+        (, InstantMarketFacet.InstantFill[] memory fills) = _borrow(_req(1500 ether, 3000 ether, 700, 1500 ether), srcs);
+        assertEq(fills.length, 2, "a slot fill and an offer fill");
+        uint256 total;
+        for (uint256 i; i < fills.length; ++i) {
+            uint256 fee = (fills[i].amount * LibVaipakam.LOAN_INITIATION_FEE_BPS) / LibVaipakam.BASIS_POINTS;
+            uint256 kept = FeeEntitlementFacet(address(diamond)).getFeeEntitlement(fills[i].loanId).keptFeeOpen;
+            assertGt(kept, 0, "a non-zero kept fee");
+            assertEq(kept, fee, "no matcher: the whole fee is kept");
+            total += kept;
+        }
+        assertEq(total, ERC20(mockERC20).balanceOf(treasury) - t0, "kept = what the fee host received");
     }
 
     /// @dev A slot without the consent, and one dearer than the limit, are

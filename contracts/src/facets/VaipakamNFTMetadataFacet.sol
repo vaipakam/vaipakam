@@ -611,7 +611,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
                 '{"name":"Vaipakam NFT","description":"Vaipakam P2P lending and rental position NFTs. Each token represents a live offer or loan on the Vaipakam protocol. A position cannot be transferred for a short time after value leaves it; check its State Number before paying.",',
                 '"image":"',
                 image,
-                '","external_link":"https://vaipakam.xyz"}'
+                '","external_link":"https://vaipakam.com"}'
             )
         );
 

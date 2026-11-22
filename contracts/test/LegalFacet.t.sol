@@ -61,7 +61,7 @@ contract LegalFacetTest is SetupTest {
         assertTrue(_l().isTermsCurrent(alice));
         assertTrue(_l().hasAcceptedCurrentTerms(alice));
         _l().requireCurrentTerms(alice);
-        (address w, uint32 v) = _l().termsBlocker(alice, bob);
+        (, address w, uint32 v) = _l().openingBlocker(alice, bob);
         assertEq(w, address(0));
         assertEq(v, 0);
         (uint32 cv, bytes32 ch) = _l().getCurrentTos();
@@ -81,7 +81,7 @@ contract LegalFacetTest is SetupTest {
         assertFalse(_l().isTermsCurrent(alice));
         vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, alice, uint32(1)));
         _l().requireCurrentTerms(alice);
-        (address w, uint32 v) = _l().termsBlocker(address(0), alice);
+        (, address w, uint32 v) = _l().openingBlocker(address(0), alice);
         assertEq(w, alice);
         assertEq(v, 1);
     }

@@ -353,6 +353,11 @@
         "name": "actualReceived",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "transportMessageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],

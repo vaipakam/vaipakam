@@ -61,6 +61,18 @@
       "message": "The marketplace listing record refused an order the platform built itself (an end time too large to store). The listing step checks this before it reaches the record, so this is a fault in the platform, not something the caller did. Please report it with the transaction.",
       "internal": true
     },
+    "BackstopDailyLimitExceeded": {
+      "actor": "user",
+      "message": "The backstop has already lent as much of this asset today as its daily limit allows, so it cannot fill this loan now. The limit resets at the end of the UTC day; try again then, or borrow from another lender."
+    },
+    "BackstopDailyLimitOutOfRange": {
+      "actor": "operator",
+      "message": "The backstop's daily limit must be a share between the governed minimum and maximum; there is no setting for no limit. Nothing was changed."
+    },
+    "BackstopOfferAboveDailyLimit": {
+      "actor": "user",
+      "message": "This offer is larger than the backstop's whole daily limit in this asset, and the backstop fills whole offers only, so it can never fill it. Offer a smaller amount for the backstop to fill."
+    },
     "BorrowerSanctioned": {
       "actor": "user",
       "message": "The borrower wallet is flagged by the on-chain sanctions oracle, so this match can't proceed."
@@ -209,6 +221,11 @@
     "IlliquidPairNotConsented": {
       "actor": "user",
       "message": "Both sides must consent to the illiquid-asset terms before this can proceed."
+    },
+    "IngressPacketKindUnknown": {
+      "actor": "nobody",
+      "message": "A reward transfer record named a kind the platform does not know. This should be impossible, so it is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
     },
     "InitLtvAboveTier": {
       "actor": "user",
@@ -431,6 +448,10 @@
       "actor": "user",
       "message": "NFT transfer failed — please retry."
     },
+    "NetworkClosing": {
+      "actor": "user",
+      "message": "This network is closing: it takes no new positions, offers or sales, while every open position runs to its end. Repaying, closing out, claiming and withdrawing stay open."
+    },
     "NoDexPool": {
       "actor": "user",
       "message": "No DEX liquidity pool found for this asset."
@@ -575,6 +596,10 @@
     "RateShortfallTooHigh": {
       "actor": "user",
       "message": "Interest rate shortfall exceeds allowed limit for this loan sale."
+    },
+    "ReconciliationPacketTyped": {
+      "actor": "operator",
+      "message": "This reward transfer was fully classified when it arrived, so it holds no unclassified remainder to reconcile. Nothing was changed."
     },
     "ReentrancyGuardReentrantCall": {
       "actor": "user",

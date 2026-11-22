@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "testnet": true,
+  "checkedAt": "2026-11-22T06:55:55.379Z",
+  "nodeVariable": "BASE_SEPOLIA_RPC_URL",
+  "plan": "not stated",
+  "status": "checked",
+  "head": 62043435,
+  "blockTimeSeconds": 0.2,
+  "watchedContracts": 38,
+  "capabilities": {
+    "traceTransaction": {
+      "debug": {
+        "answered": true,
+        "reachDays": 616.1508,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0001,
+            "block": 62043371,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 62026155,
+            "answered": true
+          },
+          {
+            "days": 1,
+            "block": 61611435,
+            "answered": true
+          },
+          {
+            "days": 7,
+            "block": 59019435,
+            "answered": true
+          },
+          {
+            "days": 30,
+            "block": 49083435,
+            "answered": true
+          },
+          {
+            "days": 616.1508,
+            "block": 23163421,
+            "answered": true
+          }
+        ]
+      },
+      "trace": {
+        "answered": true,
+        "reachDays": 616.1508,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0001,
+            "block": 62043371,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 62026155,
+            "answered": true
+          },
+          {
+            "days": 1,
+            "block": 61611435,
+            "answered": true
+          },
+          {
+            "days": 7,
+            "block": 59019435,
+            "answered": true
+          },
+          {
+            "days": 30,
+            "block": 49083435,
+            "answered": true
+          },
+          {
+            "days": 616.1508,
+            "block": 23163421,
+            "answered": true
+          }
+        ]
+      }
+    },
+    "traceCall": {
+      "debug": {
+        "answered": true,
+        "reachDays": 616.1508,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0001,
+            "block": 62043371,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 62026155,
+            "answered": true
+          },
+          {
+            "days": 1,
+            "block": 61611435,
+            "answered": true
+          },
+          {
+            "days": 7,
+            "block": 59019435,
+            "answered": true
+          },
+          {
+            "days": 30,
+            "block": 49083435,
+            "answered": true
+          },
+          {
+            "days": 616.1508,
+            "block": 23163421,
+            "answered": true
+          }
+        ]
+      },
+      "trace": {
+        "answered": true,
+        "reachDays": 616.1508,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0001,
+            "block": 62043371,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 62026155,
+            "answered": true
+          },
+          {
+            "days": 1,
+            "block": 61611435,
+            "answered": true
+          },
+          {
+            "days": 7,
+            "block": 59019435,
+            "answered": true
+          },
+          {
+            "days": 30,
+            "block": 49083435,
+            "answered": true
+          },
+          {
+            "days": 616.1508,
+            "block": 23163421,
+            "answered": true
+          }
+        ]
+      }
+    },
+    "traceFilter": {
+      "answered": true,
+      "largestRange": 10,
+      "rangesTried": [
+        {
+          "range": 10,
+          "answered": true
+        },
+        {
+          "range": 100,
+          "answered": false,
+          "error": "-32601 Method not found"
+        }
+      ],
+      "reachDays": 616.1508,
+      "refusedAtDays": null,
+      "reachTried": [
+        {
+          "days": 0.0001,
+          "block": 62043371,
+          "answered": true
+        },
+        {
+          "days": 0.04,
+          "block": 62026155,
+          "answered": true
+        },
+        {
+          "days": 1,
+          "block": 61611435,
+          "answered": true
+        },
+        {
+          "days": 7,
+          "block": 59019435,
+          "answered": true
+        },
+        {
+          "days": 30,
+          "block": 49083435,
+          "answered": true
+        },
+        {
+          "days": 616.1508,
+          "block": 23163421,
+          "answered": true
+        }
+      ]
+    },
+    "callAtPastBlock": {
+      "answered": true,
+      "reachDays": 616.1508,
+      "refusedAtDays": null,
+      "reachTried": [
+        {
+          "days": 0.0001,
+          "block": 62043371,
+          "answered": true
+        },
+        {
+          "days": 0.04,
+          "block": 62026155,
+          "answered": true
+        },
+        {
+          "days": 1,
+          "block": 61611435,
+          "answered": true
+        },
+        {
+          "days": 7,
+          "block": 59019435,
+          "answered": true
+        },
+        {
+          "days": 30,
+          "block": 49083435,
+          "answered": true
+        },
+        {
+          "days": 616.1508,
+          "block": 23163421,
+          "answered": true
+        }
+      ]
+    },
+    "blockReceipts": {
+      "answered": true
+    }
+  },
+  "blockScan": {
+    "blocksPerDay": 432000,
+    "sampleBlocks": 30,
+    "transactionsPerBlock": 4.33,
+    "watchedTransactionsPerBlock": 0,
+    "fullBlockKilobytes": 9.9,
+    "requestsPerDay": {
+      "withBlockReceipts": 864000,
+      "withReceiptPerTransaction": 432000
+    },
+    "megabytesPerDay": 4193,
+    "affordable": false
+  },
+  "explorer": {
+    "configured": true,
+    "answeredWithoutKey": false,
+    "withoutKeyError": "NOTOK Missing/Invalid API Key",
+    "keyConfigured": true,
+    "needsKey": true,
+    "answered": true,
+    "marksFailures": true,
+    "delayBlocks": 8,
+    "delaySeconds": 2,
+    "requestsPerDay": 10944,
+    "pollMinutes": 5,
+    "replayCoversDelay": true
+  },
+  "audit": {
+    "windowMinutes": 30,
+    "windowBlocks": 9000,
+    "requestsPerDay": 9000,
+    "megabytesPerDay": 87.4,
+    "replayCovered": true
+  },
+  "failedTransactionMode": "explorer-and-audit",
+  "explainer": {
+    "traceSource": "node trace",
+    "replayReachDays": 616.1508
+  },
+  "requestsUsed": 104
+}

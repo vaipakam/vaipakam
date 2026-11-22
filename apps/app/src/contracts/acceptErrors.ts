@@ -93,6 +93,8 @@ export const ACCEPT_ERROR_NAMES = [
   'RateReferenceUnavailable',
   'RateReferenceUnusual',
   'RateRangeEmpty',
+  // #3864 — the network is closing: no new position may open on it.
+  'NetworkClosing',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -165,6 +167,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   RateReferenceUnavailable: 'rateReferenceUnavailable',
   RateReferenceUnusual: 'rateReferenceUnusual',
   RateRangeEmpty: 'rateRangeEmpty',
+  NetworkClosing: 'networkClosing',
 };
 
 /**

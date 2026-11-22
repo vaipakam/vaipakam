@@ -2018,7 +2018,7 @@ contract OfferAcceptFacet is
         // `CollectionOfferFacet` (`CollectionParentNotFillable`). APPENDED.
         CollectionParent,
         // #3734 — a party of the loan has not accepted the Terms in force
-        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.openingBlocker` names it.
         // APPENDED.
         TermsNotAccepted,
         // #3635 A — the offer's rate is linked to the market reference and
@@ -2030,7 +2030,11 @@ contract OfferAcceptFacet is
         // #3635 A — the linked bound crosses the offer's unlinked opposite
         // bound, so no rate is acceptable now (`RateLinkFacet.RateRangeEmpty`).
         // APPENDED.
-        RateRangeEmpty
+        RateRangeEmpty,
+        // #3864 — the network is closing (`LibTerms.NetworkClosing`): no new
+        // loan opens here, whatever the parties' Terms. Reported before
+        // `TermsNotAccepted`. APPENDED.
+        NetworkClosing
     }
 
     /// @notice Projection of the loan that would land if the supplied

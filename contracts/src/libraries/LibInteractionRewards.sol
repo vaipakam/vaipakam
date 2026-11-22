@@ -4241,11 +4241,15 @@ library LibInteractionRewards {
     {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (!_isForfeited(s, e)) return (0, 0, 0, 0);
+        bool wasProcessed = e.processed;
         (freshCredited, recycledReleased, armedOwed, armedDelivered) =
             _forfeitEntryChunk(s, id, freshHeadroom, deliveredAllowance, tp);
         if ((freshCredited | recycledReleased | armedOwed) != 0) {
             emit RewardEntryForfeitSettled(id, e.user, e.loanId, freshCredited, recycledReleased);
         }
+        // #1789 — a forfeit that terminalizes an entry whose expiry removal
+        // had already begun also closes that expiry's lineage.
+        if (!wasProcessed && e.processed) _closeBegunExpiry(s, id, e);
     }
 
     /// @dev One forfeited entry's settlement CHUNK — the expiry dispatch
@@ -4394,7 +4398,15 @@ library LibInteractionRewards {
             }
         }
         uint256 d = _shareOfPoolCursorDay(s, id, e);
-        if (d >= e.endDay) return (0, 0, 0, 0);
+        if (d >= e.endDay) {
+            // #1789 — no armed day remains, and a settled last day would have
+            // marked the entry processed already: the remaining window is
+            // EMPTY. Retire it (nothing paid, nothing owed) rather than leave
+            // it unprocessed and rescanned by every later sweep, as the two
+            // legacy branches above already do.
+            _retireEmpty(s, id, e);
+            return (0, 0, 0, 0);
+        }
         // An armed day whose ShareOfPool stamp has not landed defers — the
         // wait clears when the broadcast arrives.
         if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
@@ -4569,6 +4581,24 @@ library LibInteractionRewards {
         s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
     }
 
+    /// @dev #1789 — the ONE terminal signal for an expiry whose removal began
+    ///      ({RewardEntryExpiryBegun}) but whose entry ended by another route:
+    ///      a later forfeit, or a remaining window that turned out empty.
+    ///      Carries the accumulated expired totals, i.e. what earlier chunks
+    ///      actually moved to the recycle bucket; a forfeited tail keeps its
+    ///      own {RewardEntryForfeitSettled} rows, so every destination stays
+    ///      attributed once. Call only where the entry has JUST become
+    ///      processed by such a route; the expiry walk's own terminal emits
+    ///      for itself. A no-op for an entry whose removal never began.
+    function _closeBegunExpiry(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) private {
+        if (!e.expiryBegun) return;
+        emit RewardEntryExpired(id, e.user, s.rewardEntryExpiredAccum[id], s.rewardEntryExpiredRecycledAccum[id]);
+    }
+
     function _beginExpiry(
         LibVaipakam.Storage storage s,
         uint256 id,
@@ -4707,7 +4737,30 @@ library LibInteractionRewards {
         ) = _entryPriceCore(s, id, e);
         // A zero-value window prices nothing, pays nothing, and — once the
         // cursor covers it — can never grow: there is no clock to run for it.
-        if (!st.priced) return (expired, 0, 0);
+        if (!st.priced) {
+            // #1789 — "not priced" alone is never terminal: globals not yet
+            // final is a retry, and the entry is left untouched. Only the
+            // pricing core's own EMPTY-window answer retires it, through the
+            // one retirement path ({RewardEntryRetiredEmpty}), so it is not
+            // rescanned by every later sweep. A removed entry also gets its
+            // expiry's terminal signal, so a begun expiry always ends.
+            if (st.emptyWindow) {
+                // #1789 — as on the claim paths, the legacy slice's domain is
+                // driven to consumed BEFORE its settle: the settle tears down
+                // only a consumed domain, so retiring the entry while its
+                // domain was still staging would strand that domain. Only a
+                // claimable entry can have opened one (the claim paths open
+                // it under the same gate); a step taken now is a retry.
+                if (_entryClaimable(s, e)) {
+                    (bool sliceReady, , ) = LibRewardCustody.callLegacySliceEpochs(id);
+                    if (!sliceReady) return (expired, 0, 0);
+                }
+                _retireEmpty(s, id, e);
+                LibRewardCustody.callLegacySliceSettled(id, 0, 0); // a domain it opened holds nothing: dropped
+                _closeBegunExpiry(s, id, e);
+            }
+            return (expired, 0, 0);
+        }
         // #1434 — this core call now serves the CLOCK only, not the credit.
         // It answers "could the claimant claim right now", which is what the
         // executable accumulator gates on: `_poolCappedPayable(toUser)` is
@@ -6985,33 +7038,10 @@ library LibInteractionRewards {
         uint256 rewardedDaysIncl
     ) private view returns (uint256) {
         LibVaipakam.FeeEntitlement storage fe = s.feeEntitlementByLoanId[loanId];
+        // #3360 — the cache is the only source. A zero is a real zero (a dust
+        // C*, or no kept initiation fee), never a record to backfill from
+        // `cStarOpen`, which would lift the kept-fee bound.
         uint256 capOpen = fe.loanSideRewardCapOpen;
-        if (capOpen == 0 && fe.cStarOpen != 0) {
-            // #1353 (M2 PR-5c) — LAZY BACKFILL: a record STAMPED before the cap
-            // cache existed (an in-place upgrade from #1347, where
-            // `loanSideRewardCapOpen` was an appended slot reading 0) still has a
-            // real `cStarOpen`. Derive the ceiling from it (rev-15 "recompute
-            // only as a consistency check") so the legacy loan is capped at its
-            // true fee-linked ceiling rather than treated as a real zero (Codex
-            // #1371 r6). A genuine dust record (`cStarOpen == 0`) keeps a 0
-            // ceiling (capped to ~0).
-            // A legacy record also predates `rewardHaircutBpsAtOpen`, so that
-            // field reads 0 even though no party selected a literal 0% haircut;
-            // fall back to the {REWARD_HAIRCUT_DEFAULT_BPS} default (matching
-            // {cfgRewardHaircutBps}'s zero-sentinel) so the derived ceiling is
-            // `½ × C* × (1 − default)`, not the too-generous `½ × C*` (Codex
-            // #1371 r7).
-            uint256 haircut = fe.rewardHaircutBpsAtOpen;
-            if (haircut == 0) haircut = LibVaipakam.REWARD_HAIRCUT_DEFAULT_BPS;
-            // `Math.mulDiv` so an extreme `cStarOpen` can't overflow the
-            // intermediate product (Codex #1371 r10), matching the stamp site.
-            capOpen =
-                Math.mulDiv(
-                    fe.cStarOpen,
-                    LibVaipakam.BASIS_POINTS - haircut,
-                    LibVaipakam.BASIS_POINTS
-                ) / 2;
-        }
         if (capOpen == 0) return 0;
         uint256 openDays = fe.openDays;
         if (openDays == 0) return capOpen; // defensive; stamp guarantees ≥ 1

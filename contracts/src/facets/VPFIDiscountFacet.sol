@@ -548,24 +548,28 @@ contract VPFIDiscountFacet is
      *      path (T-087 Sub 2.D) without having to make a tiny
      *      deposit / withdraw round-trip.
      *
-     *      The function is fully permissionless and idempotent: it
-     *      re-reads the caller's tracked balance and re-stamps the
-     *      accumulator at that same balance. If the tier hasn't
-     *      changed, no broadcast fires (the broadcast path
-     *      short-circuits on equal tier). If the tier HAS changed —
-     *      e.g., the user just crossed the min-history boundary —
-     *      the broadcast pushes the new tier to every configured
-     *      mirror chain.
+     *      The function is fully permissionless: it re-reads the
+     *      caller's tracked balance and re-stamps the accumulator at that
+     *      same balance. A new tier push is committed when the resolved
+     *      tuple (tier, bps, projected expiry, table version) changed, and
+     *      also (#1856) when an unchanged non-zero tuple was last committed
+     *      `TIER_PUSH_RENEWAL_AGE_SEC` (15 days) ago or more: a mirror
+     *      retires a cached tier at its maximum age (60 days by default,
+     *      never less than 30), so this is how a holder whose tier never
+     *      moves renews it there. Otherwise no push is committed. A lane
+     *      already holding what the push says, delivered within that age, is
+     *      settled without a message; a lowered tier goes out on the
+     *      protocol budget; a raise, a first discount or a renewal goes out
+     *      when someone pays for it with `ProtocolBroadcastFacet.deliverTierPush`.
+     *
+     *      There is NO consent gate here. A consent-off caller's poke
+     *      rolls up like any other, and the push commits `(0, 0)`: the
+     *      broadcast path applies consent (T-087 Sub 4 round-3 P2 #2), so
+     *      the caller's raw tier never reaches a mirror.
      *
      *      Gated by `whenNotPaused` so emergency pause halts pokes
-     *      (consistent with the deposit/withdraw paths). ALSO
-     *      gated by `vpfiDiscountConsent` (Codex round-1 P2 #2):
-     *      a consent-off user's RAW tier would otherwise leak to
-     *      mirrors via the un-gated `effectiveTierAndBps` path in
-     *      `ProtocolBroadcastFacet`, putting the mirror cache out
-     *      of sync with the consent-gated canonical fee path.
-     *      Consent-off pokes emit `TierPokeSkippedNoConsent` and
-     *      return without rolling up.
+     *      (consistent with the deposit/withdraw paths) and by the Tier-1
+     *      sanctions screen on the caller.
      */
     function pokeMyTier() external nonReentrant whenNotPaused {
         // #494 Card B — Tier-1 sanctions gate on the caller. pokeMyTier

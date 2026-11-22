@@ -1,0 +1,329 @@
+{
+  "schema": 1,
+  "network": "bnb-testnet",
+  "chainId": 97,
+  "testnet": true,
+  "checkedAt": "2026-11-22T06:57:06.210Z",
+  "nodeVariable": "BNB_TESTNET_RPC_URL",
+  "plan": "not stated",
+  "status": "checked",
+  "head": 144169300,
+  "blockTimeSeconds": 0.452,
+  "watchedContracts": 39,
+  "capabilities": {
+    "traceTransaction": {
+      "debug": {
+        "answered": true,
+        "reachDays": 364.9984,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0003,
+            "block": 144169236,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 144161654,
+            "answered": true
+          },
+          {
+            "days": 0.9978,
+            "block": 143978150,
+            "answered": true
+          },
+          {
+            "days": 6.9971,
+            "block": 142831250,
+            "answered": true
+          },
+          {
+            "days": 30.0002,
+            "block": 138417540,
+            "answered": true
+          },
+          {
+            "days": 89.9999,
+            "block": 126907132,
+            "answered": true
+          },
+          {
+            "days": 364.9984,
+            "block": 74192529,
+            "answered": true
+          }
+        ]
+      },
+      "trace": {
+        "answered": true,
+        "reachDays": 364.9984,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0003,
+            "block": 144169236,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 144161654,
+            "answered": true
+          },
+          {
+            "days": 0.9978,
+            "block": 143978150,
+            "answered": true
+          },
+          {
+            "days": 6.9971,
+            "block": 142831250,
+            "answered": true
+          },
+          {
+            "days": 30.0002,
+            "block": 138417540,
+            "answered": true
+          },
+          {
+            "days": 89.9999,
+            "block": 126907132,
+            "answered": true
+          },
+          {
+            "days": 364.9984,
+            "block": 74192529,
+            "answered": true
+          }
+        ]
+      }
+    },
+    "traceCall": {
+      "debug": {
+        "answered": true,
+        "reachDays": 364.9984,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0003,
+            "block": 144169236,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 144161654,
+            "answered": true
+          },
+          {
+            "days": 0.9978,
+            "block": 143978150,
+            "answered": true
+          },
+          {
+            "days": 6.9971,
+            "block": 142831250,
+            "answered": true
+          },
+          {
+            "days": 30.0002,
+            "block": 138417540,
+            "answered": true
+          },
+          {
+            "days": 89.9999,
+            "block": 126907132,
+            "answered": true
+          },
+          {
+            "days": 364.9984,
+            "block": 74192529,
+            "answered": true
+          }
+        ]
+      },
+      "trace": {
+        "answered": true,
+        "reachDays": 364.9984,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0003,
+            "block": 144169236,
+            "answered": true
+          },
+          {
+            "days": 0.04,
+            "block": 144161654,
+            "answered": true
+          },
+          {
+            "days": 0.9978,
+            "block": 143978150,
+            "answered": true
+          },
+          {
+            "days": 6.9971,
+            "block": 142831250,
+            "answered": true
+          },
+          {
+            "days": 30.0002,
+            "block": 138417540,
+            "answered": true
+          },
+          {
+            "days": 89.9999,
+            "block": 126907132,
+            "answered": true
+          },
+          {
+            "days": 364.9984,
+            "block": 74192529,
+            "answered": true
+          }
+        ]
+      }
+    },
+    "traceFilter": {
+      "answered": true,
+      "largestRange": 10000,
+      "rangesTried": [
+        {
+          "range": 10,
+          "answered": true
+        },
+        {
+          "range": 100,
+          "answered": true
+        },
+        {
+          "range": 1000,
+          "answered": true
+        },
+        {
+          "range": 10000,
+          "answered": true
+        }
+      ],
+      "reachDays": 364.9984,
+      "refusedAtDays": null,
+      "reachTried": [
+        {
+          "days": 0.0003,
+          "block": 144169236,
+          "answered": true
+        },
+        {
+          "days": 0.04,
+          "block": 144161654,
+          "answered": true
+        },
+        {
+          "days": 0.9978,
+          "block": 143978150,
+          "answered": true
+        },
+        {
+          "days": 6.9971,
+          "block": 142831250,
+          "answered": true
+        },
+        {
+          "days": 30.0002,
+          "block": 138417540,
+          "answered": true
+        },
+        {
+          "days": 89.9999,
+          "block": 126907132,
+          "answered": true
+        },
+        {
+          "days": 364.9984,
+          "block": 74192529,
+          "answered": true
+        }
+      ]
+    },
+    "callAtPastBlock": {
+      "answered": true,
+      "reachDays": 364.9984,
+      "refusedAtDays": null,
+      "reachTried": [
+        {
+          "days": 0.0003,
+          "block": 144169236,
+          "answered": true
+        },
+        {
+          "days": 0.04,
+          "block": 144161654,
+          "answered": true
+        },
+        {
+          "days": 0.9978,
+          "block": 143978150,
+          "answered": true
+        },
+        {
+          "days": 6.9971,
+          "block": 142831250,
+          "answered": true
+        },
+        {
+          "days": 30.0002,
+          "block": 138417540,
+          "answered": true
+        },
+        {
+          "days": 89.9999,
+          "block": 126907132,
+          "answered": true
+        },
+        {
+          "days": 364.9984,
+          "block": 74192529,
+          "answered": true
+        }
+      ]
+    },
+    "blockReceipts": {
+      "answered": true
+    }
+  },
+  "blockScan": {
+    "blocksPerDay": 191150,
+    "sampleBlocks": 30,
+    "transactionsPerBlock": 2.5,
+    "watchedTransactionsPerBlock": 0,
+    "fullBlockKilobytes": 11.6,
+    "requestsPerDay": {
+      "withBlockReceipts": 382300,
+      "withReceiptPerTransaction": 191150
+    },
+    "megabytesPerDay": 2167,
+    "affordable": false
+  },
+  "explorer": {
+    "configured": true,
+    "answeredWithoutKey": false,
+    "withoutKeyError": "NOTOK Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. &lt;url&gt;",
+    "keyConfigured": true,
+    "needsKey": "unknown",
+    "answered": false,
+    "error": "NOTOK Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. &lt;url&gt;"
+  },
+  "audit": {
+    "windowMinutes": 30,
+    "windowBlocks": 3983,
+    "requestsPerDay": 3983,
+    "megabytesPerDay": 45.1,
+    "replayCovered": true
+  },
+  "failedTransactionMode": "trace-filter",
+  "traceFilterRequestsPerDay": 20,
+  "explainer": {
+    "traceSource": "node trace",
+    "replayReachDays": 364.9984
+  },
+  "requestsUsed": 113
+}

@@ -19,10 +19,13 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {LibRemitDayLedger} from "../src/libraries/LibRemitDayLedger.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
@@ -2461,6 +2464,85 @@ contract RewardRemitLedgerTest is SetupTest {
         (uint256 recovered, , ) = rlens.getRecoveryPosition();
         assertEq(recovered, r.fresh, "the fresh half entered the position");
         assertEq(rlens.getRecoveredForReceipt(1), r.total, "one cumulative");
+    }
+
+    /// #2204 - every ceremony inflow, fresh and recycled halves together, is
+    /// recorded as an ingress packet (kind 4) before it is credited. No
+    /// transport carries it, so it is keyed by the source-0 sequence, and
+    /// two ceremonies on one reservation get two distinct records.
+    function test2204_Ceremony_InflowRecordedAsIngressPacket() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        uint256 half = r.fresh / 2;
+        bytes32 h1 = _ceremonyPacket(half, r.recycled);
+        bytes32 h2 = _ceremonyPacket(r.fresh - half, 0);
+        assertTrue(h1 != h2, "each inflow its own record");
+        LibVaipakam.IngressPacket memory p = rlens.getIngressPacket(h1);
+        assertEq(p.kind, LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW);
+        assertEq(p.sourceChainId, 0, "no transport source");
+        assertEq(p.actualReceived, half + r.recycled);
+        assertEq(p.freshShare, half);
+        assertEq(p.recycledShare, r.recycled, "the recycled half is carried too");
+        assertEq(p.remitter, address(diamond));
+        assertEq(p.remitId, 1);
+        assertEq(rlens.getIngressPacket(h2).recycledShare, 0);
+    }
+
+    /// #2204 — a ceremony inflow is typed in full when it lands, so the
+    /// legacy classification refuses it by name rather than reading it as
+    /// any other kind, and the keeper's untyped return refuses it rather
+    /// than sending value to its source 0.
+    function test2204_Ceremony_PacketRefusedByUntypedReaders() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        bytes32 h = _ceremonyPacket(r.fresh, r.recycled);
+        AdminFacet(address(diamond)).pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ReconciliationPacketTyped.selector,
+                h,
+                LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW
+            )
+        );
+        RewardReconciliationFacet(address(diamond)).classifyLegacyPacket(h, 0, 1, keccak256("e-2204"));
+    }
+
+    /// #2204 — the kind rule every packet reader asks names the five kinds
+    /// and refuses any other, 0 included.
+    function test2204_PacketKindTraits_RefusesUnknownKinds() public {
+        (bool rc, bool un) = LibRewardCustody.packetKindTraits(LibRewardCustody.PACKET_KIND_BUDGET);
+        assertTrue(rc && un, "budget");
+        (rc, un) = LibRewardCustody.packetKindTraits(LibRewardCustody.PACKET_KIND_STRANDED_RETURN);
+        assertTrue(!rc && un, "stranded return");
+        (rc, un) = LibRewardCustody.packetKindTraits(LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW);
+        assertTrue(!rc && !un, "ceremony inflow");
+        (rc, un) = LibRewardCustody.packetKindTraits(LibRewardCustody.PACKET_KIND_REPATRIATION_RETURN);
+        assertTrue(!rc && !un, "repatriation return");
+        uint8[4] memory unknown = [uint8(0), 6, 7, 255];
+        for (uint256 i; i < unknown.length; ++i) {
+            vm.expectRevert(
+                abi.encodeWithSelector(IVaipakamErrors.IngressPacketKindUnknown.selector, unknown[i])
+            );
+            this.kindTraitsOf(unknown[i]);
+        }
+    }
+
+    function kindTraitsOf(uint8 kind) external pure returns (bool, bool) {
+        return LibRewardCustody.packetKindTraits(kind);
+    }
+
+    /// Run one ceremony on reservation 1 and return the stamp its
+    /// `IngressPacketRecorded` event names.
+    function _ceremonyPacket(uint256 fresh, uint256 recycled) internal returns (bytes32 h) {
+        vm.recordLogs();
+        comp.recordRecoveryCeremony(1, fresh, recycled);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("IngressPacketRecorded(bytes32,uint256,uint8,uint256,address,uint256)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == sig) {
+                assertEq(h, bytes32(0), "one packet per ceremony");
+                h = logs[i].topics[1];
+            }
+        }
+        assertTrue(h != bytes32(0), "packet recorded");
     }
 
     /// SS8-6 - partial recoveries HOLD the gate; the terminal-loss record

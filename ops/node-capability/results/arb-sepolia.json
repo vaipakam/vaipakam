@@ -1,0 +1,207 @@
+{
+  "schema": 1,
+  "network": "arb-sepolia",
+  "chainId": 421614,
+  "testnet": true,
+  "checkedAt": "2026-11-22T06:56:38.133Z",
+  "nodeVariable": "ARB_SEPOLIA_RPC_URL",
+  "plan": "not stated",
+  "status": "checked",
+  "head": 331603610,
+  "blockTimeSeconds": 0.28,
+  "watchedContracts": 39,
+  "capabilities": {
+    "traceTransaction": {
+      "debug": {
+        "answered": true,
+        "reachDays": 364.9833,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0002,
+            "block": 331603546,
+            "answered": true
+          },
+          {
+            "days": 0.0394,
+            "block": 331591267,
+            "answered": true
+          },
+          {
+            "days": 0.9983,
+            "block": 331295039,
+            "answered": true
+          },
+          {
+            "days": 7.0002,
+            "block": 329391904,
+            "answered": true
+          },
+          {
+            "days": 29.9876,
+            "block": 321980320,
+            "answered": true
+          },
+          {
+            "days": 89.9909,
+            "block": 301433267,
+            "answered": true
+          },
+          {
+            "days": 364.9833,
+            "block": 217737323,
+            "answered": true
+          }
+        ]
+      },
+      "trace": {
+        "answered": false,
+        "error": "HTTP 500 19 Temporary internal error. Please retry, trace-id: &lt;redacted&gt;"
+      }
+    },
+    "traceCall": {
+      "debug": {
+        "answered": true,
+        "reachDays": 364.9833,
+        "refusedAtDays": null,
+        "reachTried": [
+          {
+            "days": 0.0002,
+            "block": 331603546,
+            "answered": true
+          },
+          {
+            "days": 0.0394,
+            "block": 331591267,
+            "answered": true
+          },
+          {
+            "days": 0.9983,
+            "block": 331295039,
+            "answered": true
+          },
+          {
+            "days": 7.0002,
+            "block": 329391904,
+            "answered": true
+          },
+          {
+            "days": 29.9876,
+            "block": 321980320,
+            "answered": true
+          },
+          {
+            "days": 89.9909,
+            "block": 301433267,
+            "answered": true
+          },
+          {
+            "days": 364.9833,
+            "block": 217737323,
+            "answered": true
+          }
+        ]
+      },
+      "trace": {
+        "answered": false,
+        "error": "HTTP 500 19 Temporary internal error. Please retry, trace-id: &lt;redacted&gt;"
+      }
+    },
+    "traceFilter": {
+      "answered": false,
+      "largestRange": null,
+      "rangesTried": [
+        {
+          "range": 10,
+          "answered": false,
+          "error": "HTTP 500 19 Temporary internal error. Please retry, trace-id: &lt;redacted&gt;"
+        }
+      ]
+    },
+    "callAtPastBlock": {
+      "answered": true,
+      "reachDays": 364.9833,
+      "refusedAtDays": null,
+      "reachTried": [
+        {
+          "days": 0.0002,
+          "block": 331603546,
+          "answered": true
+        },
+        {
+          "days": 0.0394,
+          "block": 331591267,
+          "answered": true
+        },
+        {
+          "days": 0.9983,
+          "block": 331295039,
+          "answered": true
+        },
+        {
+          "days": 7.0002,
+          "block": 329391904,
+          "answered": true
+        },
+        {
+          "days": 29.9876,
+          "block": 321980320,
+          "answered": true
+        },
+        {
+          "days": 89.9909,
+          "block": 301433267,
+          "answered": true
+        },
+        {
+          "days": 364.9833,
+          "block": 217737323,
+          "answered": true
+        }
+      ]
+    },
+    "blockReceipts": {
+      "answered": true
+    }
+  },
+  "blockScan": {
+    "blocksPerDay": 308571,
+    "sampleBlocks": 30,
+    "transactionsPerBlock": 4.2,
+    "watchedTransactionsPerBlock": 0,
+    "fullBlockKilobytes": 7,
+    "requestsPerDay": {
+      "withBlockReceipts": 617142,
+      "withReceiptPerTransaction": 308571
+    },
+    "megabytesPerDay": 2114,
+    "affordable": false
+  },
+  "explorer": {
+    "configured": true,
+    "answeredWithoutKey": false,
+    "withoutKeyError": "NOTOK Missing/Invalid API Key",
+    "keyConfigured": true,
+    "needsKey": true,
+    "answered": true,
+    "marksFailures": true,
+    "delayBlocks": 3,
+    "delaySeconds": 1,
+    "requestsPerDay": 11232,
+    "pollMinutes": 5,
+    "replayCoversDelay": true
+  },
+  "audit": {
+    "windowMinutes": 30,
+    "windowBlocks": 6429,
+    "requestsPerDay": 6429,
+    "megabytesPerDay": 44,
+    "replayCovered": true
+  },
+  "failedTransactionMode": "explorer-and-audit",
+  "explainer": {
+    "traceSource": "node trace",
+    "replayReachDays": 364.9833
+  },
+  "requestsUsed": 84
+}

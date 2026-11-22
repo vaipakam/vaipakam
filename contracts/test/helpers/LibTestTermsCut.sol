@@ -7,25 +7,27 @@ import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title LibTestTermsCut
- * @notice #3734 — the Terms host every hand-built test Diamond that opens a
- *         position needs: loan creation, both position takeovers, the offer
- *         book, Auto-lend, standing instructions and the extension ask
- *         `LegalFacet.requireCurrentTerms` by self-call, and the previews ask
- *         `termsBlocker`. A Diamond that cuts a caller without it reverts
+ * @notice #3734 / #3864 — the opening rule's host every hand-built test
+ *         Diamond that opens a position needs: loan creation, both position
+ *         takeovers, the offer book, Auto-lend and the extension ask
+ *         `LegalFacet.requireMayOpen` by self-call, standing instructions ask
+ *         `requireCurrentTerms` (the Terms part alone), and the previews ask
+ *         `openingBlocker`. A Diamond that cuts a caller without it reverts
  *         `FunctionDoesNotExist` at that self-call. With no Terms version in
- *         force (a fresh Diamond) the host checks nothing.
+ *         force and the network open (a fresh Diamond) the host checks
+ *         nothing.
  */
 library LibTestTermsCut {
     /// @notice LegalFacet's routed surface; mirrors
     ///         `DeployDiamond._getLegalSelectors`.
     function legalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](22);
         s[0] = LegalFacet.acceptTerms.selector;
         s[1] = LegalFacet.announceTos.selector;
         s[2] = LegalFacet.withdrawTosAnnouncement.selector;
         s[3] = LegalFacet.requireCurrentTerms.selector;
         s[4] = LegalFacet.isTermsCurrent.selector;
-        s[5] = LegalFacet.termsBlocker.selector;
+        s[5] = LegalFacet.openingBlocker.selector;
         s[6] = LegalFacet.hasAcceptedCurrentTerms.selector;
         s[7] = LegalFacet.getCurrentTos.selector;
         s[8] = LegalFacet.getAnnouncedTos.selector;
@@ -38,6 +40,10 @@ library LibTestTermsCut {
         s[15] = LegalFacet.getTosVersionInForceAt.selector;
         s[16] = LegalFacet.getUserAcceptedTosVersions.selector;
         s[17] = bytes4(keccak256("MAX_TOS_WINDOW()"));
+        s[18] = LegalFacet.requireMayOpen.selector;
+        s[19] = LegalFacet.mayOpen.selector;
+        s[20] = LegalFacet.setNetworkClosing.selector;
+        s[21] = LegalFacet.getNetworkClosing.selector;
     }
 
     /// @notice `cuts` with the Terms host appended.

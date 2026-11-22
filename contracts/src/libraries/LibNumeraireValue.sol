@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibPriceGuard} from "./LibPriceGuard.sol";
 
 /**
  * @title LibNumeraireValue
@@ -115,13 +116,16 @@ library LibNumeraireValue {
     /// @notice `decimals()` of `token`, never reverting. `ok` is false for an
     ///         address with no code, a failed or short answer, or a value
     ///         above {MAX_TOKEN_DECIMALS}; `decimals` is then 0 and must not
-    ///         be used.
+    ///         be used. Reverts {LibPriceGuard.PriceReadOutOfGas} when too
+    ///         little gas is left to read it in full ({LibPriceGuard.venueRead}).
     /// @dev    A low-level `staticcall`, because `try/catch` does not catch a
     ///         call to a code-less address: it succeeds with empty returndata
     ///         and the compiler's decode guard then reverts outside the catch.
     function tryTokenDecimals(address token) internal view returns (bool ok, uint8 decimals) {
         if (token.code.length == 0) return (false, 0);
-        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
+        // Capped and checked (#3504): a starved read must not read as
+        // unreadable decimals, or the gas limit would pick the outcome.
+        (bool success, bytes memory data) = LibPriceGuard.venueRead(token, abi.encodeWithSignature("decimals()"));
         if (!success || data.length < 32) return (false, 0);
         uint256 d = abi.decode(data, (uint256));
         if (d > MAX_TOKEN_DECIMALS) return (false, 0);

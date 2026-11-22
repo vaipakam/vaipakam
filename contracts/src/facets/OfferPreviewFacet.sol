@@ -503,11 +503,17 @@ contract OfferPreviewFacet {
             }
         }
 
-        // #3734 — loan creation asks both parties' Terms acceptance (the
-        // exiting seller of a sale vehicle is not asked) before its cadence.
-        if (!_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)) {
-            preview.errorCode = OfferAcceptFacet.AcceptError.TermsNotAccepted;
-            return preview;
+        // #3734 / #3864 — loan creation asks the opening rule before its
+        // cadence: the network is open (`NetworkClosing`, reported first),
+        // then both parties' Terms acceptance (the exiting seller of a sale
+        // vehicle is not asked).
+        {
+            OfferAcceptFacet.AcceptError opening =
+                _openingRefusal(_saleLoanId == 0 ? offer.creator : address(0), acceptor);
+            if (opening != OfferAcceptFacet.AcceptError.None) {
+                preview.errorCode = opening;
+                return preview;
+            }
         }
 
         // #3025 — loan creation re-admits the offer's cadence on the loan it
@@ -835,12 +841,18 @@ contract OfferPreviewFacet {
         );
     }
 
-    /// @dev #3734 — whether `a` and `b` (0 = skip) have both accepted the
-    ///      Terms that count now, asked of the rule's one host.
-    function _termsClear(address a, address b) private view returns (bool) {
+    /// @dev #3734 / #3864 — the opening rule's refusal for a loan between
+    ///      `a` and `b` (0 = skip), asked of the rule's one host: the closing
+    ///      state first, then the parties' Terms. A failed read refuses as
+    ///      the Terms refusal, never as an all-clear.
+    function _openingRefusal(address a, address b) private view returns (OfferAcceptFacet.AcceptError) {
         (bool ok, bytes memory r) =
-            address(this).staticcall(abi.encodeWithSelector(LegalFacet.termsBlocker.selector, a, b));
-        return ok && abi.decode(r, (address)) == address(0);
+            address(this).staticcall(abi.encodeWithSelector(LegalFacet.openingBlocker.selector, a, b));
+        if (!ok) return OfferAcceptFacet.AcceptError.TermsNotAccepted;
+        (uint64 closingSince, address wallet,) = abi.decode(r, (uint64, address, uint32));
+        if (closingSince != 0) return OfferAcceptFacet.AcceptError.NetworkClosing;
+        if (wallet != address(0)) return OfferAcceptFacet.AcceptError.TermsNotAccepted;
+        return OfferAcceptFacet.AcceptError.None;
     }
 
     /// @dev Whether the price-move guards on `offerId` and `otherOfferId`

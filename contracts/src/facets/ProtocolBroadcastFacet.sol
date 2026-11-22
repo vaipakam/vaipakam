@@ -68,7 +68,15 @@ interface IVPFIDiscountAccumulatorInternal {
  *     When the resolved `(tier, bps, expiry, version)` differs from the
  *     user's latest committed push, a new push is committed: the user's
  *     push nonce goes up and the tuple is recorded (`lastEffectiveTier` and
- *     siblings). Consent off forces `(0, 0)`.
+ *     siblings). Consent off forces `(0, 0)`. An unchanged non-zero tuple
+ *     is committed again once the last commit is
+ *     `TIER_PUSH_RENEWAL_AGE_SEC` old (#1856): a mirror retires a cached
+ *     tier at its maximum age, so a holder whose tier never moves would
+ *     otherwise lose the discount there with no way to renew it.
+ *   - RENEWAL. A lane holding the identical tuple is owed the renewal only
+ *     when its last delivery is that old too. A renewal keeps a discount
+ *     alive, so it is paid like a raise: by a caller's value, never by the
+ *     protocol budget.
  *   - OWED. Every broadcast lane whose delivered nonce (`tierLanePush`) is
  *     below the committed nonce is owed that push. A lane whose delivered
  *     tuple already has the same effect (both tier 0, or identical) is
@@ -124,6 +132,8 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice One lane as {getTierPushStatus} reports it.
     struct TierLaneStatus {
         uint256 destChainId;
+        /// @dev The last push sent on this lane; `delivered.sentAt` is its
+        ///      send time, which is what a renewal ages against (#1856).
         LibVaipakam.TierLanePush delivered;
         bool owed;
         /// @dev Whether the protocol budget pays this lane's owed push (it
@@ -378,7 +388,11 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev Resolve `user`'s tuple and commit it when it differs from the
-    ///      latest committed push. Returns whether a push was committed.
+    ///      latest committed push, or (#1856) when it is an unchanged
+    ///      non-zero tuple committed at least
+    ///      `LibVaipakam.TIER_PUSH_RENEWAL_AGE_SEC` ago: a renewal, so a
+    ///      steady holding can refresh a mirror cache before the mirror's
+    ///      maximum age retires it. Returns whether a push was committed.
     function _commit(LibVaipakam.Storage storage s, address user) private returns (bool) {
         (uint8 effTier, uint16 effBps) =
             IVPFIDiscountAccumulatorInternal(address(this)).effectiveTierAndBps(user);
@@ -401,6 +415,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             s.userTierPushNonce[user] != 0 && effTier == s.lastEffectiveTier[user]
                 && effBps == s.lastEffectiveBps[user] && expiry == s.lastTierExpirySec[user]
                 && version == s.lastTierTableVersion[user]
+                && block.timestamp < uint256(s.lastTierCommitSec[user]) + LibVaipakam.TIER_PUSH_RENEWAL_AGE_SEC
         ) {
             return false;
         }
@@ -410,6 +425,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         s.lastEffectiveBps[user] = effBps;
         s.lastTierExpirySec[user] = expiry;
         s.lastTierTableVersion[user] = version;
+        s.lastTierCommitSec[user] = uint40(block.timestamp);
         emit TierPushCommitted(user, nonce, effTier, effBps, expiry, version);
         return true;
     }
@@ -464,7 +480,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.TierLanePush storage lane = s.tierLanePush[p.user][dst];
         if (lane.nonce >= p.nonce) return callerFunds;
 
-        if (_sameEffect(lane, p)) {
+        if (_sameEffect(lane, p, s.lastTierCommitSec[p.user])) {
             lane.nonce = p.nonce;
             emit TierPushLaneSettled(p.user, dst, p.nonce);
             return callerFunds;
@@ -526,11 +542,28 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
 
     /// @dev Whether the lane already holds a tuple with the same effect as
     ///      `p`: both tier 0 (a mirror reads tier 0 as no discount, whatever
-    ///      the version), or the identical tuple.
-    function _sameEffect(LibVaipakam.TierLanePush storage lane, Push memory p) private view returns (bool) {
+    ///      the version, and needs no freshness), or the identical tuple
+    ///      delivered less than `LibVaipakam.TIER_PUSH_RENEWAL_AGE_SEC` ago.
+    ///      An identical tuple delivered longer ago than that is a renewal the
+    ///      lane is owed (#1856): the mirror ages its cache from the delivery,
+    ///      and only a new message restarts that clock.
+    ///      An identical tuple delivered BEFORE `commitSec` (the user's latest
+    ///      commit, `lastTierCommitSec`) is owed too. `_commit` ages a renewal
+    ///      from the commit and this test ages it from the delivery; without
+    ///      this clause a lane delivered late (after the commit) and then
+    ///      offered a renewal committed inside its window would settle with
+    ///      no send, and the next renewal could not be committed until about
+    ///      when the mirror's cache expires. So a commit made after a lane's
+    ///      last send is always delivered to it.
+    function _sameEffect(LibVaipakam.TierLanePush storage lane, Push memory p, uint40 commitSec)
+        private
+        view
+        returns (bool)
+    {
         if (p.tier == 0 && p.bps == 0 && lane.tier == 0 && lane.bps == 0) return true;
         return lane.tier == p.tier && lane.bps == p.bps && lane.tierExpirySec == p.expiry
-            && lane.tierTableVersion == p.version;
+            && lane.tierTableVersion == p.version && lane.sentAt >= commitSec
+            && block.timestamp < uint256(lane.sentAt) + LibVaipakam.TIER_PUSH_RENEWAL_AGE_SEC;
     }
 
     /// @dev #1277 — whether the protocol budget pays `p` on `lane`: only
@@ -658,7 +691,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             LibVaipakam.TierLanePush storage lane = s.tierLanePush[user][dsts[i]];
             lanes[i].destChainId = dsts[i];
             lanes[i].delivered = lane;
-            lanes[i].owed = lane.nonce < p.nonce && !_sameEffect(lane, p);
+            lanes[i].owed = lane.nonce < p.nonce && !_sameEffect(lane, p, s.lastTierCommitSec[user]);
             if (lanes[i].owed) lanes[i].budgetPays = _budgetPays(lane, p);
         }
     }

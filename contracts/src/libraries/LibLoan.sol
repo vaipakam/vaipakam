@@ -38,9 +38,10 @@ library LibLoan {
         // taking over a lender position is one: refused here, the one place
         // a lender position changes hands, so every sale route holds it.
         LibProtectedAccount.requireCanOpen(newLender);
-        // #3734 — and must have accepted the Terms in force; the exiting
-        // seller is not asked.
-        LibTerms.requireCurrent(newLender);
+        // #3734 / #3864 — the opening rule: the network is open, and the
+        // incoming lender has accepted the Terms in force; the exiting seller
+        // is not asked. So a closing network refuses every sale and takeover.
+        LibTerms.requireMayOpen(newLender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.lenderTokenId);
@@ -272,8 +273,9 @@ library LibLoan {
         // Same rule as {migrateLenderPosition}: a locked or replaced
         // protected account takes over no obligation.
         LibProtectedAccount.requireCanOpen(newBorrower);
-        // #3734 — the incoming borrower must have accepted the Terms in force.
-        LibTerms.requireCurrent(newBorrower);
+        // #3734 / #3864 — the opening rule: the network is open, and the
+        // incoming borrower has accepted the Terms in force.
+        LibTerms.requireMayOpen(newBorrower);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.borrowerTokenId);

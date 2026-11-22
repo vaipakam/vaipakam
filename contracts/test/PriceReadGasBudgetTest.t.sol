@@ -12,6 +12,9 @@ import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {LibOfferAdmission} from "../src/libraries/LibOfferAdmission.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /**
@@ -225,6 +228,31 @@ contract PriceReadGasBudgetTest is SetupTest {
             seen = true;
         }
         assertTrue(seen, "CollateralAdded emitted");
+    }
+
+    // ─── The offer value floor (fork-tier e2e, PriceReadOutOfGas) ─────────
+
+    /// @dev The floor reads liquidity, then the value, and admits the offer
+    ///      when either read is refused. A read that ran short of gas used to
+    ///      count as refused, so a gas estimate settled on the limit at which
+    ///      the floor was skipped and the real `createOffer` then ran out of
+    ///      gas further on. It now reverts by name.
+    function test_offerValueFloor_shortOfGas_revertsByName_notAdmitted() public {
+        (bool ok, bytes memory ret) = address(diamond).call{gas: LibPriceGuard.SELF_READ_GAS}(
+            abi.encodeCall(OfferBookFacet.requireOfferValueAdmitted, (mockERC20, LibVaipakam.AssetType.ERC20, 1))
+        );
+        _assertOutOfGas(ok, ret);
+    }
+
+    /// @dev With the gas the reads need, the floor still bites.
+    function test_offerValueFloor_enoughGas_refusesBelowFloor() public {
+        // The shared fixture lowers the floor; 0 restores the production default.
+        NumeraireConfigFacet(address(diamond)).setMinOfferValueNumeraire(0);
+        (bool ok, bytes memory ret) = address(diamond).call{gas: AMPLE_GAS}(
+            abi.encodeCall(OfferBookFacet.requireOfferValueAdmitted, (mockERC20, LibVaipakam.AssetType.ERC20, 1))
+        );
+        assertFalse(ok, "a 1-wei principal is below the floor");
+        assertEq(bytes4(ret), LibOfferAdmission.OfferBelowMinimumValue.selector, "refused by the floor");
     }
 
     function _createLoan() internal {

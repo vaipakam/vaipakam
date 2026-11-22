@@ -63,34 +63,44 @@
   },
   {
     "type": "function",
-    "name": "getBackstopAbsorbInfo",
+    "name": "getBackstopDailyLimit",
     "inputs": [
       {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
+        "name": "lendingAsset",
         "type": "address",
         "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "cash",
+        "name": "limit",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "exposure",
+        "name": "usedToday",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "cap",
+        "name": "roomLeft",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "dayEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "capital",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limitBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -143,52 +153,6 @@
   },
   {
     "type": "function",
-    "name": "releaseBackstopAbsorbExposure",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "realizedPrincipal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "seedBackstopAbsorb",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "seedBackstopOrigination",
     "inputs": [
       {
@@ -212,35 +176,12 @@
   },
   {
     "type": "function",
-    "name": "setBackstopAbsorbCap",
+    "name": "setBackstopDailyLimitBps",
     "inputs": [
       {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setBackstopAbsorbEnabled",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "limitBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [],
@@ -361,24 +302,6 @@
   },
   {
     "type": "function",
-    "name": "sweepBackstopAbsorbCollateral",
-    "inputs": [
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "sweepBackstopNFT",
     "inputs": [
       {
@@ -434,29 +357,6 @@
   },
   {
     "type": "function",
-    "name": "withdrawBackstopAbsorbToTreasury",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "withdrawBackstopToTreasury",
     "inputs": [
       {
@@ -480,138 +380,13 @@
   },
   {
     "type": "event",
-    "name": "BackstopAbsorbCapSet",
+    "name": "BackstopDailyLimitBpsSet",
     "inputs": [
       {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
+        "name": "limitBps",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbCollateralSwept",
-    "inputs": [
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbEnabledSet",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbExposureReleased",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "released",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbSeeded",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BackstopAbsorbWithdrawn",
-    "inputs": [
-      {
-        "name": "principal",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateral",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -936,11 +711,6 @@
   },
   {
     "type": "error",
-    "name": "BackstopAbsorbCollateralInsufficient",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BackstopAlreadyInitialized",
     "inputs": []
   },
@@ -948,6 +718,17 @@
     "type": "error",
     "name": "BackstopAlreadyProvisioned",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BackstopDailyLimitOutOfRange",
+    "inputs": [
+      {
+        "name": "limitBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
   },
   {
     "type": "error",
@@ -963,6 +744,27 @@
     "type": "error",
     "name": "BackstopNotProvisioned",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BackstopOfferAboveDailyLimit",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1113,11 +915,6 @@
   {
     "type": "error",
     "name": "TreasuryNotDiamond",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TreasuryUnset",
     "inputs": []
   },
   {
