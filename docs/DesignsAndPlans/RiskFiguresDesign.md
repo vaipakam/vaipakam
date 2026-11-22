@@ -97,6 +97,11 @@ is a way to add the higher health floor at once.
   old reading so never raises a cap by falling away.
 - Whichever applies is cut to the tier's ceiling when a loan reads it, and to
   the cap of every deeper tier (section 3).
+- A reading that rose applies no higher than the default until it is
+  refreshed again. That is a reading higher than the one before it, or the
+  first for its tier. Anyone may make that refresh, and it applies what it
+  finds unless that is higher again. So a refresh timed to a spike raises
+  nothing above the default.
 - A reading past half the usable age raises a notice while it still applies.
 
 **The peer reading.** Anyone may refresh it.
@@ -122,8 +127,9 @@ is a way to add the higher health floor at once.
 and none is above the hard ceiling. One platform alone never raises a cap past
 what a second platform lends at. No quick step raises one: turning the caps
 off, a pause of peer reads and a reading that grows old each leave every cap
-at or below what it was. A cap rises only by a new usable reading, or by a
-setting that has waited.
+at or below what it was. A cap rises only by a new usable reading or by a
+setting that has waited, and above the default only by a reading that was
+refreshed again.
 
 ## 5. The liquidation line
 
@@ -341,7 +347,9 @@ parameters table.
   below and above the default. A low reading grown old. A ceiling lowered
   between a refresh and a loan. A reading that puts a deeper tier's cap below
   a shallower tier's, read by a loan of each tier and of none, below High and
-  at High. A lowest tier cap at and below the least cap.
+  at High. A lowest tier cap at and below the least cap. A raised reading read
+  before and after its next refresh, a first reading above the default, and
+  readings that rise at every refresh.
 - One platform alone, two that disagree past the band, one reference asset, a
   failed read, a frozen asset, one platform raised far above the other, and
   the lowest platform raised alone, up to and past the second. A refresh in a
@@ -376,19 +384,22 @@ parameters table.
 3. **Take the median of the platforms for a reference asset.** Not taken. The
    lowest of those that agree costs a little room, and bounds what one
    platform that loosens its own figure can do by the figure of a second.
-4. **Keep the three per-asset settings.** Not taken. Each gives a named asset
+4. **A raised reading waits a set time before it applies.** Not taken: it is
+   a new figure. A second refresh, which anyone may make, is asked for
+   instead.
+5. **Keep the three per-asset settings.** Not taken. Each gives a named asset
    terms of its own, and the pause and the confidence tier already make one
    asset more careful without choosing its figures.
-5. **A lowering by governance that renewals lift, as a lowering by the keeper
+6. **A lowering by governance that renewals lift, as a lowering by the keeper
    is.** Not taken: it would last one renewal.
-6. **Read every risk figure live.** Not taken. A change of a setting could
+7. **Read every risk figure live.** Not taken. A change of a setting could
    then liquidate or trap a loan that is sound by the figures it opened on.
-7. **Record every figure, the floor of a sale among them.** Not taken: a sale
+8. **Record every figure, the floor of a sale among them.** Not taken: a sale
    must respect the depth there is, and a loan that opened with no tier would
    keep the full floor after its asset had earned a tier.
-8. **Refuse a release when the pledged amount is short.** Not taken. A fault
+9. **Refuse a release when the pledged amount is short.** Not taken. A fault
    in a record would hold a party's collateral.
-9. **Give collateral with no tier the shallowest tier's own figures.** Not
+10. **Give collateral with no tier the shallowest tier's own figures.** Not
    taken: an asset that has earned no tier should not have the terms of one
    that has.
 
