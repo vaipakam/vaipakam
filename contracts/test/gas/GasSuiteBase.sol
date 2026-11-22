@@ -6,6 +6,7 @@ import {SetupTest} from "../SetupTest.t.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {LibTestTiming} from "../helpers/LibTestTiming.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title  GasSuiteBase
@@ -26,7 +27,11 @@ import {LibTestTiming} from "../helpers/LibTestTiming.sol";
  *         - `slotsRead`: distinct (account, slot) pairs read and not written;
  *         - `facetCalls`: calls the Diamond makes to itself (each one a
  *           routed call between facets through the fallback);
- *         - `events`: logs emitted.
+ *         - `events`: logs emitted;
+ *         - `guardReads`: calls the Diamond makes to the price guard. The
+ *           guard is answered by mocks here, so the check adds the guard's
+ *           full read budget for each one where a rule counts it
+ *           (instant borrow's source bound).
  *
  *         One file per action is written to `out-gas-suite/<action>.json`,
  *         so tests running in parallel never write the same file.
@@ -83,6 +88,7 @@ abstract contract GasSuiteBase is SetupTest {
         uint256 slotsRead;
         uint256 facetCalls;
         uint256 events;
+        uint256 guardReads;
     }
 
     /// @dev Calls `data` on the Diamond as `actor`, requires success, and
@@ -109,6 +115,7 @@ abstract contract GasSuiteBase is SetupTest {
         m.gas = vm.lastCallGas().gasTotalUsed;
         m.events = logs.length;
         (m.slotsWritten, m.slotsRead, m.facetCalls) = _count(acc);
+        m.guardReads = _guardReads(acc);
         _write(action, m);
     }
 
@@ -146,6 +153,18 @@ abstract contract GasSuiteBase is SetupTest {
         for (uint256 i; i < nr; i++) if (!_has(wKeys, nw, rKeys[i])) readOnly++;
     }
 
+    /// @dev Calls from the Diamond to the price guard, mocked or not.
+    function _guardReads(VmSafe.AccountAccess[] memory acc) internal view returns (uint256 n) {
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        for (uint256 i; i < acc.length; i++) {
+            VmSafe.AccountAccess memory a = acc[i];
+            if (
+                a.account == guard && a.accessor == address(diamond)
+                    && (a.kind == VmSafe.AccountAccessKind.Call || a.kind == VmSafe.AccountAccessKind.StaticCall)
+            ) n++;
+        }
+    }
+
     function _has(bytes32[] memory keys, uint256 n, bytes32 k) private pure returns (bool) {
         for (uint256 i; i < n; i++) if (keys[i] == k) return true;
         return false;
@@ -158,6 +177,7 @@ abstract contract GasSuiteBase is SetupTest {
         vm.serializeUint(o, "slotsWritten", m.slotsWritten);
         vm.serializeUint(o, "slotsRead", m.slotsRead);
         vm.serializeUint(o, "facetCalls", m.facetCalls);
+        vm.serializeUint(o, "guardReads", m.guardReads);
         string memory json = vm.serializeUint(o, "events", m.events);
         // The folder is removed before a full run (predeploy-check), and
         // writeJson creates no folder.

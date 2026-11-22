@@ -2,10 +2,10 @@
 // Run: node --test packages/contracts/scripts/gas-budgets.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareBudgets, largestInstantCount, readMeasurements } from '../../../contracts/script/check-gas-budgets.mjs';
+import { compareBudgets, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost } from '../../../contracts/script/check-gas-budgets.mjs';
 
 const R = 'the measured figure on the first suite run, with mocked oracles';
 const budgets = (actions, extra = {}) => ({ blocking: false, lowerAt: 0.8, actions, ...extra });
@@ -38,8 +38,9 @@ test('instant borrow: the largest count within the headroom of the smallest netw
   const meas = { ib_1: m(200_000), ib_2: m(400_000), ib_4: m(790_000), ib_8: m(1_500_000) };
   assert.deepEqual(largestInstantCount({ instantBorrow: ib }, meas), { limit: 1_000_000, cap: 800_000, best: 4 });
   const rows = Object.fromEntries(Object.keys(meas).map((k) => [k, { gas: 2_000_000, reason: R }]));
-  assert.ok(!compareBudgets(budgets(rows, { instantBorrow: ib }), meas).findings.some((f) => /instantBorrow/.test(f)));
-  assert.match(compareBudgets(budgets(rows, { instantBorrow: { ...ib, maxSources: 8 } }), meas).findings.find((f) => /instantBorrow/.test(f)), /is 4, but maxSources says 8/);
+  const count = (f) => /largest source count/.test(f);
+  assert.ok(!compareBudgets(budgets(rows, { instantBorrow: ib }), meas).findings.some(count));
+  assert.match(compareBudgets(budgets(rows, { instantBorrow: { ...ib, maxSources: 8 } }), meas).findings.find(count), /is 4, but maxSources says 8/);
 });
 
 test('the suite\'s own probes are ignored', () => {
@@ -47,4 +48,48 @@ test('the suite\'s own probes are ignored', () => {
   writeFileSync(join(dir, '_probe_warm_1.json'), JSON.stringify({ action: '_probe_warm_1', gas: 1 }));
   writeFileSync(join(dir, 'offer_post.json'), JSON.stringify({ action: 'offer_post', gas: 2 }));
   assert.deepEqual(Object.keys(readMeasurements(dir)), ['offer_post']);
+});
+
+test('the source rule: guard reads at their full budget, the dearest further fill and skip, for every bound', () => {
+  const ib = {
+    actionPrefix: 'ib_', sources: [1, 2, 4], headroom: 0.8, maxSources: 1, deployBound: 2, guardReadGas: 1_000,
+    skipActions: ['ib_1_skip_a', 'ib_1_skip_b'],
+    networkTxGasLimits: { eth: { gas: 1_000_000, why: 'x' } },
+  };
+  const g = (gas, guardReads) => ({ ...m(gas), guardReads });
+  const meas = { ib_1: g(100_000, 10), ib_2: g(190_000, 20), ib_4: g(400_000, 40), ib_1_skip_a: g(105_000, 10), ib_1_skip_b: g(150_000, 15) };
+  const c = instantCosts(ib, meas);
+  // first 110,000; 2: 210,000 (+100,000); 4: 440,000 (+115,000 each); skips +5,000 and +55,000.
+  assert.deepEqual(c, { first: 110_000, perFill: 115_000, skip: 55_000 });
+  assert.equal(sourceRuleCost(c, 2, 4), 110_000 + 115_000 + 2 * 55_000);
+  Object.defineProperty(meas, '__instantConfig', { value: { defaultBound: 3, topBound: 6, maxSources: 6 }, enumerable: false });
+  const rows = Object.fromEntries(Object.keys(meas).map((k) => [k, { gas: 2_000_000, reason: R }]));
+  const f = compareBudgets(budgets(rows, { instantBorrow: { ...ib, maxSources: 4 } }), meas).findings.filter((x) => /bound of/.test(x));
+  // bound 2: 110k + 115k + 4×55k = 445k, fits 800k; bound 3: 110k + 230k + 3×55k = 505k fits; bound 6: 110k + 575k = 685k fits.
+  assert.deepEqual(f, []);
+  const tight = { ...ib, maxSources: 4, networkTxGasLimits: { eth: { gas: 600_000, why: 'x' } } };
+  const f2 = compareBudgets(budgets(rows, { instantBorrow: tight }), meas).findings.filter((x) => /bound of/.test(x));
+  assert.equal(f2.length, 2, f2.join('\n'));
+  assert.match(f2[0], /bound of 3 \(the code default\) with a list of 6 needs 505000 gas/);
+  assert.match(f2[1], /bound of 6 \(the top of the governance range\)/);
+});
+
+test('the source rule without its measurements or the code bounds is a finding, never a silent pass', () => {
+  const ib = { actionPrefix: 'ib_', sources: [1, 2], headroom: 0.8, maxSources: 2, deployBound: 2, guardReadGas: 0, skipActions: ['ib_1_skip'], networkTxGasLimits: { eth: { gas: 10_000_000, why: 'x' } } };
+  const meas = { ib_1: m(1), ib_2: m(2) };
+  const rows = { ib_1: { gas: 10, reason: R }, ib_2: { gas: 10, reason: R } };
+  assert.ok(compareBudgets(budgets(rows, { instantBorrow: ib }), meas).findings.some((x) => /needs instant borrow at 1/.test(x)));
+  meas.ib_1_skip = m(3);
+  rows.ib_1_skip = { gas: 10, reason: R };
+  assert.ok(compareBudgets(budgets(rows, { instantBorrow: ib }), meas).findings.some((x) => /needs the code's fill bounds/.test(x)));
+});
+
+test('the code bounds file is read beside the measurements and is not an action', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gas-'));
+  writeFileSync(join(dir, 'a.json'), JSON.stringify({ action: 'a', ...m(1) }));
+  mkdirSync(join(dir, 'config'));
+  writeFileSync(join(dir, 'config', 'instant.json'), JSON.stringify({ defaultBound: 8, topBound: 16, maxSources: 16 }));
+  const r = readMeasurements(dir);
+  assert.deepEqual(Object.keys(r), ['a']);
+  assert.deepEqual(r.__instantConfig, { defaultBound: 8, topBound: 16, maxSources: 16 });
 });

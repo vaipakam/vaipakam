@@ -80,6 +80,67 @@ contract GasSuiteMarketTest is GasSuiteBase, InstantMarketBase {
         );
     }
 
+    /// @dev One skipped source, then one fill. The skip refuses EARLY: the
+    ///      slot carries no instant-market consent. Its cost is this figure
+    ///      less `instant_borrow_1`.
+    function test_gas_instant_borrow_1_skip_early() public {
+        address skipped = _newParty("gasSkipEarly");
+        _slot(skipped, 500, SLOT_SIZE, false);
+        _borrowAfterSkip("instant_borrow_1_skip_early", skipped);
+    }
+
+    /// @dev One skipped source, then one fill. The skip refuses LATE: the
+    ///      slot's owner fails the Terms rule, which loan creation asks after
+    ///      the fill has sized the loan and materialized both offers. A skip
+    ///      costs what was spent before its refusal, so this is the dearer
+    ///      kind.
+    function test_gas_instant_borrow_1_skip_late() public {
+        address skipped = _newParty("gasSkipLate");
+        _slot(skipped, 500, SLOT_SIZE, true);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSignature("requireCurrentTerms(address)", skipped),
+            abi.encodeWithSignature("TermsNotAccepted(address,uint32)", skipped, uint32(1))
+        );
+        _borrowAfterSkip("instant_borrow_1_skip_late", skipped);
+    }
+
+    function _borrowAfterSkip(string memory action, address skipped) internal {
+        address filler = _newParty("gasSkipFiller");
+        _slot(filler, 510, SLOT_SIZE, true);
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](2);
+        srcs[0] = _src(skipped);
+        srcs[1] = _src(filler);
+        _age();
+        Measured memory m = _measure(
+            action,
+            taker,
+            abi.encodeCall(InstantMarketFacet.borrowInstant, (_req(SLOT_SIZE, SLOT_SIZE * 2, 510, SLOT_SIZE), srcs))
+        );
+        assertGt(m.gas, 0, "measured");
+    }
+
+    /// @dev The instant market's fill bound as the code holds it: the default
+    ///      a fresh Diamond reads, and the top of the range governance may set
+    ///      (found by setting it). The check applies the source rule to both.
+    ///      The list's length cap is the top of the range today.
+    function test_gas_instant_config() public {
+        (, uint8 dflt) = InstantMarketFacet(address(diamond)).getInstantMarketConfig();
+        uint8 top;
+        for (uint256 v = 2; v <= 255; v++) {
+            vm.prank(owner);
+            (bool ok,) = address(diamond).call(abi.encodeCall(InstantMarketFacet.setInstantMaxFills, (uint8(v))));
+            if (!ok) break;
+            top = uint8(v);
+        }
+        string memory o = "instantConfig";
+        vm.serializeUint(o, "defaultBound", dflt);
+        vm.serializeUint(o, "topBound", top);
+        string memory json = vm.serializeUint(o, "maxSources", top);
+        vm.createDir(string.concat(OUT_DIR, "config/"), true);
+        vm.writeJson(json, string.concat(OUT_DIR, "config/instant.json"));
+    }
+
     // ─── Auto-lend slots ─────────────────────────────────────────────────
 
     function test_gas_slot_set() public {

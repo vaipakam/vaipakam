@@ -18,11 +18,22 @@
  * a budget RAISED without a changed reason: a raise is a decision, and the
  * row says why it was taken.
  *
- * Instant borrow is measured with 1, 2, 4 and 8 sources. The largest count
- * whose gas stays within `instantBorrow.headroom` (80%) of the smallest
- * transaction gas limit among the networks listed is computed here, and must
- * equal the file's `instantBorrow.maxSources`: that count is what the app and
- * the contracts may offer.
+ * Instant borrow is measured with 1, 2, 4 and 8 sources, and with one
+ * skipped source before one fill (a skip refused early and one refused
+ * late). Every instant-borrow figure here counts each price-guard read at the
+ * guard's full read budget (`instantBorrow.guardReadGas`), since the suite's
+ * guard is a mock. The largest count whose gas stays within
+ * `instantBorrow.headroom` (80%) of the smallest transaction gas limit among
+ * the networks listed is computed here, and must equal the file's
+ * `instantBorrow.maxSources`.
+ *
+ * The source rule (design ruling 2026-11-22, instant borrow source cap): for
+ * a fill bound b and a list of up to L sources, the first fill, plus (b - 1)
+ * further fills, plus (L - b) skips, must stay within the headroom of the
+ * smallest network limit. It is checked for the bound the deploy sets
+ * (`instantBorrow.deployBound`), the code's default and the top of the range
+ * governance may set, as the suite reads them from the code
+ * (`out-gas-suite/config/instant.json`). A bound that breaks it is a finding.
  *
  * Measurements whose action starts with `_` are the suite's own probes (the
  * isolation demonstration) and are ignored.
@@ -47,7 +58,15 @@ export function readMeasurements(dir) {
     const m = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     out[m.action ?? f.slice(0, -5)] = m;
   }
+  const cfg = join(dir, 'config', 'instant.json');
+  // Not an action: kept under a key no action can take.
+  if (existsSync(cfg)) Object.defineProperty(out, '__instantConfig', { value: JSON.parse(readFileSync(cfg, 'utf8')), enumerable: false });
   return out;
+}
+
+/** An instant-borrow figure with every guard read at the guard's full read budget. */
+export function fullGas(ib, m) {
+  return m.gas + (m.guardReads ?? 0) * (ib.guardReadGas ?? 0);
 }
 
 /** The largest measured source count within the headroom of the smallest network limit. */
@@ -59,9 +78,35 @@ export function largestInstantCount(budgets, measured) {
   let best = 0;
   for (const n of ib.sources ?? []) {
     const m = measured[`${ib.actionPrefix}${n}`];
-    if (m && m.gas <= cap && n > best) best = n;
+    if (m && fullGas(ib, m) <= cap && n > best) best = n;
   }
   return { limit, cap, best };
+}
+
+/**
+ * The source rule's terms from the measurements: the first fill, the dearest
+ * further fill between two measured counts, and the dearest skip. Undefined
+ * when a measurement it needs is missing.
+ */
+export function instantCosts(ib, measured) {
+  const at = (n) => measured[`${ib.actionPrefix}${n}`];
+  const counts = (ib.sources ?? []).filter((n) => at(n)).sort((a, b) => a - b);
+  if (!counts.length || counts[0] !== 1 || counts.length < 2) return undefined;
+  const first = fullGas(ib, at(1));
+  let perFill = 0;
+  for (let i = 1; i < counts.length; i++) {
+    const [a, b] = [counts[i - 1], counts[i]];
+    perFill = Math.max(perFill, Math.ceil((fullGas(ib, at(b)) - fullGas(ib, at(a))) / (b - a)));
+  }
+  const skips = (ib.skipActions ?? []).map((k) => measured[k]);
+  if (!skips.length || skips.some((m) => !m)) return undefined;
+  const skip = Math.max(0, ...skips.map((m) => fullGas(ib, m) - first));
+  return { first, perFill, skip };
+}
+
+/** The source rule for a bound `b` and a list of up to `listMax` sources. */
+export function sourceRuleCost(costs, b, listMax) {
+  return costs.first + (b - 1) * costs.perFill + Math.max(0, listMax - b) * costs.skip;
 }
 
 /**
@@ -97,6 +142,26 @@ export function compareBudgets(budgets, measured, base) {
       findings.push(`instantBorrow: the largest source count within ${ib.cap} gas (${Math.round((budgets.instantBorrow.headroom ?? 0.8) * 100)}% of ${ib.limit}) is ${ib.best}, but maxSources says ${budgets.instantBorrow.maxSources}`);
     }
   }
+  if (ib && Number.isFinite(ib.limit)) {
+    const ibCfg = budgets.instantBorrow;
+    const costs = instantCosts(ibCfg, measured);
+    const cfg = measured.__instantConfig;
+    if (!costs) findings.push('instantBorrow: the source rule needs instant borrow at 1 and at least one more count, and every skip in skipActions');
+    else if (!cfg) findings.push('instantBorrow: the source rule needs the code\'s fill bounds (out-gas-suite/config/instant.json)');
+    else {
+      const bounds = [['the deploy setting', ibCfg.deployBound], ['the code default', cfg.defaultBound], ['the top of the governance range', cfg.topBound]];
+      for (const [what, b] of bounds) {
+        if (!Number.isInteger(b)) {
+          refusals.push(`instantBorrow: ${what} is not a whole number`);
+          continue;
+        }
+        const cost = sourceRuleCost(costs, b, cfg.maxSources);
+        if (cost > ib.cap) {
+          findings.push(`instantBorrow: a bound of ${b} (${what}) with a list of ${cfg.maxSources} needs ${cost} gas (first ${costs.first}, ${b - 1} more at ${costs.perFill}, ${Math.max(0, cfg.maxSources - b)} skips at ${costs.skip}), over ${ib.cap}`);
+        }
+      }
+    }
+  }
   return { findings, notes, refusals };
 }
 
@@ -125,7 +190,11 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`  ${a.padEnd(34)} ${String(m.gas).padStart(9)} gas  ${String(m.slotsWritten).padStart(3)} written  ${String(m.slotsRead).padStart(3)} read  ${String(m.facetCalls).padStart(2)} facet calls  ${String(m.events).padStart(2)} events  (budget ${budgets.actions?.[a]?.gas ?? '—'})`);
   }
   const ib = largestInstantCount(budgets, measured);
-  if (ib && Number.isFinite(ib.limit)) console.log(`  instant borrow: up to ${ib.best} sources within ${ib.cap} gas`);
+  if (ib && Number.isFinite(ib.limit)) {
+    console.log(`  instant borrow: up to ${ib.best} sources within ${ib.cap} gas, guard reads at their full budget`);
+    const c = instantCosts(budgets.instantBorrow, measured);
+    if (c) console.log(`  instant borrow: first fill ${c.first}, each further fill ${c.perFill}, each skip ${c.skip}`);
+  }
   for (const n of notes) console.log(`  · ${n}`);
   for (const r of refusals) console.error(`  ✗ ${r}`);
   const mark = budgets.blocking ? '✗' : '⚠';

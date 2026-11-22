@@ -46,6 +46,14 @@
       "gas": 7047000,
       "reason": "instant borrow taking 1 Auto-lend slot, each its own loan; measured at the first build, plus 10%"
     },
+    "instant_borrow_1_skip_early": {
+      "gas": 7118000,
+      "reason": "instant borrow with one source skipped (refused early: no instant consent) before one fill; measured at the first build, plus 10%"
+    },
+    "instant_borrow_1_skip_late": {
+      "gas": 8248000,
+      "reason": "instant borrow with one source skipped (refused late: at loan creation) before one fill; measured at the first build, plus 10%"
+    },
     "instant_borrow_2": {
       "gas": 12296000,
       "reason": "instant borrow taking 2 Auto-lend slots, each its own loan; measured at the first build, plus 10%"
@@ -152,7 +160,14 @@
       8
     ],
     "headroom": 0.8,
-    "maxSources": 2,
+    "maxSources": 0,
+    "deployBound": 2,
+    "guardReadGas": 500000,
+    "_guardReadGasWhy": "Design ruling 2026-11-22 (instant borrow source cap): each price-guard read is counted at the full gas the Diamond gives the guard (LibPriceGuard GUARD_READ_GAS), not at the mocked cost. A read measured on Base Sepolia costs 45,000-57,000 gas.",
+    "skipActions": [
+      "instant_borrow_1_skip_early",
+      "instant_borrow_1_skip_late"
+    ],
     "networkTxGasLimits": {
       "ethereum": {
         "gas": 16777216,
