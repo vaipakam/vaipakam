@@ -140,6 +140,7 @@ import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
+import {ExitInstructionFacet} from "../src/facets/ExitInstructionFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1134,6 +1135,19 @@ contract HelperTest {
         selectors = LibTestRateLinkCut.rateLinkSelectors();
     }
 
+    /// @notice #3752 — the exit instruction (sell and repay before liquidation).
+    function getExitInstructionFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = ExitInstructionFacet.setExitInstruction.selector;
+        selectors[1] = ExitInstructionFacet.clearExitInstruction.selector;
+        selectors[2] = ExitInstructionFacet.runExit.selector;
+        selectors[3] = ExitInstructionFacet.runReduce.selector;
+        selectors[4] = ExitInstructionFacet.previewExit.selector;
+        selectors[5] = ExitInstructionFacet.getExitInstruction.selector;
+        selectors[6] = ExitInstructionFacet.getExitInstructionConfig.selector;
+        selectors[7] = ExitInstructionFacet.setExitInstructionConfig.selector;
+    }
+
     function getReferralFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](8);
         selectors[0] = ReferralFacet.bindInviter.selector;
@@ -1235,9 +1249,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
         selectors[1] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+        selectors[2] = SwapToRepayFacet.swapToRepayFullByInstruction.selector;
     }
 
     /// #2416 — the partial swap-to-repay route (split off SwapToRepayFacet).
@@ -1246,8 +1261,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = SwapToRepayPartialFacet.swapToRepayPartial.selector;
+        selectors[1] = SwapToRepayPartialFacet.swapToRepayPartialByInstruction.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.

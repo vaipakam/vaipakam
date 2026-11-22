@@ -341,6 +341,8 @@ FACETS=(
   # #3635 A / #3713 — the rate link and the warning band (bound, band check,
   # link admission); the app previews the band and the linked bound with it.
   "RateLinkFacet"
+  # Sell and repay before liquidation (#3752).
+  "ExitInstructionFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

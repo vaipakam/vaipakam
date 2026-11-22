@@ -99,7 +99,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
     /// @notice Emitted on a successful full swap-to-repay close-out.
     /// @param loanId The loan being settled.
-    /// @param borrower The borrower (== msg.sender — caller authority).
+    /// @param borrower The borrower side the close-out was made for: the
+    ///        caller on the manual entry, the instruction's holder on the
+    ///        #3752 instruction entry.
     /// @param collateralIn The collateral consumed by the swap.
     /// @param principalOut The principal asset received from the swap.
     /// @param adapterUsed The `LibSwap` adapter index that succeeded.
@@ -122,6 +124,14 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     error LenderYieldFeeResolveFailed();
 
     error SwapBoundsInsufficient();
+
+    /// @notice #3752 — the instruction entry is reached only by the Diamond's
+    ///         own executor.
+    error OnlyDiamondInternal();
+
+    /// @notice #3752 — a holder's tolerance looser than the manual route's
+    ///         slippage cap.
+    error SlippageAboveRouteCap(uint256 capBps, uint256 routeCapBps);
 
     /// @notice `LibSwap.swapWithFailoverUpTo` returned `(success=false)` —
     ///         every adapter in the caller's try-list reverted or was refused
@@ -192,6 +202,63 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 maxCollateralIn,
         uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        // Borrower NFT ownership (not the latched `loan.borrower` field) is
+        // the authority root: claim rights travel with the position NFT,
+        // so only its current holder may spend the pledged collateral.
+        LibAuth.requireBorrowerNftOwner(LibVaipakam.storageSlot().loans[loanId]);
+        _swapToRepayFull(
+            loanId, adapterCalls, maxCollateralIn, validUntil, msg.sender,
+            LibVaipakam.cfgMaxSwapToRepaySlippageBps()
+        );
+    }
+
+    /// @notice #3752 — the same full close-out, run on the borrower holder's
+    ///         standing "sell and repay before liquidation" instruction.
+    /// @dev    Reached only by self-call from `ExitInstructionFacet.runExit`,
+    ///         which has already established that `holder` holds the borrower
+    ///         position and set the instruction, that it is due, and that the
+    ///         platform is not paused, and holds the Diamond's reentrancy
+    ///         guard. Only the authority and the price bound differ from the
+    ///         manual entry: the holder's instruction stands in for the
+    ///         holder's transaction, and the holder's tolerance (never looser
+    ///         than the manual cap) stands in for the cap. The sale may use
+    ///         the whole collateral; it still sells only the least that repays.
+    /// @param holder The borrower-position holder whose instruction runs.
+    /// @param capBps The holder's tolerance, `<=` the manual route's cap.
+    /// @return collateralSold The collateral the sale consumed.
+    /// @return proceeds       What the sale delivered.
+    /// @return debtPaid       The debt it repaid (lender due plus the
+    ///                        treasury's share); `proceeds - debtPaid` is held
+    ///                        for the borrower position.
+    function swapToRepayFullByInstruction(
+        uint256 loanId,
+        address holder,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        uint256 capBps,
+        uint64 validUntil
+    ) external whenNotPaused returns (uint256 collateralSold, uint256 proceeds, uint256 debtPaid) {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        uint256 routeCap = LibVaipakam.cfgMaxSwapToRepaySlippageBps();
+        if (capBps > routeCap) revert SlippageAboveRouteCap(capBps, routeCap);
+        return _swapToRepayFull(
+            loanId, adapterCalls, LibVaipakam.storageSlot().loans[loanId].collateralAmount, validUntil, holder,
+            capBps
+        );
+    }
+
+    /// @dev The full close-out both entries run. `actor` is the borrower side
+    ///      the repayment is made for: the caller on the manual entry (whose
+    ///      position authority the entry checks), the instruction's holder on
+    ///      the instruction entry (checked by the executor). `capBps` is the
+    ///      slippage bound the sale is sized and floored at.
+    function _swapToRepayFull(
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        uint256 maxCollateralIn,
+        uint64 validUntil,
+        address actor,
+        uint256 capBps
+    ) private returns (uint256, uint256, uint256) {
         LibTiming.requireDeadline(validUntil);
         // T-090 v1.1 (#389) §5.8 — borrower can't run the v1 atomic
         // close path while their v1.1 intent commit is live; the
@@ -222,10 +289,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // latched `loan.borrower` field) is the authority root. Claim
         // rights travel with the position NFT, so the current NFT
         // holder must be the only caller able to spend pledged collateral.
-        LibAuth.requireBorrowerNftOwner(loan);
+        // The caller's position authority is checked by the manual entry
+        // before this body runs; on the instruction entry the executor has
+        // checked that `actor` holds the borrower position.
 
         // Block lender-side self-repay (mirrors RepayFacet:273-278).
-        LibAuth.requireNotLenderSide(loan);
+        LibAuth.requireNotLenderSide(loan, actor);
 
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
             revert InvalidAmount();
@@ -268,7 +337,8 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             loan.collateralAsset,
             loan.principalAsset,
             requiredPrincipal,
-            maxCollateralIn
+            maxCollateralIn,
+            capBps
         );
 
         // ── Withdraw collateral to diamond + execute swap ────────────
@@ -537,11 +607,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // borrower's residual position on indexer / dashboard surfaces.
         emit SwapToRepayExecuted(
             loanId,
-            msg.sender,
+            actor,
             actualCollateralConsumed,
             outputAmount,
             adapterUsed
         );
+        return (actualCollateralConsumed, outputAmount, requiredPrincipal);
     }
 
     /// @notice #2317 — how {swapToRepayFull} would size its sale right now.
@@ -593,7 +664,8 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             loan.collateralAsset,
             loan.principalAsset,
             requiredPrincipal,
-            maxCollateralIn
+            maxCollateralIn,
+            LibVaipakam.cfgMaxSwapToRepaySlippageBps()
         );
     }
 
@@ -619,12 +691,11 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         address collateralAsset,
         address principalAsset,
         uint256 required,
-        uint256 maxIn
+        uint256 maxIn,
+        uint256 capBps
     ) private view returns (uint256 sell, uint256 floor) {
         bool covers;
-        (covers, sell, floor) = LibSaleSizing.sizeSale(
-            collateralAsset, principalAsset, required, maxIn, LibVaipakam.cfgMaxSwapToRepaySlippageBps()
-        );
+        (covers, sell, floor) = LibSaleSizing.sizeSale(collateralAsset, principalAsset, required, maxIn, capBps);
         if (!covers) revert SwapBoundsInsufficient();
     }
 

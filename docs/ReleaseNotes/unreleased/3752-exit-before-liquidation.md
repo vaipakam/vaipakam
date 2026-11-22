@@ -1,0 +1,11 @@
+## Thread — Sell and repay before liquidation (PR #<n>)
+
+A borrower can now leave a fourth standing instruction on a loan: when the health factor falls below a level they choose, sell enough of the loan's own collateral to repay, at no worse than a price tolerance they choose. It needs no money set aside, and it costs the borrower the tolerance instead of a liquidation's keeper bonus and handling fee. It comes in two forms: close the loan (sell the least that repays the whole debt), or, where the loan allows partial repayment, reduce it (sell the least that restores the holder's target, and at least the loan's opening loan-to-value limit). Design: `docs/DesignsAndPlans/ExitBeforeLiquidationDesign.md`.
+
+There is no second settlement path. The two manual "repay with collateral" routes each gain one more authority, the holder's live instruction, reachable only from the new executors, and take the holder's tolerance in place of their cap. Sizing, settlement and events are theirs, so the lender is paid exactly as a manual repayment pays, and what the borrower side is left with is held for the borrower position and collected into the holder's vault.
+
+Anyone may run it, and the caller chooses only the swap routes and receives nothing. Unless the holder switches it off, a run waits for a calm market, measured against the last two hourly price checkpoints with the forced-sale floor's bound; with the switch on, the reading is still taken and stated with the run. On a protected account every change that could sell more or at a worse price waits the account's delay. A preview states whether a run is due, why it would be skipped, how much it would sell and the least a route must deliver.
+
+The new facet is its own (about 20 KB, where the standing-instruction facet has about 5 KB of room), and the skip reasons every standing instruction reports now live in one list in the shared library. It must be refreshed together with both swap-to-repay facets and the standing-instruction facet. Advances #3752.
+
+> Caveat: the keeper step that runs it is not built yet; until it is, a run needs someone to call it. The hourly price checkpoint pass must be armed on a network for the calm wait to be satisfiable there.

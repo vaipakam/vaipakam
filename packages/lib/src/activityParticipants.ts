@@ -114,6 +114,14 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['StandingInstructionSkipped', ['caller']],
   ['StandingInstructionsSet', ['owner', 'setBy']],
   ['StandingInstructionsCleared', ['owner', 'by']],
+  // #3752 — the exit instruction ("sell and repay before liquidation"):
+  // whoever set, queued or cleared it for the holder it names, and a run's
+  // holder and the wallet that submitted it.
+  ['ExitInstructionSet', ['owner', 'setBy']],
+  ['ExitInstructionChangeQueued', ['owner', 'setBy']],
+  ['ExitInstructionCleared', ['owner', 'by']],
+  ['ExitInstructionRun', ['holder', 'caller']],
+  ['ExitReductionRun', ['holder', 'caller']],
   // The wallet that paid an extension's fee for the added term.
   ['ExtensionFeeCharged', ['payer']],
   // Settled with the reserve's repayment legs, in the holder's name.

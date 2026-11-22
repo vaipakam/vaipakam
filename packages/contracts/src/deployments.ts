@@ -274,6 +274,8 @@ export interface DeploymentFacets {
   referralFacet?: HexAddress;
   /** #3635 A / #3713 — the rate link and the warning band. */
   rateLinkFacet?: HexAddress;
+  /** #3752 — sell and repay before liquidation (the exit instruction). */
+  exitInstructionFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

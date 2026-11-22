@@ -67,7 +67,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     /// @notice Emitted on a successful partial swap-to-repay (principal
     ///         reduced; loan continues in Active).
     /// @param loanId The loan being partially repaid.
-    /// @param borrower The borrower (== msg.sender).
+    /// @param borrower The borrower side the repayment was made for: the
+    ///        caller on the manual entry, the instruction's holder on the
+    ///        #3752 instruction entry.
     /// @param collateralIn The collateral consumed by the swap.
     /// @param principalOut The principal asset received from the swap.
     /// @param partialPrincipal The principal amount retired.
@@ -128,6 +130,14 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     ///         floor) is the meaningful protection here, alongside the LTV cap.
     error PartialSwapWorsensHealthFactor(uint256 hfBefore, uint256 hfAfter);
 
+    /// @notice #3752 — the instruction entry is reached only by the Diamond's
+    ///         own executor.
+    error OnlyDiamondInternal();
+
+    /// @notice #3752 — a holder's tolerance looser than the manual route's
+    ///         slippage cap.
+    error SlippageAboveRouteCap(uint256 capBps, uint256 routeCapBps);
+
     /// @notice Partial swap-to-repay: swap a portion of the borrower's
     ///         collateral for the principal asset and apply the proceeds
     ///         to a partial principal reduction. Resets the accrual
@@ -149,6 +159,68 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         LibSwap.AdapterCall[] calldata adapterCalls,
         uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        // Borrower NFT ownership (not the latched `loan.borrower` field) is
+        // the authority root: claim rights travel with the position NFT,
+        // so only its current holder may spend the pledged collateral.
+        LibAuth.requireBorrowerNftOwner(LibVaipakam.storageSlot().loans[loanId]);
+        _swapToRepayPartial(
+            loanId, collateralSwapAmount, adapterCalls, validUntil, msg.sender, false,
+            LibVaipakam.cfgMaxSwapToRepaySlippageBps()
+        );
+    }
+
+    /// @notice #3752 — the same partial repayment, run on the borrower
+    ///         holder's standing "sell and repay before liquidation"
+    ///         instruction in its reduce form.
+    /// @dev    Reached only by self-call from `ExitInstructionFacet.runReduce`,
+    ///         which has established that `holder` holds the borrower position
+    ///         and set the instruction, that it is due and that the platform
+    ///         is not paused, sized `collateralSwapAmount`, and holds the
+    ///         Diamond's reentrancy guard. Every rule of the manual entry
+    ///         applies unchanged (interest first, the smallest partial, no
+    ///         whole-principal result, health factor not worse, back inside
+    ///         the opening loan-to-value limit); only the authority and the
+    ///         price bound differ.
+    /// @param holder The borrower-position holder whose instruction runs.
+    /// @param capBps The holder's tolerance, `<=` the manual route's cap.
+    /// @return collateralSold   The collateral the sale consumed.
+    /// @return proceeds         What the sale delivered.
+    /// @return principalRetired The principal the repayment retired (the
+    ///                          rest paid the accrued interest, and anything
+    ///                          above both is held for the borrower position).
+    function swapToRepayPartialByInstruction(
+        uint256 loanId,
+        address holder,
+        uint256 collateralSwapAmount,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        uint256 capBps,
+        uint64 validUntil
+    ) external whenNotPaused returns (uint256 collateralSold, uint256 proceeds, uint256 principalRetired) {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        uint256 routeCap = LibVaipakam.cfgMaxSwapToRepaySlippageBps();
+        if (capBps > routeCap) revert SlippageAboveRouteCap(capBps, routeCap);
+        return _swapToRepayPartial(loanId, collateralSwapAmount, adapterCalls, validUntil, holder, true, capBps);
+    }
+
+    /// @dev The partial repayment both entries run. `actor` is the borrower
+    ///      side it is made for: the caller on the manual entry (whose
+    ///      position authority the entry checks), the instruction's holder on
+    ///      the instruction entry (checked by the executor). `instructed`
+    ///      marks the instruction entry: an instruction set before its holder
+    ///      was sanctions-flagged still runs (#3752 design §4.1), so the
+    ///      collateral pull and the unspent-input refund resolve the stored
+    ///      borrower's existing vault under the narrow move-out exemption,
+    ///      exactly as the full route does. The manual entry stays a voluntary
+    ///      Tier-1 action. `capBps` is the slippage bound of the sale's floor.
+    function _swapToRepayPartial(
+        uint256 loanId,
+        uint256 collateralSwapAmount,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        uint64 validUntil,
+        address actor,
+        bool instructed,
+        uint256 capBps
+    ) private returns (uint256, uint256, uint256) {
         LibTiming.requireDeadline(validUntil);
         // T-090 v1.1 (#389) §5.8 — same custody-conflict rationale
         // as `swapToRepayFull`; block partial-atomic while the
@@ -183,7 +255,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
         // Codex round-1 PR #390 P1 #3 (same fix as `swapToRepayFull`).
-        LibAuth.requireBorrowerNftOwner(loan);
+        // The caller's position authority is checked by the manual entry
+        // before this body runs; on the instruction entry the executor has
+        // checked that `actor` holds the borrower position.
 
         // Codex round-2 PR #390 P2 #1 — block lender self-repay on
         // the partial path too. The full path had this guard from
@@ -191,7 +265,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // borrower-side position NFT could consume claim-bearing
         // collateral and route the partial principal + interest into
         // their own lender vault while keeping the loan Active.
-        LibAuth.requireNotLenderSide(loan);
+        LibAuth.requireNotLenderSide(loan, actor);
 
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
 
@@ -222,7 +296,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             collateralSwapAmount
         );
         uint256 minPrincipalOut = (expectedProceeds *
-            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
+            (LibVaipakam.BASIS_POINTS - capBps)) /
             LibVaipakam.BASIS_POINTS;
 
         // ── Withdraw + swap ──────────────────────────────────────────
@@ -237,7 +311,19 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
         // #2440 — the borrower chose this repayment, so a short arrival is
         // refused: the sale never spends the Diamond's other balance.
-        LibVaultOutflow.toDiamondExact(loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP);
+        if (instructed) {
+            LibDelivery.requireFull(
+                loan.collateralAsset,
+                collateralSwapAmount,
+                LibSanctionedLock.pullToDiamond(
+                    s, loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP
+                )
+            );
+        } else {
+            LibVaultOutflow.toDiamondExact(
+                loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP
+            );
+        }
 
         (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =
             LibSwap.swapWithFailoverUpTo(
@@ -256,11 +342,16 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         if (partialFillRefund > 0) {
             // #2440 — refused unless the vault got all of it back, so the
             // re-lien and the loan's collateral match what the vault holds.
+            // On the instruction entry the stored borrower may have been
+            // flagged since: resolve their existing vault under the narrow
+            // move-out window, never spanning the swap.
+            if (instructed) LibSanctionedLock.beginMoveOut(s, loan.borrower);
             LibDelivery.pushExact(
                 loan.collateralAsset,
                 LibFacet.getOrCreateVault(loan.borrower),
                 partialFillRefund
             );
+            if (instructed) LibSanctionedLock.endMoveOut(s);
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,
                 loan.collateralAsset,
@@ -443,12 +534,13 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // and `actualCollateralConsumed` (not the requested amount).
         emit SwapToRepayPartialExecuted(
             loanId,
-            msg.sender,
+            actor,
             actualCollateralConsumed,
             outputAmount,
             partialPrincipal,
             adapterUsed
         );
+        return (actualCollateralConsumed, outputAmount, partialPrincipal);
     }
 
     /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated

@@ -20,7 +20,6 @@ import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
-import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibInterestPayment, IInterestPaymentHost} from "../libraries/LibInterestPayment.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -289,35 +288,14 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     uint8 internal constant INSTRUCTION_PAY_INTEREST = 2;
     uint8 internal constant INSTRUCTION_REPAY_AT_DUE = 3;
 
-    /// @notice The position is no longer held by the instructions' owner.
-    uint8 internal constant SKIP_HOLDER_CHANGED = 1;
-    /// @notice The reserve the instruction spends is empty.
-    uint8 internal constant SKIP_RESERVE_EMPTY = 2;
-    /// @notice The payment reserve is short of the full repayment.
-    uint8 internal constant SKIP_RESERVE_SHORT = 3;
-    /// @notice A preclose offset, a sale listing, a refinance request or a
-    ///         swap-to-repay order is live on the loan.
-    uint8 internal constant SKIP_LOAN_BUSY = 4;
-    /// @notice The price or health factor could not be read.
-    uint8 internal constant SKIP_PRICE_UNAVAILABLE = 5;
-    /// @notice The platform or the asset is paused.
-    uint8 internal constant SKIP_PAUSED = 6;
-    /// @notice The owner's protected account is locked or was replaced.
-    uint8 internal constant SKIP_ACCOUNT_LOCKED = 7;
-    /// @notice The position moved and has not been consolidated into the new
-    ///         holder's vault.
-    uint8 internal constant SKIP_NOT_CONSOLIDATED = 8;
-    /// @notice The payment's one attempt reverted, so nothing moved. The
-    ///         usual cause is a delivery the token refused (a frozen lender
-    ///         vault or treasury); {InterestPaymentAttemptFailed}, emitted
-    ///         beside the skip, carries the attempt's own error selector so
-    ///         the cause is stated, not guessed.
-    uint8 internal constant SKIP_LEG_REFUSED = 9;
-    /// @notice The reserve's owner is sanctions-flagged. Only the collateral
-    ///         top-up uses it: it stands in for adding collateral, which a
-    ///         flagged holder may not do, while paying interest and repaying
-    ///         stay open so the lender is made whole.
-    uint8 internal constant SKIP_SANCTIONED = 10;
+    // The skip reasons: one list for every standing instruction, in
+    // `LibStandingInstructions` (#3752 added four), aliased here.
+    uint8 internal constant SKIP_RESERVE_EMPTY = LibStandingInstructions.SKIP_RESERVE_EMPTY;
+    uint8 internal constant SKIP_RESERVE_SHORT = LibStandingInstructions.SKIP_RESERVE_SHORT;
+    uint8 internal constant SKIP_PRICE_UNAVAILABLE = LibStandingInstructions.SKIP_PRICE_UNAVAILABLE;
+    uint8 internal constant SKIP_NOT_CONSOLIDATED = LibStandingInstructions.SKIP_NOT_CONSOLIDATED;
+    uint8 internal constant SKIP_LEG_REFUSED = LibStandingInstructions.SKIP_LEG_REFUSED;
+    uint8 internal constant SKIP_SANCTIONED = LibStandingInstructions.SKIP_SANCTIONED;
 
     /// @dev The gas the interest payment's one attempt is given: well above
     ///      a draw, a booking with open seller claims, and the credit.
@@ -466,6 +444,10 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
             if (LibStandingInstructions.autoDueDatePlanLive(s, loan)) revert DueDatePlanExists(loanId);
         }
         address owner = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        // #3752 — with the exit instruction set too, the top-up acts first.
+        LibStandingInstructions.requireExitBelowTopUp(
+            LibStandingInstructions.exitLevelOf(s, loanId, owner), cfg.topUpTriggerHf, _cfgMargin(s)
+        );
         LibVaipakam.StandingInstructions storage si = s.standingInstructions[loanId];
         // The interval between two top-ups survives a re-set by the same
         // owner, so re-setting cannot shorten it.
@@ -522,7 +504,7 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         if (si.lastTopUpAt != 0 && block.timestamp < nextAt) revert TopUpTooSoon(loanId, nextAt);
 
         address holder = si.owner;
-        uint8 skip = _commonSkip(s, loanId, loan, holder, loan.collateralAsset);
+        uint8 skip = LibStandingInstructions.commonSkip(s, loanId, loan, holder, loan.collateralAsset);
         // The top-up follows the manual add-collateral's Tier-1 gate: a
         // flagged holder's loan is not strengthened from its reserve.
         if (skip == 0 && LibVaipakam.isSanctionedAddress(holder)) skip = SKIP_SANCTIONED;
@@ -649,7 +631,7 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         shortfall = LibPeriodicInterest.currentShortfall(loan);
         if (shortfall == 0) revert NothingOwed(loanId);
         holder = si.owner;
-        skip = _commonSkip(s, loanId, loan, holder, loan.principalAsset);
+        skip = LibStandingInstructions.commonSkip(s, loanId, loan, holder, loan.principalAsset);
         uint256 reserve = s.paymentReserve[loanId][holder];
         if (skip == 0 && reserve == 0) skip = SKIP_RESERVE_EMPTY;
         amount = shortfall < reserve ? shortfall : reserve;
@@ -697,7 +679,7 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         }
 
         address holder = si.owner;
-        uint8 skip = _commonSkip(s, loanId, loan, holder, loan.principalAsset);
+        uint8 skip = LibStandingInstructions.commonSkip(s, loanId, loan, holder, loan.principalAsset);
         uint256 reserve = s.paymentReserve[loanId][holder];
         uint256 due = _repaymentDue(loan, loanId);
         uint256 missing;
@@ -787,11 +769,11 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         v.ownerHoldsPosition = v.instructions.owner != address(0) && holderNow == v.instructions.owner;
         v.consolidationPending = loan.borrower != holderNow;
         if (v.instructions.owner != address(0)) {
-            v.topUpSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.collateralAsset);
+            v.topUpSkipNow = LibStandingInstructions.commonSkip(s, loanId, loan, v.instructions.owner, loan.collateralAsset);
             if (v.topUpSkipNow == 0 && LibVaipakam.isSanctionedAddress(v.instructions.owner)) {
                 v.topUpSkipNow = SKIP_SANCTIONED;
             }
-            v.paymentSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.principalAsset);
+            v.paymentSkipNow = LibStandingInstructions.commonSkip(s, loanId, loan, v.instructions.owner, loan.principalAsset);
         }
         uint256 hf;
         (v.priceKnown, hf) = _healthFactor(loanId);
@@ -877,28 +859,6 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
             abi.decode(ret, (LibVaipakam.LiquidityStatus)) == LibVaipakam.LiquidityStatus.Liquid;
     }
 
-    /// @dev The skip reasons every instruction shares (design §4.4), in
-    ///      order; 0 when none applies.
-    function _commonSkip(
-        LibVaipakam.Storage storage s,
-        uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        address holder,
-        address asset
-    ) private view returns (uint8) {
-        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != holder) return SKIP_HOLDER_CHANGED;
-        if (LibPausable.paused() || LibFacet.isAssetPaused(asset)) return SKIP_PAUSED;
-        LibProtectedAccount.Core memory c = LibProtectedAccount.core(holder);
-        if (c.locked || c.retired) return SKIP_ACCOUNT_LOCKED;
-        if (
-            s.loanToOffsetOfferId[loanId] != 0 ||
-            s.prepayListingOrderHash[loanId] != bytes32(0) ||
-            s.intentCommits[loanId].orderHash != bytes32(0) ||
-            LibRefinanceRequest.live(loanId) != 0
-        ) return SKIP_LOAN_BUSY;
-        return 0;
-    }
-
     /// @dev The collateral lien sits in the STORED borrower's vault; a moved
     ///      position is consolidated into the new holder's vault first (skip-
     ///      not-block), and a top-up waits until it is.
@@ -975,18 +935,15 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         if (v == 0) v = LibVaipakam.STANDING_TRIGGER_MAX_HF_DEFAULT;
     }
 
-    function _cfgTargetMax(LibVaipakam.Storage storage s) private view returns (uint64 v) {
-        v = s.standingInstructionCfg.targetMaxHf;
-        if (v == 0) v = LibVaipakam.STANDING_TARGET_MAX_HF_DEFAULT;
+    function _cfgTargetMax(LibVaipakam.Storage storage s) private view returns (uint64) {
+        return LibStandingInstructions.cfgTargetMax(s);
     }
 
-    function _cfgMargin(LibVaipakam.Storage storage s) private view returns (uint64 v) {
-        v = s.standingInstructionCfg.minMarginHf;
-        if (v == 0) v = LibVaipakam.STANDING_MIN_MARGIN_HF_DEFAULT;
+    function _cfgMargin(LibVaipakam.Storage storage s) private view returns (uint64) {
+        return LibStandingInstructions.cfgMargin(s);
     }
 
-    function _cfgInterval(LibVaipakam.Storage storage s) private view returns (uint256 v) {
-        v = s.standingInstructionCfg.topUpIntervalSeconds;
-        if (v == 0) v = LibVaipakam.STANDING_TOPUP_INTERVAL_DEFAULT;
+    function _cfgInterval(LibVaipakam.Storage storage s) private view returns (uint256) {
+        return LibStandingInstructions.cfgInterval(s);
     }
 }
