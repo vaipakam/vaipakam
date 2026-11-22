@@ -72,11 +72,31 @@ and EIP-170 room comes back to `OracleFacet`.
 - **Delay.** On a production chain the delay is 7 to 14 days, 7 by default,
   matching the vault code delay (owner decision 2026-11-10). A testnet may set
   0, as the feed registry allows.
-- **One fast lever.** The guardian may disable a secondary source (Tellor,
-  API3 or DIA) at once. This is stop-only: the quorum runs on fewer sources,
-  and no price can be introduced. Re-enabling a source waits the delay, and a
+- **Two fast levers, both stop-only.** The first: the guardian may disable a
+  secondary source (Tellor, API3 or DIA) at once. The quorum runs on fewer
+  sources, and no price can be introduced. A disabled source still counts as
+  a source that has a reading, so an answer that needed a confirming reading
+  still needs one, and a stop never turns a refused answer into an accepted
+  one. Re-enabling a source waits the delay, and a
   stop cancels any re-enable already waiting or due for that source, so an
   approval given before the stop cannot undo it.
+- **The second: a bounded stop of one asset's price** (owner decision
+  2026-11-22). The guardian may stop one asset's price at once. While the
+  stop holds, the guard gives a distrusted price for that asset at every
+  price version: a step that needs the price is refused, and a repayment, a
+  top-up of collateral and a cure stay open. The stop names no figure and
+  changes no setting, and it is published with its reason. It lapses by
+  itself after the stop time (24 hours proposed), and the guardian or
+  governance can lift it sooner. Only governance can make it hold longer:
+  its extension acts at once, lasts at most one stop time and may be
+  renewed. The guardian alone cannot stop the same asset again until one
+  stop time has passed since its stop lapsed, and at most a few assets (3
+  proposed) are stopped at one time. A stop never gives a price, never
+  counts as silence, and never moves a loan onto the route for an asset with
+  no price. It is a second line for a price that goes wrong after its entry
+  passed the registry's checks (`FeedRegistryDesign.md`, section 4). A wrong
+  price that liquidates is worse than a short halt, and the bounds keep the
+  stop from becoming a freeze.
 - **Not configurable by the Diamond.** The Diamond holds no write path into
   the guard.
 - **First settings** (owner decision 2026-11-09, "Set at deploy, checked

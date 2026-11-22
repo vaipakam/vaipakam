@@ -71,6 +71,23 @@ date of the directory file it was checked against.
   27-second heartbeat (several on Polygon) is routinely a few seconds past
   it; without the grace such a change would pass or fail by chance on the
   block it landed in. A feed that has stopped is late by far more.
+- the price the entry implies lies within a wide band (one third to three
+  times, proposed) of each reference that exists: every secondary reading,
+  the accepted price, and the average price of the pool the liquidity test
+  reads for the asset. The implied price is the asset's price by its whole
+  route with the entry in place, and it is checked for every asset whose
+  route uses the entry, at the proposal and again when the entry takes
+  effect. One reference outside the band refuses the entry, so an entry
+  that is wrong by a wide margin never prices anything. An entry that
+  corrects an existing one is not compared with the accepted price, which
+  may be the wrong one. An entry refused when it takes effect stays waiting
+  and can be carried out again. The pool is found from the chain alone and
+  nobody names it, and its average price over a window is a reading one
+  transaction cannot move.
+
+With no reference at all, an entry passes only when the owner's proposal
+names it unchecked, with a reason, for the whole wait, and the asset shows
+it as unchecked afterwards. A proposer cannot set the check aside.
 
 The contract cannot prove which token a pair name means. That is the binding,
 section 5.
@@ -95,6 +112,12 @@ and removals alike. The delay is bounded at 7–14 days on a production chain an
 defaults to 7 days, the same floor as the price guard that reads these feeds and
 the vault code delay (owner decision 2026-11-10). A testnet chain (`TestnetChains`) may set 0, so the mock
 rig can register its feeds in the same transaction batch.
+
+**One proposal may carry several entries.** They take effect together or not
+at all, and make one version of the registry
+(`LoanSettingsSnapshotDesign.md`, section 4). The price guard keeps a stated
+most of unretired versions, so entries added one version at a time would be
+bound by it, and a proposal that carries several is not.
 
 There is no instant removal. Unpricing a collateral asset stops health-factor
 reads on its open loans, which is worse than a stale price, because a stale
