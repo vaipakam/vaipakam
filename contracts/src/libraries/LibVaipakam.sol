@@ -9039,6 +9039,32 @@ library LibVaipakam {
         // rate is band-checked with the request's acknowledgement.
         bool instantTakerActive;
         bool instantRateFarAck; // Appended — append-only.
+        /// @dev #3744 — an open offer's escrow that a step someone else
+        ///      triggered could not pay to the holder of the offer's position
+        ///      token, kept in the creator's vault under a reservation, per
+        ///      position token, asset and asset token id. Written only by
+        ///      `LibEncumbrance.holdForOfferToken` / `releaseOfferTokenHold`;
+        ///      the token's holder collects it
+        ///      (`OfferCancelFacet.collectOfferRefund`). Appended — append-only.
+        mapping(uint256 => mapping(address => mapping(uint256 => uint256))) offerTokenHeld;
+        /// @dev #3744 — the creator whose vault holds an offer token's held
+        ///      escrow ({offerTokenHeld}). Set once, at the first hold; an
+        ///      offer token belongs to one offer, so it never changes.
+        ///      Appended — append-only.
+        mapping(uint256 => address) offerTokenHeldFrom;
+        /// @dev #3744 — the wallet that gave an offer's Full-tariff consent
+        ///      (`Offer.creatorFull`), recorded with it by
+        ///      `ProfileFacet.setOfferCreatorFullTariff` and by a signed
+        ///      offer's materialization. The consent counts at a fill only
+        ///      while this wallet holds the offer's position token
+        ///      (`LibFeeEntitlement.offerFullConsented`); a transfer lapses it.
+        ///      Appended — append-only.
+        mapping(uint256 => address) offerFullTariffBy;
+        /// @dev #3744 — the offer token's transfer count when
+        ///      `offerFullTariffBy` gave the consent. The consent counts only
+        ///      while the count is unchanged, so a round trip (away and back)
+        ///      lapses it too. Appended — append-only.
+        mapping(uint256 => uint256) offerFullTariffMoves;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

@@ -47,6 +47,11 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *      with the NFT, and keeper whitelist is also resolved against the
  *      current NFT holder.
  */
+/// @dev #3744 — the host of the offer-holder rule (OfferBookFacet).
+interface IOfferHolderHost {
+    function requireOfferHolder(uint256 offerId, address caller) external view;
+}
+
 library LibAuth {
     /// @notice #1638 — the one gate for a `KEEPER_ROLE` entry point: the
     ///         caller holds the role, and the global keeper pause is off.
@@ -84,15 +89,36 @@ library LibAuth {
         if (msg.sender != LibProtectedAccount.manager(loan.lender)) revert IVaipakamErrors.NotLender();
     }
 
-    /// @dev Caller must be the offer's creator, and that creator must still
-    ///      manage itself (#3526). The controller of a retired creator does
-    ///      not take over its offers: a retired creator's offer can never be
-    ///      accepted (every open refuses a retired account), so the only
-    ///      action left on it is cancelling, which `OfferCancelFacet` allows
-    ///      the manager. Every other creator action (changing terms or the
-    ///      escrowed amount, staging, a payoff permit) is refused to both.
-    function requireOfferCreator(LibVaipakam.Offer storage offer) internal view {
-        if (offer.creator != msg.sender || msg.sender != LibProtectedAccount.manager(msg.sender)) revert IVaipakamErrors.NotOfferCreator();
+    /// @dev #3744 — the holder of an open offer's position token acts on the
+    ///      offer: its terms, its staging, its keepers, its escrow. The offer's
+    ///      value follows its token (a fill gives the creator side to the
+    ///      token's holder), so the rights to change or withdraw it follow it
+    ///      too, and its refunds pay that holder ({LibVaultOutflow.toOfferHolder}).
+    ///      The rule has one runtime copy, {OfferBookFacet.requireOfferHolder}
+    ///      (see {offerHolderRule}); this is a self-call to it, so a facet near
+    ///      EIP-170 carries a call, not the rule.
+    function requireOfferHolder(LibVaipakam.Offer storage offer) internal view {
+        IOfferHolderHost(address(this)).requireOfferHolder(offer.id, msg.sender);
+    }
+
+    /// @dev #3744 — the rule {requireOfferHolder} reaches, run only by its
+    ///      host: `caller` is the holder of the offer's token and still manages
+    ///      itself (#3526), and the offer's creator still manages itself (a
+    ///      retired creator's offer can never be accepted, every open refuses
+    ///      a retired account, so the only action left on it is cancelling,
+    ///      which {managesOfferHolder} decides).
+    function offerHolderRule(LibVaipakam.Offer storage offer, address caller) internal view returns (bool) {
+        address holder = LibPositionNFT.holderOrZero(offer.positionTokenId);
+        return holder != address(0) && caller == holder && caller == LibProtectedAccount.manager(caller)
+            && offer.creator == LibProtectedAccount.manager(offer.creator);
+    }
+
+    /// @dev #3744 — whether the caller manages the holder of the offer's
+    ///      position token: the holder itself, or its controller once a
+    ///      protected-account replacement retired it. The cancel right.
+    function managesOfferHolder(LibVaipakam.Offer storage offer) internal view returns (bool) {
+        address holder = LibPositionNFT.holderOrZero(offer.positionTokenId);
+        return holder != address(0) && msg.sender == LibProtectedAccount.manager(holder);
     }
 
     /// @dev Caller must manage the holder of the loan's lender-side position.
@@ -224,7 +250,7 @@ library LibAuth {
     ///         whether `solver` is authorized to act for `principal` on
     ///         `action`, applying the IDENTICAL rules (diamond-internal / self
     ///         exempt, global keeper-pause, per-principal enable + action mask).
-    /// @dev    #625 WI-2b — `RiskPreviewFacet.previewIntent` calls this to tell a
+    /// @dev    #625 WI-2b — `IntentPreviewFacet.previewIntent` calls this to tell a
     ///         keeper, off-chain, whether a `requiresKeeperAuth` intent is
     ///         fillable BY THAT SOLVER before it spends gas on `matchIntent`
     ///         (which would revert `KeeperAccessRequired`). Reusing the same

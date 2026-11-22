@@ -148,10 +148,9 @@ describe('manageReceipt', () => {
   });
   const to = (route: ManageReview['route']) => manageReceipt(review(route), null, copy).rows.find((r) => r.label === 'autoLend.mRowTo')?.value;
 
-  it('states the destination a take-back binds, and leaves an unread mode unknown', () => {
-    expect(to('wallet')).toEqual({ kind: 'text', text: 'autoLend.mToWallet' });
-    expect(to('unknown')).toEqual({ kind: 'unknown', why: 'receipt.unknown' });
-    expect(to('held')).toEqual({ kind: 'text', text: 'payout.toHeld' });
+  it('states that a take-back is freed in the vault, and leaves an unread route unknown', () => {
+    expect(to('credit')).toEqual({ kind: 'text', text: 'payout.toCredit' });
+    expect(to(null)).toEqual({ kind: 'unknown', why: 'receipt.unknown' });
   });
 });
 

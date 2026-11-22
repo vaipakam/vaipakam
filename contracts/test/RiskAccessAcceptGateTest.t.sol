@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
@@ -926,6 +928,33 @@ contract RiskAccessAcceptGateTest is SetupTest {
             0,
             "armed creator => 0"
         );
+    }
+
+    /// #3744 — once the offer token moves, the creator's side is the holder's,
+    /// so both risk previews read the holder, as the accept gate does: an armed
+    /// creator no longer clears a transferred offer, an armed holder does.
+    function test_3744_riskPreviews_readTheOfferHolder() public {
+        _mockTier(mockERC20, 3);
+        _mockTier(mockIlliquidERC20, 0);
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+        assertEq(RiskPreviewFacet(address(diamond)).previewCreatorBlock(offerId), 0, "armed creator clears");
+
+        address h = makeAddr("riskHolder");
+        LibTestPositionNFT.move(
+            address(diamond), OfferCancelFacet(address(diamond)).getOffer(offerId).positionTokenId, h
+        );
+        assertEq(RiskPreviewFacet(address(diamond)).previewCreatorBlock(offerId), 1, "unarmed holder blocks");
+        assertEq(
+            RiskPreviewFacet(address(diamond)).previewOfferAcceptBlock(offerId, borrower), 1, "accept preview too"
+        );
+
+        vm.prank(h);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.prank(h);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(_offerPair(mockERC20, mockIlliquidERC20), true);
+        assertEq(RiskPreviewFacet(address(diamond)).previewCreatorBlock(offerId), 0, "armed holder clears");
     }
 
     // ════════════════════════════════════════════════════════════════════════

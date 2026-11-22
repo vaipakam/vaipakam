@@ -527,7 +527,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
 
         // Lender-side day-5 pool = floor/2 + recycled/2 (per side).
@@ -799,13 +799,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _seedEntry(alice, 43, 5, 6);
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
         assertApproxEqAbs(
             paid, recycled5 / 2, 1e6,
             "recycled term pays alone - the steady state"
         );
-        assertEq(vpfi.balanceOf(alice), paid, "tokens delivered");
+        assertEq(_vaultFree(alice, address(vpfi)), paid, "tokens delivered");
     }
 
     // ─── 4. Mixed pre/post-cutover window ────────────────────────────────────
@@ -833,7 +833,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _seedEntry(alice, 44, 4, 6); // days 4 + 5
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
 
         // Day 4 (pre-arming): schedule-only, no recycled. Day 5: both halves.
@@ -2016,13 +2016,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertFalse(_mut().entryExecutableNowRaw(id), "one wei short of the draw: non-executable");
         vm.prank(alice);
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         _mut().setRecycleBucketRaw(bucketRecycled);
         assertTrue(_mut().entryExecutableNowRaw(id), "exactly the draw: executable");
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
         assertGt(paid, bucketRecycled, "exactly the draw: the claim pays the day, fresh and recycled");
         assertEq(_cfg().getRecycleBucket(), 0, "and draws the bucket exactly empty");
@@ -2404,7 +2404,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         vm.prank(alice);
         try
             RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-                LibVaipakam.RewardDelivery.Wallet
+                LibVaipakam.RewardDelivery.Vault
             )
         returns (uint256, uint256, uint256) {} catch {}
 
@@ -2428,7 +2428,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         vm.prank(alice);
         try
             RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-                LibVaipakam.RewardDelivery.Wallet
+                LibVaipakam.RewardDelivery.Vault
             )
         returns (uint256, uint256, uint256) {} catch {}
 
@@ -2751,11 +2751,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // comparison says the tokens actually went to the CLAIMANT rather
         // than somewhere else. A consumption moves tokens; a release does not.
         uint256 custodyBefore = vpfi.balanceOf(address(diamond));
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond))
-            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         // Codex #1907 r7 — anchor `paid` ITSELF. I declined this last round on
         // the grounds that the fresh leg has its own coverage, and that reason
@@ -2770,7 +2770,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             paid, expectPayout, 1e6, "the claim paid this claimant's whole share"
         );
         assertEq(
-            vpfi.balanceOf(alice) - aliceBefore,
+            _vaultFree(alice, address(vpfi)) - aliceBefore,
             paid,
             "the claimant received what the claim reported paying"
         );
@@ -2836,11 +2836,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // unanchored second RELEASE — an assertion that exists three lines
         // away from where its twin belongs.
         uint256 custodyMid = vpfi.balanceOf(address(diamond));
-        uint256 bobBefore = vpfi.balanceOf(bob);
+        uint256 bobBefore = _vaultFree(bob, address(vpfi));
 
         vm.prank(bob);
         (uint256 paid2, , ) = RewardClaimFacet(address(diamond))
-            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         assertApproxEqAbs(
             paid2,
@@ -2849,7 +2849,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             "and the second claim paid the second claimant's whole share"
         );
         assertEq(
-            vpfi.balanceOf(bob) - bobBefore,
+            _vaultFree(bob, address(vpfi)) - bobBefore,
             paid2,
             "the second claimant received what their claim reported paying"
         );
@@ -3277,7 +3277,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond))
-            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
         assertApproxEqAbs(
@@ -3375,11 +3375,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         MirrorLedger memory b = _snapMirror(today);
 
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond))
-            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         MirrorLedger memory a = _snapMirror(today);
 
@@ -3436,7 +3436,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             "the payout is the PAYABLE entry's share only, not the forfeited one"
         );
         assertEq(
-            vpfi.balanceOf(alice) - aliceBefore,
+            _vaultFree(alice, address(vpfi)) - aliceBefore,
             paid,
             "and the claimant received exactly that"
         );

@@ -242,7 +242,7 @@ contract EarlyWithdrawalDirectFacet is
     ///         Parking additional lender interest between quote and mining grows
     ///         that balance, all of which transfers to the buyer.
     ///         Mirrors the listed route's {SaleAboveHeldCeiling}; the second value
-    ///         of `RiskPreviewFacet.quoteSellerBounds` (`maxHeld`) is this ceiling.
+    ///         of `SaleAdmissionFacet.quoteSellerBounds` (`maxHeld`) is this ceiling.
     error SaleHeldAboveReviewed(uint256 held, uint256 reviewedMax);
 
 
@@ -282,7 +282,7 @@ contract EarlyWithdrawalDirectFacet is
      *      Callable only by original lender. Emits LoanSold.
      *
      *      #1922 (#1503 item 6) — the sale is BOUND to what the seller reviewed:
-     *      the seller carries the economics `RiskPreviewFacet.quoteSellerBounds`
+     *      the seller carries the economics `SaleAdmissionFacet.quoteSellerBounds`
      *      showed them (its `minSellerNet` / `maxHeld` map to the two params
      *      here), and the sale is refused if execution is WORSE — a net below
      *      `reviewedMinSellerNet`, a migrating held balance above

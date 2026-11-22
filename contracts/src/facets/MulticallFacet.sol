@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibRevert} from "../libraries/LibRevert.sol";
+import {LibBatchCredit} from "../libraries/LibBatchCredit.sol";
 
 /**
  * @title  MulticallFacet
@@ -130,6 +131,11 @@ contract MulticallFacet {
         results = new Result[](len);
         bytes4 selfSelector = this.multicall.selector;
 
+        // "And withdraw" (payout rule §4.4): count what the items credit to
+        // the caller's free balance, so a last `withdrawCredited` item can
+        // withdraw exactly that. The figure only sizes; it grants nothing.
+        LibBatchCredit.open(msg.sender);
+
         for (uint256 i; i < len; ) {
             bytes calldata cd = calls[i].callData;
             // Every item MUST carry at least a 4-byte selector. Empty/short
@@ -155,5 +161,6 @@ contract MulticallFacet {
                 ++i;
             }
         }
+        LibBatchCredit.close();
     }
 }

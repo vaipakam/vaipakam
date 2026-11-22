@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -425,7 +426,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         vm.prank(founder);
         PayrollFacet(address(diamond)).withdrawSalary(id);
 
-        assertEq(IERC20(mockERC20).balanceOf(founder), expected, "beneficiary paid");
+        assertEq(_salaryFree(), expected, "beneficiary credited in its vault");
         assertEq(
             PayrollFacet(address(diamond)).getPayrollStream(id).withdrawn,
             expected,
@@ -442,7 +443,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         PayrollFacet(address(diamond)).withdrawSalary(id);
 
         // Withdrawal clamped to `funded` — the stream dried up.
-        assertEq(IERC20(mockERC20).balanceOf(founder), 500 * RATE, "clamped to funded");
+        assertEq(_salaryFree(), 500 * RATE, "clamped to funded");
     }
 
     function test_withdrawSalary_nonBeneficiary_reverts() public {
@@ -476,7 +477,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         uint256 expected = 100 * RATE + 200 * 2 * RATE;
         vm.prank(founder);
         PayrollFacet(address(diamond)).withdrawSalary(id);
-        assertEq(IERC20(mockERC20).balanceOf(founder), expected, "rate change not retroactive");
+        assertEq(_salaryFree(), expected, "rate change not retroactive");
     }
 
     function test_pause_freezesAccrual() public {
@@ -494,7 +495,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         uint256 expected = 150 * RATE;           // 100 + 50, the paused 9_999 excluded
         vm.prank(founder);
         PayrollFacet(address(diamond)).withdrawSalary(id);
-        assertEq(IERC20(mockERC20).balanceOf(founder), expected, "paused window did not accrue");
+        assertEq(_salaryFree(), expected, "paused window did not accrue");
     }
 
     // ─── Payroll — structural guarantee (the load-bearing negative test) ──
@@ -745,4 +746,11 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         TreasuryFacet(address(diamond)).setTreasuryConvertMaxTranche(address(0), 1);
     }
 
+
+    /// @dev Payout rule (2026-11-19): salary lands as free balance in the
+    ///      beneficiary's own vault, never in its wallet.
+    function _salaryFree() internal view returns (uint256) {
+        assertEq(IERC20(mockERC20).balanceOf(founder), 0, "nothing to the wallet");
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(founder, mockERC20, 0);
+    }
 }

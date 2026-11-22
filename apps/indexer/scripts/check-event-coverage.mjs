@@ -88,6 +88,8 @@ const DELIBERATELY_NOT_HANDLED = {
     'the maker\'s price-move guard (#3358) — read live through getOfferPriceGuard; no offer row column depends on it yet (follow-up: lets the price-checkpoint keeper find guarded pairs)',
   OfferCreatorFullTariffSet:
     'per-offer creator Full VPFI fee-entitlement tariff opt-in (#1347) — a pre-acceptance authorization knob, not an offer-lifecycle state the indexer projects (dark until the fee-entitlement master switch arms)',
+  OfferFullTariffConsentBy:
+    'the wallet whose Full-tariff consent an offer carries (#3744; zero address = withdrawn) — a pre-acceptance authorization the indexer does not project, read live from the contract (dark until the fee-entitlement master switch arms)',
   OfferCreatedDetails:
     'companion to OfferCreated — the offer row is still built via a getOfferDetails read-back; switching the offer side to consume this companion event (the loan side already consumes LoanInitiatedDetails) is a follow-up',
   OfferCanceledDetails: 'companion to OfferCanceled — extra fields not needed beyond the status flip',

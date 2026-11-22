@@ -154,12 +154,12 @@ contract LoanSideRewardCapTest is SetupTest {
         // ceiling 0.5e18 is the only binding constraint (raw would be 2e18).
         _stampCap({openDays: 2, capOpen: 0.5e18});
 
-        uint256 balBefore = vpfi.balanceOf(rewardLender);
+        uint256 balBefore = _vaultFree(rewardLender, address(vpfi));
         vm.prank(rewardLender);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, 0.5e18, "claim trimmed to the loan-side ceiling");
-        assertEq(vpfi.balanceOf(rewardLender) - balBefore, 0.5e18, "paid out");
+        assertEq(_vaultFree(rewardLender, address(vpfi)) - balBefore, 0.5e18, "paid out into the vault");
     }
 
     // ── Early-close / partial-term proration binds before the flat ceiling ──

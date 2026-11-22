@@ -1090,6 +1090,25 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "OfferFullTariffConsentBy",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
@@ -2985,7 +3004,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -3852,6 +3871,22 @@
   {
     "type": "error",
     "name": "RefinanceRequestOpen",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RefinanceRequestTokenMoved",
     "inputs": [
       {
         "name": "loanId",

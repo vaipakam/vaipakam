@@ -12,6 +12,7 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -185,11 +186,15 @@ contract OfferPrincipalLockTest is SetupTest {
         assertEq(_lock(), 0, "lock released on single-fill accept");
     }
 
+    function _free(address who, address token) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
+    }
+
     // ─── cancel — release + refund, and the refund is NOT self-blocked ─
 
     function test_cancel_releasesLockAndRefunds() public {
         uint256 id = _createLenderOffer(1000 ether, 1000 ether);
-        uint256 walletBefore = ERC20Mock(mockERC20).balanceOf(lender);
+        uint256 freeBefore = _free(lender, mockERC20);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
@@ -197,10 +202,11 @@ contract OfferPrincipalLockTest is SetupTest {
         OfferCancelFacet(address(diamond)).cancelOffer(id);
 
         assertEq(_lock(), 0, "lock released on cancel");
+        // #3744 — the refund is the holder's free vault balance.
         assertEq(
-            ERC20Mock(mockERC20).balanceOf(lender) - walletBefore,
+            _free(lender, mockERC20) - freeBefore,
             1000 ether,
-            "full principal refunded to lender wallet (refund not self-blocked)"
+            "full principal freed in the lender's vault (refund not self-blocked)"
         );
     }
 
@@ -208,18 +214,18 @@ contract OfferPrincipalLockTest is SetupTest {
 
     function test_modifyShrink_decrementsLock_refundNotSelfBlocked() public {
         uint256 id = _createLenderOffer(1000 ether, 1000 ether);
-        uint256 walletBefore = ERC20Mock(mockERC20).balanceOf(lender);
+        uint256 freeBefore = _free(lender, mockERC20);
 
-        // Shrink the ceiling 1000 → 600. The 400 delta refunds to the
-        // lender's wallet — which is only possible because the lock is
-        // decremented BEFORE the refund withdraw (else the chokepoint
-        // would treat the 400 as still encumbered and revert).
+        // Shrink the ceiling 1000 → 600. The 400 delta becomes the
+        // lender's free vault balance (#3744) — which is only possible
+        // because the lock is decremented BEFORE the refund (else the
+        // chokepoint would treat the 400 as still encumbered and revert).
         vm.prank(lender);
         OfferMutateFacet(address(diamond)).setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
 
         assertEq(_lock(), 600 ether, "lock follows the new ceiling");
         assertEq(
-            ERC20Mock(mockERC20).balanceOf(lender) - walletBefore,
+            _free(lender, mockERC20) - freeBefore,
             400 ether,
             "shrink delta refunded (no self-block)"
         );
@@ -231,7 +237,8 @@ contract OfferPrincipalLockTest is SetupTest {
         OfferMutateFacet(address(diamond)).setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
 
         // The post-shrink 600 stays locked — the decrement freed exactly
-        // the 400 refunded, never the live remainder.
+        // the 400 refunded (now free in the vault, #3744), never the live
+        // remainder: the 400 leaves, one wei more does not.
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -239,11 +246,13 @@ contract OfferPrincipalLockTest is SetupTest {
                 lender,
                 mockERC20,
                 uint256(0),
-                uint256(1),
-                uint256(0)
+                uint256(400 ether + 1),
+                uint256(400 ether)
             )
         );
-        LibTestOutflow.withdrawERC20(address(diamond), lender, mockERC20, lender, 1);
+        LibTestOutflow.withdrawERC20(address(diamond), lender, mockERC20, lender, 400 ether + 1);
+        vm.prank(address(diamond));
+        LibTestOutflow.withdrawERC20(address(diamond), lender, mockERC20, lender, 400 ether);
     }
 
     function test_modifyGrow_incrementsLock() public {

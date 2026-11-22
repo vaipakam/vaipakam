@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -119,6 +120,11 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         //
         bool acceptorFull = s.acceptAckActive && s.acceptAckAcceptorFull;
         bool isLenderOffer = offer.offerType == LibVaipakam.OfferType.Lender;
+        // #3744 — the creator's side of this loan is taken by the holder of
+        // the accepted offer's position token, so that holder is the party
+        // whose consent counts and whose vault pays (never another wallet).
+        if (isLenderOffer) lender = LibOfferRefund.holder(offer);
+        else borrower = LibOfferRefund.holder(offer);
 
         // #1369 — MATCHED fills. `matchOffers` routes `acceptOfferInternal`
         // with the BORROWER offer id, so `offer` above is the borrower offer
@@ -146,6 +152,9 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             if (lenderAuthOfferId != 0) {
                 lenderAuthOffer = s.offers[lenderAuthOfferId];
                 lenderAuthFromMatch = true;
+                // #3744 — the lender side of a match belongs to the holder of
+                // the lender offer's token, so its consent and vault are read.
+                lender = LibOfferRefund.holder(lenderAuthOffer);
             }
         }
 
@@ -237,7 +246,10 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             LibFeeEntitlement.resolveAndCharge(
                 loanId,
                 party,
-                useAcceptorAuth ? acceptorFull : authOffer.creatorFull,
+                // #3744 — a creator-side consent counts only for the wallet
+                // that gave it, while it holds the offer's token, and only when
+                // that wallet is the party this fill charges.
+                useAcceptorAuth ? acceptorFull : LibFeeEntitlement.offerFullConsented(authOffer.id, party),
                 useAcceptorAuth
                     ? s.acceptAckAcceptorMaxCStar
                     : authOffer.creatorMaxCStar,

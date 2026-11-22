@@ -18,9 +18,10 @@
  * - what the offer locks follows the change: a lending offer's ceiling and
  *   a borrowing request's collateral ceiling are held in the creator's
  *   vault, so raising one pulls the difference from the wallet (through an
- *   approval of exactly that much) and lowering one returns it from the
- *   vault to the wallet, routed like any payout by protected account mode.
- *   The rate moves nothing;
+ *   approval of exactly that much) and lowering one releases it in the
+ *   vault of the offer token's holder as free balance (the payout rule:
+ *   only the owner's own withdrawal reaches a wallet). The rate moves
+ *   nothing;
  * - the change restarts the clock takers wait on before the new terms can
  *   be filled, and it ends any backstop eligibility the offer carried.
  */
@@ -31,8 +32,8 @@ import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { MAX_RATE_BPS } from '../post/postModel';
-import { payoutOutcomes, payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
-import { payoutLegs, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
+import { freedInVault, OFFER_REFUND_CLASSES, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { freedLeg, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import { answerOrNull } from '../reads/answer';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
@@ -378,7 +379,10 @@ export async function readEditReview(own: OwnStateClient, diamond: Hex, offerId:
     balance,
     allowance,
     approvalSteps,
-    route: o === null ? 'unknown' : payoutRoute(facts.protection, o.creator, o.creator),
+    // A lowered amount is released in the vault as free balance, whatever
+    // the account's protected mode (the payout rule, owner decision
+    // 2026-11-19).
+    route: o === null ? 'unknown' : 'credit',
     dryRun: null,
     readAt: Date.now(),
   };
@@ -498,7 +502,7 @@ export function editReceipt(r: EditReview, w: AmountWords, copy: Copy): Receipt 
       value:
         r.route === 'unknown'
           ? unknown(text('payout.protectionUnread'))
-          : { kind: 'text', text: routedDestination(r.route, r.facts.protection, copy) ?? text('offerCancel.toYourWallet') },
+          : { kind: 'text', text: routedDestination(r.route, r.facts.protection, copy) ?? text('payout.toCredit') },
       binding: true,
     });
   }
@@ -553,16 +557,13 @@ export function measureEdit(r: EditReview, logs: readonly Log[], diamond: Hex, v
   }
   const asset = m.asset;
   legs.push(
-    ...payoutLegs(
+    freedLeg(
       {
-        outcomes: payoutOutcomes(logs, diamond, viewer, asset),
-        wallet: moved(logs, asset, null, viewer),
+        freed: freedInVault(logs, diamond, r.facts.offer?.creator ?? viewer, asset, OFFER_REFUND_CLASSES, { ref: r.offerId }),
         expected: m.amount,
-        protection: r.facts.protection,
         what: (v) => w(asset, v, false),
         exact: (v) => w(asset, v, true),
-        walletLeg: (what) => format('offerEdit.legReleased', { what }),
-        walletOther: (got, want) => format('loanClaim.arrivedOther', { amount: got, expected: want }),
+        label: (what, ownVault) => format(ownVault ? 'offerEdit.legReleased' : 'offerEdit.legReleasedHolder', { what }),
       },
       copy,
     ),

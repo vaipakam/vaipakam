@@ -9,6 +9,7 @@ import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
+import {VaultDepositoryFacet} from "../../src/facets/VaultDepositoryFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
@@ -152,11 +153,20 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
         uint256 offerId = _kept(OFFER);
         _requireOpenOffer(offerId, lender, "PF-045");
         uint256 before = usdc.balanceOf(lender);
+        VaultDepositoryFacet depo = VaultDepositoryFacet(diamond);
+        uint256 freeBefore = depo.getDepositoryHolding(lender, address(usdc), 0);
         vm.startBroadcast(lenderKey);
         OfferCancelFacet(diamond).cancelOffer(offerId);
         vm.stopBroadcast();
+        // #3744 — the refund is the holder's free vault balance; the
+        // holder's own withdrawal is what reaches the wallet.
+        require(depo.getDepositoryHolding(lender, address(usdc), 0) - freeBefore == LOAN_AMOUNT,
+            "PF-045: the cancel should free exactly the locked principal in the vault");
+        vm.startBroadcast(lenderKey);
+        depo.withdrawFromVault(lender, uint8(LibVaipakam.AssetType.ERC20), address(usdc), 0, LOAN_AMOUNT, lender);
+        vm.stopBroadcast();
         require(usdc.balanceOf(lender) - before == LOAN_AMOUNT,
-            "PF-045: the cancel should return exactly the locked principal");
+            "PF-045: the withdrawal should return exactly the locked principal");
         require(OfferCancelFacet(diamond).getOffer(offerId).creator == address(0),
             "PF-045: the cancelled offer should be gone");
         console.log("Lender offer cancelled; principal returned:", LOAN_AMOUNT);
@@ -175,11 +185,20 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
         uint256 offerId = _kept(OFFER);
         _requireOpenOffer(offerId, borrower, "PF-046");
         uint256 before = weth.balanceOf(borrower);
+        VaultDepositoryFacet depo = VaultDepositoryFacet(diamond);
+        uint256 freeBefore = depo.getDepositoryHolding(borrower, address(weth), 0);
         vm.startBroadcast(borrowerKey);
         OfferCancelFacet(diamond).cancelOffer(offerId);
         vm.stopBroadcast();
+        // #3744 — the refund is the holder's free vault balance; the
+        // holder's own withdrawal is what reaches the wallet.
+        require(depo.getDepositoryHolding(borrower, address(weth), 0) - freeBefore == COLLATERAL_AMOUNT,
+            "PF-046: the cancel should free exactly the locked collateral in the vault");
+        vm.startBroadcast(borrowerKey);
+        depo.withdrawFromVault(borrower, uint8(LibVaipakam.AssetType.ERC20), address(weth), 0, COLLATERAL_AMOUNT, borrower);
+        vm.stopBroadcast();
         require(weth.balanceOf(borrower) - before == COLLATERAL_AMOUNT,
-            "PF-046: the cancel should return exactly the locked collateral");
+            "PF-046: the withdrawal should return exactly the locked collateral");
         require(OfferCancelFacet(diamond).getOffer(offerId).creator == address(0),
             "PF-046: the cancelled offer should be gone");
         console.log("Borrower offer cancelled; collateral returned:", COLLATERAL_AMOUNT);

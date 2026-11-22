@@ -23,12 +23,14 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -220,7 +222,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcTracked(fcBorrower, vpfi), FC_COLLATERAL + d, "fixture-live: custody plus the free deposit");
 
         vm.prank(fcBorrower);
-        vm.expectRevert(abi.encodeWithSelector(VPFIDiscountFacet.VPFIEncumberedByActiveLoan.selector, d + 1, d));
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, d + 1, d));
         VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(d + 1);
 
         uint256 wallet0 = IERC20(vpfi).balanceOf(fcBorrower);
@@ -603,10 +605,10 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcTracked(fcBorrower, vpfi), u + b, "the vault keeps the free deposit and the slice");
 
         // #3205 part 2 — the sweep pays only the treasury (no free `to`).
-        vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l + 1);
+        vm.expectRevert(BackstopAbsorbFacet.BackstopAbsorbCollateralInsufficient.selector);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l + 1);
         uint256 treasuryBeforeSweep = IERC20(vpfi).balanceOf(treasuryEOA);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l);
         assertEq(IERC20(vpfi).balanceOf(treasuryEOA) - treasuryBeforeSweep, l, "warehoused exactly the lender slice, swept to the treasury");
     }
 

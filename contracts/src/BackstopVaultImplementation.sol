@@ -11,7 +11,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IPositionNFTSource} from "./interfaces/IPositionNFTSource.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
-import {LibHolderClaim} from "./libraries/LibHolderClaim.sol";
+import {LibHolderClaim, IHolderClaimDiamond} from "./libraries/LibHolderClaim.sol";
 import {LibDelivery} from "./libraries/LibDelivery.sol";
 
 /**
@@ -253,8 +253,9 @@ contract BackstopVaultImplementation is
     /**
      * @notice Release `amount` of idle intent capital and forward it to the
      *         Diamond (treasury) for recording by the facet.
-     * @dev onlyOwner. `withdrawLenderIntentCapital` returns the un-lent capital to
-     *      the vault as a raw balance; the delta is forwarded to the Diamond.
+     * @dev onlyOwner. `withdrawLenderIntentCapital` releases the un-lent capital
+     *      into this contract's Vaipakam vault; it is withdrawn here and the
+     *      delta forwarded to the Diamond.
      *      #2440 — returns what reached the Diamond, which the facet credits to
      *      the treasury (see {executeClaim}).
      */
@@ -266,10 +267,15 @@ contract BackstopVaultImplementation is
         uint256 before = IERC20(lend).balanceOf(address(this));
         // #3088 keyed the withdraw on the intent's ACCOUNT (its manager may be
         // a replacement controller). This vault is the intent owner and is
-        // never a protected account, so it names itself and is paid directly.
+        // never a protected account. The capital is released into its
+        // Vaipakam vault as free balance (payout rule, 2026-11-19), so it
+        // withdraws exactly that credit to itself through its own Withdraw.
+        IHolderClaimDiamond d = IHolderClaimDiamond(diamond);
+        uint256 held0 = d.getDepositoryHolding(address(this), lend, 0);
         IBackstopDiamond(diamond).withdrawLenderIntentCapital(
             address(this), lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT, amount
         );
+        LibHolderClaim.withdrawCredit(d, uint8(LibVaipakam.AssetType.ERC20), lend, 0, held0);
         uint256 received = IERC20(lend).balanceOf(address(this)) - before;
         if (received > 0) returned = LibDelivery.pushMeasured(lend, diamond, received);
     }
@@ -282,8 +288,9 @@ contract BackstopVaultImplementation is
      *      loan's lender (this vault), and `claimInteractionRewards` only ever pays
      *      `msg.sender` — so without this owner-only forwarder those protocol-owned
      *      rewards would be unclaimable yet still counted in the emission
-     *      denominators, diluting every other lender. The Diamond pays the VPFI to
-     *      this vault as a raw balance; we forward the delta on. `vpfi` is supplied
+     *      denominators, diluting every other lender. The Diamond credits the
+     *      VPFI to this contract's Vaipakam vault; it is withdrawn here and the
+     *      delta forwarded on. `vpfi` is supplied
      *      by the facet (which reads `s.vpfiToken`). Returns the forwarded amount.
      */
     function claimInteractionRewardsToDiamond(address vpfi)
@@ -292,14 +299,15 @@ contract BackstopVaultImplementation is
         returns (uint256 recovered)
     {
         uint256 before = IERC20(vpfi).balanceOf(address(this));
-        // RL-1 — HARDWIRED Wallet delivery: this forwarder reads its own raw
-        // balance delta and ships it to the Diamond/treasury; a vault
-        // delivery would strand the VPFI in this vault's per-user vault
-        // where the delta never shows. Explicit rather than relying on the
-        // contract-caller default so the behaviour can't drift.
+        // A reward is always paid into the claimant's Vaipakam vault (payout
+        // rule, 2026-11-19): withdraw exactly what the claim credited to
+        // this contract, then forward the measured delta.
+        IHolderClaimDiamond d = IHolderClaimDiamond(diamond);
+        uint256 held0 = d.getDepositoryHolding(address(this), vpfi, 0);
         IBackstopDiamond(diamond).claimInteractionRewardsTo(
-            uint8(LibVaipakam.RewardDelivery.Wallet)
+            uint8(LibVaipakam.RewardDelivery.Vault)
         );
+        LibHolderClaim.withdrawCredit(d, uint8(LibVaipakam.AssetType.ERC20), vpfi, 0, held0);
         recovered = IERC20(vpfi).balanceOf(address(this)) - before;
         if (recovered > 0) IERC20(vpfi).safeTransfer(diamond, recovered);
     }

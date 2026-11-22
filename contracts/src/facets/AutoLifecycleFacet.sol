@@ -563,10 +563,14 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.AutoExtendCaps storage lenderCaps =
             s.autoExtendLenderCaps[loanId];
         // A consent is fresh only while its setter still manages the holder,
-        // so a replacement voids the caps the retired wallet set.
-        bool borrowerFresh = borrowerCaps.setter == address(0) ||
+        // so a replacement voids the caps the retired wallet set, and a token
+        // that moved carries no consent of its new holder's. The setter
+        // stores `msg.sender` on every write, so an enabled cap always names
+        // one. The lender half is one of the three conditions the direct
+        // interest payment in {_routeInterest} rests on.
+        bool borrowerFresh =
             borrowerCaps.setter == LibProtectedAccount.manager(borrowerNftOwner);
-        bool lenderFresh = lenderCaps.setter == address(0) ||
+        bool lenderFresh =
             lenderCaps.setter == LibProtectedAccount.manager(lenderNftOwner);
         if (
             !borrowerCaps.enabled || !lenderCaps.enabled ||
@@ -904,6 +908,18 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             s, loan, address(0), principalAsset, interestGross, lenderShare
         );
         uint256 holderShare = lenderShare - sellersNet;
+        // The lender share is paid straight into the lender-token holder's
+        // vault, created here if it has none, rather than held in the stored
+        // lender's vault for the holder's claim as every other open-loan
+        // lender payment is (#3629). That is sound ONLY while the entry
+        // ({extendLoanInPlace}) keeps all three of its checks on that holder:
+        // (1) the holder is not sanctions-flagged, (2) the wallet that manages
+        // it is on the Terms in force, and (3) the lender caps were set by the
+        // wallet that manages it now. Together they mean the holder consented
+        // and may receive, so the vault this creates is a clean holder's own
+        // (design ruling 2026-11-19). If any of the three is ever relaxed,
+        // move this share to the held path
+        // ({LibCloseoutFreeze.holdActiveLenderResident}) in the same change.
         address lenderVault = LibFacet.getOrCreateVault(lenderNftOwner);
         if (holderShare > 0) {
             // #2440 — the extension re-terms the loan as if the lender received

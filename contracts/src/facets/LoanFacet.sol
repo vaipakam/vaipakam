@@ -8,6 +8,7 @@ import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTerms} from "../libraries/LibTerms.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -174,6 +175,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      invariant; never expected).
     error AcceptChargeLoanMismatch(uint256 settledFor, uint256 opened);
     error InvalidOffer();
+    /// @notice #3744 — both sides of the loan would belong to one owner (the
+    ///         holders of the two offers' tokens, or a holder and the
+    ///         acceptor). Same signature as `OfferAcceptFacet`'s.
+    error SelfTradeForbidden(address party);
     error MixedCollateralNotAllowed();
 
     /**
@@ -228,6 +233,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // position on either side, whichever route opens the loan.
         LibProtectedAccount.requireCanOpen(offer.creator);
         LibProtectedAccount.requireCanOpen(acceptor);
+        // #3744 — the offer's position token decides who takes the loan
+        // position, so its holder at the fill is a party too: the same
+        // screens apply to it as to the creator whose escrow funds the loan.
+        address offerHolder = LibOfferRefund.holder(offer);
+        if (offerHolder != offer.creator) LibProtectedAccount.requireCanOpen(offerHolder);
+        // In a match the acceptor's side belongs to the holder of the matched
+        // lender offer's token: screened the same way, and never the same
+        // owner as the other side.
+        address acceptorOwner = LibOfferRefund.acceptorSideOwner(acceptor);
+        if (acceptorOwner != acceptor) {
+            LibVaipakam._assertNotSanctioned(acceptorOwner);
+            LibProtectedAccount.requireCanOpen(acceptorOwner);
+        }
+        if (acceptorOwner == offerHolder) revert SelfTradeForbidden(acceptorOwner);
 
         // Detect if this offer is a lender-sale vehicle (created by
         // createLoanSaleOffer).  The temporary loan it creates is not a real
@@ -244,8 +263,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // #3734 — both parties of a new loan must have accepted the Terms in
         // force, whichever route opens it. A lender-sale vehicle's creator is
         // the exiting lender, who is leaving, so only its buyer is asked.
-        if (!isLenderSaleVehicle) LibTerms.requireCurrent(offer.creator);
+        if (!isLenderSaleVehicle) {
+            LibTerms.requireCurrent(offer.creator);
+            if (offerHolder != offer.creator) LibTerms.requireCurrent(offerHolder);
+        }
         LibTerms.requireCurrent(acceptor);
+        if (acceptorOwner != acceptor) LibTerms.requireCurrent(acceptorOwner);
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send
@@ -347,10 +370,16 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // updated by EarlyWithdrawalFacet via {transferLenderEntry}.
         if (!isLenderSaleVehicle) {
             LibVaipakam.Loan storage loanRef = s.loans[loanId];
+            // #3744 — the entries belong to the wallets that hold the two
+            // position tokens as the loan opens (an offer's token holder, or
+            // the acceptor's side owner in a match), not to the vaults that
+            // fund it: `loan.lender` / `loan.borrower` stay the custody
+            // anchors only. An entry keyed to a funding creator who never held
+            // the position would earn on, or be frozen by, the wrong wallet.
             LibInteractionRewards.registerLoan(
                 loanId,
-                loanRef.lender,
-                loanRef.borrower,
+                LibPositionNFT.ownerOf(loanRef.lenderTokenId),
+                LibPositionNFT.ownerOf(loanRef.borrowerTokenId),
                 loanRef.principalAsset,
                 loanRef.principal,
                 loanRef.interestRateBps,
@@ -798,7 +827,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // bump. Re-asserting here closes that window before the loan is
             // admitted. Standing consent only — the creator signs no #662 accept
             // ack, so there is nothing to substitute.
-            RiskAccessFacet(address(this)).requireActorMayTransact(offer.creator, pair);
+            // #3744 — the owner of the creator's side is the holder of the
+            // offer's token.
+            RiskAccessFacet(address(this)).requireActorMayTransact(LibOfferRefund.holder(offer), pair);
             LibVaipakam.Loan storage gateLoan = s.loans[ctx.loanId];
             address acceptingParty = offer.creator == gateLoan.lender
                 ? gateLoan.borrower
@@ -868,7 +899,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         unchecked {
             acceptorTokenId = ++s.nextTokenId;
         }
-        _mintPosition(ctx.acceptor, acceptorTokenId, ctx, !creatorIsLender);
+        // #3744 — in a match, the acceptor's side goes to the holder of the
+        // matched lender offer's token (the creator still funds it).
+        _mintPosition(LibOfferRefund.acceptorSideOwner(ctx.acceptor), acceptorTokenId, ctx, !creatorIsLender);
 
         LibVaipakam.Loan storage loan = s.loans[ctx.loanId];
         if (creatorIsLender) {
@@ -936,9 +969,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         bool isSaleVehicle = LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0;
         _snapshotFeeBps(loan, isSaleVehicle);
         // #3722 — the borrower has now opened a loan, so it can no longer
-        // bind an inviter. A sale vehicle's "borrower" opens nothing.
-        if (!isSaleVehicle) LibVaipakam.storageSlot().hasBorrowed[loan.borrower] = true;
-        _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
+        // bind an inviter. A sale vehicle's "borrower" opens nothing. #3744 —
+        // the borrower is whoever holds the borrower side as the loan opens
+        // (the borrower offer's token holder, or the acceptor's side owner),
+        // not the vault that funds the collateral.
+        if (!isSaleVehicle) {
+            address borrowerSide = offer.offerType == LibVaipakam.OfferType.Borrower
+                ? LibOfferRefund.holder(offer)
+                : LibOfferRefund.acceptorSideOwner(acceptor);
+            LibVaipakam.storageSlot().hasBorrowed[borrowerSide] = true;
+        }
+        // #3744 — the offer's keepers were chosen by its token's holder, from
+        // that holder's own approved list.
+        _latchOfferKeepersToLoan(loan.id, offerId, LibOfferRefund.holder(offer));
     }
 
     /// @dev #957 (#921 item 6) — freeze the treasury-fee + LIF BPS the loan is
@@ -987,10 +1030,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     function _latchOfferKeepersToLoan(
         uint256 loanId,
         uint256 offerId,
-        address creator
+        address offerHolder
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address[] storage keepers = s.approvedKeepersList[creator];
+        address[] storage keepers = s.approvedKeepersList[offerHolder];
         uint256 len = keepers.length;
         for (uint256 i; i < len; ) {
             address k = keepers[i];

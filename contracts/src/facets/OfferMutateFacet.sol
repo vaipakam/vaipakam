@@ -6,9 +6,9 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
-import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -49,7 +49,9 @@ import {ProfileFacet} from "./ProfileFacet.sol";
  *             union of deltas, emits a single `OfferModified` event.
  *
  *         Invariants enforced on every entry point:
- *           - msg.sender == offer.creator (`NotOfferCreator`).
+ *           - msg.sender holds the offer's position token (`NotOfferHolder`,
+ *             #3744); a raise of the escrow also needs the creator
+ *             (`OfferEscrowRaiseByCreatorOnly`).
  *           - !offer.accepted (`OfferAlreadyAccepted`).
  *           - Range invariants identical to {OfferCreateFacet} so the
  *             post-mutation offer satisfies the same shape any
@@ -106,7 +108,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // #3719 / #3713 — the warnings the offer's checked rate (a lender's
         // floor, a borrower's ceiling) carries after the edit: bit 1 far
         // above the term average, bit 2 far below. Never a caller input.
-        uint8 warnings
+        uint8 warnings,
+        // #3744 — who changed it: the holder of the offer's token (or its
+        // manager); `creator` stays the offer's identity.
+        address by
     );
 
     /// @notice #2737 — re-declared byte-identical from `BackstopFacet`, so
@@ -168,7 +173,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /**
      * @notice Update the principal range (`amount` floor + `amountMax`
      *         ceiling) on an unaccepted offer the caller created.
-     * @dev    Reverts: NotOfferCreator, OfferAlreadyAccepted,
+     * @dev    Reverts: NotOfferHolder, OfferAlreadyAccepted,
      *         AmountMustBePositive, AmountMaxMustBePositive,
      *         InvalidAmountRange, ModifyBelowFilledFloor,
      *         SanctionedAddress, plus per-asset pause reverts.
@@ -230,7 +235,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *         `interestRateBpsMax` ceiling) on an unaccepted offer the
      *         caller created.
      * @dev    Never moves vaulted funds — rate is metadata, not an
-     *         escrow-pulled quantity. Reverts: NotOfferCreator,
+     *         escrow-pulled quantity. Reverts: NotOfferHolder,
      *         OfferAlreadyAccepted, InvalidRateRange,
      *         InterestRateAboveCeiling, SanctionedAddress, plus
      *         per-asset pause reverts.
@@ -273,7 +278,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      * @notice Update the collateral range (`collateralAmount` floor +
      *         `collateralAmountMax` ceiling) on an unaccepted offer
      *         the caller created.
-     * @dev    Reverts: NotOfferCreator, OfferAlreadyAccepted,
+     * @dev    Reverts: NotOfferHolder, OfferAlreadyAccepted,
      *         CollateralMustBePositive, CollateralAmountMaxMustBePositive,
      *         InvalidCollateralAmountRange, LenderCollateralRangeNotAllowed,
      *         CollateralMutationUnsupportedForShape, ModifyBelowFilledFloor,
@@ -502,7 +507,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      the sanctions policy.
     function _assertMutableBy(LibVaipakam.Offer storage offer) private view {
         if (offer.creator == address(0)) revert InvalidOffer();
-        LibAuth.requireOfferCreator(offer);
+        LibAuth.requireOfferHolder(offer);
         if (offer.accepted) revert OfferAlreadyAccepted();
         // #3328 — a collection offer's terms are fixed; it changes only by
         // lowering its loans (`reduceCollectionLoans`) or by cancel.
@@ -598,6 +603,12 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         when a live parallel-sale Seaport listing is bound to
     ///         the offer. Borrower must release the lock first.
     error OfferLockedByParallelSale();
+
+    /// @notice #3744 — only the offer's creator, still holding its token, may
+    ///         raise the escrow (it is pulled into the creator's vault). The
+    ///         token's other holders may lower it, change its terms, or
+    ///         cancel it.
+    error OfferEscrowRaiseByCreatorOnly();
 
     /// @dev #2749 — the offer-shape rules are {LibOfferShape}'s, the same
     ///      definition `createOffer` applies, so the edited offer satisfies
@@ -746,9 +757,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         ),
                         bytes4(0)
                     );
-                    _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                    _pullOrRefundErc20(offerId, offer, offer.lendingAsset, oldAmountMax, newAmountMax);
                 } else {
-                    _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                    _pullOrRefundErc20(offerId, offer, offer.lendingAsset, oldAmountMax, newAmountMax);
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EncumbranceMutateFacet.incrementOfferPrincipalLien.selector,
@@ -788,7 +799,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 uint256 bufBps = LibVaipakam.effectiveRentalBufferBps(offer);
                 uint256 oldPrepay = _nftRentalPrepayTotal(oldAmount, offer.durationDays, bufBps);
                 uint256 newPrepay = _nftRentalPrepayTotal(newAmount, offer.durationDays, bufBps);
-                _pullOrRefundErc20(offer.prepayAsset, oldPrepay, newPrepay);
+                _pullOrRefundErc20(offerId, offer, offer.prepayAsset, oldPrepay, newPrepay);
             }
             return;
         }
@@ -829,12 +840,16 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     bytes4(0)
                 );
                 _pullOrRefundErc20(
+                    offerId,
+                    offer,
                     offer.collateralAsset,
                     oldCollateralAmountMax,
                     newCollateralAmountMax
                 );
             } else {
                 _pullOrRefundErc20(
+                    offerId,
+                    offer,
                     offer.collateralAsset,
                     oldCollateralAmountMax,
                     newCollateralAmountMax
@@ -853,29 +868,31 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // `collateralAmountMax`, so storage-only update is correct.
     }
 
-    /// @dev Generic ERC-20 vault delta: pulls or refunds the difference
-    ///      between `oldAmount` and `newAmount` using the same vault
-    ///      deposit / withdraw selectors `OfferCreateFacet` and
-    ///      `OfferCancelFacet` use.
+    /// @dev Generic ERC-20 vault delta on the offer's escrow, which sits in
+    ///      the CREATOR's vault. A raise pulls the difference from the
+    ///      creator's wallet into that vault, so only the creator, still
+    ///      holding the offer's token, may raise it (#3744: anyone else
+    ///      would be funding someone else's vault). A cut returns the
+    ///      difference to the vault of whoever holds the offer's token now,
+    ///      as free balance ({LibOfferRefund}: held for the token when that
+    ///      vault cannot be paid), the same rule a cancel follows.
     function _pullOrRefundErc20(
+        uint256 offerId,
+        LibVaipakam.Offer storage offer,
         address token,
         uint256 oldAmount,
         uint256 newAmount
     ) private {
         if (newAmount > oldAmount) {
-            uint256 pull = newAmount - oldAmount;
+            if (msg.sender != offer.creator) revert OfferEscrowRaiseByCreatorOnly();
             LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20.selector,
-                    msg.sender,
-                    token,
-                    pull
+                abi.encodeCall(
+                    VaultFactoryFacet.vaultDepositERC20From, (msg.sender, offer.creator, token, newAmount - oldAmount)
                 ),
                 VaultDepositFailed.selector
             );
         } else {
-            uint256 refund = oldAmount - newAmount;
-            LibVaultOutflow.toOwner(msg.sender, LibVaultOutflow.ERC20, token, 0, refund, OutflowReason.OFFER_REFUND);
+            LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, token, 0, oldAmount - newAmount, true);
         }
     }
 
@@ -981,7 +998,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.integrator,
             offer.linkKind,
             offer.linkMarginBps,
-            warnings
+            warnings,
+            msg.sender
         );
     }
 }

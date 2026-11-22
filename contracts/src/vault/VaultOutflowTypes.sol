@@ -96,6 +96,22 @@ library VaultOutflowTypes {
      *           Diamond derives the inviter from that user's own binding and
      *           refuses one whose period has ended. A protected inviter is
      *           paid into its vault, as for every wallet payout.
+     *         - OwnRelease (payout rule, owner decision 2026-11-19): an
+     *           amount already in the entitled account's OWN vault under a
+     *           lien or a reservation (Auto-lend capital, a loan reserve, a
+     *           prior seller's interest, a sale vehicle's collateral), which
+     *           the caller has just released from that lien or reservation by
+     *           exactly the amount. Nothing moves and the vault is never
+     *           called: the Diamond checks the amount is now unencumbered and
+     *           credits it to the account's free balance (the depository
+     *           ledger), never past what the vault holds unencumbered. It
+     *           passes no payout queue, since nothing leaves the vault.
+     *         - OfferHolder (#3744): an open offer's escrow, from its
+     *           creator's vault into the vault of whoever holds the offer's
+     *           position token now, as free balance. The Diamond reads the
+     *           holder from the token; when the creator still holds it,
+     *           nothing moves. The vault checks the holder's vault, as for
+     *           PositionHolder.
      *         What a loan or an open offer owes a party always lands in the
      *         position holder's VAULT as free balance (PositionHolder); only
      *         the owner's own withdrawal reaches a wallet (owner decision
@@ -120,7 +136,9 @@ library VaultOutflowTypes {
         Consolidation,
         Recovery,
         IntegratorShare,
-        ReferralShare
+        ReferralShare,
+        OwnRelease,
+        OfferHolder
     }
 
     /// @notice #3246 part 2 — one asset a clawback or a recovered account's
@@ -294,5 +312,7 @@ library OutflowReason {
     uint8 internal constant STANDING_INSTRUCTION = 25; // #3681: a standing instruction's draw on a loan reserve
     uint8 internal constant INTEGRATOR_SHARE = 26; // an integrator's share of the initiation fee
     uint8 internal constant REFERRAL_SHARE = 27; // an inviter's share of the initiation fee
+    uint8 internal constant CAPITAL_RELEASE = 28; // Auto-lend capital released into its account's free balance
+    uint8 internal constant RESERVE_RELEASE = 29; // a loan reserve released into its depositor's free balance
 
 }

@@ -4433,22 +4433,15 @@ library LibRewardCustody {
         _custody(abi.encodeWithSignature("eraDrawForDay(uint64,uint256,uint256)", era, dayId, amount));
     }
 
-    /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
-    ///      the claimant's vault when asked and creditable, else to their
-    ///      wallet. Returns whether the vault took it.
-    function callDeliverClaim(
-        address user,
-        uint256 fresh,
-        uint256 recycled,
-        uint256 epoch,
-        bool toVault
-    ) internal returns (bool vaulted) {
-        bytes memory ret = _custodyReturning(
+    /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs
+    ///      into the claimant's vault (payout rule 2026-11-19: never a
+    ///      wallet). A failed credit bubbles, so the claim reverts.
+    function callDeliverClaim(address user, uint256 fresh, uint256 recycled, uint256 epoch) internal {
+        _custody(
             abi.encodeWithSignature(
-                "custodyDeliverClaim(address,uint256,uint256,uint256,bool)", user, fresh, recycled, epoch, toVault
+                "custodyDeliverClaim(address,uint256,uint256,uint256)", user, fresh, recycled, epoch
             )
         );
-        vaulted = abi.decode(ret, (bool));
     }
 
     /// @notice 3d-1 — attest a packet's split FROM ITS OWN WIRE: a budget delivery
@@ -4998,13 +4991,6 @@ library LibRewardCustody {
     function callReleaseFromRow(LibVaipakam.RewardCustodyRow r, address to, uint256 amount) internal {
         if (amount == 0) return;
         _custody(abi.encodeWithSignature("custodyReleaseFromRow(uint8,address,uint256)", uint8(r), to, amount));
-    }
-
-    /// @dev The two-row wallet payout through the custody facet: live-fresh
-    ///      by `fresh`, recycled by `recycled`, released to `to`.
-    function callPayoutToWallet(address to, uint256 fresh, uint256 recycled) internal {
-        if (fresh + recycled == 0) return;
-        _custody(abi.encodeWithSignature("custodyPayoutToWallet(address,uint256,uint256)", to, fresh, recycled));
     }
 
     /// @dev {drawForTransport} through the custody facet; returns the total

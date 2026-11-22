@@ -290,6 +290,73 @@ token's details carry an "Approved for transfer" trait, refreshed when an
 approval is given or cleared, if the metadata facet has room for it in the
 refactor.
 
+### 3.10 An open offer's escrow follows its token (#3744)
+
+An open offer has its own position token, and a fill already gives the
+creator's side of the new loan to whoever holds that token. The offer's
+escrow (a lender offer's principal, a borrower offer's collateral or rental
+prepayment) sits in the creator's vault until then. Owner decision
+2026-11-19: the rights over that escrow follow the token too, the same way
+3.3 reads a live loan's payee from its token.
+
+- **Who acts.** Whoever holds the offer's token cancels the offer, changes
+  its terms, lowers its size, stages it (the price-move guard, the treasury
+  backstop, a parallel collateral sale) and chooses its keepers. The rule
+  has one runtime copy on `OfferBookFacet` (`requireOfferHolder`), reached by
+  a self-call, so a facet near EIP-170 carries a call rather than the rule.
+  A cancel is also open to the holder's controller (a replaced account) and,
+  once the offer has expired or its route is dead, to anyone.
+- **Who is paid.** Every refund of the escrow (a cancel, an expired or
+  dead-route clean-up, a size cut, a collection offer's reduction) leaves the
+  creator's vault through one outflow class, `OfferHolder`. The route names
+  no payee: the policy reads the holder from the offer's token. Under the
+  payout rule (owner decision 2026-11-19) the refund lands in that holder's
+  VAULT as its free balance, never at a wallet; only the owner's own
+  withdrawal reaches a wallet. A creator still holding its own offer moves
+  nothing: the released escrow becomes its free balance where it already
+  sits. The vault checks the destination against the token's holder itself,
+  as it does for a live loan's holder payout.
+- **Marks.** A refund takes value out of the offer's token, so the policy
+  raises its state number and starts its wait (3.2), before a cancel
+  retires it.
+- **Growing an offer.** A raise pulls more from the creator's wallet into
+  the creator's vault, so only the creator, still holding the token, may
+  raise it; another holder may lower, re-price or cancel.
+
+Alternatives considered: (B) refusing any move of an offer's token until it
+becomes a loan's, which drops the open-offer sale the fill rule already
+supports; (C) parking each refund in a claim the holder takes later, which
+adds a step where 3.3 chose "hold the token, not the assets". Recommendation
+and decision: as above (A).
+
+At the fill (design rulings of 2026-11-19), the holder of a borrower offer's
+token is the borrower: the net principal goes into its vault as free balance,
+the initiation fee's hold discount is its own, and a holder that is
+sanctions-flagged or has not accepted the Terms in force makes the offer
+unfillable, with a named refusal the previews report. The creator, whose vault
+holds the collateral, is screened as before, and its risk consents stay with
+the offer. An offer's Full-tariff consent is given by the token's holder,
+recorded with that wallet, and counts only while that wallet holds the token;
+a transfer lapses it and the fill runs on the standard tariff. The same rule
+covers the lender side of a match and a collection offer's slices: the loan
+side an offer creates belongs to whoever holds the offer's token when the loan
+opens, while the creator's vault funds it and stays recorded as the funding
+vault. Every ownership check reads the holder and refuses by name; nothing
+falls back to the creator. An offer with no token of its own keeps its
+creator.
+
+A refinance request is the one exception (design ruling 2026-11-19). It stands
+only while its creator holds both the loan's borrower token and the request's
+own token, each unmoved since the request was posted: the payoff permit is the
+creator's signature and any carried collateral sits in the creator's vault, so
+neither half can belong to anyone else. The test lives in the one standing rule
+(`LibRefinanceRequest`), so accept, match, both previews, the loan-holding guard
+and the views all follow it; a moved request token is refused by name
+(`RefinanceRequestTokenMoved`). The request's rights and escrow stay with the
+creator, so its token's holder gains nothing: the creator cancels it (anyone
+may clear it), a fresh pledge stays in the creator's vault, the cancel drops
+its payoff permit, and the loan's holder may post a new request in its place.
+
 ## 4. What a user is told
 
 - **On any marketplace, in the token's own details.** Most marketplaces do

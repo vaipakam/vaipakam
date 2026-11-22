@@ -8,9 +8,6 @@ import {LibRewardEntryProgress} from "./LibRewardEntryProgress.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardSanctions} from "./LibRewardSanctions.sol";
-import {LibAccountShape} from "./LibAccountShape.sol";
-import {LibProtectedAccount} from "./LibProtectedAccount.sol";
-import {LibDelivery} from "./LibDelivery.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -194,8 +191,11 @@ library LibRewardStaging {
         if (caller != r.user || r.phase != LibVaipakam.StagingPhase.Staging) {
             revert IVaipakamErrors.StagingVenueNotSettable(key);
         }
-        // #1566 — the held-apart venue is the owner settlement's alone.
-        if (venue == LibVaipakam.RewardDelivery.SanctionsHeld) revert IVaipakamErrors.RewardDeliveryNotSelectable(uint8(venue));
+        // #1566 — the held-apart venue is the owner settlement's alone, and
+        // the wallet venue is retired by the payout rule (2026-11-19).
+        if (venue == LibVaipakam.RewardDelivery.SanctionsHeld || venue == LibVaipakam.RewardDelivery.Wallet) {
+            revert IVaipakamErrors.RewardDeliveryNotSelectable(uint8(venue));
+        }
         LibRewardCustody.bindStagingVenue(key, r, venue);
     }
 
@@ -790,14 +790,12 @@ library LibRewardStaging {
             LibVaipakam.StagingDomain storage dom = s.stagingDomains[r.domainKey];
             venue = dom.venueSet ? dom.venue : LibVaipakam.RewardDelivery.Default;
         }
-        // The RL-1 rule, as a direct claim resolves it: `Default` is the vault
-        // for an EOA, a 7702-delegated one included (#2617). A wallet in
-        // protected account mode is always paid into its vault.
-        bool toVault = venue == LibVaipakam.RewardDelivery.Vault
-            || LibProtectedAccount.isProtected(user)
-            || (venue == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
+        // Payout rule (owner decision 2026-11-19): a reward is always paid
+        // into the claimant's vault as free balance, whatever venue the
+        // record names; only the account's own Withdraw reaches a wallet. A
+        // vault credit that fails reverts this page, so the record stays
+        // pending (the claimant's own record only) and the next page retries.
         setApart = setApart || venue == LibVaipakam.RewardDelivery.SanctionsHeld;
-        bool vaulted;
         if (forfeit) {
             emit StagingClaimantForfeited(
                 key, user, liveUserFresh + r.epochUserFresh + r.eraUserFresh, liveUserRecycled + r.epochUserRecycled
@@ -810,13 +808,12 @@ library LibRewardStaging {
                 user, liveUserFresh + r.eraUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled
             );
         } else if (userTotal != 0 && !LibRewardCustody.active(s)) {
-            // Custody inactive: the Diamond's balance pays, as it pays a
-            // claim — the vault where the venue asks for it, the wallet
-            // otherwise.
-            vaulted = _payFromDiamond(s, user, userTotal, toVault);
+            // Custody inactive: the Diamond's balance pays into the vault,
+            // as it pays a claim.
+            _payFromDiamond(s, user, userTotal);
         } else if (userTotal != 0) {
-            vaulted = LibRewardCustody.callDeliverClaim(
-                user, liveUserFresh + r.eraUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
+            LibRewardCustody.callDeliverClaim(
+                user, liveUserFresh + r.eraUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled
             );
         }
         // A forfeited claimant's share joins the treasury's forfeit legs, by
@@ -860,7 +857,7 @@ library LibRewardStaging {
                 uint8(
                     setApart
                         ? LibVaipakam.RewardDelivery.SanctionsHeld
-                        : vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet
+                        : LibVaipakam.RewardDelivery.Vault
                 )
             );
         }
@@ -1085,30 +1082,23 @@ library LibRewardStaging {
     }
 
     /// @dev The claim facet's inactive-custody delivery, for one record: the
-    ///      vault credit from the Diamond's balance, else a wallet transfer.
-    ///      A claim's payout reaches it only after `_pay`'s sanctions screen
-    ///      decided Deliver — the claimant is not barred
-    ///      ({LibVaipakam.isRecipientBarred}): a flagged claimant, or one
-    ///      carrying a committed flag during an oracle outage, was held or
-    ///      forfeited before this point. An outage over a wallet with no
-    ///      committed flag still pays (the fail-open posture for an
-    ///      unconfirmed wallet).
-    function _payFromDiamond(
-        LibVaipakam.Storage storage s,
-        address user,
-        uint256 amount,
-        bool toVault
-    ) private returns (bool vaulted) {
-        address vpfi = s.vpfiToken;
-        if (toVault) {
-            (bool ok, ) = address(this).call(
-                abi.encodeWithSignature("vaultCreditFromDiamondERC20(address,address,uint256)", user, vpfi, amount)
-            );
-            if (ok) return true;
+    ///      vault credit from the Diamond's balance, never a wallet (payout
+    ///      rule 2026-11-19). A failed credit reverts the page, so the record
+    ///      stays pending. A claim's payout reaches it only after `_pay`'s
+    ///      sanctions screen decided Deliver — the claimant is not barred
+    ///      ({LibVaipakam.isRecipientBarred}).
+    function _payFromDiamond(LibVaipakam.Storage storage s, address user, uint256 amount) private {
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature("vaultCreditFromDiamondERC20(address,address,uint256)", user, s.vpfiToken, amount)
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            // Re-raise the credit's own revert. Memory-safe: reads only the
+            // `ret` bytes Solidity allocated.
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
         }
-        // A protected wallet is credited in its vault here too
-        // (`LibDelivery.creditIfProtected`), so the fallback never pays it.
-        LibDelivery.pushOut(vpfi, user, amount);
     }
 
     /// @dev The close is BOUNDED (Codex #2308 r12, r13): the record's staged
@@ -1199,8 +1189,11 @@ library LibRewardStaging {
         LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
         if (dom.legacy || dom.phase != LibVaipakam.DomainPhase.Staging) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
         if (caller != dom.user) revert IVaipakamErrors.StagingNotClaimant(dk, caller);
-        // #1566 — the held-apart venue is the owner settlement's alone.
-        if (venue == LibVaipakam.RewardDelivery.SanctionsHeld) revert IVaipakamErrors.RewardDeliveryNotSelectable(uint8(venue));
+        // #1566 — the held-apart venue is the owner settlement's alone, and
+        // the wallet venue is retired by the payout rule (2026-11-19).
+        if (venue == LibVaipakam.RewardDelivery.SanctionsHeld || venue == LibVaipakam.RewardDelivery.Wallet) {
+            revert IVaipakamErrors.RewardDeliveryNotSelectable(uint8(venue));
+        }
         bindDomainVenue(dk, dom, venue);
     }
 

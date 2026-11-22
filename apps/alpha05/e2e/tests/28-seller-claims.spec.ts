@@ -86,21 +86,28 @@ test('a sold position lists its interest from the index, offers nothing while th
   await expect(receipt).toContainText('Owed to you, after the protocol’s 10% share of interest');
   await expect(receipt).toContainText('From the ended loan’s recovery');
   await expect(receipt).not.toContainText('Stays unpaid when your claim closes');
-  await expect(receipt).toContainText('Your wallet');
+  await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
   await expect(receipt).toContainText('Every open seller claim on the loan closes');
   await expect(receipt).toContainText('Wallet prompts: 1');
   await fitsWidth(page);
 
-  const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [seller] });
+  // The payout rule: the interest is released as free balance in the
+  // seller's own vault; only the seller's own Withdraw reaches the wallet.
+  const free = () => sc.read<bigint>('withdrawableNow', [seller, 0, WETH, 0n]);
+  const wallet = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [seller] });
+  const before = await free();
+  const walletBefore = await wallet();
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText('Your claim closed, paid in full');
-  await expect(finish).toContainText(/arrived in your wallet/);
+  await expect(finish).toContainText(/credited to your vault, free to withdraw/);
   expect(flags.sentTransactions).toBe(sent + 1);
-  // The chain agrees: the net claim, to the wei, and nothing left open.
-  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [seller] })).toBe(before + net);
+  // The chain agrees: the net claim, to the wei, free in the vault, the
+  // wallet unchanged, and nothing left open.
+  expect(await free()).toBe(before + net);
+  expect(await wallet()).toBe(walletBefore);
   const [, , , after] = await sc.read<Ledger>('getInterestLedger', [loanId]);
   expect(after.length).toBe(0);
 
@@ -151,7 +158,10 @@ test('when the index fails, a sold loan is looked up by its number and its inter
   await expect(receipt).not.toContainText('From the ended loan’s recovery');
   await expect(receipt).toContainText('Wallet prompts: 1');
 
-  const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [seller] });
+  const free = () => sc.read<bigint>('withdrawableNow', [seller, 0, WETH, 0n]);
+  const wallet = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [seller] });
+  const before = await free();
+  const walletBefore = await wallet();
   const held = await sc.read<bigint>('getSellerInterestHeld', [loanId, seller, WETH]);
   expect(held).toBeGreaterThan(0n);
   // Paid net of the fee; the per-second figure may differ by rounding only.
@@ -160,9 +170,10 @@ test('when the index fails, a sold loan is looked up by its number and its inter
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
-  await expect(finish).toContainText(/arrived in your wallet/);
+  await expect(finish).toContainText(/credited to your vault, free to withdraw/);
   expect(flags.sentTransactions).toBe(sent + 1);
-  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [seller] })).toBe(before + held);
+  expect(await free()).toBe(before + held);
+  expect(await wallet()).toBe(walletBefore);
 
   // The finish card stays until closed, though the loan no longer owes this
   // wallet anything; then the lookup says so.

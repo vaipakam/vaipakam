@@ -2108,7 +2108,7 @@ const copySource = {
       'The offer’s replacement term can no longer finish before this loan’s due date, so no one can accept it any more. Cancel it to get your lending money back.',
     // #3205 — the borrower position moved since the offset was posted.
     pendingMoved:
-      'This offset can no longer complete: your borrower position NFT moved (to another wallet, or away and back) after the offset was posted, and an offset completes only while the position has not moved since. No one can accept it any more. Anyone can cancel its offer to close it out; the lending money it holds goes back to the wallet that posted it.',
+      'This offset can no longer complete: your borrower position NFT moved (to another wallet, or away and back) after the offset was posted, and an offset completes only while the position has not moved since. No one can accept it any more. Anyone can cancel its offer to close it out; the lending money it holds then goes to the vault of whoever holds the offer’s position token, or is held for that holder to collect if it cannot be paid there at that moment.',
     movedUnknown:
       'The app can’t tell whether your borrower position NFT has moved since this offset was posted. If it has, the offset can no longer complete and only a cancel closes it out.',
     pendingOffer: tmpl('Linked offer: #{{offerId}}.', ['offerId']),
@@ -2134,9 +2134,9 @@ const copySource = {
     cancelCooldown:
       'Cancelling opens a few minutes after posting.',
     cancelled:
-      'Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.',
+      'Offset offer cancelled. Your position is unlocked and your lending money is back in your vault as free balance; withdraw it from your vault to move it to your wallet.',
     cancelledApprovalKept:
-      'Offset offer cancelled — your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
+      'Offset offer cancelled — your lending money is back in your vault as free balance. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
     blockedOtherPaths:
       'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
     alreadyLive:
@@ -4242,7 +4242,7 @@ const copySource = {
     action: 'Review exit',
     confirm: 'Confirm — sell my position',
     done:
-      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. The interest you earned stays yours as a claim on the loan: Claims shows it, and you withdraw there whatever reaches your vault.',
+      'Position sold — the payout is already in your vault, and this loan now belongs to the new lender. The interest you earned stays yours as a claim on the loan: Claims shows it, and you collect there whatever reaches your vault.',
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
@@ -4398,7 +4398,7 @@ const copySource = {
       'When a listing is made, it records the least you can come out with and how much is already set aside for the lender. If the loan changes before a buyer takes it so that a sale would break either figure — for example, the borrower repays part of the loan — buyers’ attempts are refused, and you can cancel and list again at the new terms. The app can’t read the figures recorded for this listing yet, so it can’t tell you whether that has happened. (Listings made before this protection existed recorded no figures and sell as before.)',
     // #3205 — the lender position moved since the listing was posted.
     movedEnded:
-      'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted, and a sale completes only while the position has not moved since its listing. No buyer can take it. Anyone can cancel it to close it out; anything it holds goes back to the wallet that posted it.',
+      'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted, and a sale completes only while the position has not moved since its listing. No buyer can take it. Anyone can cancel it to close it out; anything it holds then goes to the vault of whoever holds the offer’s position token, or is held for that holder to collect if it cannot be paid there at that moment.',
     movedEndedNoId:
       'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted. No buyer can take it. Anyone can cancel it to close it out, but the app couldn’t identify the listing’s offer, so it can’t offer the cancel here.',
     movedUnknown:
@@ -4411,7 +4411,7 @@ const copySource = {
     loanSettledWhileListed:
       'This loan has settled, so the sale listing can never complete — cancel it to close it out.',
     ended:
-      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet, and the interest you earned is your claim on the loan, shown in Claims.',
+      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your vault, and the interest you earned is your claim on the loan, shown in Claims.',
     // Issue #951 — the on-chain listing entry point is broken; the
     // form is feature-gated off until the contract fix lands.
     listingUnavailable:
@@ -4554,7 +4554,7 @@ const copySource = {
         rentalClosed: 'Rental closed. Any refundable buffer is ready — claim it from the Claim Center.',
         repaid: 'Repayment confirmed. Your collateral is ready — claim it below or from the Claim Center.',
         collateralAdded: 'Collateral added — the loan is safer now.',
-        collateralWithdrawn: 'Collateral taken back — it’s in your wallet now.',
+        collateralWithdrawn: 'Collateral taken back — it’s in your vault now as free balance.',
         partialRepaid: 'Partial repayment confirmed — you now owe less.',
       },
       // UX3-004 — the claim's exact payout, stated above the claim button.
@@ -4617,7 +4617,7 @@ const copySource = {
       withdrawCollateral: {
         title: 'Take back extra collateral',
         blurb: tmpl(
-          'If your {{symbol}} collateral is worth more than this loan needs, you can take the extra back to your wallet. The loan stays open, but it becomes riskier: with less collateral, a price drop brings liquidation closer.',
+          'If your {{symbol}} collateral is worth more than this loan needs, you can take the extra back into your vault as free balance. The loan stays open, but it becomes riskier: with less collateral, a price drop brings liquidation closer.',
           ['symbol'],
         ),
         available: tmpl('You can take back up to {{amount}} right now.', ['amount']),
@@ -4639,7 +4639,7 @@ const copySource = {
         button: 'Take back',
         overMax: tmpl('That is more than you can take back right now (up to {{amount}}).', ['amount']),
         confirm: 'Confirm — take back collateral',
-        receive: tmpl('{{amount}} back in your wallet.', ['amount']),
+        receive: tmpl('{{amount}} back in your vault as free balance.', ['amount']),
         lockNothing: 'Nothing new.',
         oweNothingMore: 'Nothing more — what you owe doesn’t change.',
         lose: 'The loan has less collateral behind it, so a price drop reaches liquidation sooner. If the loan defaults, the collateral that is left is at stake.',
@@ -4886,11 +4886,11 @@ const copySource = {
   sellerClaims: {
     // The sale reviews' statement of the claim, with today's figure.
     saleNote: tmpl(
-      'The interest you have earned on this position, about {{claim}} so far before the protocol’s cut, is not part of this payout and is not given up: it stays yours as a claim on the loan. Each time the borrower pays interest, open seller claims are paid first, oldest first, into your vault, and you withdraw from Claims. If the borrower defaults and the recovery falls short, the buyer’s loan amount is paid first, so your claim can be paid in part or not at all.',
+      'The interest you have earned on this position, about {{claim}} so far before the protocol’s cut, is not part of this payout and is not given up: it stays yours as a claim on the loan. Each time the borrower pays interest, open seller claims are paid first, oldest first, into your vault, and you collect them from Claims into your vault’s free balance. If the borrower defaults and the recovery falls short, the buyer’s loan amount is paid first, so your claim can be paid in part or not at all.',
       ['claim'],
     ),
     title: 'Interest from positions you sold',
-    lede: 'When you sold a lender position, the interest you had earned on it stayed yours as a claim on the loan. As the borrower pays interest, open claims are paid first, oldest first, into your vault, less the protocol’s usual cut of interest. You withdraw from here to your wallet.',
+    lede: 'When you sold a lender position, the interest you had earned on it stayed yours as a claim on the loan. As the borrower pays interest, open claims are paid first, oldest first, into your vault, less the protocol’s usual cut of interest. Collecting it here makes it part of your vault’s free balance, which you can then withdraw to your wallet from your vault.',
     rowTitle: tmpl('Loan #{{id}}', ['id']),
     held: tmpl('{{amount}} is waiting in your vault for you.', ['amount']),
     owedOpen: tmpl(
@@ -4905,12 +4905,12 @@ const copySource = {
       'About {{amount}} was still owed to you, before the protocol’s cut, when this loan ended. Withdrawing settles it from what the loan recovered: the current lender’s loan amount is paid first, then sellers, oldest first. Whatever the recovery does not cover is unpaid, and nothing on the loan owes it.',
       ['amount'],
     ),
-    nothingYet: 'Nothing is waiting to be withdrawn yet.',
-    refused: tmpl('It can’t be withdrawn right now: {{reason}}', ['reason']),
-    checkFailed: 'We couldn’t check whether it can be withdrawn right now. Try again shortly.',
-    withdraw: 'Withdraw to wallet',
-    withdrawing: 'Withdrawing…',
-    withdrawn: 'Withdrawn to your wallet.',
+    nothingYet: 'Nothing is waiting to be collected yet.',
+    refused: tmpl('It can’t be collected right now: {{reason}}', ['reason']),
+    checkFailed: 'We couldn’t check whether it can be collected right now. Try again shortly.',
+    withdraw: 'Collect into vault',
+    withdrawing: 'Collecting…',
+    withdrawn: 'Collected. It is now part of your vault’s free balance; withdraw it from your vault to move it to your wallet.',
     unavailable:
       'We couldn’t check for interest owed to you from positions you sold, because the activity index is unavailable right now. Try again shortly.',
     unread: tmpl('We couldn’t read your claim on loan #{{id}} right now.', ['id']),
@@ -6291,6 +6291,8 @@ const copySource = {
         'Your wallet is compliance-flagged, so new positions are blocked. Existing loans can still be repaid or closed.',
       flaggedCreator:
         'The wallet that created this offer is compliance-flagged, so it can’t be taken. Nothing was sent.',
+      flaggedHolder:
+        'The wallet that holds this offer’s position token is compliance-flagged, so it can’t be taken. Nothing was sent.',
       assetPaused:
         'One of this offer’s assets is paused by the protocol right now, so the transaction would be rejected. Nothing was sent.',
       // Shown only on deploys with country-pair trading rules enabled
@@ -6945,6 +6947,10 @@ const copySource = {
       OfferCreatorFullTariffSet: 'Fee choice recorded for the offer',
       OfferKeeperEnabled: 'Keeper permission updated',
       OfferSaleProceedsCredited: 'Sale proceeds credited to the vault',
+      OfferEscrowReturned: 'Offer escrow returned to the vault',
+      OfferRefundCollected: 'Held offer refund collected',
+      OfferRefundHeld: 'Offer refund held for the token holder',
+      OfferFullTariffConsentBy: 'Full-tariff consent given on an offer',
       CollateralSaleProceedsSplit: 'Sale proceeds split',
       ParallelSaleLockReleased: 'Collateral sale listing released',
       ParallelSaleReleaseConsolidationDeferred: 'Collateral move deferred',

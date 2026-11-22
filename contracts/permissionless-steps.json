@@ -1014,6 +1014,14 @@
       "class": "user",
       "why": "the vault owner disowns its own untracked asset"
     },
+    "VaultDepositoryFacet.withdrawCredited(uint8,address,uint256)": {
+      "class": "user",
+      "why": "the account withdraws, to its own wallet, what its own batch credited to its free balance (the one Withdraw, for msg.sender only)"
+    },
+    "VaultDepositoryFacet.withdrawFromVault(address,uint8,address,uint256,uint256,address)": {
+      "class": "user",
+      "why": "the one Withdraw: the account's manager (LibVaultWithdraw, requireManager) withdraws the account's own free balance"
+    },
     "VaultFactoryFacet.getOrCreateUserVault(address)": {
       "class": "user",
       "why": "creates or returns a user's own vault; no step waits on it"
@@ -1123,6 +1131,46 @@
     "StandingInstructionFacet.previewInterestPayment(uint256)": {
       "class": "user",
       "why": "a keeper's eth_call preview of the pay-my-interest instruction: it always reverts with the skip reason it would record, so it changes nothing and no keeper is owed"
+    },
+    "BackstopFacet.setOfferBackstopEligible(uint256,uint64)": {
+      "class": "user",
+      "why": "the holder of a borrower offer's position token opts its own offer into backstop eligibility. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "CollectionOfferFacet.reduceCollectionLoans(uint256,uint16)": {
+      "class": "user",
+      "why": "the holder of a collection offer's position token reduces its own offer's loan count. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "OfferMutateFacet.modifyOffer(uint256,struct:LibVaipakam.OfferModifyParams,uint64)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token changes its own offer. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "OfferMutateFacet.setOfferAmount(uint256,uint256,uint256,uint64)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token changes its own offer's amount. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "OfferMutateFacet.setOfferCollateral(uint256,uint256,uint256,uint64)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token changes its own offer's collateral. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "OfferMutateFacet.setOfferRate(uint256,uint256,uint256,uint8,int16,bool,uint64)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token changes its own offer's rate. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "OfferParallelSaleFacet.postParallelSaleListing(uint96,uint256,bytes32,struct:FeeLeg[])": {
+      "class": "user",
+      "why": "the holder of an open offer's position token posts its own parallel sale listing. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "OfferPriceGuardFacet.setOfferPriceGuard(uint256,uint16)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token sets its own offer's price-move guard. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "ProfileFacet.setOfferCreatorFullTariff(uint256,bool,uint256,bool)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token gives or withdraws its own full-tariff consent, recorded with its address. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
+    },
+    "ProfileFacet.setOfferKeeperEnabled(uint256,address,bool)": {
+      "class": "user",
+      "why": "the holder of an open offer's position token chooses the keepers that may act on its own offer. The gate is a self-call to the one holder rule on OfferBookFacet (#3744), which this reader does not follow; the caller can only be the token's holder, so no keeper is owed"
     },
     "RateReference.update(address)": {
       "class": "gap",

@@ -131,6 +131,8 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 result.errorCode = LibOfferMatch.MatchError.CadenceNotAdmitted;
             } else if (r == OfferPriceGuardFacet.OriginationRefusal.PriceGuardRefused) {
                 result.errorCode = LibOfferMatch.MatchError.PriceGuardRefused;
+            } else if (r == OfferPriceGuardFacet.OriginationRefusal.OfferHolderFlagged) {
+                result.errorCode = LibOfferMatch.MatchError.OfferHolderFlagged;
             }
         }
     }

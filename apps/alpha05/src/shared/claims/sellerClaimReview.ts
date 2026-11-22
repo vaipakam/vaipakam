@@ -3,9 +3,10 @@
  * through the wallet's connection, the receipt it is confirmed against, and
  * its outcome measured from the transaction's own record.
  *
- * `claimAsSeller` withdraws from the seller's OWN vault to their wallet, so
- * protected account mode queues it like any withdrawal of the account's own
- * (RB-PAYOUT-ROUTE). On an ended loan it first splits the lender's recovery
+ * `claimAsSeller` releases the interest held for the seller in their OWN
+ * vault as free balance there (`OwnRelease`, the payout rule, owner decision
+ * 2026-11-19): nothing reaches a wallet, and only the seller's own Withdraw
+ * takes it out (RB-PAYOUT-ROUTE). On an ended loan it first splits the lender's recovery
  * between the holder's principal and every open seller claim, which closes
  * them all; the receipt states the seller's part and what stays unpaid.
  */
@@ -14,9 +15,8 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal, Verdict } from '../eligibility/types';
-import { moved } from '../offers/acceptOutcome';
-import { payoutOutcomes, payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
-import { payoutLegs, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
+import { freedInVault, OWN_RELEASE, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { freedLeg, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import { frozenRefusal, frozenState, isFrozenRefusal, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { figured, type Receipt, type ReceiptRow, type ReceiptText } from '../receipt/types';
 import { askThrough } from '../tx/simulate';
@@ -88,8 +88,9 @@ export async function readSellerClaimReview(own: OwnStateClient, diamond: Hex, l
     row: facts.row,
     paused: facts.paused,
     protection: facts.protection,
-    // From the seller's own vault to the seller's wallet.
-    route: payoutRoute(facts.protection, seller, seller),
+    // Released as free balance in the seller's own vault, whatever the
+    // account's protected mode; only the later Withdraw reaches the wallet.
+    route: 'credit',
     frozen: facts.frozen,
     part: splitPart(facts.row, seller),
     dryRun,
@@ -178,8 +179,8 @@ export function sellerClaimReceipt(r: SellerClaimReview, account: Hex, w: Seller
 
 /** RB-CONFIDENCE — the finish card: each claim the split closed for the
  *  seller (what it paid, against what the review said), and each asset the
- *  withdrawal moved, measured where it landed (the wallet, or protected
- *  account mode's queue or vault). */
+ *  withdrawal released as free balance in the seller's own vault, from the
+ *  protocol's own record of the release (`OwnRelease`, ref = the loan). */
 export function measureSellerClaim(r: SellerClaimReview, logs: Parameters<typeof sellerLogs>[0], diamond: Hex, account: Hex, w: SellerWords, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const legs: LegOutcome[] = [];
@@ -204,19 +205,14 @@ export function measureSellerClaim(r: SellerClaimReview, logs: Parameters<typeof
   const expected = sellerPays(r);
   for (const wd of withdrawn) {
     const want = expected?.find((e) => e.asset.toLowerCase() === wd.asset.toLowerCase())?.amount ?? wd.amount;
-    const outcomes = payoutOutcomes(logs, diamond, account, wd.asset);
-    const wallet = moved(logs, wd.asset, null, account);
     legs.push(
-      ...payoutLegs(
+      freedLeg(
         {
-          outcomes,
-          wallet,
+          freed: freedInVault(logs, diamond, account, wd.asset, [OWN_RELEASE], { ref: r.loanId }),
           expected: want,
-          protection: r.protection,
           what: (v) => w.amount(wd.asset, v, false),
           exact: (v) => w.amount(wd.asset, v, true),
-          walletLeg: (what) => format('loanClaim.legArrived', { amount: what }),
-          walletOther: (got, wantText) => format('loanClaim.arrivedOther', { amount: got, expected: wantText }),
+          label: (what) => format('payout.legCredit', { what }),
         },
         copy,
       ),
@@ -225,6 +221,6 @@ export function measureSellerClaim(r: SellerClaimReview, logs: Parameters<typeof
   // A reviewed asset the withdrawal did not move at all is flagged.
   for (const e of expected ?? [])
     if (!withdrawn.some((wd) => wd.asset.toLowerCase() === e.asset.toLowerCase()))
-      legs.push({ status: 'not-done', label: format('loanClaim.legArrived', { amount: w.amount(e.asset, e.amount, false) }), reason: text('sellerClaim.notWithdrawn') });
+      legs.push({ status: 'not-done', label: format('payout.legCredit', { what: w.amount(e.asset, e.amount, false) }), reason: text('sellerClaim.notWithdrawn') });
   return legs;
 }

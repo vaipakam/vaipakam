@@ -11,6 +11,7 @@ import {LibOfferBounds} from "./LibOfferBounds.sol";
 import {LibInitRiskGate} from "./LibInitRiskGate.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
@@ -125,7 +126,12 @@ library LibOfferMatch {
         // (`ReferenceUnusual`). `matchOffers` reverts
         // `RateLinkUnavailable(refusal)`. Transient. Appended.
         ReferenceUnavailable,
-        ReferenceUnusual
+        ReferenceUnusual,
+        // #3744 — the holder of either offer's position token, who owns the
+        // loan side that offer creates, is flagged by the sanctions oracle.
+        // The match reverts `SanctionedAddress(holder)`. Reported by
+        // the match and intent previews. Appended.
+        OfferHolderFlagged
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -218,7 +224,7 @@ library LibOfferMatch {
         PairUnpriced
     }
 
-    /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
+    /// @notice Structured outcome of `IntentPreviewFacet.previewIntent`. `ok` is
     ///         true iff EVERY layer cleared: `intentError == Ok` AND
     ///         `matchError == Ok` AND `riskBlock == 0`. The numeric figures
     ///         mirror what the on-chain fill would lock, so a solver can size a
@@ -409,11 +415,18 @@ library LibOfferMatch {
         // mirror serves both stored-offer matches and a synthesized #625
         // auto-lend intent slice — the latter has no stored lender offer to
         // pass an id for (it is materialised only inside the state-changing
-        // `matchIntent`), so `RiskPreviewFacet.previewIntent` builds the slice
+        // `matchIntent`), so `IntentPreviewFacet.previewIntent` builds the slice
         // in memory and previews it through this same core.
         return _previewMatchCore(
             s.offers[lenderOfferId], s.offers[borrowerOfferId], s, borrowerCollFloor
         );
+    }
+
+    /// @dev #3744 — the owner of the loan side an offer creates: the holder
+    ///      of its position token, or its creator when it carries none.
+    function _sideOwner(uint256 token, address creator) private view returns (address h) {
+        if (token != 0) h = LibPositionNFT.core().holderOf(token);
+        if (h == address(0)) h = creator;
     }
 
     /// @notice Struct-based core of `previewMatch` — runs the full
@@ -509,7 +522,10 @@ library LibOfferMatch {
         // when that happens (the load-bearing gate). Surfacing it here
         // as a typed `MatchError` saves bots an `acceptOfferInternal`
         // submission + revert + gas burn for an obviously-bad pair.
-        if (L.creator == B.creator) {
+        // #3744 — each side belongs to the holder of its offer's token, so
+        // the holders are compared too: a creator cannot take back the side
+        // its transferred offer now gives another wallet by matching itself.
+        if (L.creator == B.creator || _sideOwner(L.positionTokenId, L.creator) == _sideOwner(B.positionTokenId, B.creator)) {
             r.errorCode = MatchError.SelfTrade;
             return r;
         }
@@ -904,8 +920,8 @@ library LibOfferMatch {
     ///         solver can decide whether to submit `matchIntent` without
     ///         spending gas on a revert.
     /// @dev    The risk-access gate (#671) is layered on by the
-    ///         `RiskPreviewFacet.previewIntent` wrapper — it owns the actor
-    ///         resolver — so `ok` here is provisional (intent + match only);
+    ///         `IntentPreviewFacet.previewIntent` wrapper — it resolves the
+    ///         gated actors — so `ok` here is provisional (intent + match only);
     ///         the wrapper downgrades it if `riskBlock != 0`. The binding
     ///         guarantee that this preview agrees with the live path is the
     ///         `previewIntent` Ok ⟺ `matchIntent` succeeds agreement test.

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -310,7 +311,7 @@ contract TierRecordSeamTest is SetupTest {
 
     /// @dev Lending VPFI moves it into the lender's vault as offer escrow and
     ///      back on cancel; neither path stamped the record before #1820.
-    function test_VpfiLendingOffer_CreateAndCancel_RefreshTheRecord() public {
+    function test_VpfiLendingOffer_CreateCancelWithdraw_RefreshTheRecord() public {
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         uint256 amount = 1_000 ether;
 
@@ -319,13 +320,19 @@ contract TierRecordSeamTest is SetupTest {
         (,, uint120 dayClose,) = TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
         assertEq(uint256(dayClose), amount, "record carries the escrowed VPFI");
 
-        vm.expectCall(address(diamond), abi.encodeCall(VPFIDiscountAccumulatorFacet.syncTierRecord, (lender)));
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
+        // #3744 — the refund stays in the lender's vault as its free balance,
+        // so the VPFI the record carries has not moved.
         (,, dayClose,) = TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
-        assertEq(uint256(dayClose), 0, "record follows the refund");
+        assertEq(uint256(dayClose), amount, "the refund stays in the vault");
+
+        vm.expectCall(address(diamond), abi.encodeCall(VPFIDiscountAccumulatorFacet.syncTierRecord, (lender)));
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
+        (,, dayClose,) = TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        assertEq(uint256(dayClose), 0, "record follows the withdrawal");
     }
 
     function test_NonVpfiMovement_DoesNotRefresh() public {

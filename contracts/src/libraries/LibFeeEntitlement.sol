@@ -8,6 +8,8 @@ import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LibPriceRead} from "./LibPriceRead.sol";
+import {LibOfferRefund} from "./LibOfferRefund.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -196,6 +198,39 @@ library LibFeeEntitlement {
         }
         LibVpfiRecycle.creditFullTariff(loanId, cStar, balanceBefore);
         return (LibVaipakam.FeeEntitlementMode.Full, cStar);
+    }
+
+    /**
+     * @notice #3744 — whether `offerId`'s Full-tariff consent counts for
+     *         `party` at a fill now: the offer carries one, the wallet that
+     *         gave it is `party`, and that wallet still holds the offer's
+     *         position token. A transfer of the token lapses the consent (the
+     *         fill then runs on the standard tariff, never reverts); the new
+     *         holder may give its own. A round trip (away and back) lapses it
+     *         too: the token's transfer count must be the one recorded with
+     *         the consent. The VPFI is only ever drawn from the
+     *         consenting holder's vault.
+     */
+    function offerFullConsented(uint256 offerId, address party) internal view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        address by = s.offerFullTariffBy[offerId];
+        if (!offer.creatorFull || by == address(0) || by != party || by != LibOfferRefund.holder(offer)) {
+            return false;
+        }
+        uint256 token = offer.positionTokenId;
+        return token == 0 || LibPositionNFT.transferCountOf(token) == s.offerFullTariffMoves[offerId];
+    }
+
+    /// @notice #3744 — record `by` as the wallet that gave `offerId`'s
+    ///         Full-tariff consent (zero clears it), with the offer token's
+    ///         transfer count now, so any later move of the token (a round
+    ///         trip included) lapses the consent.
+    function recordFullConsent(uint256 offerId, address by) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.offerFullTariffBy[offerId] = by;
+        uint256 token = s.offers[offerId].positionTokenId;
+        s.offerFullTariffMoves[offerId] = token == 0 ? 0 : LibPositionNFT.transferCountOf(token);
     }
 
     /**

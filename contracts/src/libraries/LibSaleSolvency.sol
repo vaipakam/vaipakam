@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../facets/SaleAdmissionFacet.sol";
 import {LibPriceRead} from "./LibPriceRead.sol";
 
 /**
@@ -53,7 +53,7 @@ import {LibPriceRead} from "./LibPriceRead.sol";
  *         "silent blocking" the design doc rules out — the refusal names the
  *         condition and the leg. See the note on `saleAdmission`.
  *
- *         The logic itself lives on `RiskPreviewFacet.saleAdmission` — it owns the
+ *         The logic itself lives on `SaleAdmissionFacet.saleAdmission` (on `RiskPreviewFacet` until #3843) — it owns the
  *         health factor and every parameter consulted, and both calling
  *         facets were already at the EIP-170 ceiling. This library is only
  *         the mapping from that classification onto the errors, which stay
@@ -135,7 +135,7 @@ library LibSaleSolvency {
     /// @notice The classifier returned a code this mapping does not know.
     ///         Unreachable on a coherent deploy — both sides ship together —
     ///         and reachable only on a SPLIT Diamond, where a newer
-    ///         `RiskPreviewFacet` is routed alongside sale facets still
+    ///         `SaleAdmissionFacet` is routed alongside sale facets still
     ///         carrying an older `LibSaleSolvency`. Refusing is the only safe
     ///         reading: the classifier declined to admit the sale, and a code
     ///         we cannot name is not evidence about which check objected.
@@ -159,7 +159,7 @@ library LibSaleSolvency {
      */
     function assertSaleSolvent(uint256 loanId) internal view {
         (uint8 code, uint256 a, uint256 b) =
-            RiskPreviewFacet(address(this)).saleAdmission(loanId);
+            SaleAdmissionFacet(address(this)).saleAdmission(loanId);
         if (code == 0) return;
         if (code == 1) revert SalePositionBelowSolvencyFloor(loanId, a, b);
         if (code == 5) revert SaleLtvAboveAdmissionCap(loanId, a, b);
@@ -208,7 +208,7 @@ library LibSaleSolvency {
         // down with it. A classifier that ran short of gas is not an
         // unavailable answer: it reverts by name (#3504).
         (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
-            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, loanId)
+            abi.encodeWithSelector(SaleAdmissionFacet.saleAdmission.selector, loanId)
         );
         // Codex #1635 r5 — this used to degrade to code 1, which the preview
         // renders as `SalePositionBelowSolvencyFloor`. That was wrong twice

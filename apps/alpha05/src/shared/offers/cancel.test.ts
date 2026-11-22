@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { encodeAbiParameters, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
-import { OfferCancelFacetABI } from '@vaipakam/contracts/abis';
+import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
+import { OfferCancelFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import {
   CANCEL_COOLDOWN_SECONDS,
   cancelBlockers,
@@ -74,7 +74,7 @@ function offer(p: Partial<CancelOffer> = {}): CancelOffer {
 
 function review(o: CancelOffer | null, p: Partial<CancelFacts> = {}, r: Partial<CancelReview> = {}): CancelReview {
   const facts: CancelFacts = { offer: o, state: 'open', linkedLoanId: 0n, paused: false, protection: OPEN, chainNow: NOW, ...p };
-  const route = facts.protection === null ? 'unknown' : !facts.protection.enabled ? 'wallet' : facts.protection.locked ? 'held' : 'queued';
+  const route = facts.protection === null ? 'unknown' : 'credit';
   return { identity: 'i', offerId: 9n, facts, refund: o === null ? null : cancelRefund(o, facts.linkedLoanId), route, dryRun: null, readAt: 0, ...r };
 }
 
@@ -167,7 +167,9 @@ describe('cancelChanged', () => {
     expect(cancelChanged(a, review(offer()), copy)).toBeNull();
     expect(cancelChanged(a, review(offer(), { state: 'accepted' }), copy)).toBe('offerCancel.changedOffer');
     expect(cancelChanged(a, review(offer({ amountFilled: 10n })), copy)).toBe('offerCancel.changedOffer');
-    expect(cancelChanged(a, review(offer(), { protection: PROTECTED }), copy)).toBe('queue.changedAccount');
+    // The return is freed in a vault whatever the account's protection, so
+    // turning it on changes no route.
+    expect(cancelChanged(a, review(offer(), { protection: PROTECTED }), copy)).toBeNull();
     expect(cancelChanged(a, review(offer(), { paused: true }), copy)).toBe('offerCancel.changedPause');
     expect(cancelChanged(a, review(offer(), {}, { dryRun: 'unread' }), copy)).toBe('offerCancel.changedVerdict');
   });
@@ -178,48 +180,28 @@ describe('cancelReceipt', () => {
     const row = r.rows.find((x) => x.label === label);
     return row && row.value.kind === 'text' ? row.value.text : row?.value.kind;
   };
-  it('states what returns and that it reaches the creator’s own wallet at once', () => {
+  it('states what returns and that it is freed in the creator’s vault', () => {
     const r = cancelReceipt(review(offer()), ME, words, copy);
     expect(r.title).toBe('offerCancel.title');
     expect(rowText(r, 'offerCancel.rowReturns')).toBe('100');
-    expect(rowText(r, 'offerCancel.rowTo')).toBe('offerCancel.toYourWallet');
+    expect(rowText(r, 'offerCancel.rowTo')).toBe('payout.toCredit');
     expect(r.consequences).toContain('offerCancel.positionRetired');
     expect(r.consequences).toContain('offerCancel.race');
     expect(r.consequences).toContain('offerCancel.noApproval');
   });
-  it('routes the creator’s return through its protected queue', () => {
+  it('frees the return in the vault whatever the creator’s protection: nothing is queued', () => {
     const r = cancelReceipt(review(offer(), { protection: PROTECTED }), ME, words, copy);
-    expect(rowText(r, 'offerCancel.rowTo')).toMatch(/^payout\.toQueued:/);
-    expect(r.consequences).toContain('payout.queuedNote');
+    expect(rowText(r, 'offerCancel.rowTo')).toBe('payout.toCredit');
+    expect(r.consequences).not.toContain('payout.queuedNote');
   });
-  it('says a clean-up of someone else’s offer pays its creator, in the creator’s terms', () => {
+  it('says a clean-up of someone else’s offer frees the return in the token holder’s vault', () => {
     const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
     const r = cancelReceipt(review(o, { state: 'expired', protection: PROTECTED }), ME, words, copy);
     expect(r.title).toBe('offerCancel.titleCleanup');
-    expect(rowText(r, 'offerCancel.rowTo')).toMatch(/^offerCancel\.toCreatorQueued:/);
+    expect(rowText(r, 'offerCancel.rowTo')).toBe('offerCancel.toHolderVault');
     expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.cleanupNotYours:'))).toBe(true);
-    // The payee's own queue notes speak to the payee, not to the reader.
+    // The payee's own route notes speak to the payee, not to the reader.
     expect(r.consequences).not.toContain('payout.queuedNote');
-    expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.creatorQueuedNote:'))).toBe(true);
-  });
-  it('states that the creator’s secondary signer must approve a queued return', () => {
-    const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
-    const r = cancelReceipt(review(o, { state: 'expired', protection: { ...PROTECTED, requireCosign: true } }), ME, words, copy);
-    expect(rowText(r, 'offerCancel.rowTo')).toMatch(/^offerCancel\.toCreatorQueuedCosign:/);
-    expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.creatorQueuedCosignNote:'))).toBe(true);
-  });
-  it('names the wallet that now manages a retired creator’s account as where a queued return goes', () => {
-    const NEXT = '0x00000000000000000000000000000000000000c9' as Hex;
-    const retired = { ...PROTECTED, retired: true, controller: NEXT };
-    const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
-    const theirs = cancelReceipt(review(o, { state: 'expired', protection: retired }), ME, words, copy);
-    expect(rowText(theirs, 'offerCancel.rowTo')).toContain('offerCancel.creatorControllerWallet');
-    expect(rowText(theirs, 'offerCancel.rowTo')).toContain('0x0000…00c9');
-    const note = theirs.consequences.find((c) => typeof c === 'string' && c.startsWith('offerCancel.creatorQueuedNote:'));
-    expect(note).toContain('creatorControllerWallet');
-    const mine = cancelReceipt(review(offer(), { protection: retired }), ME, words, copy);
-    expect(rowText(mine, 'offerCancel.rowTo')).toContain('payout.controllerWallet');
-    expect(mine.consequences.some((c) => typeof c === 'string' && c.startsWith('payout.queuedControllerNote:'))).toBe(true);
   });
   it('states a return it cannot size as unknown, never as a figure', () => {
     const r = cancelReceipt(review(offer(), { linkedLoanId: 3n }), ME, words, copy);
@@ -232,22 +214,40 @@ describe('cancelReceipt', () => {
   });
 });
 
-const TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
-const NFT_TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
-
-function nftLog(token: Hex, from: Hex, to: Hex, tokenId: bigint): Log {
-  const topics = encodeEventTopics({ abi: NFT_TRANSFER, eventName: 'Transfer', args: { from, to, tokenId } });
-  return { address: token, topics, data: '0x' } as unknown as Log;
-}
-
 function cancelledLog(offerId: bigint, creator: Hex): Log {
   const topics = encodeEventTopics({ abi: OfferCancelFacetABI as Abi, eventName: 'OfferCanceled', args: { offerId, creator } });
   return { address: DIAMOND, topics, data: '0x' } as unknown as Log;
 }
 
-function transferLog(token: Hex, from: Hex, to: Hex, value: bigint): Log {
-  const topics = encodeEventTopics({ abi: TRANSFER, eventName: 'Transfer', args: { from, to } });
-  return { address: token, topics, data: encodeAbiParameters([{ type: 'uint256' }], [value]) } as unknown as Log;
+function outflowLog(owner: Hex, asset: Hex, delivered: bigint, opts: { to?: Hex; ref?: bigint; tokenId?: bigint; class_?: number } = {}): Log {
+  const args = {
+    owner,
+    vault: VAULT,
+    asset,
+    tokenId: opts.tokenId ?? 0n,
+    amount: delivered,
+    delivered,
+    to: opts.to ?? VAULT,
+    class_: opts.class_ ?? 20,
+    reason: 1,
+    ref: opts.ref ?? 9n,
+  };
+  const abi = VaultOutflowFacetABI as Abi;
+  const event = abi.find((e) => e.type === 'event' && e.name === 'VaultOutflow') as unknown as { inputs: { name: string; type: string; indexed?: boolean }[] };
+  const topics = encodeEventTopics({ abi, eventName: 'VaultOutflow', args } as never);
+  const plain = event.inputs.filter((i) => !i.indexed);
+  const data = encodeAbiParameters(plain, plain.map((i) => (args as Record<string, unknown>)[i.name]));
+  return { address: DIAMOND, topics, data } as unknown as Log;
+}
+
+function heldLog(offerId: bigint, holder: Hex, asset: Hex, amount: bigint, tokenId = 0n): Log {
+  const abi = OfferCancelFacetABI as Abi;
+  const args = { offerId, positionToken: 5n, holder, asset, tokenId, amount };
+  const event = abi.find((e) => e.type === 'event' && e.name === 'OfferRefundHeld') as unknown as { inputs: { name: string; type: string; indexed?: boolean }[] };
+  const topics = encodeEventTopics({ abi, eventName: 'OfferRefundHeld', args } as never);
+  const plain = event.inputs.filter((i) => !i.indexed);
+  const data = encodeAbiParameters(plain, plain.map((i) => (args as Record<string, unknown>)[i.name]));
+  return { address: DIAMOND, topics, data } as unknown as Log;
 }
 
 describe('measureCancel', () => {
@@ -256,32 +256,64 @@ describe('measureCancel', () => {
     expect(legs).toHaveLength(1);
     expect(legs[0]!.status).toBe('not-done');
   });
-  it('measures the return that reached the creator’s wallet against the review', () => {
-    const legs = measureCancel(review(offer()), [cancelledLog(9n, ME), transferLog(TOKEN, VAULT, ME, 100n)], DIAMOND, ME, words, copy);
+  it('measures the return the protocol freed in the creator’s vault against the review', () => {
+    const legs = measureCancel(review(offer()), [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n)], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
-    expect(legs[1]!.label).toBe('offerCancel.legArrived:{"what":"100"}');
+    expect(legs[1]!.label).toBe('offerCancel.legFreed:{"what":"100"}');
   });
-  it('flags a return short of the review', () => {
-    const legs = measureCancel(review(offer()), [cancelledLog(9n, ME), transferLog(TOKEN, VAULT, ME, 60n)], DIAMOND, ME, words, copy);
-    expect(legs[1]!.status).toBe('unknown');
+  it('flags a return short of the review, and one never recorded', () => {
+    const short = measureCancel(review(offer()), [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 60n)], DIAMOND, ME, words, copy);
+    expect(short[1]!.status).toBe('unknown');
+    expect((short[1] as { reason?: string }).reason).toMatch(/^payout\.freedOther:/);
+    const none = measureCancel(review(offer()), [cancelledLog(9n, ME)], DIAMOND, ME, words, copy);
+    expect(none[1]!.status).toBe('not-done');
   });
-  it('names the creator’s wallet when the reader cleaned up someone else’s offer', () => {
+  it('ignores a record for another offer, another class or another owner', () => {
+    const logs = [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n, { ref: 8n }), outflowLog(ME, TOKEN, 100n, { class_: 2 }), outflowLog(OTHER, TOKEN, 100n)];
+    expect(measureCancel(review(offer()), logs, DIAMOND, ME, words, copy)[1]!.status).toBe('not-done');
+  });
+  it('measures a refund the protocol released in the creator’s own vault (a refinance request)', () => {
+    const legs = measureCancel(review(offer()), [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n, { class_: 19 })], DIAMOND, ME, words, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    expect(legs[1]!.label).toBe('offerCancel.legFreed:{"what":"100"}');
+  });
+  it('says a refund kept for the offer token’s holder as held, never as nothing returned', () => {
     const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
-    const legs = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), transferLog(TOKEN, VAULT, OTHER, 100n)], DIAMOND, ME, words, copy);
-    expect(legs[1]!.label).toBe('offerCancel.legArrivedCreator:{"what":"100"}');
-  });
-  it('measures a return it could not size from what moved', () => {
-    const legs = measureCancel(review(offer(), { linkedLoanId: 3n }), [cancelledLog(9n, ME), transferLog(TOKEN, VAULT, ME, 42n)], DIAMOND, ME, words, copy);
+    const HOLDER = '0x00000000000000000000000000000000000000c3' as Hex;
+    const legs = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(9n, HOLDER, TOKEN, 100n)], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
-    expect(legs[1]!.label).toBe('offerCancel.legArrived:{"what":"42"}');
+    expect(legs[1]!.label).toMatch(/^offerCancel\.legHeld:/);
+    expect(legs[1]!.label).toContain('"what":"100"');
+    // The reader holds the token: said to them.
+    const mine = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(9n, ME, TOKEN, 100n)], DIAMOND, ME, words, copy);
+    expect(mine[1]!.label).toBe('offerCancel.legHeldMine:{"what":"100"}');
+    // Held short of the review: said beside it.
+    const short = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(9n, HOLDER, TOKEN, 60n)], DIAMOND, ME, words, copy);
+    expect(short[1]!.status).toBe('unknown');
+    // Another offer's hold is not this one's.
+    const other = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), heldLog(8n, HOLDER, TOKEN, 100n)], DIAMOND, ME, words, copy);
+    expect(other[1]!.status).toBe('not-done');
+  });
+  it('names the holder’s vault when the return left the creator’s own', () => {
+    const HOLDER_VAULT = '0x00000000000000000000000000000000000000f2' as Hex;
+    const mine = measureCancel(review(offer()), [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 100n, { to: HOLDER_VAULT })], DIAMOND, ME, words, copy);
+    expect(mine[1]!.label).toBe('offerCancel.legFreedHolder:{"what":"100"}');
+    const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
+    const theirs = measureCancel(review(o, { state: 'expired' }), [cancelledLog(9n, OTHER), outflowLog(OTHER, TOKEN, 100n)], DIAMOND, ME, words, copy);
+    expect(theirs[1]!.label).toBe('offerCancel.legFreedHolder:{"what":"100"}');
+  });
+  it('measures a return it could not size from what the protocol recorded', () => {
+    const legs = measureCancel(review(offer(), { linkedLoanId: 3n }), [cancelledLog(9n, ME), outflowLog(ME, TOKEN, 42n)], DIAMOND, ME, words, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    expect(legs[1]!.label).toBe('offerCancel.legFreed:{"what":"42"}');
   });
   it('measures an NFT a linked offer returns, rather than leaving it unmeasured', () => {
     const o = offer({ assetType: 1, lendingAsset: NFT, tokenId: 4n });
-    const legs = measureCancel(review(o, { linkedLoanId: 3n }), [cancelledLog(9n, ME), nftLog(NFT, VAULT, ME, 4n)], DIAMOND, ME, words, copy);
+    const legs = measureCancel(review(o, { linkedLoanId: 3n }), [cancelledLog(9n, ME), outflowLog(ME, NFT, 1n, { tokenId: 4n })], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
-    expect(legs[1]!.label).toBe('offerCancel.legArrived:{"what":"nft#4x1"}');
+    expect(legs[1]!.label).toBe('offerCancel.legFreed:{"what":"nft#4x1"}');
   });
-  it('says a measured return moved nothing when nothing reached the creator', () => {
+  it('says a measured return moved nothing when nothing was freed', () => {
     const legs = measureCancel(review(offer(), { linkedLoanId: 3n }), [cancelledLog(9n, ME)], DIAMOND, ME, words, copy);
     expect(legs[1]).toEqual({ status: 'done', label: 'offerCancel.legNothingMine' });
     const nft = offer({ assetType: 1, lendingAsset: NFT, tokenId: 4n });

@@ -8,8 +8,8 @@ import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { legVerdict, moved } from '../offers/acceptOutcome';
 import { readVault } from '../offers/reads';
 import { parseAmount } from '../post/postModel';
-import { payoutOutcomes } from '../protection/payout';
-import { payoutLegs } from '../protection/payoutCopy';
+import { freedInVault, OWN_RELEASE } from '../protection/payout';
+import { freedLeg } from '../protection/payoutCopy';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
@@ -228,26 +228,16 @@ export function AutoLendManage({ kind, lending, collateral, slot, unlent, chain,
             reason: format('autoLend.mReleasedOther', { amount: exact(lending, released), expected: exact(lending, d.amount) }),
           });
         }
-        const outcomes = payoutOutcomes(receipt.logs, diamond, account, lending);
-        const routed = outcomes.reduce((t, o) => t + o.amount, 0n);
-        // An unread vault leaves what reached the wallet unknown, never zero,
-        // unless the protocol's own routed payouts already account for it all.
-        if (vault === null && routed !== d.amount) {
-          legs.push({ status: 'unknown', label: format('autoLend.mLegReceived', { what: amt(d.amount) }), reason: text('accept.vaultUnknown') });
-          return legs;
-        }
-        const wallet = vault === null ? 0n : moved(receipt.logs, lending, vault, account);
+        // Released in the account's own vault as free balance (the payout
+        // rule), measured from the protocol's own record of the release.
         legs.push(
-          ...payoutLegs(
+          freedLeg(
             {
-              outcomes,
-              wallet,
+              freed: freedInVault(receipt.logs, diamond, account, lending, [OWN_RELEASE]),
               expected: d.amount,
-              protection: review.facts.protection,
               what: amt,
               exact: (v) => exact(lending, v),
-              walletLeg: (what) => format('autoLend.mLegReceived', { what }),
-              walletOther: (got, expected) => format('autoLend.mReceivedOther', { amount: got, expected }),
+              label: (what) => format('autoLend.mLegFreed', { what }),
             },
             copy,
           ),

@@ -5,6 +5,7 @@ import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -12,7 +13,7 @@ import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -715,7 +716,7 @@ contract LenderIntentMatchTest is SetupTest {
         returns (LibOfferMatch.IntentPreviewResult memory)
     {
         // The solver sends its own transaction, so it is also the route's initiator.
-        return RiskPreviewFacet(address(diamond)).previewIntent(
+        return IntentPreviewFacet(address(diamond)).previewIntent(
             solver_, solver_, lender, mockERC20, mockCollateralERC20, 0, boId, fill
         );
     }
@@ -802,6 +803,31 @@ contract LenderIntentMatchTest is SetupTest {
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertGt(loanId, 0, "fill succeeds - agrees with preview Ok");
+    }
+
+    /// #3744 — the holder of the borrower offer's token owns the borrower
+    /// side, so with KYC enforcement on the preview refuses a holder below
+    /// the tier, as the fill does, and clears once the holder's tier does.
+    function test_previewIntent_holderBelowKycTier_agreesWithTheFill() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("bKycHolder");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        address h = makeAddr("kycHolder");
+        LibTestPositionNFT.move(address(diamond), OfferCancelFacet(address(diamond)).getOffer(cp).positionTokenId, h);
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview refuses the holder's tier");
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.AcceptGateBlocked), "accept gate");
+        vm.prank(solver);
+        vm.expectRevert();
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL);
+
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).updateKYCTier(h, LibVaipakam.KYCTier.Tier2);
+        r = _preview(solver, PRINCIPAL, cp);
+        assertTrue(r.ok, "preview clears with the holder's tier");
     }
 
     // ── sale-vehicle counterparty (#951 v2, D3) — non-matchable via intent too ──

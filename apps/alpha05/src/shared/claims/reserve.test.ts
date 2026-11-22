@@ -1,6 +1,6 @@
 import { encodeAbiParameters, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { StandingInstructionFacetABI } from '@vaipakam/contracts/abis';
+import { StandingInstructionFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { discoverReserveLoans, RESERVE_KINDS, reserveDrawable, reserveLogs, reserveRowKey, reserveRowShown, reserveVerdict, type ReserveRow } from './reserve';
@@ -93,9 +93,13 @@ const ERC20 = parseAbi(['event Transfer(address indexed from, address indexed to
 const withdrawn = (amount: bigint, reserved = 0n, loanId = 7n, kind = 0) =>
   log(STANDING, DIAMOND, 'LoanReserveWithdrawn', { loanId, holder: ME, kind, asset: WETH, amount, reserved });
 const transfer = (amount: bigint) => log(ERC20, WETH, 'Transfer', { from: OTHER, to: ME, value: amount });
+const VAULT = '0x00000000000000000000000000000000000000f1' as Hex;
+// The release into the account's own vault (`OwnRelease` = 19, ref = loan).
+const released = (amount: bigint, class_ = 19, ref = 7n) =>
+  log(VaultOutflowFacetABI as Abi, DIAMOND, 'VaultOutflow', { owner: ME, vault: VAULT, asset: WETH, tokenId: 0n, amount, delivered: amount, to: VAULT, class_, reason: 1, ref });
 
 function review(r: ReserveRow, over: Partial<ReserveReview> = {}): ReserveReview {
-  return { identity: '1:0xaa', loanId: 7n, row: r, paused: false, protection: null, route: 'wallet', frozen: null, dryRun: null, verdict: OPEN, readAt: 1, ...over };
+  return { identity: '1:0xaa', loanId: 7n, row: r, paused: false, protection: null, route: 'credit', frozen: null, dryRun: null, verdict: OPEN, readAt: 1, ...over };
 }
 
 describe('reserve withdrawal record', () => {
@@ -105,11 +109,18 @@ describe('reserve withdrawal record', () => {
     expect(reserveLogs([withdrawn(3n, 0n, 7n, 1)], DIAMOND, 7n, ME)).toEqual([]);
   });
 
-  it('measures the withdrawal where it landed, and says what stays reserved', () => {
+  it('measures the release into the account’s own vault, and says what stays reserved', () => {
     const r = review(row());
-    expect(measureReserve(r, [withdrawn(500n), transfer(500n)], DIAMOND, ME, words, copy).map((l) => l.status)).toEqual(['done']);
+    const done = measureReserve(r, [withdrawn(500n), released(500n)], DIAMOND, ME, words, copy);
+    expect(done.map((l) => l.status)).toEqual(['done']);
+    expect(done[0]!.label).toBe('payout.legCredit{"what":"500"}');
     expect(measureReserve(r, [], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
-    const left = measureReserve(r, [withdrawn(500n, 30n), transfer(500n)], DIAMOND, ME, words, copy);
+    // A wallet transfer, another class or another loan is not the release.
+    expect(measureReserve(r, [withdrawn(500n), transfer(500n)], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
+    expect(measureReserve(r, [withdrawn(500n), released(500n, 20)], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
+    expect(measureReserve(r, [withdrawn(500n), released(500n, 19, 8n)], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
+    expect(measureReserve(r, [withdrawn(500n), released(300n)], DIAMOND, ME, words, copy)[0]!.status).toBe('unknown');
+    const left = measureReserve(r, [withdrawn(500n, 30n), released(500n)], DIAMOND, ME, words, copy);
     expect(left.map((l) => l.label)).toContain('reserve.legLeft{"amount":"30"}');
   });
 

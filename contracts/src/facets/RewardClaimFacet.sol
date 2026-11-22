@@ -2,13 +2,10 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
-import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
-import {LibAccountShape} from "../libraries/LibAccountShape.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -95,14 +92,10 @@ contract RewardClaimFacet is
      *
      *      Pausable + reentrancy-guarded. Emits {InteractionRewardsClaimed}.
      *
-     *      RL-1 delivery default: a direct EOA-style claim (an EIP-7702
-     *      delegated EOA included, #2617) delivers the
-     *      payout into the claimant's per-user VAULT (closing the reward
-     *      loop — see {claimInteractionRewardsTo}); a contract caller gets
-     *      the raw wallet transfer every pre-RL-1 integration observed.
-     *      Pass an explicit venue via {claimInteractionRewardsTo} to
-     *      override either default.
-     * @return paid    VPFI wei transferred to the caller.
+     *      Payout rule (owner decision 2026-11-19): the payout is credited
+     *      into the claimant's VAULT as free balance, whoever the claimant
+     *      is; see {claimInteractionRewardsTo}.
+     * @return paid    VPFI wei credited to the caller's vault.
      * @return fromDay First day walked (inclusive).
      * @return toDay   Last day walked (inclusive).
      */
@@ -131,29 +124,18 @@ contract RewardClaimFacet is
      *         semantics to {claimInteractionRewards}; only where the payout
      *         lands differs:
      *
-     *         - `Vault`: the payout is credited into the claimant's
-     *           per-user vault via the Diamond-funded credit primitive, so
-     *           it immediately counts toward protocol-tracked balance and
-     *           fee-discount tier standing. NOT a lockup — the vault is the
-     *           user's own custody surface and withdrawal stays available
-     *           at any time. Available to every caller: a smart-contract
-     *           wallet (Safe, AA account) passes `Vault` to get the same
-     *           loop-closing credit as an EOA.
-     *         - `Wallet`: raw `safeTransfer` to `msg.sender` (the pre-RL-1
-     *           behaviour; the EOA opt-out and the integration default).
-     *         - `Default`: resolves by caller shape — EOA-style → `Vault`,
-     *           contract caller → `Wallet`. An EIP-7702 delegated EOA is
-     *           EOA-style (`LibAccountShape`, #2617).
-     *
-     *         Delivery is best-effort and NEVER reduces claim availability:
-     *         if the vault credit cannot complete (no vault yet, mandatory
-     *         vault upgrade pending, or the tier bookkeeping reverts), the
-     *         whole vault-side frame rolls back and the payout falls back
-     *         to the wallet transfer — never a double-pay, never untracked
-     *         vault dust, never a bubbled revert.
+     *         Payout rule (owner decision 2026-11-19): the payout is
+     *         ALWAYS credited into the claimant's vault as free balance,
+     *         whoever the claimant is; only the account's own Withdraw
+     *         reaches a wallet. `Default` and `Vault` both mean the vault;
+     *         `Wallet` is retired and refused (`RewardDeliveryNotSelectable`),
+     *         as is the settlement's `SanctionsHeld`. A vault credit that
+     *         cannot complete (a mandatory vault upgrade pending, the tier
+     *         bookkeeping reverting) reverts the claim, so the reward stays
+     *         claimable; there is no wallet fallback.
      *
      * @param  deliverTo Delivery venue selector.
-     * @return paid    VPFI wei paid out (vault-credited or transferred).
+     * @return paid    VPFI wei credited to the vault.
      * @return fromDay First day walked (inclusive).
      * @return toDay   Last day walked (inclusive).
      */
@@ -322,7 +304,7 @@ contract RewardClaimFacet is
         paid = LibRewardCustody.callReleaseSanctionsHeld(msg.sender);
         if (paid == 0) revert NoInteractionRewardsToClaim();
         (uint256 today, ) = LibInteractionRewards.currentDayOrZero();
-        _deliverFromDiamond(msg.sender, vpfi, paid, _toVault(msg.sender, deliverTo), today);
+        _deliverFromDiamond(msg.sender, vpfi, paid, today);
         emit InteractionRewardsClaimed(msg.sender, 0, 0, paid);
     }
 
@@ -342,10 +324,14 @@ contract RewardClaimFacet is
         }
     }
 
-    /// @dev The held-apart venue is the settlement's alone: every public entry
-    ///      that takes a venue refuses it.
+    /// @dev The held-apart venue is the settlement's alone, and `Wallet` is
+    ///      retired by the payout rule (owner decision 2026-11-19: a reward is
+    ///      always paid into the vault): every public entry that takes a venue
+    ///      refuses both.
     function _requireSelectableVenue(LibVaipakam.RewardDelivery deliverTo) private pure {
-        if (deliverTo == LibVaipakam.RewardDelivery.SanctionsHeld) revert RewardDeliveryNotSelectable(uint8(deliverTo));
+        if (
+            deliverTo == LibVaipakam.RewardDelivery.SanctionsHeld || deliverTo == LibVaipakam.RewardDelivery.Wallet
+        ) revert RewardDeliveryNotSelectable(uint8(deliverTo));
     }
 
     /// @dev Shared claim body for `user` — the caller on the two claim
@@ -375,7 +361,7 @@ contract RewardClaimFacet is
         // Carried in `paid` (no new local in this at-budget frame).
         if (deliverTo != LibVaipakam.RewardDelivery.SanctionsHeld) {
             paid = LibRewardCustody.callReleaseSanctionsHeld(user);
-            if (paid != 0) _deliverFromDiamond(user, vpfi, paid, _toVault(user, deliverTo), today);
+            if (paid != 0) _deliverFromDiamond(user, vpfi, paid, today);
         }
 
         // Fold new entry-path rewards first. Forfeited entries accumulate
@@ -702,25 +688,15 @@ contract RewardClaimFacet is
     }
 
     /**
-     * @dev RL-1 payout delivery to `user`. Resolves `Default` by the
-     *      claimant's shape (an EOA-style claimant — `LibAccountShape.isEoaStyle`:
-     *      no code, or only an EIP-7702 delegation designator — joins the
-     *      loop by default; a contract caller keeps the raw transfer every
-     *      pre-RL-1 integration observed), then attempts the Diamond-funded
-     *      vault credit for `Vault` deliveries.
-     *
-     *      The credit runs as ONE revert-isolated unit: the cross-facet
-     *      self-call routes through the Diamond's fallback into
-     *      {VaultFactoryFacet.vaultCreditFromDiamondERC20} in its own call
-     *      frame, so a failure at ANY step (no vault, mandatory-upgrade
-     *      gate, transfer, tracked-balance record, tier rollup) rolls back
-     *      every vault-side effect before the wallet fallback pays — never
-     *      a double-pay, never untracked vault dust, and never a bubbled
-     *      revert that regresses claim availability relative to the
-     *      pre-RL-1 wallet claim. `abi.encodeWithSignature` (not
-     *      `.selector`) keeps the heavy VaultFactoryFacet source out of
-     *      this facet's import graph; the deploy-sanity selector-coverage
-     *      suite pins the routed signature.
+     * @dev Payout delivery to `user`, always into its vault (payout rule,
+     *      owner decision 2026-11-19). The credit runs through the Diamond's
+     *      fallback into {VaultFactoryFacet.vaultCreditFromDiamondERC20} (or,
+     *      on an activated deployment, the custody host's credit from the
+     *      holder); a failure bubbles and reverts the claim, so the reward
+     *      stays claimable. `abi.encodeWithSignature` (not `.selector`) keeps
+     *      the heavy VaultFactoryFacet source out of this facet's import
+     *      graph; the deploy-sanity selector-coverage suite pins the routed
+     *      signature.
      *
      *      NOTE deliberately NOT nonReentrant-guarded on the inner call:
      *      the claim entry holds the shared diamond guard and the credit
@@ -759,20 +735,16 @@ contract RewardClaimFacet is
             );
             return;
         }
-        bool toVault = _toVault(user, deliverTo);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1566 slice 4 PR B — on an activated deployment the payout is ONE
         // atomic two-row debit of the holder (design §5d): the fresh
         // component leaves the live-fresh row and the recycled component
         // (`amount − fresh`; the bucket's ledger-side counterpart is
         // {LibVpfiRecycle.consume}, which moves no tokens) leaves the
-        // recycled row, and the tokens are released from the holder to the
-        // resolved destination, measured at both ends. The vault leg runs
-        // the debit, the release, the tracked-balance record and the tier
-        // rollup inside the same revert-isolated self-call the Diamond-funded
-        // route uses, so a failure after the token movement rolls the
-        // holder release back before the wallet fallback pays — exactly one
-        // destination is ever paid.
+        // recycled row, and the tokens are released from the holder into
+        // the claimant's vault, measured at both ends, with the
+        // tracked-balance record and the tier rollup. A failure reverts the
+        // claim (payout rule 2026-11-19: no wallet fallback).
         if (LibRewardCustody.active(s)) {
             // 3b-ii-A — three legs: live-fresh and recycled from their rows,
             // the epoch-paid share from the holder's `Unclassified` row, where
@@ -782,62 +754,34 @@ contract RewardClaimFacet is
             // this facet has no room to inline it. The subtractions are the
             // guard: the walk bounded every epoch-paid leg by the same headroom
             // this facet's scaling applies, so they cannot exceed the figures.
-            if (
-                LibRewardCustody.callDeliverClaim(
-                    user,
-                    fresh - tp.userFresh,
-                    amount - fresh - tp.userRecycled,
-                    tp.userFresh + tp.userRecycled,
-                    toVault
-                )
-            ) {
-                emit RewardDeliveredToVault(user, amount, claimDayId);
-            }
+            LibRewardCustody.callDeliverClaim(
+                user, fresh - tp.userFresh, amount - fresh - tp.userRecycled, tp.userFresh + tp.userRecycled
+            );
+            emit RewardDeliveredToVault(user, amount, claimDayId);
             return;
         }
-        _deliverFromDiamond(user, vpfi, amount, toVault, claimDayId);
+        _deliverFromDiamond(user, vpfi, amount, claimDayId);
     }
 
-    /// @dev The RL-1 venue rule: `Vault`, or `Default` for an EOA-style
-    ///      claimant (`LibAccountShape.isEoaStyle`: no code, or only an
-    ///      EIP-7702 delegation designator, #2617); a contract caller keeps the
-    ///      raw transfer every pre-RL-1 integration observed.
-    ///      A wallet in protected account mode is always paid into its vault.
-    function _toVault(address user, LibVaipakam.RewardDelivery deliverTo) private view returns (bool) {
-        return deliverTo == LibVaipakam.RewardDelivery.Vault
-            || LibProtectedAccount.isProtected(user)
-            || (deliverTo == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
-    }
-
-    /// @dev Deliver `amount` the Diamond holds to `user`: the revert-isolated
-    ///      vault credit when asked, else (or when it cannot complete) the wallet
-    ///      transfer — exactly one destination is paid. The inactive-custody
-    ///      payout and the release of a held balance (#1566) both end here.
-    function _deliverFromDiamond(
-        address user,
-        address vpfi,
-        uint256 amount,
-        bool toVault,
-        uint256 claimDayId
-    ) private {
-        if (toVault) {
-            // slither-disable-next-line low-level-calls
-            (bool ok, ) = address(this).call(
-                abi.encodeWithSignature(
-                    "vaultCreditFromDiamondERC20(address,address,uint256)",
-                    user,
-                    vpfi,
-                    amount
-                )
-            );
-            if (ok) {
-                emit RewardDeliveredToVault(user, amount, claimDayId);
-                return;
+    /// @dev Deliver `amount` the Diamond holds into `user`'s vault as free
+    ///      balance (payout rule, owner decision 2026-11-19: never a wallet).
+    ///      A credit that cannot complete reverts the claim, so the reward
+    ///      stays claimable. The inactive-custody payout and the release of a
+    ///      held balance (#1566) both end here.
+    function _deliverFromDiamond(address user, address vpfi, uint256 amount, uint256 claimDayId) private {
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature("vaultCreditFromDiamondERC20(address,address,uint256)", user, vpfi, amount)
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            // Re-raise the credit's own revert. Memory-safe: reads only the
+            // `ret` bytes Solidity allocated.
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
             }
         }
-        // A protected wallet is credited in its vault here too
-        // (`LibDelivery.creditIfProtected`), so the fallback never pays it.
-        LibDelivery.pushOut(vpfi, user, amount);
+        emit RewardDeliveredToVault(user, amount, claimDayId);
     }
 
     /**

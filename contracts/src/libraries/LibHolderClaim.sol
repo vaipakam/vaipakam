@@ -11,6 +11,7 @@ interface IHolderClaimDiamond {
     function getLoanDetails(uint256 loanId) external view returns (LibVaipakam.Loan memory);
     function claimAsLenderWithRetry(uint256 loanId, LibSwap.AdapterCall[] calldata retryCalls) external;
     function getDepositoryHolding(address user, address asset, uint256 tokenId) external view returns (uint256);
+    function getVPFIToken() external view returns (address);
     function withdrawFromVault(
         address account,
         uint8 kind,
@@ -66,17 +67,20 @@ library LibHolderClaim {
 
         d.claimAsLenderWithRetry(loanId, retryCalls);
 
-        _withdrawCredit(d, uint8(LibVaipakam.AssetType.ERC20), r.principalAsset, 0, p0);
-        if (distinct) _withdrawCredit(d, r.collateralKind, r.collateralAsset, r.collateralTokenId, c0);
+        withdrawCredit(d, uint8(LibVaipakam.AssetType.ERC20), r.principalAsset, 0, p0);
+        if (distinct) withdrawCredit(d, r.collateralKind, r.collateralAsset, r.collateralTokenId, c0);
 
         r.principal = IERC20(r.principalAsset).balanceOf(address(this)) - pBal0;
         if (distinct) r.collateral = _held(r, address(this)) - cBal0;
     }
 
-    /// @dev Withdraw to this contract what the claim credited to its vault for
-    ///      `asset` / `tokenId` (the rise above `before`).
-    function _withdrawCredit(IHolderClaimDiamond d, uint8 kind, address asset, uint256 tokenId, uint256 before)
-        private
+    /// @notice Withdraw to this contract what a step credited to its vault
+    ///         for `asset` / `tokenId` (the rise of its depository holding
+    ///         above `before`, read before the step). Every payout to a party
+    ///         lands in its vault (payout rule, 2026-11-19); this is how a
+    ///         holder CONTRACT takes it, through its own Withdraw.
+    function withdrawCredit(IHolderClaimDiamond d, uint8 kind, address asset, uint256 tokenId, uint256 before)
+        internal
     {
         uint256 nowHeld = d.getDepositoryHolding(address(this), asset, tokenId);
         if (nowHeld > before) d.withdrawFromVault(address(this), kind, asset, tokenId, nowHeld - before, address(this));

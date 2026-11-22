@@ -157,14 +157,14 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         uint256 expected = _halfPool(1);
         assertEq(preview, expected, "preview == halfPool(1)");
 
-        uint256 balBefore = vpfi.balanceOf(alice);
+        uint256 balBefore = _vaultFree(alice, address(vpfi));
         vm.prank(alice);
         (uint256 paid, uint256 fromDay, uint256 toDay) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "paid == halfPool(1)");
         assertEq(fromDay, 1, "window starts after the never-claimed sentinel");
         assertEq(toDay, 1, "single-day claim");
-        assertEq(vpfi.balanceOf(alice), balBefore + paid, "transfer landed");
+        assertEq(_vaultFree(alice, address(vpfi)), balBefore + paid, "transfer landed");
     }
 
     function testTwoLendersSplitHalfPoolByUSDShare() public {
@@ -259,12 +259,12 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         _mut().setDailyLenderInterest(1, alice, 10e18, 10e18);
         vm.warp(block.timestamp + 2 days + 1);
 
-        uint256 balBefore = vpfi.balanceOf(alice);
+        uint256 balBefore = _vaultFree(alice, address(vpfi));
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, 1 ether, "truncated to remaining");
-        assertEq(vpfi.balanceOf(alice), balBefore + 1 ether, "transfer matches truncation");
+        assertEq(_vaultFree(alice, address(vpfi)), balBefore + 1 ether, "transfer matches truncation");
         assertEq(_lens().getInteractionPoolPaidOut(), cap, "paidOut == cap");
         assertEq(_lens().getInteractionPoolRemaining(), 0, "pool exhausted");
     }

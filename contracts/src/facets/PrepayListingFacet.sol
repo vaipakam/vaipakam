@@ -3,8 +3,10 @@
 pragma solidity ^0.8.29;
 
 import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -454,10 +456,24 @@ contract PrepayListingFacet is
         // round-2 `OfferConsumedBySale` gate in `_acceptOffer`
         // rejects the reentrant accept.
         s.offerConsumedBySale[uint256(offerId)] = true;
+        // #3744 — the sold collateral was the offer's escrow, and the escrow's
+        // rights follow the offer's token: the proceeds belong to its holder,
+        // as free balance in the holder's vault. The fill screened that holder
+        // ({assertOfferFillNotSanctioned}); a vault is never created for a
+        // flagged one, so a holder flagged since reverts the fill here.
+        address holder = LibOfferRefund.holder(offer);
+        if (holder != borrower) {
+            borrower = holder;
+            vaultAddr = LibFacet.getOrCreateVault(holder);
+        }
         // #2440 — the tracked balance and the event record what the vault
         // received.
         amount = LibDelivery.pushMeasured(principalAsset, vaultAddr, amount);
         LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
+        // Free balance, as every holder payout is (the policy's holder
+        // classes credit the same ledger): it leaves only through the
+        // holder's own withdrawal.
+        LibDepositoryLedger.credit(borrower, principalAsset, 0, amount);
         emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
     }
 
@@ -820,8 +836,12 @@ contract PrepayListingFacet is
         //    original seller — NOT a live recipient. Applying the registry bar would
         //    let a stale/original-seller marker revert a clean current holder's fill,
         //    so keep the fail-open screen on that vestigial party.
+        //  - #3744: in Scenario A the proceeds go to the holder of the offer's
+        //    token, so that holder is screened with the same fail-closed bar.
         if (LibVaipakam.storageSlot().offerIdToLoanId[uint256(offerId)] == 0) {
             LibVaipakam.assertRecipientNotBarred(borrowerWallet);
+            address holder = LibOfferRefund.holder(LibVaipakam.storageSlot().offers[uint256(offerId)]);
+            if (holder != borrowerWallet) LibVaipakam.assertRecipientNotBarred(holder);
         } else {
             LibVaipakam._assertNotSanctioned(borrowerWallet);
         }

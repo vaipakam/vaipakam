@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, zeroAddress as ZERO_ADDRESS, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
-import { OfferMutateFacetABI } from '@vaipakam/contracts/abis';
+import { OfferMutateFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import {
   currentTerms,
   editBlockers,
@@ -80,7 +80,7 @@ function review(o: EditOfferRecord, terms: EditTerms, p: Partial<EditReview> = {
     balance: 1_000n,
     allowance: 0n,
     approvalSteps: 0,
-    route: 'wallet',
+    route: 'credit',
     dryRun: null,
     readAt: 0,
     ...p,
@@ -202,10 +202,10 @@ describe('editChanged', () => {
     expect(editChanged(a, review(o, t, {}, { paused: true }), copy)).toBe('offerEdit.changedPause');
     expect(editChanged(a, review(o, t, { balance: 1n }), copy)).toBe('repay.changedFunds');
     expect(editChanged(a, review(o, t, { dryRun: 'unread' }), copy)).toBe('offerEdit.changedVerdict');
-    // A protection delay changed under the review reopens it, though the route reads alike.
+    // A release is freed in the vault whatever the account's protection, so
+    // a changed protection delay changes no route.
     const guarded = { ...OPEN, enabled: true, delaySeconds: 3600 };
-    const g = review(o, t, { route: 'queued' }, { protection: guarded });
-    expect(editChanged(g, review(o, t, { route: 'queued' }, { protection: { ...guarded, delaySeconds: 7200 } }), copy)).toBe('queue.changedAccount');
+    expect(editChanged(review(o, t, {}, { protection: guarded }), review(o, t, {}, { protection: { ...guarded, delaySeconds: 7200 } }), copy)).toBeNull();
   });
 });
 
@@ -257,9 +257,19 @@ function modifiedLog(offerId: bigint, t: EditTerms): Log {
   const abi = OfferMutateFacetABI as Abi;
   const topics = encodeEventTopics({ abi, eventName: 'OfferModified', args: { offerId, creator: ME } });
   const data = encodeAbiParameters(
-    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint8' }, { type: 'int16' }, { type: 'uint8' }],
-    [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax, ZERO_ADDRESS, 0, 0, 0],
+    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint8' }, { type: 'int16' }, { type: 'uint8' }, { type: 'address' }],
+    [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax, ZERO_ADDRESS, 0, 0, 0, ME],
   );
+  return { address: DIAMOND, topics, data } as unknown as Log;
+}
+
+function outflowLog(owner: Hex, asset: Hex, delivered: bigint, to: Hex = VAULT, ref = 9n, class_ = 20): Log {
+  const args = { owner, vault: VAULT, asset, tokenId: 0n, amount: delivered, delivered, to, class_, reason: 1, ref };
+  const abi = VaultOutflowFacetABI as Abi;
+  const event = abi.find((e) => e.type === 'event' && e.name === 'VaultOutflow') as unknown as { inputs: { name: string; type: string; indexed?: boolean }[] };
+  const topics = encodeEventTopics({ abi, eventName: 'VaultOutflow', args } as never);
+  const plain = event.inputs.filter((i) => !i.indexed);
+  const data = encodeAbiParameters(plain, plain.map((i) => (args as Record<string, unknown>)[i.name]));
   return { address: DIAMOND, topics, data } as unknown as Log;
 }
 
@@ -285,11 +295,25 @@ describe('measureEdit', () => {
     const short = measureEdit(review(o, t), [modifiedLog(9n, t), transferLog(TOKEN, ME, VAULT, 20n)], DIAMOND, ME, words, copy);
     expect(short[1]!.status).toBe('unknown');
   });
-  it('measures a release that reached the wallet', () => {
+  it('measures a release the protocol freed in the creator’s vault', () => {
     const t = with_(o, { amountMax: 150n });
-    const legs = measureEdit(review(o, t), [modifiedLog(9n, t), transferLog(TOKEN, VAULT, ME, 50n)], DIAMOND, ME, words, copy);
+    const legs = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n)], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
     expect(legs[1]!.label).toBe('offerEdit.legReleased:{"what":"50"}');
+    // A wallet transfer is not the release: only the protocol's record counts.
+    const wallet = measureEdit(review(o, t), [modifiedLog(9n, t), transferLog(TOKEN, VAULT, ME, 50n)], DIAMOND, ME, words, copy);
+    expect(wallet[1]!.status).toBe('not-done');
+    const short = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 20n)], DIAMOND, ME, words, copy);
+    expect(short[1]!.status).toBe('unknown');
+    const other = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n, '0x00000000000000000000000000000000000000f2')], DIAMOND, ME, words, copy);
+    expect(other[1]!.label).toBe('offerEdit.legReleasedHolder:{"what":"50"}');
+  });
+  it('measures a release kept in the creator’s own vault (a refinance request), and no other class', () => {
+    const t = with_(o, { amountMax: 150n });
+    const own = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n, VAULT, 9n, 19)], DIAMOND, ME, words, copy);
+    expect(own[1]!.label).toBe('offerEdit.legReleased:{"what":"50"}');
+    const holder = measureEdit(review(o, t), [modifiedLog(9n, t), outflowLog(ME, TOKEN, 50n, VAULT, 9n, 2)], DIAMOND, ME, words, copy);
+    expect(holder[1]!.status).toBe('not-done');
   });
 });
 

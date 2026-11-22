@@ -124,6 +124,8 @@ contract DefaultedFacetTest is Test {
     address lender; // User1
     address borrower; // User2
     uint256 borrowerPk;
+    /// @dev Lets one test open a loan whose offer allows partial repayment.
+    bool internal _allowPartialRepay;
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Distinct liquid asset for collateral (SelfCollateralizedOffer invariant)
     address mockIlliquidERC20; // Illiquid asset
@@ -758,7 +760,7 @@ contract DefaultedFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false,
+                allowsPartialRepay: _allowPartialRepay,
                 allowsPrepayListing: false,
                 allowsParallelSale: false,
                 amountMax: amount,
@@ -3523,5 +3525,165 @@ contract DefaultedFacetTest is Test {
         );
         (, , , uint64 at,) = ClaimViewFacet(address(diamond)).getOwedAtDefault(loanId);
         assertEq(at, 0, "no record for a rental");
+    }
+
+    // ─── A lender token passed to an address with no vault, flagged later ───
+    //
+    // Vault creation is refused for a flagged address. A lender token may be
+    // given to an address that has never had a vault, and that address may be
+    // flagged afterwards. Every close-out someone else starts (the borrower's
+    // full or part repayment, a default, a liquidation) must still complete,
+    // holding the lender side's money in the STORED lender's vault for the
+    // holder's later claim. None may need the holder's vault to exist, and
+    // none may create it.
+
+    /// @dev Opens a liquid loan, moves its lender token to a fresh address
+    ///      with no vault, then flags that address.
+    function _lenderTokenToVaultlessThenFlag(bool partialRepay)
+        internal
+        returns (uint256 loanId, address holder, MockSanctionsList m)
+    {
+        _allowPartialRepay = partialRepay;
+        loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20, 1000 ether, 2000 ether, 30, 0, 0
+        );
+        _allowPartialRepay = false;
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        holder = makeAddr("vaultlessLenderHolder");
+        assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "fixture: no vault");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), l0.lenderTokenId);
+        vm.prank(l0.lender);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(l0.lender, holder, l0.lenderTokenId);
+        m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(holder, true);
+    }
+
+    function _assertHeldForVaultlessHolder(uint256 loanId, address holder) internal view {
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder),
+            address(0),
+            "no step created the flagged holder's vault"
+        );
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lender, lender, "the stored lender is unchanged (consolidation skipped the flagged holder)");
+        assertEq(
+            LibTestPositionNFT.core(address(diamond)).ownerOf(l.lenderTokenId),
+            holder,
+            "the flagged holder still holds the lender token"
+        );
+    }
+
+    /// @dev The holder, once cleared, claims: its vault is created then and
+    ///      receives the held money.
+    function _clearAndClaim(uint256 loanId, address holder, MockSanctionsList m) internal {
+        vm.clearMockedCalls();
+        m.setFlagged(holder, false);
+        vm.prank(holder);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        address v = VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder);
+        assertTrue(v != address(0), "the claim opened the cleared holder's vault");
+        assertGt(IERC20(mockERC20).balanceOf(v), 0, "and paid the held money into it");
+    }
+
+    function test_vaultlessFlaggedLenderHolder_fullRepayCompletes_heldForClaim() public {
+        (uint256 loanId, address holder, MockSanctionsList m) = _lenderTokenToVaultlessThenFlag(false);
+        vm.warp(block.timestamp + 10 days);
+        deal(mockERC20, borrower, 100_000 ether);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the repayment completed"
+        );
+        (, uint256 owed, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertGe(owed, 1000 ether, "principal and interest owed to the lender position");
+        address storedVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        assertGe(IERC20(mockERC20).balanceOf(storedVault), owed, "held in the stored lender's vault");
+        _assertHeldForVaultlessHolder(loanId, holder);
+        _clearAndClaim(loanId, holder, m);
+    }
+
+    function test_vaultlessFlaggedLenderHolder_partRepayCompletes_heldForClaim() public {
+        (uint256 loanId, address holder, ) = _lenderTokenToVaultlessThenFlag(true);
+        vm.warp(block.timestamp + 10 days);
+        address storedVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        uint256 before = IERC20(mockERC20).balanceOf(storedVault);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
+
+        (, , , , , , uint256 held, ) = ClaimViewFacet(address(diamond)).getClaimable(loanId, true);
+        assertGe(held, 400 ether, "the part repayment is held for the lender position");
+        assertEq(IERC20(mockERC20).balanceOf(storedVault) - before, held, "in the stored lender's vault");
+        _assertHeldForVaultlessHolder(loanId, holder);
+
+        // The flagged holder cannot take it while flagged.
+        vm.prank(holder);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+    }
+
+    function test_vaultlessFlaggedLenderHolder_defaultCompletes_heldForClaim() public {
+        (uint256 loanId, address holder, MockSanctionsList m) = _lenderTokenToVaultlessThenFlag(false);
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            LibTestPriceGuard.guardOf(address(diamond)),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        vm.prank(makeAddr("someKeeper"));
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "the default completed"
+        );
+        (, uint256 owed, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertGt(owed, 0, "the lender position's proceeds are recorded");
+        address storedVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        assertGe(IERC20(mockERC20).balanceOf(storedVault), owed, "held in the stored lender's vault");
+        _assertHeldForVaultlessHolder(loanId, holder);
+        _clearAndClaim(loanId, holder, m);
+    }
+
+    function test_vaultlessFlaggedLenderHolder_liquidationCompletes_heldForClaim() public {
+        (uint256 loanId, address holder, MockSanctionsList m) = _lenderTokenToVaultlessThenFlag(false);
+        vm.mockCall(
+            LibTestPriceGuard.guardOf(address(diamond)),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        ForcedSaleFacet.ForcedSalePlan memory plan =
+            forcedSalePlan(address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
+        vm.prank(makeAddr("someLiquidator"));
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, plan.sell, defaultAdapterCalls());
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "the liquidation completed"
+        );
+        (, uint256 owed, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertGt(owed, 0, "the lender position's proceeds are recorded");
+        address storedVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        assertGe(IERC20(mockERC20).balanceOf(storedVault), owed, "held in the stored lender's vault");
+        _assertHeldForVaultlessHolder(loanId, holder);
+        _clearAndClaim(loanId, holder, m);
     }
 }

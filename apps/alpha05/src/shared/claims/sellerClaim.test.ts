@@ -1,6 +1,6 @@
 import { encodeAbiParameters, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { SellerClaimFacetABI } from '@vaipakam/contracts/abis';
+import { SellerClaimFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { discoverSoldLoans, mineGross, mineNet, netOwed, sellerLogs, sellerRowShown, sellerVerdict, splitFinal, splitPart, type SellerRow } from './sellerClaim';
@@ -149,6 +149,10 @@ const withdrawn = (amount: bigint) => log(SELLER, DIAMOND, 'SellerInterestWithdr
 const closedEv = (paid: bigint, fullyPaid: boolean) =>
   log(SELLER, DIAMOND, 'SellerInterestClaimClosed', { loanId: 7n, seller: ME, grossOwed: 1000n, netOwed: 980n, asset: WETH, paid, credited: paid, fullyPaid });
 const transfer = (amount: bigint) => log(ERC20, WETH, 'Transfer', { from: OLDER, to: ME, value: amount });
+const VAULT = '0x00000000000000000000000000000000000000f1' as Hex;
+// The release into the seller's own vault (`OwnRelease` = 19, ref = loan).
+const released = (amount: bigint, class_ = 19, ref = 7n) =>
+  log(VaultOutflowFacetABI as Abi, DIAMOND, 'VaultOutflow', { owner: ME, vault: VAULT, asset: WETH, tokenId: 0n, amount, delivered: amount, to: VAULT, class_, reason: 1, ref });
 
 function review(r: SellerRow, over: Partial<SellerClaimReview> = {}): SellerClaimReview {
   return {
@@ -157,7 +161,7 @@ function review(r: SellerRow, over: Partial<SellerClaimReview> = {}): SellerClai
     row: r,
     paused: false,
     protection: null,
-    route: 'wallet',
+    route: 'credit',
     frozen: null,
     part: splitPart(r, ME),
     dryRun: null,
@@ -179,9 +183,14 @@ describe('seller withdrawal record', () => {
   it('measures a running loan’s withdrawal against what waited in the vault', () => {
     const r = review(row({ held: [{ asset: WETH, amount: 40n }] }));
     expect(sellerPays(r)).toEqual([{ asset: WETH, amount: 40n }]);
-    const legs = measureSellerClaim(r, [withdrawn(40n), transfer(40n)], DIAMOND, ME, words, copy);
+    const legs = measureSellerClaim(r, [withdrawn(40n), released(40n)], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done']);
+    expect(legs[0]!.label).toBe('payout.legCredit{"what":"40"}');
     expect(measureSellerClaim(r, [], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
+    // A wallet transfer, another class or another loan is not the release.
+    expect(measureSellerClaim(r, [withdrawn(40n), transfer(40n)], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
+    expect(measureSellerClaim(r, [withdrawn(40n), released(40n, 2)], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
+    expect(measureSellerClaim(r, [withdrawn(40n), released(40n, 19, 8n)], DIAMOND, ME, words, copy)[0]!.status).toBe('not-done');
   });
 
   it('measures an ended loan’s split and states a short claim', () => {
@@ -199,11 +208,11 @@ describe('seller withdrawal record', () => {
       ),
     );
     expect(sellerPays(r)).toEqual([{ asset: WETH, amount: 520n }]);
-    const legs = measureSellerClaim(r, [closedEv(520n, false), withdrawn(520n), transfer(520n)], DIAMOND, ME, words, copy);
+    const legs = measureSellerClaim(r, [closedEv(520n, false), withdrawn(520n), released(520n)], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
     expect(legs[0]!.label).toContain('legClosedShort');
     // A split that paid another figure is said beside the review's.
-    const off = measureSellerClaim(r, [closedEv(400n, false), withdrawn(400n), transfer(400n)], DIAMOND, ME, words, copy);
+    const off = measureSellerClaim(r, [closedEv(400n, false), withdrawn(400n), released(400n)], DIAMOND, ME, words, copy);
     expect(off[0]!.status).toBe('unknown');
   });
 

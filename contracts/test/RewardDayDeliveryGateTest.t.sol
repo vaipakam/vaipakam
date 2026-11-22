@@ -725,7 +725,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_row(LibVaipakam.RewardCustodyRow.Unclassified), uncl, "nor the unclassified row");
         assertEq(_mut().getArmedFreshPaidRaw(), 0, "nothing charged to the delivered ledger");
         assertEq(_cfg().getRecycleBucket(), bucket, "nor to the bucket");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing reached the claimant");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing reached the claimant");
 
         // The fold itself halts BEFORE the day: driven directly, it reaches day 1 and stops.
         assertEq(_mut().advanceCumThroughRaw(0, 2), 1, "the lender fold stops before day 2");
@@ -768,7 +768,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
         uint256 uncl = _row(LibVaipakam.RewardCustodyRow.Unclassified);
         assertEq(_claim(), NEED, "the delivery pays the day");
-        assertEq(vpfi.balanceOf(alice), NEED, "to the claimant");
+        assertEq(_vaultFree(alice, address(vpfi)), NEED, "to the claimant");
         assertEq(uncl - _row(LibVaipakam.RewardCustodyRow.Unclassified), NEED, "out of its epoch");
         assertGe(_cursor(), 2, "stored: the fold passed day 2");
     }
@@ -803,7 +803,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         // claim until Base prices the day. Nothing waits on the gate.
         assertEq(_claim(), 0, "a claim before the stamp pays nothing");
         assertEq(_claim(), 0, "and so does the next one");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing moved");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing moved");
 
         _broadcastV2(_armedPacket(1));
         g = _gd(1);
@@ -1546,7 +1546,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         uint256 live = _payable();
         _expectHeld(1);
         assertEq(_payable(), live, "nothing paid while held");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing reached the claimant");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing reached the claimant");
     }
 
     // ─────────────────────── cell 15: replays ───────────────────────

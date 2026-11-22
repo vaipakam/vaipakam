@@ -7,6 +7,8 @@ import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -682,9 +684,10 @@ contract OfferAcceptFacet is
         if (offer.collateralAssetType != LibVaipakam.AssetType.ERC20) return;
         if (offer.collateralAmountMax <= offer.collateralAmount) return;
         uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
-        // refund to borrower's wallet
-        LibVaultOutflow.toOwner(offer.creator, LibVaultOutflow.ERC20, // pull from borrower's vault
-                offer.collateralAsset, 0, collRefund, OutflowReason.OFFER_REFUND);
+        // #3744 — to the vault of the holder of the offer's position token,
+        // as free balance; the acceptor triggered it, so a holder who cannot
+        // be paid never blocks the accept (held for the token instead).
+        LibOfferRefund.refund(offer.id, LibVaultOutflow.ERC20, offer.collateralAsset, 0, collRefund, false);
     }
 
     /// @dev #573 — release the borrower offer-collateral lock on a DIRECT
@@ -977,6 +980,15 @@ contract OfferAcceptFacet is
         if (LibVaipakam.isSanctionedAddress(offer.creator)) {
             revert ProfileFacet.SanctionedAddress(offer.creator);
         }
+        // #3744 — the creator side of the new loan is whoever holds the
+        // offer's position token now: the borrower party of a borrower offer
+        // (it takes the net principal, the fee discount and the screens) and
+        // the holder of the creator-side position. A flagged holder makes the
+        // offer unfillable.
+        address creatorParty = LibOfferRefund.holder(offer);
+        if (creatorParty != offer.creator && LibVaipakam.isSanctionedAddress(creatorParty)) {
+            revert ProfileFacet.SanctionedAddress(creatorParty);
+        }
 
         // T-092 Phase 2b (#506) — re-check the borrower's per-loan
         // refinance caps at accept time. Caps may have been
@@ -1084,8 +1096,11 @@ contract OfferAcceptFacet is
         // Tiered KYC check based on transaction value (per README Section 16)
         uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer, effectivePrincipal);
         if (
-            !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueNumeraire) ||
-            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire)
+            // #3744 — the one origination rule (creator, the offer token's
+            // holder, the acceptor), plus in a match the holder of the lender
+            // offer's token, which owns the acceptor's side.
+            !LibCompliance.offerPartiesMeetKYC(offer.creator, LibOfferRefund.holder(offer), acceptor, valueNumeraire) ||
+            !ProfileFacet(address(this)).meetsKYCRequirement(LibOfferRefund.acceptorSideOwner(acceptor), valueNumeraire)
         ) {
             revert KYCRequired();
         }
@@ -1134,6 +1149,11 @@ contract OfferAcceptFacet is
         // submitting; the load-bearing revert is here (every match
         // routes through `_acceptOffer` via `acceptOfferInternal`).
         if (lender == borrower) revert SelfTradeForbidden(lender);
+        // #3744 — the borrower PARTY of a borrower offer is the offer token's
+        // holder (the creator's vault still holds the collateral). The fee,
+        // its discount and the net principal key on it.
+        address borrowerParty = offer.offerType == LibVaipakam.OfferType.Borrower ? creatorParty : borrower;
+        if (lender == borrowerParty) revert SelfTradeForbidden(lender);
 
         // #1835 (Codex #1891 F3/F4/F5/F10/F11) — the sale VEHICLE must MIRROR
         // the position it sells. A listing created before #1779 taught
@@ -1353,7 +1373,7 @@ contract OfferAcceptFacet is
                         offerId,
                         offer.lendingAsset,
                         lender,
-                        borrower,
+                        borrowerParty,
                         effectivePrincipal,
                         lendingAssetLiquidity ==
                             LibVaipakam.LiquidityStatus.Liquid,
@@ -2030,7 +2050,11 @@ contract OfferAcceptFacet is
         // #3635 A — the linked bound crosses the offer's unlinked opposite
         // bound, so no rate is acceptable now (`RateLinkFacet.RateRangeEmpty`).
         // APPENDED.
-        RateRangeEmpty
+        RateRangeEmpty,
+        // #3744 — the holder of the offer's position token (the creator side
+        // of the loan, once the token moved) is flagged by the sanctions
+        // oracle. APPENDED.
+        SanctionedOfferHolder
     }
 
     /// @notice Projection of the loan that would land if the supplied

@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -1187,68 +1186,37 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.releaseFromRow(LibVaipakam.storageSlot(), LibVaipakam.RewardCustodyRow(row), to, amount);
     }
 
-    /// @notice Diamond-internal: the two-row WALLET payout — live-fresh by
-    ///         `fresh`, recycled by `recycled`, the sum released to `to`,
-    ///         measured at both ends.
-    function custodyPayoutToWallet(address to, uint256 fresh, uint256 recycled) external {
-        _requireDiamondInternal();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (address holder, address token) = LibRewardCustody.boundHolderAndToken(s);
-        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, to);
-        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, to);
-        LibRewardCustody.releaseMeasured(token, holder, to, fresh + recycled);
-    }
-
     /// @notice Diamond-internal: deliver a claim from custody — the live-fresh
     ///         and recycled legs from their rows and, since 3b-ii-A, the
-    ///         epoch-paid leg from `Unclassified` — to the claimant's vault
-    ///         when asked and creditable, else to their wallet. Exactly one
-    ///         destination is paid: a vault credit that fails rolls its own
-    ///         frame back before the wallet release runs.
+    ///         epoch-paid leg from `Unclassified` — into the claimant's vault
+    ///         as free balance. Never a wallet (payout rule, owner decision
+    ///         2026-11-19): a credit that cannot complete reverts, so the
+    ///         claim reverts and the reward stays claimable.
     /// @dev    Hosted here rather than inlined into `RewardClaimFacet`, which
     ///         went over EIP-170 with the third leg inlined (3b-ii-A); this
-    ///         facet owns the row primitives it composes. `custodyPayoutToWallet`
-    ///         stays as the two-leg primitive.
-    /// @return vaulted True when the vault took the delivery.
-    function custodyDeliverClaim(
-        address user,
-        uint256 fresh,
-        uint256 recycled,
-        uint256 epoch,
-        bool toVault
-    ) external returns (bool vaulted) {
+    ///         facet owns the row primitives it composes.
+    function custodyDeliverClaim(address user, uint256 fresh, uint256 recycled, uint256 epoch) external {
         _requireDiamondInternal();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (address holder, address token) = LibRewardCustody.boundHolderAndToken(s);
-        if (toVault) {
-            // slither-disable-next-line low-level-calls
-            (bool ok, ) = address(this).call(
-                abi.encodeWithSignature(
-                    "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)",
-                    user,
-                    token,
-                    fresh,
-                    recycled,
-                    epoch
-                )
-            );
-            if (ok) return true;
+        (, address token) = LibRewardCustody.boundHolderAndToken(LibVaipakam.storageSlot());
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature(
+                "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)",
+                user,
+                token,
+                fresh,
+                recycled,
+                epoch
+            )
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            // Re-raise the credit's own revert. Memory-safe: reads only the
+            // `ret` bytes Solidity allocated.
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
         }
-        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, user);
-        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, user);
-        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, user);
-        // Protected account mode: a protected wallet is never paid directly,
-        // so when its vault could not take the credit above (a mandatory
-        // vault upgrade it has not made), the delivery goes to its vault
-        // anyway, recorded as tracked, and leaves only through the delay.
-        if (LibProtectedAccount.isProtected(user)) {
-            address proxy = s.userVaipakamVaults[user];
-            uint256 amount = fresh + recycled + epoch;
-            LibRewardCustody.releaseMeasured(token, holder, proxy, amount);
-            LibProtectedAccount.creditPayment(user, token, 0, amount, amount);
-            return true;
-        }
-        LibRewardCustody.releaseMeasured(token, holder, user, fresh + recycled + epoch);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.setApartReward} — a claim's
