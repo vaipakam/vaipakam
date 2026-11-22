@@ -20,10 +20,16 @@ const addr = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
 
 let nextId = 1;
 function loan(over: Partial<CurveLoanRow> = {}): CurveLoanRow {
+  // The opening parties default to the lender and borrower given, so a row
+  // reads as a loan nobody has sold or handed over (#3879).
+  const lender = over.lender ?? addr(1);
+  const borrower = over.borrower ?? addr(1001);
   return {
     loan_id: nextId++,
-    lender: addr(1),
-    borrower: addr(1001),
+    lender,
+    borrower,
+    init_lender: 'init_lender' in over ? (over.init_lender ?? null) : lender,
+    init_borrower: 'init_borrower' in over ? (over.init_borrower ?? null) : borrower,
     status: 'repaid',
     start_at: NOW - 40 * DAY,
     terminal_at: NOW - 10 * DAY,
@@ -77,7 +83,7 @@ describe('rate curve: which loans count', () => {
 
   it('withholds below five lenders or five borrowers', () => {
     const { rows, pay } = market(5, () => 500);
-    rows[4].lender = rows[3].lender; // four distinct lenders
+    rows[4].init_lender = rows[3].init_lender; // four distinct lenders
     const f = point(ownLoansCurve(rows, pay, NOW), 30);
     expect(f.state).toBe('withheld');
     expect(f.reason).toBe('not-enough-loans');
@@ -86,7 +92,7 @@ describe('rate curve: which loans count', () => {
     expect(OWN_LOANS_RULE.minBorrowers).toBe(5);
   });
 
-  it('leaves out open, defaulted, self-trade, unconfirmed, too-young and unpaid loans', () => {
+  it('leaves out open, defaulted, one-address, unconfirmed, too-young and unpaid loans', () => {
     const { rows, pay } = market(5, () => 500);
     const extra = [
       loan({ status: 'active', terminal_at: null, init_rate_bps: 9_000 }),
@@ -100,6 +106,45 @@ describe('rate curve: which loans count', () => {
     const f = point(ownLoansCurve([...rows, ...extra], pay, NOW), 30);
     expect(f.loans).toBe(5);
     expect(f.p75Bps).toBe(500);
+  });
+
+  describe('the counting rule for public figures (#3879)', () => {
+    it('leaves out one-address and unknown-party loans and counts each on its own line', () => {
+      const { rows, pay } = market(5, () => 500);
+      const one = loan({ lender: addr(77), borrower: addr(77), init_rate_bps: 9_000 });
+      const unknown = loan({ init_lender: null, init_rate_bps: 9_000 });
+      // A one-address loan that fails another test is not in scope at all.
+      const oneOpen = loan({ lender: addr(78), borrower: addr(78), status: 'active', terminal_at: null });
+      for (const e of [one, unknown, oneOpen]) pay.set(e.loan_id, 10_000n);
+      const f = point(ownLoansCurve([...rows, one, unknown, oneOpen], pay, NOW), 30);
+      expect(f.loans).toBe(5);
+      expect(f.p75Bps).toBe(500);
+      expect(f.oneAddress).toBe(1);
+      expect(f.openingPartiesUnknown).toBe(1);
+    });
+
+    it('reads the opening parties, so a later sale or handover moves a loan neither in nor out', () => {
+      const { rows, pay } = market(5, () => 500);
+      // Loan 0 was later sold to its own borrower: the current holders are
+      // one address, the opening parties two. It stays counted.
+      rows[0].lender = rows[0].borrower;
+      // A loan opened with one address on both sides and later sold to a
+      // different lender stays out.
+      const sold = loan({ lender: addr(90), borrower: addr(91), init_lender: addr(91), init_borrower: addr(91), init_rate_bps: 9_000 });
+      pay.set(sold.loan_id, 10_000n);
+      const f = point(ownLoansCurve([...rows, sold], pay, NOW), 30);
+      expect(f.loans).toBe(5);
+      expect(f.state).toBe('shown');
+      expect(f.oneAddress).toBe(1);
+    });
+
+    it('states the rule on every response', () => {
+      const r = ruleStatement();
+      expect(r.excludes).toEqual(expect.arrayContaining(['one-address-at-opening', 'opening-parties-unknown']));
+      expect(r.excludes).not.toContain('self-trade-pairs');
+      expect(r.oneAddressRule).toMatch(/cannot see two addresses that belong to one person/);
+      expect(r.rates).toMatch(/per lending asset and term range/);
+    });
   });
 
   it('counts a loan repaid AFTER the as-of time as not yet closed on that day', () => {
@@ -222,17 +267,23 @@ const OPEN = { limit: async () => ({ success: true }) };
 describe('rate curve against the migrated schema', () => {
   function seeded(now: number) {
     const h = createSqliteD1(migrations());
-    for (let i = 0; i < 6; i++) {
+    // Six two-party loans, then one opened with one address on both sides
+    // (id 7, rate 9000) that the counting rule leaves out (#3879).
+    for (let i = 0; i < 7; i++) {
       const id = i + 1;
+      const [lender, borrower] = i < 6 ? [addr(10 + i), addr(500 + i)] : [addr(77), addr(77)];
       h.db
         .prepare(
           `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower, principal,
              collateral_amount, lending_asset, collateral_asset, duration_days, start_block, start_at,
              terminal_at, updated_at, init_rate_bps, init_duration_days, init_terms_unbacked,
-             init_principal, init_principal_unbacked)
-           VALUES (?, ?, ?, 'repaid', ?, ?, '1000', '2000', ?, ?, 30, 1, ?, ?, ?, ?, 30, 0, '1000', 0)`,
+             init_principal, init_principal_unbacked, init_lender, init_borrower)
+           VALUES (?, ?, ?, 'repaid', ?, ?, '1000', '2000', ?, ?, 30, 1, ?, ?, ?, ?, 30, 0, '1000', 0, ?, ?)`,
         )
-        .run(BASE, id, id, addr(10 + i), addr(500 + i), USDC, addr(99), now - 40 * DAY, now - 10 * DAY, now, 400 + i * 100);
+        .run(
+          BASE, id, id, lender, borrower, USDC, addr(99), now - 40 * DAY, now - 10 * DAY, now,
+          i < 6 ? 400 + i * 100 : 9_000, lender, borrower,
+        );
       h.db
         .prepare(
           `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, actor, args_json, block_at)
@@ -258,7 +309,16 @@ describe('rate curve against the migrated schema', () => {
     expect(body.reference.terms.every((t: any) => t.state === 'not-published' && t.valueBps === null)).toBe(true);
     expect(body.ownLoans.source).toBe('platform-repaid-loans');
     const p30 = body.ownLoans.terms.find((t: any) => t.days === 30);
-    expect(p30).toMatchObject({ state: 'shown', loans: 6, lenders: 6, borrowers: 6, p25Bps: 500, medianBps: 600 });
+    expect(p30).toMatchObject({
+      state: 'shown',
+      loans: 6,
+      lenders: 6,
+      borrowers: 6,
+      p25Bps: 500,
+      medianBps: 600,
+      leftOut: { oneAddress: 1, openingPartiesUnknown: 0 },
+    });
+    expect(body.ownLoans.rule.excludes).toContain('one-address-at-opening');
     expect(body.ownLoans.terms.find((t: any) => t.days === 7).state).toBe('withheld');
 
     const hist = await handleRateCurveHistory(

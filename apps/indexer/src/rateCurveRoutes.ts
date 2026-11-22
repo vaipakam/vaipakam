@@ -28,6 +28,7 @@ import { type Env } from './env';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { chainNotServed, requestedChainId } from './servedChain';
+import { NO_CROSS_MEAN, NO_VALUE_TOTAL, ONE_ADDRESS_RULE } from './figureRules';
 import {
   CURVE_TERMS,
   MAX_LOOKBACK_DAYS,
@@ -80,6 +81,8 @@ interface CurveRow {
   own_loans: number;
   own_lenders: number;
   own_borrowers: number;
+  own_one_address: number;
+  own_parties_unknown: number;
   ref_state: string;
   ref_value_bps: number | null;
   ref_a24_bps: number | null;
@@ -135,7 +138,8 @@ export async function refreshRateCurveForChain(
   const loanRes = await db
     .prepare(
       `SELECT loan_id, lender, borrower, status, start_at, terminal_at,
-              init_rate_bps, init_duration_days, init_terms_unbacked, lending_asset
+              init_rate_bps, init_duration_days, init_terms_unbacked, lending_asset,
+              init_lender, init_borrower
          FROM loans
         WHERE chain_id = ? AND start_at >= ? AND is_sale_vehicle = 0
           AND asset_type = 0 AND collateral_asset_type = 0
@@ -196,13 +200,15 @@ export async function refreshRateCurveForChain(
       `INSERT INTO rate_curve_daily
          (chain_id, asset, term_days, day, own_state, own_reason,
           own_p25_bps, own_median_bps, own_p75_bps,
-          own_loans, own_lenders, own_borrowers, ref_state, computed_at)
+          own_loans, own_lenders, own_borrowers, own_one_address, own_parties_unknown,
+          ref_state, computed_at)
        SELECT json_extract(value, '$.c'), json_extract(value, '$.a'),
               json_extract(value, '$.t'), json_extract(value, '$.d'),
               json_extract(value, '$.s'), json_extract(value, '$.r'),
               json_extract(value, '$.p25'), json_extract(value, '$.p50'),
               json_extract(value, '$.p75'), json_extract(value, '$.n'),
               json_extract(value, '$.l'), json_extract(value, '$.b'),
+              json_extract(value, '$.o1'), json_extract(value, '$.pu'),
               json_extract(value, '$.rs'), json_extract(value, '$.at')
          FROM json_each(?)
         -- WHERE true: SQLite reads ON CONFLICT after a bare SELECT's FROM
@@ -214,6 +220,8 @@ export async function refreshRateCurveForChain(
          own_p25_bps = excluded.own_p25_bps, own_median_bps = excluded.own_median_bps,
          own_p75_bps = excluded.own_p75_bps, own_loans = excluded.own_loans,
          own_lenders = excluded.own_lenders, own_borrowers = excluded.own_borrowers,
+         own_one_address = excluded.own_one_address,
+         own_parties_unknown = excluded.own_parties_unknown,
          ref_state = excluded.ref_state, computed_at = excluded.computed_at`,
     )
     .bind(JSON.stringify(rows))
@@ -235,6 +243,8 @@ function curveRowJson(chainId: number, asset: string, day: number, f: OwnTermFig
     n: f.loans,
     l: f.lenders,
     b: f.borrowers,
+    o1: f.oneAddress,
+    pu: f.openingPartiesUnknown,
     rs: REFERENCE_NOT_PUBLISHED,
     at: now,
   };
@@ -288,12 +298,17 @@ export function ruleStatement() {
       'open-loans',
       'defaulted-or-liquidated-loans',
       'linked-rate-loans',
-      'self-trade-pairs',
+      'one-address-at-opening',
+      'opening-parties-unknown',
       'unconfirmed-terms',
       'lender-sale-vehicles',
       'nft-legs',
       'loans-younger-than-min-age',
     ],
+    // The counting rule every public figure states (#3879, figureRules.ts).
+    oneAddressRule: ONE_ADDRESS_RULE,
+    amounts: NO_VALUE_TOTAL,
+    rates: NO_CROSS_MEAN,
     interestSources: Object.keys(PAID_INTEREST_FIELDS),
     interestNotYetCounted: ['refinance-payoff', 'swap-to-repay', 'partial-repayment'],
     points: CURVE_TERMS.map((days) => ({
@@ -314,6 +329,7 @@ function ownOf(r: CurveRow) {
     loans: r.own_loans,
     lenders: r.own_lenders,
     borrowers: r.own_borrowers,
+    leftOut: { oneAddress: r.own_one_address, openingPartiesUnknown: r.own_parties_unknown },
   };
 }
 

@@ -76,7 +76,9 @@ one point's daily rows. Both carry two halves, never blended:
 `reference` (the outside-source term average, `not-published` until the
 rate reference's `termAverage` view is deployed) and `ownLoans` (the
 platform's repaid loans under TermAverageAndLinkGuardsDesign.md §8, with
-every setting in `ownLoans.rule`). The figures are written once an hour by
+every setting in `ownLoans.rule`, and the #3879 counting rule of
+`src/figureRules.ts`: each point's `leftOut` counts the one-address and
+unknown-party loans it leaves out). The figures are written once an hour by
 the cron's rate-curve pass into `rate_curve_daily` (0120), so a read costs
 one D1 query; the reads sit behind `RATE_CURVE_RATELIMIT` (per IP, fails
 closed). The rule lives in `src/rateCurve.ts`, the pass and reads in

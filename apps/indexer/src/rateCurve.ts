@@ -9,8 +9,12 @@
  *
  *   1. Which loans: ERC-20 on both legs, not a lender-sale vehicle, agreed
  *      terms confirmed by the ledger (the one placement rule,
- *      marketPlacement.ts), lender and borrower different addresses (the
- *      self-trade rule), started inside the point's look-back, at least the
+ *      marketPlacement.ts), two known, different opening parties (the
+ *      #3879 counting rule, `figureRules.ts`: the parties the opening event
+ *      named, so a later sale or handover moves a loan neither in nor out;
+ *      a loan with one address on both sides, or whose opening parties are
+ *      unknown, is left out and counted on its own line per point),
+ *      started inside the point's look-back, at least the
  *      minimum age old, and CLOSED BY REPAYMENT by the as-of time. Open
  *      loans are out for now: an open loan would weigh only by interest it
  *      has already paid mid-loan, and the indexer does not yet keep that
@@ -32,6 +36,8 @@
  *
  * Rates are annual basis points (the loans' `init_rate_bps`).
  */
+
+import { openingPartiesOf } from './figureRules';
 
 /** The curve's points, in days. */
 export const CURVE_TERMS = [7, 30, 90, 180, 365] as const;
@@ -85,6 +91,10 @@ export interface CurveLoanRow {
   init_rate_bps: number | null;
   init_duration_days: number | null;
   init_terms_unbacked: number | null;
+  /** The parties the loan's opening event named (migration 0118); null =
+   *  not established. */
+  init_lender: string | null;
+  init_borrower: string | null;
 }
 
 /** One interest payment the indexer recorded for a loan. */
@@ -153,6 +163,11 @@ export interface OwnTermFigure {
   loans: number;
   lenders: number;
   borrowers: number;
+  /** Loans that met every other step-1 test at this point but are left out
+   *  by the counting rule: one address on both sides at opening. */
+  oneAddress: number;
+  /** Likewise, left out because the opening parties are unknown. */
+  openingPartiesUnknown: number;
 }
 
 /** The curve point a loan of `durationDays` belongs to, or null. */
@@ -172,23 +187,29 @@ interface Weighted {
   borrower: string;
 }
 
+/** How rule steps 1 and 2 treat one loan at one as-of time: counted with
+ *  its weight, left out by the counting rule (and counted on its own line),
+ *  or not in scope at all. */
+export type LoanVerdict =
+  | { kind: 'counted'; weight: Weighted }
+  | { kind: 'left-out'; why: 'one-address' | 'parties-unknown' }
+  | null;
+
 /**
- * The loan's weighted rate as of `asOf` (unix seconds), or null when the
- * loan is not counted. Rule steps 1 and 2. `paid` is the interest paid on
- * it up to `asOf`.
+ * Rule steps 1 and 2 for one loan as of `asOf` (unix seconds). `paid` is
+ * the interest paid on it up to `asOf`. The counting rule's party test runs
+ * LAST, so a loan is counted as left out only when it met every other test
+ * and would otherwise have been counted.
  */
-export function loanWeight(
+export function classifyLoan(
   row: CurveLoanRow,
   term: CurveTerm,
   paid: bigint | undefined,
   asOf: number,
-): Weighted | null {
+): LoanVerdict {
   if (row.init_terms_unbacked !== 0) return null;
   const rate = row.init_rate_bps;
   if (rate == null || rate < 0) return null;
-  const lender = row.lender.toLowerCase();
-  const borrower = row.borrower.toLowerCase();
-  if (lender === borrower) return null;
   if (row.start_at > asOf - OWN_LOANS_RULE.minAgeDays * 86_400) return null;
   if (row.start_at < asOf - lookbackDays(term) * 86_400) return null;
   // Closed by repayment by `asOf`.
@@ -198,7 +219,27 @@ export function loanWeight(
   // precise enough for the weight.
   const weight = Number(paid);
   if (!Number.isFinite(weight) || weight <= 0) return null;
-  return { rate, weight, lender, borrower };
+  // The counting rule (#3879): the opening event's parties, never the
+  // current holders. They also stand for the loan in the wallet cap and the
+  // distinct-party minimum, since they are who agreed the rate.
+  const lender = row.init_lender?.toLowerCase() ?? null;
+  const borrower = row.init_borrower?.toLowerCase() ?? null;
+  const parties = openingPartiesOf(lender, borrower);
+  if (parties === 'unknown') return { kind: 'left-out', why: 'parties-unknown' };
+  if (parties === 'one') return { kind: 'left-out', why: 'one-address' };
+  return { kind: 'counted', weight: { rate, weight, lender: lender!, borrower: borrower! } };
+}
+
+/** The loan's weighted rate as of `asOf`, or null when it is not counted
+ *  (out of scope, or left out by the counting rule). */
+export function loanWeight(
+  row: CurveLoanRow,
+  term: CurveTerm,
+  paid: bigint | undefined,
+  asOf: number,
+): Weighted | null {
+  const v = classifyLoan(row, term, paid, asOf);
+  return v?.kind === 'counted' ? v.weight : null;
 }
 
 /**
@@ -263,13 +304,21 @@ export function ownLoansCurve(
 ): OwnTermFigure[] {
   const rule = OWN_LOANS_RULE;
   const byTerm = new Map<CurveTerm, Weighted[]>();
+  const leftOut = new Map<CurveTerm, { oneAddress: number; openingPartiesUnknown: number }>();
   for (const row of rows) {
     const term = row.init_duration_days == null ? null : curveTermFor(row.init_duration_days);
     if (term === null) continue;
-    const w = loanWeight(row, term, paid.get(row.loan_id), asOf);
-    if (!w) continue;
+    const v = classifyLoan(row, term, paid.get(row.loan_id), asOf);
+    if (!v) continue;
+    if (v.kind === 'left-out') {
+      const c = leftOut.get(term) ?? { oneAddress: 0, openingPartiesUnknown: 0 };
+      if (v.why === 'one-address') c.oneAddress++;
+      else c.openingPartiesUnknown++;
+      leftOut.set(term, c);
+      continue;
+    }
     const list = byTerm.get(term) ?? [];
-    list.push(w);
+    list.push(v.weight);
     byTerm.set(term, list);
   }
   return CURVE_TERMS.map((days) => {
@@ -283,6 +332,8 @@ export function ownLoansCurve(
       loans: list.length,
       lenders,
       borrowers,
+      oneAddress: leftOut.get(days)?.oneAddress ?? 0,
+      openingPartiesUnknown: leftOut.get(days)?.openingPartiesUnknown ?? 0,
     };
     const incomplete = asOf - lookbackDays(days) * 86_400 < coveredFrom;
     if (incomplete || lenders < rule.minLenders || borrowers < rule.minBorrowers) {

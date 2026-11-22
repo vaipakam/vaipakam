@@ -5,7 +5,8 @@
 --
 --   own_*  the platform's own loans, under the standing rule for figures
 --          built from them (TermAverageAndLinkGuardsDesign.md §8): each loan
---          weighted by interest PAID, repaid loans only, one wallet's share capped, a minimum number
+--          weighted by interest PAID, two known different opening parties
+--          (the #3879 counting rule), repaid loans only, one wallet's share capped, a minimum number
 --          of distinct lenders and borrowers, shown as a quartile band.
 --          `own_state` is 'shown' or 'withheld'; a withheld row carries the
 --          reason and no figures.
@@ -31,6 +32,10 @@ CREATE TABLE IF NOT EXISTS rate_curve_daily (
   own_loans       INTEGER NOT NULL DEFAULT 0,
   own_lenders     INTEGER NOT NULL DEFAULT 0,
   own_borrowers   INTEGER NOT NULL DEFAULT 0,
+  -- #3879: loans that met every other test at this point but are left out
+  -- by the counting rule, each counted on its own line.
+  own_one_address     INTEGER NOT NULL DEFAULT 0,   -- one address on both sides at opening
+  own_parties_unknown INTEGER NOT NULL DEFAULT 0,   -- opening parties unknown
   ref_state       TEXT    NOT NULL DEFAULT 'not-published',
   ref_value_bps   INTEGER,
   ref_a24_bps     INTEGER,
