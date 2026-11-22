@@ -130,6 +130,27 @@ test('a src/ interface reaches a contract that has all its functions without inh
   assert.deepEqual(raisers['0xffffffff'], ['Partial.mint(0x0000aaaa)']);
 });
 
+test('a src/ interface whose functions the Diamond routes, across facets, reaches each hosting facet from a standalone contract', () => {
+  const E = errDef('E', '0xeeeeeeee');
+  const F = errDef('F', '0xffffffff');
+  const iSet = fn('set', null, { selector: '0x0000aaaa' });
+  iSet.implemented = false;
+  const iFund = fn('fund', null, { selector: '0x0000bbbb' });
+  iFund.implemented = false;
+  const I = contract('ISurface', [iSet, iFund], { contractKind: 'interface' });
+  const A = contract('SetFacet', [E, fn('set', block(revertWith(E)), { selector: '0x0000aaaa' })]);
+  const B = contract('FundFacet', [F, fn('fund', block(revertWith(F)), { selector: '0x0000bbbb' })]);
+  const ext = call({ nodeType: 'MemberAccess', memberName: 'fund', expression: { nodeType: 'Identifier', name: 'diamond' }, referencedDeclaration: iFund.id, typeDescriptions: { typeString: 'function () external' } });
+  const Adapter = contract('Adapter', [fn('deposit', block(stmt(ext)), { selector: '0x00000003' })]);
+  const units = [unit('src/I.sol', I), unit('src/A.sol', A), unit('src/B.sol', B), unit('src/Ad.sol', Adapter)];
+  const { raisers } = raisersFrom(units, manifest(['SetFacet', 'FundFacet'], ['Adapter']));
+  assert.deepEqual(raisers['0xffffffff'], ['Adapter.deposit(0x00000003)', 'FundFacet.fund(0x0000bbbb)']);
+  assert.deepEqual(raisers['0xeeeeeeee'], ['SetFacet.set(0x0000aaaa)']);
+  // With one of its functions unrouted, the interface does not reach the Diamond.
+  const { raisers: partial } = raisersFrom(units, manifest(['FundFacet'], ['Adapter', 'SetFacet']));
+  assert.deepEqual(partial['0xffffffff'], ['FundFacet.fund(0x0000bbbb)']);
+});
+
 test('an error declaration expands enums, contracts and structs to ABI types', () => {
   const en = { nodeType: 'EnumDefinition', id: id(), name: 'K' };
   const st = { nodeType: 'StructDefinition', id: id(), name: 'S', members: [{ name: 'a', typeName: { nodeType: 'ElementaryTypeName', name: 'uint256' } }] };

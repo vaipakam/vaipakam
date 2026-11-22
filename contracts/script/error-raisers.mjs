@@ -46,7 +46,11 @@
  *     that implements it: inherits it, or has every function it declares (a
  *     price read reaches `PriceGuard`, a vault step the vault implementation,
  *     an `IPositionNFTCore.mint` the `PositionNFT`, which does not inherit
- *     that interface). Calls through standard interfaces
+ *     that interface). The Diamond counts as a contract that answers its
+ *     whole routed surface, so an interface every function of which some
+ *     facet hosts reaches the Diamond, and each call goes to the facet that
+ *     routes it (the aggregator adapter's `fundLenderIntent` reaches
+ *     `LenderIntentFacet`). Calls through standard interfaces
  *     declared in `lib/` (IERC20, IERC721, ...) are not followed: they reach
  *     tokens the platform does not ship, and following them into the
  *     platform's own token contracts would list those contracts' errors under
@@ -378,18 +382,37 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
   // targets. Matching on the whole interface, not the one selector, keeps a call
   // through a one-off interface's `transferOwnership` from reaching every
   // Ownable contract the platform ships.
+  //
+  // The Diamond is one implementer like any other: it answers its whole routed
+  // surface, so an interface whose every function some facet hosts (one facet
+  // or several, IVaipakamIntentSurface for the aggregator adapter) reaches the
+  // Diamond, and each call resolves through the routing to the facet that
+  // hosts that selector. A facet is never a target by itself: nothing calls a
+  // facet's address.
+  const ifaceSelectors = new Map(); // interface id → [selector]
+  const selectorsOf = (iface) => {
+    if (!ifaceSelectors.has(iface.id)) {
+      const sels = [];
+      for (const m of iface.nodes ?? []) {
+        if (m.nodeType === 'FunctionDefinition' && m.functionSelector) sels.push(m.functionSelector);
+      }
+      ifaceSelectors.set(iface.id, sels);
+    }
+    return ifaceSelectors.get(iface.id);
+  };
   const conformance = new Map();
   const implementsDeclaring = (c, iface) => {
     if (c.lineage.includes(iface.id)) return true;
     const key = `${c.node.id}:${iface.id}`;
     if (!conformance.has(key)) {
-      const sels = [];
-      for (const m of iface.nodes ?? []) {
-        if (m.nodeType === 'FunctionDefinition' && m.functionSelector) sels.push(m.functionSelector);
-      }
+      const sels = selectorsOf(iface);
       conformance.set(key, sels.length > 0 && sels.every((x) => c.answers.has(x)));
     }
     return conformance.get(key);
+  };
+  const diamondImplements = (iface) => {
+    const sels = selectorsOf(iface);
+    return sels.length > 0 && sels.every((x) => routing.has(hex4(x)));
   };
   const externalTargets = (decl) => {
     const owner = declaringContract.get(decl.id);
@@ -401,6 +424,7 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
       const fn = c.bySelector.get(decl.functionSelector);
       if (fn) out.push({ contract: c, fn });
     }
+    if (diamondImplements(owner.contract)) out.push(...(routing.get(hex4(decl.functionSelector)) ?? []));
     return out;
   };
 
