@@ -45,7 +45,6 @@ describe('public data feed', () => {
     expect(FEED_ROUTES.map((r) => r.path)).toEqual([
       '/offers/active',
       '/offers/recent',
-      '/offers/markets',
       '/offers/stats',
       '/offers/{id}',
       '/loans/active',

@@ -44,7 +44,6 @@ import { CURSOR_KIND } from './chainIndexer';
 import {
   handleOfferById,
   handleOffersActive,
-  handleOffersMarkets,
   handleOffersRecent,
   handleOffersStats,
 } from './offerRoutes';
@@ -88,6 +87,11 @@ interface FeedRoute {
   handler: Handler;
   /** The query parameters the route takes, besides `chainId`. */
   params: readonly string[];
+  /**
+   * Parameters the feed sets itself on every request, so the route's
+   * answer matches what its `about` states. A caller cannot pass them.
+   */
+  fixed?: Readonly<Record<string, string>>;
   about: FeedAbout;
 }
 
@@ -103,7 +107,11 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/offers/active',
     target: '/offers/active',
     handler: handleOffersActive,
-    params: [...PAGE, ...PAIR_TERM, 'excludeExpired', 'excludeSaleVehicles', 'excludeOffsetVehicles'],
+    params: [...PAGE, ...PAIR_TERM, 'excludeSaleVehicles', 'excludeOffsetVehicles'],
+    // An offer past its expiry can still read `active` (expiry is enforced
+    // lazily on-chain), so the feed always drops expired offers: the book
+    // it publishes is the one `about.excludes` describes.
+    fixed: { excludeExpired: '1' },
     about: {
       what: 'The open offer book, paginated.',
       source: CHAIN_EVENTS,
@@ -117,18 +125,6 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     handler: handleOffersRecent,
     params: [...PAGE, ...PAIR_TERM],
     about: { what: 'Recently created offers.', source: CHAIN_EVENTS, excludes: [] },
-  },
-  {
-    pattern: /^\/offers\/markets$/,
-    path: '/offers/markets',
-    target: '/offers/markets',
-    handler: handleOffersMarkets,
-    params: [],
-    about: {
-      what: 'Each pair and term (lending asset, collateral asset, term) with open offers, and their open-offer aggregates.',
-      source: CHAIN_EVENTS,
-      excludes: ['offers that are not open'],
-    },
   },
   {
     pattern: /^\/offers\/stats$/,
@@ -243,6 +239,8 @@ export function feedCatalogue() {
       method: 'GET',
       path: `${PUBLIC_FEED_PREFIX}${r.path}`,
       params: ['chainId', ...r.params],
+      // Set by the feed on every request; a caller cannot pass them.
+      ...(r.fixed ? { fixed: { ...r.fixed } } : {}),
       ...r.about,
     })),
   };
@@ -321,6 +319,7 @@ export async function handlePublicFeed(req: Request, env: Env): Promise<Response
   }
   const forwarded = new URLSearchParams();
   for (const [k, v] of url.searchParams) if (allowed.has(k)) forwarded.append(k, v);
+  for (const [k, v] of Object.entries(hit.route.fixed ?? {})) forwarded.set(k, v);
   const query = forwarded.toString();
   const search = query ? `?${query}` : '';
 

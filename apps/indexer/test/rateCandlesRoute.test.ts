@@ -14,6 +14,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRateCandles } from '../src/loanRoutes';
+import { oneAddressLoanSql } from '../src/figureRules';
+import { repairOpeningParties } from '../src/chainIndexer';
 import {
   PLACED_IN_TENOR_SQL,
   UNPLACED_COUNT_CAP,
@@ -161,6 +163,51 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     const body = await h.call();
     expect(body.buckets).toEqual([]);
     expect(body.unplaced).toEqual({ count: 1, capped: false });
+  });
+
+  it('counts one-address loans through their own partial index (#3879)', () => {
+    const h = makeHarness();
+    const plan = h.db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT COUNT(*) AS n FROM (
+           SELECT 1 FROM loans l
+            WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
+              AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
+              AND asset_type = 0 AND collateral_asset_type = 0 AND start_at >= ?
+              AND ${oneAddressLoanSql('l')}
+            LIMIT ?)`,
+      )
+      .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_one_address_tenor_start_at');
+  });
+
+  it('fills unknown opening parties from the ledger, once, and never changes known ones (#3879)', async () => {
+    const h = makeHarness();
+    const A = '0x1111111111111111111111111111111111111111';
+    const B = '0x2222222222222222222222222222222222222222';
+    const ledger = h.db.prepare(
+      `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+       VALUES (?, ?, 0, ?, 'LoanInitiated', ?, ?, 0)`,
+    );
+    // Loan 1: written by an older Worker, parties unknown, ledger names A to A.
+    h.seed(1, 0, 400);
+    ledger.run(CHAIN_ID, 1, '0x' + '01'.repeat(32), 1, JSON.stringify({ loanId: '1', lender: A.toUpperCase().replace('0X', '0x'), borrower: A }));
+    // Loan 2: parties known (A to B); a ledger row naming others must not move them.
+    h.seed(2, 10, 500);
+    h.db.prepare('UPDATE loans SET init_lender = ?, init_borrower = ? WHERE loan_id = 2').run(A, B);
+    ledger.run(CHAIN_ID, 2, '0x' + '02'.repeat(32), 2, JSON.stringify({ loanId: '2', lender: B, borrower: B }));
+    // Loan 3: no ledger record; stays unknown.
+    h.seed(3, 20, 600);
+    expect(await repairOpeningParties({ DB: h.d1 } as unknown as Env, CHAIN_ID)).toBe(1);
+    const rows = h.db
+      .prepare('SELECT loan_id, init_lender, init_borrower FROM loans ORDER BY loan_id')
+      .all() as Array<{ loan_id: number; init_lender: string | null; init_borrower: string | null }>;
+    expect(rows).toEqual([
+      { loan_id: 1, init_lender: A, init_borrower: A },
+      { loan_id: 2, init_lender: A, init_borrower: B },
+      { loan_id: 3, init_lender: null, init_borrower: null },
+    ]);
+    expect(await repairOpeningParties({ DB: h.d1 } as unknown as Env, CHAIN_ID)).toBe(0);
   });
 
   it('range-scans the placed fills through the placement index', () => {

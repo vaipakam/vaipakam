@@ -81,9 +81,8 @@ today are testnets; the platform is not live on any mainnet.
 
 | Route | What it returns | Query parameters |
 | --- | --- | --- |
-| `/offers/active` | The open offer book, paginated. | `limit`, `before`, `lendingAsset`, `collateralAsset`, `durationDays`, `excludeExpired`, `excludeSaleVehicles`, `excludeOffsetVehicles` |
+| `/offers/active` | The open offer book, paginated. Offers past their expiry are always left out (the feed sets this itself; it is not a parameter). | `limit`, `before`, `lendingAsset`, `collateralAsset`, `durationDays`, `excludeSaleVehicles`, `excludeOffsetVehicles` |
 | `/offers/recent` | Recently created offers. | `limit`, `before`, `lendingAsset`, `collateralAsset`, `durationDays` |
-| `/offers/markets` | Each pair and term (lending asset, collateral asset, term) with open offers, and their open-offer aggregates. | |
 | `/offers/stats` | Open-offer counts and totals. | |
 | `/offers/{id}` | One offer by id. | |
 | `/loans/active` | Active loans, paginated. | `limit`, `before` |

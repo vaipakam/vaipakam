@@ -111,23 +111,6 @@
     "notice",
     "version"
   ],
-  "/offers/markets": [
-    "about",
-    "about.cacheSeconds",
-    "about.excludes",
-    "about.source",
-    "about.what",
-    "asOf",
-    "asOf.block",
-    "asOf.scannedAt",
-    "chainId",
-    "data",
-    "data.chainId",
-    "data.markets",
-    "data.truncated",
-    "notice",
-    "version"
-  ],
   "/offers/stats": [
     "about",
     "about.cacheSeconds",

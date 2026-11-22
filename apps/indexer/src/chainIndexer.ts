@@ -4321,9 +4321,10 @@ export async function runHealLanes(
     // them: the ledger heal above may have committed rows whose report rides
     // this function's return, and a query past the ceiling could end the
     // invocation before it. Skipped work just runs next tick.
-    if (affords(budget, { external: 0, d1Queries: 2 })) {
+    if (affords(budget, { external: 0, d1Queries: 3 })) {
       await reverifyInitPrincipal(env, chainId);
       await reverifyInitTerms(env, chainId);
+      await repairOpeningParties(env, chainId);
     }
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, redactedError(err));
@@ -5198,6 +5199,46 @@ async function canonicalSettlementBlock(
     if (carries) return c.block_number;
   }
   return 'unconfirmed';
+}
+
+/**
+ * #3879 — fill a loan's opening parties (`init_lender` / `init_borrower`,
+ * migration 0118) from its own `LoanInitiated` record in the activity
+ * ledger, wherever they are still unknown. Every insert path writes them, so
+ * this finds rows only where something older wrote the loan: the previous
+ * Worker, still serving between the migration and the new publish. It
+ * writes once per row (`init_lender IS NULL`) and never changes a value
+ * already there, so the parties stay the opening event's whatever a later
+ * sale does. A row with no ledger record stays unknown, and an unknown loan
+ * is not left out of rate figures. D1 only, no RPC.
+ */
+export async function repairOpeningParties(env: Env, chainId: number): Promise<number> {
+  const res = await env.DB.prepare(
+    `UPDATE loans
+        SET init_lender = (
+              SELECT LOWER(json_extract(ae.args_json, '$.lender'))
+                FROM activity_events ae
+               WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+                 AND ae.kind = 'LoanInitiated'
+               ORDER BY ae.block_number, ae.log_index LIMIT 1),
+            init_borrower = (
+              SELECT LOWER(json_extract(ae.args_json, '$.borrower'))
+                FROM activity_events ae
+               WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+                 AND ae.kind = 'LoanInitiated'
+               ORDER BY ae.block_number, ae.log_index LIMIT 1)
+      WHERE chain_id = ?
+        AND init_lender IS NULL
+        AND EXISTS (
+          SELECT 1 FROM activity_events ae
+           WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+             AND ae.kind = 'LoanInitiated'
+             AND json_extract(ae.args_json, '$.lender') IS NOT NULL
+        )`,
+  )
+    .bind(chainId)
+    .run();
+  return res.meta?.changes ?? 0;
 }
 
 /**

@@ -43,7 +43,6 @@ const PAIR = `lendingAsset=${USDC}&collateralAsset=${WETH}&durationDays=30`;
 const SAMPLE: Record<string, string> = {
   '/offers/active': '/offers/active',
   '/offers/recent': '/offers/recent',
-  '/offers/markets': '/offers/markets',
   '/offers/stats': '/offers/stats',
   '/offers/{id}': '/offers/1',
   '/loans/active': '/loans/active',
@@ -171,18 +170,27 @@ describe('(a) each route takes only the parameters it lists', () => {
 
   for (const r of FEED_ROUTES) {
     it(`${r.path} lists exactly what ${r.handler.name} reads`, () => {
-      expect([...r.params].sort()).toEqual(handlerParams(r.handler.name));
+      // What a caller passes plus what the feed fixes: together, every
+      // parameter the handler reads, each from exactly one side.
+      const fixed = Object.keys(r.fixed ?? {});
+      expect(fixed.filter((k) => r.params.includes(k))).toEqual([]);
+      expect([...r.params, ...fixed].sort()).toEqual(handlerParams(r.handler.name));
     });
   }
+
+  it('pins the parameters the feed fixes itself', () => {
+    expect(Object.fromEntries(FEED_ROUTES.filter((r) => r.fixed).map((r) => [r.path, r.fixed]))).toEqual({
+      '/offers/active': { excludeExpired: '1' },
+    });
+  });
 
   it('pins the v1 parameter lists', () => {
     expect(Object.fromEntries(FEED_ROUTES.map((r) => [r.path, [...r.params]]))).toEqual({
       '/offers/active': [
         'limit', 'before', 'lendingAsset', 'collateralAsset', 'durationDays',
-        'excludeExpired', 'excludeSaleVehicles', 'excludeOffsetVehicles',
+        'excludeSaleVehicles', 'excludeOffsetVehicles',
       ],
       '/offers/recent': ['limit', 'before', 'lendingAsset', 'collateralAsset', 'durationDays'],
-      '/offers/markets': [],
       '/offers/stats': [],
       '/offers/{id}': [],
       '/loans/active': ['limit', 'before'],
@@ -284,7 +292,6 @@ describe('(c) the tables each route reads', () => {
     expect(recorded).toEqual({
       '/offers/active': ['indexer_cursor', 'offers'],
       '/offers/recent': ['indexer_cursor', 'offers'],
-      '/offers/markets': ['indexer_cursor', 'market_summary'],
       '/offers/stats': ['indexer_cursor', 'offers'],
       '/offers/{id}': ['indexer_cursor', 'offers'],
       '/loans/active': ['indexer_cursor', 'loans', 'protocol_config'],
@@ -350,5 +357,23 @@ describe('the budget', () => {
     const res = await handlePublicFeed(new Request(`https://x${withChain('/loans/stats')}`), env);
     const body = (await res.json()) as { about: { cacheSeconds: number | null } };
     expect(typeof body.about.cacheSeconds).toBe('number');
+  });
+});
+
+describe('(d) what a route publishes matches what it says it leaves out', () => {
+  it('drops an expired offer from the open book, and does not let a caller turn that off', async () => {
+    const { h, env } = seeded();
+    // Offer 2 has passed its expiry but still reads `active`: expiry is
+    // enforced lazily on-chain.
+    h.db.prepare('UPDATE offers SET expires_at = ? WHERE offer_id = 2').run(NOW - 60);
+    const res = await handlePublicFeed(new Request(`https://x${withChain('/offers/active')}`), env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { offers: Array<{ offerId: number | string }> } };
+    expect(body.data.offers.map((o) => Number(o.offerId))).toEqual([1]);
+    const refused = await handlePublicFeed(
+      new Request(`https://x${withChain('/offers/active?excludeExpired=0')}`),
+      env,
+    );
+    expect(refused.status).toBe(400);
   });
 });

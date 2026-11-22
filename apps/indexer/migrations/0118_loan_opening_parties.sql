@@ -20,9 +20,27 @@
 ALTER TABLE loans ADD COLUMN init_lender TEXT;
 ALTER TABLE loans ADD COLUMN init_borrower TEXT;
 
+-- The rate candles count one-address loans per market beside the candles,
+-- capped. Without an index that names the rule, that count reads every loan
+-- of the market in range to find the few that qualify; this partial index
+-- holds only the loans the rule leaves out, in the candle index's order, so
+-- the count visits only those. Its WHERE is the rule's SQL exactly
+-- (figureRules.ts, oneAddressLoanSql), which is what lets SQLite use it.
+CREATE INDEX IF NOT EXISTS idx_loans_one_address_tenor_start_at
+  ON loans (chain_id, lending_asset, collateral_asset, init_duration_days, start_at)
+  WHERE init_lender IS NOT NULL AND init_lender = init_borrower;
+
+-- The pass-by-pass repair below looks only at rows still missing their
+-- parties; this index keeps that read to those rows.
+CREATE INDEX IF NOT EXISTS idx_loans_opening_parties_unknown
+  ON loans (chain_id, loan_id)
+  WHERE init_lender IS NULL;
+
 -- Existing rows: the parties of the loan's own `LoanInitiated` record in
 -- the activity ledger, where there is one. A row with no ledger record
--- stays NULL, as above.
+-- stays NULL, as above. Rows the previous Worker writes after this
+-- migration and before the new one is published are filled by the same
+-- read on every pass (chainIndexer.ts, repairOpeningParties).
 UPDATE loans
    SET init_lender = (
          SELECT LOWER(json_extract(ae.args_json, '$.lender'))
