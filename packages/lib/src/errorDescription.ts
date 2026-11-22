@@ -37,7 +37,7 @@
  * falsify it; the suite now builds real viem errors.
  */
 
-import { extractRevertName } from './decodeContractError';
+import { extractRevertName } from './revertData';
 
 /**
  * The field names whose value is a credential wherever it appears: a query

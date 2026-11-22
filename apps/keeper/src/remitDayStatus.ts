@@ -14,7 +14,7 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { RewardRemittanceFacetABI } from '@vaipakam/contracts/abis';
-import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
+import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/revertData';
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;

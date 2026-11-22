@@ -308,7 +308,7 @@ jobs:
           # installer (.github/actions/setup-foundry): contracts-fast,
           # slither and build-docs are the only consumers of its v1.8.3 and
           # v1.7.1 pins, so a change to it must run them.
-          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$|\.github/actions/setup-foundry/|packages/contracts/src/abis/|packages/contracts/src/deployments\.(json|ts)$|packages/contracts/scripts/diamond-facets\.json$)'
+          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$|\.github/actions/setup-foundry/|packages/contracts/src/abis/|packages/contracts/src/deployments\.(json|ts)$|packages/contracts/scripts/diamond-facets\.json$|packages/contracts/src/errorRaisers\.json$)'
           if echo "$CHANGED" | grep -Eq "$CONTRACTS_RE"; then
             echo "contracts=true" >> "$GITHUB_OUTPUT"
           else
@@ -374,10 +374,10 @@ jobs:
           # must still run them (#1274 / #2092). The same holds for
           # contracts/script/check-measured-delivery.mjs (#2440), the
           # permissionless-steps ledger guard (#2984; its ledger is a .json, so
-          # already matched), and for the
+          # already matched), the error-raisers derivation (#3916), and for the
           # restore converter, which the indexer's table-classification guard
           # imports (#1481).
-          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|contracts/script/check-loan-collateral-writer\.mjs$|contracts/script/check-loan-start-term-writer\.mjs$|contracts/script/check-raw-payouts\.mjs$|contracts/script/check-permissionless-steps\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|contracts/script/check-loan-collateral-writer\.mjs$|contracts/script/check-loan-start-term-writer\.mjs$|contracts/script/check-raw-payouts\.mjs$|contracts/script/check-permissionless-steps\.mjs$|contracts/script/error-raisers\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -1165,6 +1165,12 @@ jobs:
       # delivers and which ramp versions it refuses. No anvil, no forge build.
       - name: Tests — packages/anvil-harness (fork relay)
         run: pnpm --filter @vaipakam/anvil-harness test
+
+      # The transaction explainer's operator command and the explainer it
+      # wraps (#3917). Only those files: the rest of the library is
+      # typechecked by the apps that import it.
+      - name: Typecheck — packages/lib (transaction explainer)
+        run: pnpm --filter @vaipakam/lib typecheck
 
       - name: Typecheck — packages/push
         run: pnpm --filter @vaipakam/push typecheck

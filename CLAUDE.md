@@ -1290,6 +1290,42 @@ the connected app's `isFunctionDoesNotExistRevert` reads the revert data viem
 keeps on `ContractFunctionRevertedError.raw`, decoded or not — and treat any
 text match as a fallback for non-viem errors only.
 
+## Error catalogue (#3916)
+
+Every error the shipped contracts can raise has one row in
+`packages/contracts/src/errorCatalogue.json` (name, selector, values, and
+where written, the plain message, who can act on it and whether it is
+internal), read through `@vaipakam/contracts/error-catalogue`. The shared
+decoder (`packages/lib/src/decodeContractError.ts`) reads it; there is no
+hand-kept selector or message table any more. Which entry functions can raise
+each error is `packages/contracts/src/errorRaisers.json`, derived from the
+compiler's AST by `contracts/script/error-raisers.mjs` (internal calls,
+self-calls through the Diamond, and calls to the platform's own contracts;
+presence, not path feasibility).
+
+- **Add or change an error** → the ABI export rebuilds both files. Write its
+  meaning in `packages/contracts/errors/meanings.json` (keyed by name, or by
+  full signature when the name has several). The export, the package test
+  and the pre-deploy gate (step 1f, raisers) refuse a stale catalogue, a
+  meaning for an error that no longer exists, and a rise in the count of
+  errors without a meaning (`maxErrorsWithoutEntry`, which may only fall).
+- **Internal** (`"internal": true`) means "should be impossible": the apps
+  show the platform-fault copy, never the error as something the user did.
+- **App copy is keyed** by the error name, or by its full signature when two
+  errors share a name, so a translation never crosses meanings.
+
+**Explaining a transaction** (#3917): `EXPLAIN_RPC_URL=<node> pnpm --filter
+@vaipakam/lib explain-tx --chain <id> --tx <hash>` (or an unsent attempt:
+`--from --to --data --block [--value]`; `--json <path>` writes the data). It
+prints each function entered by depth with its arguments, the events (marking
+those a failed call undid), where it stopped with the catalogue's meaning, and
+the gas per step. The trace is the node's own, else a local anvil copy rebuilt
+from the parent block with the block's earlier transactions applied, compared
+with the receipt; a mismatch is headed "approximate replay". The code that ran
+is read from the trace's delegate-call addresses, never from a route lookup.
+The explainer itself is the pure `@vaipakam/lib/txExplainer`; the endpoint is
+read from the environment and never printed.
+
 ## Worker ABI consumption (Stage 3 split)
 
 The Stage 3 source-tree refactor (see
