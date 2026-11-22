@@ -1247,7 +1247,9 @@ and the exact spender, and so are signed permits.
 At every deploy, on every chain, the launch check compares the code at
 each deployed address with the build of the reviewed commit, and the live
 settings and roles with the parameters table and the authority
-statements. The per-chain record that already binds each address to a
+statements. The reviewed commit is named by a protected tag, and the
+hashes compared are the ones in that tag's baseline record
+([`RefactorRulesDesign.md`](RefactorRulesDesign.md), section 3.2). The per-chain record that already binds each address to a
 code hash is the starting point. A difference is a refusal that names the
 address or the setting.
 
