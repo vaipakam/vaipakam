@@ -8,7 +8,8 @@ every finding is fixed or explicitly closed before mainnet (section 8).
 He also confirmed the refactor's structure (a new structure built fresh,
 the rules carried across), which settles stage 3 of section 6, and
 approved a canonical specification that the reader pass checks the code
-against (section 3.5).
+against (section 3.5) and a cross review that cuts the same code a second
+way (section 3.6).
 Companion: [`RefactorRulesDesign.md`](RefactorRulesDesign.md).
 
 ## 1. The problem
@@ -39,8 +40,8 @@ review.
 
 **A piece of code is covered when its present text passed two layers,
 inside a review no larger than the size limit (about 1,500 contract lines
-today), and holds every approved statement of the specification that
-governs it (section 3.5):**
+today), holds every approved statement of the specification that governs
+it (section 3.5), and has had its cross review (section 3.6):**
 
 1. **A reader pass:** an adversarial read by a thread that did not write the
    code, against the five lenses of the review policy (fund movement and
@@ -107,14 +108,14 @@ modifiers, types, constants and inherited functions behind it are the same
 too. An upgrade-authorisation function written identically in two
 contracts, each with its own owner check, is two items.
 
-The record is a **ledger** of hashes, each with three marks: the reader
-pass it passed in, the reviewer loop it passed in, and the specification
-mark of section 3.5. Each mark names the
+The record is a **ledger** of hashes, each with four marks: the reader
+pass it passed in, the reviewer loop it passed in, the specification mark
+of section 3.5 and the cross review of section 3.6. Each mark names the
 contract the declaration was reviewed in, and the report lists every other
 place the same hash appears, so what is being counted once is visible.
 
 Coverage of the tree is the share of declaration code whose hash carries
-all three marks. The report shows each mark's share beside it, so code that
+all four marks. The report shows each mark's share beside it, so code that
 has had one and not another is visible as that.
 
 Three things follow, and they are the reason for this choice over counting
@@ -229,6 +230,23 @@ A file that fits no unit by itself (the three largest libraries) is
 sliced by whole declarations. Its storage structs form their own unit, read
 first, because every later slice depends on them.
 
+**A declaration larger than the limit is reviewed in parts.** One exists
+today: the main storage struct is several thousand lines by itself. Such a
+declaration is cut at its members (a struct at its fields, in order, each
+part inside the limit), and the ledger holds it as its parts:
+
+- Each part has its own hash and its own marks, and names the hash of the
+  whole declaration it was cut from.
+- The declaration is covered when every one of its parts carries every
+  mark **and** all were cut from the declaration's present text. An edit
+  to one field changes the whole declaration's hash, and with it every
+  part's standing, because a storage layout is read as one thing.
+- Its cross review is the closing read of the whole (section 3.6), by one
+  reader, which looks for what the parts cannot show each other.
+
+Only a declaration with members can be cut this way. A function longer
+than the limit is not cut: it is a finding, and it is split in the code.
+
 ### 3.3 The loop on one unit
 
 1. The reader pass comes first, by the security thread or by another
@@ -246,16 +264,20 @@ first, because every later slice depends on them.
    again.
 5. The unit converges on **one** round with no P1 and no P2, on a head
    that holds every accepted fix, **and with every earlier thread on the
-   pull request closed** (section 8). The trial showed the reviewer does not
-   repeat a finding it has already posted, so a quiet round over an open
-   thread is not a clean round, and a second run on an unchanged head is
-   not a second read.
+   pull request answered.** A thread is answered when it carries a closing
+   line of section 8, or, for a P3 only, the line `Deferred to #N` naming
+   an open card that carries `review-finding`. The trial showed the
+   reviewer does not repeat a finding it has already posted, so a quiet
+   round over an unanswered thread is not a clean round, and a second run
+   on an unchanged head is not a second read.
 6. The round cap and the root-fix rule of the review policy apply
    unchanged: the same seam three rounds running means one fix at the root,
    and round 15 is the stop.
 
 A deferred finding does not block convergence only when it is P3. A P1 or P2
-is fixed, or refuted with evidence.
+is fixed, or refuted with evidence. Convergence and the launch are two
+different gates: a deferred P3 lets its unit converge, and its card still
+refuses a mainnet until it is closed (section 8).
 
 ### 3.4 The cross-cutting rules, and the gate check
 
@@ -342,13 +364,24 @@ listed as **the specification is silent**.
   removed. A behaviour never enters the specification because the code was
   found doing it.
 
-**A third mark.** The ledger gains a third mark beside the reader's and the
-reviewer's: the specification mark, written when every statement that
-governs the declaration has a verdict of holds, and nothing the declaration
-does is still on the silent list. Covered means all three. So the two
+**The specification mark.** The ledger gains a mark beside the reader's
+and the reviewer's: the specification mark, written when every statement
+that governs the declaration has a verdict of holds, and nothing the
+declaration does is still on the silent list. So the two
 safety layers and the specification check can be reported one by one, and a
 unit read before its statements were approved shows exactly what it still
 owes.
+
+**The mark is bound to the statements it was given for.** A declaration's
+code hash does not change when a statement does, so the mark records what
+it was judged against: the id and the hash of the approved text of every
+statement that governs the declaration, and the hash of the list of
+statements in each section it drew from. The mark is void when any of
+those changes: a statement reworded by a new approval, or a statement
+added to, dropped from or moved out of the section. The reader then traces
+the changed statements again, and only those. So a rule the owner changes
+uncovers the code it governs, exactly as an edit to the code does, and the
+report cannot read complete against a rule nobody has checked.
 
 **Order.** A domain's statements are approved one step ahead of the review
 of its code, so a unit of stages 1 to 3 is opened with its statements in
@@ -368,12 +401,64 @@ statement (every entry point of a kind screens its caller, say) is a row of
 the rules file of section 3.4 once it is approved, so the checklist and the
 specification cannot state two versions of one rule.
 
+### 3.6 The cross review: a second cut
+
+A unit is close to a file: one facet with the library code it reaches, or a
+slice of a large library. Section 2.2 states the limit of that: every piece
+of text is reviewed, and not every combination. A second pass in the same
+grouping would cost as much again and look from the same angle. The owner
+asked on 2026-11-22 for a review that cuts across the first, and approved
+this form the same day.
+
+**Every line is reviewed in two groupings, by two readers: once with its
+file, and once with the user action that runs through it.**
+
+| Code | First review | Cross review |
+| --- | --- | --- |
+| Standalone contracts and rule libraries (stages 1 and 2) | By file or slice | By user action: each action that runs through them, followed from its entry to the last change of a balance |
+| The refactor's new facets (stage 3) | By user action, since the refactor is built one action at a time | By file: each finished facet read whole |
+| A file reviewed in slices | By slice | A closing read of the whole file by one reader, for what fell between slices and for slices that disagree |
+
+**A review by action** follows one user action through every facet and
+library it touches, and reads it against that action's statements and its
+step in the lifecycle model. The unit tool builds it from the call graph it
+already reads, as a review-only pull request cut the other way. The size
+limit applies. An action too long for one review is cut where it calls back
+into the platform's own entry points.
+
+**What form it takes.** For an action that moves funds: a reader pass and a
+converged reviewer loop, as for a first review. For a read-only view: the
+reader pass alone.
+
+**The reader of a cross review is never the reader of the first review of
+the same code.** The tool that writes the mark refuses when the two are the
+same thread.
+
+**The fourth mark.** The ledger carries the cross review as its own mark,
+beside the reader's, the reviewer's and the specification's. Covered means
+all four.
+
+**A declaration on no action's path is listed.** It is dead code, or
+behaviour nobody specified, and each one becomes a question.
+
+**A third cut, by machine: by stored value.** For every stored figure that
+holds funds or a position's status, a generated table lists every place
+that writes it and every place that reads it. Each writer is matched to the
+statement that permits it. Four checks of this kind exist today, each for
+one figure (the loan's terms, its collateral, its start and term, and raw
+payouts). The table makes the set complete, and a new writer with no
+statement is refused. It is read from the compiler's syntax tree, costs no
+reading, and runs on every change.
+
+**Order.** Actions that move funds are cross-reviewed first.
+
 ## 4. The records
 
 | Record | Where | Holds |
 | --- | --- | --- |
-| The ledger | This repository, beside the contracts | Each hash with its three marks: the reader pass, the reviewer loop and the specification, each as an opaque review number. No finding, no description |
-| The coverage report | Generated, printed by one command and by CI | Per area and per file: the share that carries each mark and the share that carries all three, each uncovered declaration by name, and the trace counts for each domain |
+| The ledger | This repository, beside the contracts | Each hash with its four marks: the reader pass, the reviewer loop, the specification and the cross review, each as an opaque review number. No finding, no description |
+| The coverage report | Generated, printed by one command and by CI | Per area and per file: the share that carries each mark and the share that carries all four, each uncovered declaration by name, and the trace counts for each domain |
+| The stored-value table | Generated, in this repository | Each stored figure that holds funds or status, every writer and reader of it, and the statement that permits each writer (section 3.6) |
 | The trace tables | The review repository, one for each unit | Each statement that governs the unit, where the code holds it, its tests and its verdict (section 3.5) |
 | The order list | This repository, beside the ledger | The areas, their order and their state: waiting, in review, converged |
 | The findings | The review-only pull requests, in the review repository | Every finding is a review thread: its round, its severity, how it was answered and how it was closed (section 8) |
@@ -695,6 +780,29 @@ one the launch was judged on.
 25. A planted fault that breaks a stated rule and no safety lens (a fee
     taken at a rate other than the stated one) is reported by the trace
     table as differs.
+26. A declaration with every mark but the cross review is reported as not
+    covered.
+27. A cross-review mark whose reader is the reader of the same
+    declaration's first review is refused.
+28. The unit tool, given a user action, builds a review whose declarations
+    are exactly those the action reaches, and cuts it at the platform's own
+    entry points when it is over the size limit.
+29. A declaration no action reaches appears on the list of section 3.6.
+30. The stored-value table lists a writer added in a test tree, and the
+    check refuses it until a statement permits it.
+31. A file reviewed in slices does not carry its cross-review mark until
+    its closing read is recorded.
+32. A statement reworded by a new approval, with no change to the code,
+    voids the specification mark of every declaration it governs and of no
+    other. A statement added to a section voids the marks drawn from that
+    section until each is traced against it.
+33. A unit with one P3 thread that reads `Deferred to #N`, where card N is
+    open and labelled, converges. The same thread with no card, or a P2
+    deferred the same way, does not. The launch check still refuses while
+    card N is open.
+34. A declaration larger than the limit is cut into parts inside the
+    limit. It is reported as not covered while any part lacks a mark, and
+    again after an edit to any one of its members.
 
 ## 11. Residuals
 
@@ -793,12 +901,22 @@ one the launch was judged on.
 23. **Let a behaviour the specification is silent on pass when the reader
     judges it sound.** Rejected: it is how a specification comes to
     describe the code. The owner answers, and the answer is recorded.
+24. **A second review in the same grouping.** Rejected: the same cost
+    again, from the same angle. A fault that lives in the sequence of two
+    correct functions is seen only by following the sequence.
+25. **The cross review by the same reader.** Rejected: the second read
+    would start from the first's conclusions.
+26. **A reviewer loop on every cross review, views included.** Rejected: a
+    view moves nothing, and the first review already put it through the
+    loop. The reader pass alone is kept for it.
+27. **Leave the stored-value cut to the four checks that exist.** Rejected:
+    four figures are guarded and the rest are not, and nothing says which.
 
 ## 13. Recommendation
 
 Adopt the coverage rule and the ledger, with the specification as the
-reader's sixth lens and the third mark. Run the pass in the private review
-repository.
+reader's sixth lens and the cross review as a second cut, each with its own
+mark. Run the pass in the private review repository.
 Start stages 1 and 2 beside the batch. Stage 3 happens inside the refactor
 pass, facet by facet. Block the audit tag on the report, and a mainnet on the launch
 check of section 8.
@@ -819,4 +937,6 @@ check of section 8.
 | The launch check `review findings closed`, the findings report, the `review-finding` label | Governance, with test tooling | Before the pass starts |
 | The policy text: the rule, the size limit, the closing lines, the freeze gate | Governance | With the ledger |
 | Stage 3 | The threads that write the new facets, each read by another | With the refactor pass (#3926) |
-| The specification lens: statements in the description, the trace table, the third mark, the counts in the report | Security reads. Test tooling builds the table's check and the description | With the first approved domain |
+| The cross review: the unit tool's cut by action, the fourth mark, the list of declarations on no path | Test tooling builds. Security leads the reading, with a second reader for each unit | After the first reviews of stage 1 |
+| The stored-value table and its check | Test tooling. Design rules on a disputed writer | With the gate check (#3944) |
+| The specification lens: statements in the description, the trace table, the specification mark, the counts in the report | Security reads. Test tooling builds the table's check and the description | With the first approved domain |
