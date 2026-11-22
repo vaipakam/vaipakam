@@ -200,8 +200,9 @@ export function checkSpec(parsed, opts = {}) {
   // (states, steps, dimension values); a model's citation columns are checked
   // with the model below.
   const citers = [
-    ...statements.map((s) => ({ who: s.id, self: s.id, file: s.file, line: s.line, text: statementText(s) })),
-    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, self: null, file: m.file, line: x.line, text: x.text }))),
+    ...statements.map((s) => ({ who: s.id, self: s.id, key: s.id, file: s.file, line: s.line, text: statementText(s) })),
+    // A model is named in an owed row's "Cited by" as "Model: <name>".
+    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, self: null, key: `Model: ${m.name}`, file: m.file, line: x.line, text: x.text }))),
   ];
   for (const c of citers) {
     for (const m of c.text.matchAll(ID_RE)) {
@@ -213,18 +214,15 @@ export function checkSpec(parsed, opts = {}) {
         else add(c.file, c.line, 'reference', `${c.who} cites ${ref}, but no statement of ${m[1]} is in the checked set; a domain not yet drafted is cited as "(${m[1]} owed: …)"`);
       }
     }
-  }
-  for (const s of statements) {
-    const text = statementText(s);
-    if (/\bthe (?!same\b|one\b)[a-z]+(?: [a-z]+)? domains?\b/i.test(text.replace(OWED_RE, ''))) {
-      add(s.file, s.line, 'reference', `${s.id} refers to another domain by name; cite a statement by id, or write "(<CODE> owed: …)"`);
+    if (/\bthe (?!same\b|one\b)[a-z]+(?: [a-z]+)? domains?\b/i.test(c.text.replace(OWED_RE, ''))) {
+      add(c.file, c.line, 'reference', `${c.who} refers to another domain by name; cite a statement by id, or write "(<CODE> owed: …)"`);
     }
-    for (const m of text.matchAll(OWED_RE)) {
+    for (const m of c.text.matchAll(OWED_RE)) {
       const code = m[1];
       const phrase = normaliseOwed(m[2]);
-      if (complete.has(code)) add(s.file, s.line, 'owed', `${s.id}: "(${code} owed: ${phrase})" names a domain that is complete; cite its statement by id`);
-      const listed = record.owed.some((o) => normaliseOwed(o.ref) === `${code} owed: ${phrase}` && o.by.includes(s.id));
-      if (!listed) add(s.file, s.line, 'owed', `${s.id}: "(${code} owed: ${phrase})" is not listed in its domain's record (a row "| ${code} owed: ${phrase} | ${s.id} |" in a table "| Owed | Cited by |")`);
+      if (complete.has(code)) add(c.file, c.line, 'owed', `${c.who}: "(${code} owed: ${phrase})" names a domain that is complete; cite its statement by id`);
+      const listed = record.owed.some((o) => normaliseOwed(o.ref) === `${code} owed: ${phrase}` && o.by.includes(c.key));
+      if (!listed) add(c.file, c.line, 'owed', `${c.who}: "(${code} owed: ${phrase})" is not listed in its domain's record (a row "| ${code} owed: ${phrase} | ${c.key} |" in a table "| Owed | Cited by |")`);
     }
   }
 

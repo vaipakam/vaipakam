@@ -194,8 +194,10 @@ function parseModel(file, lines, start, end) {
       for (const r of table.rows) {
         const row = Object.fromEntries(want.map((k, j) => [k, r.cells[j] ?? '']));
         row.line = r.line;
-        // The cells a figure could hide in; citation cells hold ids only.
-        const prose = want.filter((k) => !['Guarded by', 'Refused by', 'Named by'].includes(k)).map((k) => row[k]).join(' ');
+        // Every cell is text the figure, parameter and reference checks read,
+        // citation cells included: a citation cell may carry a short prose
+        // reason beside its ids, and a condition written there must not escape.
+        const prose = want.map((k) => row[k]).join(' ');
         m.texts.push({ line: r.line, text: prose });
         if (section === 'Steps') m.steps.push(row);
         else if (section === 'Refusals out of state') m.refusals.push(row);

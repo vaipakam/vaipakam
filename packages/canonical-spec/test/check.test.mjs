@@ -431,3 +431,21 @@ test('a statement cited in a model\'s prose must exist and not be retired; a hel
   const held = run([['vlt.md', REFUSAL('VLT-012') + model('the balance follows VLT-905.')], ['record.md', RECORD([['VLT-012']])]]);
   assert.ok(!has(held, 'reference', /VLT-905/));
 });
+
+test('an owed reference in a model\'s prose is held to the owed rules', () => {
+  const model = MODEL(['| Not created | Create | Anyone | VLT-012 | Recovered |'], ['| Create | VLT-012 |'], '- Not created (start): no vault (DPL owed: where the treasury is).\n- Recovered (end): a recovered vault.');
+  const owed = (by) => `\n| Owed | Cited by |\n| --- | --- |\n| DPL owed: where the treasury is | ${by} |\n`;
+  const unlisted = run([['vlt.md', REFUSAL('VLT-012') + model], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(unlisted, 'owed', /model "a vault": "\(DPL owed: where the treasury is\)" is not listed/), JSON.stringify(unlisted));
+  const listed = run([['vlt.md', REFUSAL('VLT-012') + model], ['record.md', RECORD([['VLT-012']], owed('Model: a vault'))]]);
+  assert.ok(!has(listed, 'owed', /a vault/), JSON.stringify(listed));
+  const complete = run([['vlt.md', REFUSAL('VLT-012') + model], ['record.md', RECORD([['VLT-012']], owed('Model: a vault'))]], { completeDomains: new Set(['DPL']) });
+  assert.ok(has(complete, 'owed', /names a domain that is complete/));
+});
+
+test('a citation cell\'s prose is read by the figure and parameter checks', () => {
+  const model = MODEL(['| Not created | Create | Anyone | VLT-012 if the balance exceeds PRM-777 | Recovered |'], ['| Create | VLT-012 |']);
+  const params = '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-001 | Limit | 5 |\n';
+  const f = run([['vlt.md', STMT('VLT-012', 'rule', '', 'A vault holds at most PRM-001.') + model], ['params.md', params], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(f, 'parameter', /model "a vault" names PRM-777/), JSON.stringify(f));
+});
