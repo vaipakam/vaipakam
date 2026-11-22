@@ -248,6 +248,13 @@ The app's existing trust line, issuer powers line and NFT standard read stay as 
 
 Written into the incident runbook, the admin keys and pause guide, and the threat model by the governance thread, in the words of guard 3. Publication of each use is a public note with the asset, the time and the reason. The contract's event carries no reason and is not changed.
 
+**Where the note lives.** One append-only file, `docs/ops/AssetPauseLog.md`, with one entry per pause and one per lift: the asset and the network, the time and the transaction, which of the two reasons applies with one sentence on it, what the pause stops on that day, and later the lift's transaction. Every entry is a reviewed commit, so the history cannot be changed without a trace.
+
+- The entry is opened as a step of the incident itself. It gives the reason at once. Evidence that would help someone exploit a fault that is still open is added when it is safe, and until then the entry says that evidence follows.
+- A correction is a new line under the entry. Nothing in an entry is rewritten.
+- The app shows a paused asset as "paused for new positions" with a link to the log. It does not claim a reason is published: where no entry exists yet, the reader finds none.
+- The scheduled launch check compares each network's paused assets, read from the chain, with the log's open entries. A paused asset with no entry, or an entry for an asset that is not paused and has no lift recorded, is reported in that check's issue. This is what makes "each use is published" something that is checked.
+
 What the governance thread found on main, and what is done with each:
 
 - The incident runbook offers the per-asset pause as the step that acts at once when the narrower switches are behind the delay, for incidents that include a wrong price reading and a manipulated outside reading. That use is kept, as the rule's second reason. The runbook's note is rewritten to name the two reasons and nothing wider.
@@ -298,6 +305,7 @@ What the governance thread found on main, and what is done with each:
 - **An index of rentals by renter kept on chain.** Rejected: a write on every rental step for a question the event answers.
 - **A feed route listing everything an address rents across collections.** Not built: a project asks about its own collection, so nothing needs it. This is not a privacy line. The same facts are public in the chain's events and anyone can assemble that list.
 - **Keeping the rental routes behind a key or out of the public feed.** Rejected: it would suggest the data is private when the chain publishes it, and it would stand between a project and a read it needs.
+- **A status page or a reason carried on chain for the pause note.** Rejected: a status page is another service whose text can change without a trace, and a reason in the event is a contract change for something a reviewed file carries.
 - **A per-asset pause rule with the first reason only.** Rejected: after the handover the narrower switches wait for the delay, so a faulty reading of one asset could be answered at once only by pausing the whole platform.
 - **A wrapped rental token issued by the platform, a hosted marketplace per project, a rental royalty.** Rejected: the vault is already the adapter, the kit's links already keep users on a project's site up to the review, and fees stay as they are.
 
