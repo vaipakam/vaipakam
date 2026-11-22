@@ -15,20 +15,22 @@
 -- Both columns are written once, by the insert that creates the row, and
 -- never updated: like the other `init_*` columns they are history, not
 -- state. NULL means the parties are not known; a loan with NULL parties is
--- not left out, since it cannot be shown to have one address on both sides.
+-- left out of rate figures too and counted as "opening parties unknown",
+-- never assumed to have two parties.
 -- Stored lowercase (repo convention).
 ALTER TABLE loans ADD COLUMN init_lender TEXT;
 ALTER TABLE loans ADD COLUMN init_borrower TEXT;
 
--- The rate candles count one-address loans per market beside the candles,
--- capped. Without an index that names the rule, that count reads every loan
--- of the market in range to find the few that qualify; this partial index
--- holds only the loans the rule leaves out, in the candle index's order, so
--- the count visits only those. Its WHERE is the rule's SQL exactly
--- (figureRules.ts, oneAddressLoanSql), which is what lets SQLite use it.
-CREATE INDEX IF NOT EXISTS idx_loans_one_address_tenor_start_at
+-- The rate candles count the loans the rule leaves out per market beside
+-- the candles, capped. Without an index that names the rule, that count
+-- reads every loan of the market in range to find the few that qualify;
+-- this partial index holds only the left-out loans, in the candle index's
+-- order, so the count visits only those. Its WHERE is the rule's SQL
+-- exactly (figureRules.ts, leftOutOfRatesSql), which is what lets SQLite
+-- use it.
+CREATE INDEX IF NOT EXISTS idx_loans_rates_left_out_tenor_start_at
   ON loans (chain_id, lending_asset, collateral_asset, init_duration_days, start_at)
-  WHERE init_lender IS NOT NULL AND init_lender = init_borrower;
+  WHERE init_lender IS NULL OR init_borrower IS NULL OR init_lender = init_borrower;
 
 -- The pass-by-pass repair below looks only at rows still missing their
 -- parties; this index keeps that read to those rows.

@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRateCandles } from '../src/loanRoutes';
-import { oneAddressLoanSql } from '../src/figureRules';
+import { leftOutOfRatesSql } from '../src/figureRules';
 import { repairOpeningParties } from '../src/chainIndexer';
 import {
   PLACED_IN_TENOR_SQL,
@@ -63,10 +63,10 @@ function makeHarness() {
        lender_current_owner, borrower_current_owner, interest_rate_bps,
        start_time, start_block, start_at, updated_at,
        init_rate_bps, init_duration_days, init_principal,
-       init_terms_unbacked, init_principal_unbacked)
+       init_terms_unbacked, init_principal_unbacked, init_lender, init_borrower)
      VALUES (?, ?, 1, 'active', '0xl', '0xb', '1000', '200', 0, 0, ?, ?,
        ?, '0', '0', '1', '2', '0xl', '0xb', ?, 0, 0, ?, 0,
-       ?, ?, '1000', ?, 0)`,
+       ?, ?, '1000', ?, 0, '0xl', '0xb')`,
   );
   // A seeded fill carries a BACKED initiation snapshot unless `termsUnbacked`
   // is set, in which case the candle route must count it and draw nothing.
@@ -165,7 +165,7 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     expect(body.unplaced).toEqual({ count: 1, capped: false });
   });
 
-  it('counts one-address loans through their own partial index (#3879)', () => {
+  it('counts the left-out loans through their own partial index (#3879)', () => {
     const h = makeHarness();
     const plan = h.db
       .prepare(
@@ -174,11 +174,11 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
             WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
               AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
               AND asset_type = 0 AND collateral_asset_type = 0 AND start_at >= ?
-              AND ${oneAddressLoanSql('l')}
+              AND ${leftOutOfRatesSql('l')}
             LIMIT ?)`,
       )
       .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
-    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_one_address_tenor_start_at');
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_rates_left_out_tenor_start_at');
   });
 
   it('fills unknown opening parties from the ledger, once, and never changes known ones (#3879)', async () => {
@@ -189,8 +189,10 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
       `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
        VALUES (?, ?, 0, ?, 'LoanInitiated', ?, ?, 0)`,
     );
+    const unknown = h.db.prepare('UPDATE loans SET init_lender = NULL, init_borrower = NULL WHERE loan_id = ?');
     // Loan 1: written by an older Worker, parties unknown, ledger names A to A.
     h.seed(1, 0, 400);
+    unknown.run(1);
     ledger.run(CHAIN_ID, 1, '0x' + '01'.repeat(32), 1, JSON.stringify({ loanId: '1', lender: A.toUpperCase().replace('0X', '0x'), borrower: A }));
     // Loan 2: parties known (A to B); a ledger row naming others must not move them.
     h.seed(2, 10, 500);
@@ -198,6 +200,7 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     ledger.run(CHAIN_ID, 2, '0x' + '02'.repeat(32), 2, JSON.stringify({ loanId: '2', lender: B, borrower: B }));
     // Loan 3: no ledger record; stays unknown.
     h.seed(3, 20, 600);
+    unknown.run(3);
     expect(await repairOpeningParties({ DB: h.d1 } as unknown as Env, CHAIN_ID)).toBe(1);
     const rows = h.db
       .prepare('SELECT loan_id, init_lender, init_borrower FROM loans ORDER BY loan_id')
@@ -234,7 +237,7 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     expect(h.batches[0]).toHaveLength(3);
   });
 
-  it('leaves a loan opened with one address on both sides out of the candles, and counts it (#3879)', async () => {
+  it('leaves one-address loans and loans with unknown opening parties out of the candles, and counts each (#3879)', async () => {
     const h = makeHarness();
     const opened = h.db.prepare(
       'UPDATE loans SET init_lender = ?, init_borrower = ?, lender = ?, borrower = ? WHERE loan_id = ?',
@@ -251,16 +254,22 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     // Opened A to A; A later sold the lender side. Stays out.
     h.seed(4, 30, 9_500);
     opened.run(A, A, B, A, 4);
+    // Opening parties unknown: never assumed to be two parties. Stays out.
+    h.seed(5, 40, 9_900);
+    opened.run(null, null, A, B, 5);
     const body = (await h.call()) as CandlesBody & {
       oneAddress: number;
-      oneAddressAtLeast: boolean;
-      counting: { valueTotal: null; oneAddress: number };
+      openingPartiesUnknown: number;
+      leftOutAtLeast: boolean;
+      counting: { valueTotal: null; oneAddress: number; openingPartiesUnknown: number };
     };
     expect(body.buckets.map((b) => [b.open, b.close, b.fills])).toEqual([[400, 500, 2]]);
     expect(body.oneAddress).toBe(2);
-    expect(body.oneAddressAtLeast).toBe(false);
+    expect(body.openingPartiesUnknown).toBe(1);
+    expect(body.leftOutAtLeast).toBe(false);
     expect(body.counting.valueTotal).toBeNull();
     expect(body.counting.oneAddress).toBe(2);
+    expect(body.counting.openingPartiesUnknown).toBe(1);
   });
 
   it('stops counting at the cap and says "more than" past it', async () => {

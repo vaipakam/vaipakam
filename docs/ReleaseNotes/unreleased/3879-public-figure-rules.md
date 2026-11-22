@@ -8,6 +8,6 @@ No figure is a mean across assets or terms. The loan totals no longer carry an a
 
 A loan whose opening event names the same address as lender and borrower is left out of the rate candles and counted on its own line, and the loan totals count such loans too. The test reads the two parties of the opening event, now kept with the loan row, so a later sale or handover moves a loan neither in nor out. Each figure that applies the rule says that it cannot see two addresses that belong to one person.
 
-A new migration adds the two opening-party columns and fills them for existing loans from the activity ledger; a loan with no ledger record is left with no parties and is not left out.
+A new migration adds the two opening-party columns and fills them for existing loans from the activity ledger, and each indexer pass fills any still unknown the same way. A loan whose opening parties cannot be established is left out of the rate candles as well and counted on its own line, as opening parties unknown: it is never assumed to have two parties.
 
 Part of #3879. Design: `docs/DesignsAndPlans/ProjectKitDesign.md` section 8.

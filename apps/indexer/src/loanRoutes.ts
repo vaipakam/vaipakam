@@ -60,7 +60,13 @@ import {
   readUnplacedCount,
   unplacedOnPairStatement,
 } from './marketPlacement';
-import { ONE_ADDRESS_COUNT_CAP, countingStatement, oneAddressLoanSql } from './figureRules';
+import {
+  LEFT_OUT_COUNT_CAP,
+  countingStatement,
+  leftOutOfRatesSql,
+  oneAddressLoanSql,
+  partiesUnknownLoanSql,
+} from './figureRules';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -1365,7 +1371,8 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
         // when it opened (figureRules.ts), so the response can count those
         // loans on their own line.
         `SELECT l.lending_asset, l.principal,
-                CASE WHEN ${oneAddressLoanSql('l')} THEN 1 ELSE 0 END AS one_address
+                CASE WHEN ${oneAddressLoanSql('l')} THEN 1 ELSE 0 END AS one_address,
+                CASE WHEN ${partiesUnknownLoanSql('l')} THEN 1 ELSE 0 END AS parties_unknown
          FROM loans l WHERE l.chain_id = ? AND l.is_sale_vehicle = 0`,
       )
         .bind(chainId),
@@ -1418,8 +1425,15 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     const volumeByAsset: Record<string, bigint> = {};
     const loansByAsset: Record<string, number> = {};
     let oneAddress = 0;
-    for (const row of (volumeRows.results ?? []) as { lending_asset: string; principal: string; one_address: number }[]) {
+    let partiesUnknown = 0;
+    for (const row of (volumeRows.results ?? []) as {
+      lending_asset: string;
+      principal: string;
+      one_address: number;
+      parties_unknown: number;
+    }[]) {
       if (row.one_address === 1) oneAddress += 1;
+      if (row.parties_unknown === 1) partiesUnknown += 1;
       // Drop rows with unset / malformed `lending_asset` (legacy
       // testnet bookkeeping wrote `0x` for some NFT-rental loans
       // before the indexer normalised the column). Keeps the per-
@@ -1486,7 +1500,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       // lending assets and terms, and counted one-address loans; nothing
       // read it, and a mean across assets is not a figure this platform
       // states. `counting` says how the figures above were counted.
-      counting: countingStatement(oneAddress),
+      counting: countingStatement(oneAddress, partiesUnknown),
       // Deploy provenance (version-metadata binding): every deploy —
       // Workers Builds auto-deploys and manual wrangler alike — mints a
       // new version id, so "is the merged code live?" is answerable
@@ -1923,15 +1937,16 @@ export async function handleLoansRateCandles(
     // between two separate reads would otherwise be counted by both or by
     // neither. `range=all` counts from the epoch.
     // #3879: a loan with one address on both sides when it opened is no
-    // agreed rate between two parties, so it is left out of the candles
-    // and counted beside them (`oneAddress`), in the same snapshot.
-    const oneAddressSql = oneAddressLoanSql('l');
-    const [rows, unplacedRows, oneAddressRows] = await env.DB.batch([
+    // agreed rate between two parties, and a loan whose opening parties
+    // are unknown cannot be shown to be one, so both are left out of the
+    // candles and counted beside them, in the same snapshot.
+    const leftOutSql = leftOutOfRatesSql('l');
+    const [rows, unplacedRows, leftOutRows] = await env.DB.batch([
       env.DB.prepare(
         `SELECT loan_id, start_at, init_rate_bps,
                 init_principal, init_principal_unbacked
          FROM loans l
-         WHERE ${conds.join(' AND ')} AND NOT ${oneAddressSql}
+         WHERE ${conds.join(' AND ')} AND NOT ${leftOutSql}
          ORDER BY start_at DESC, loan_id DESC
          LIMIT ?`,
       ).bind(...binds, CANDLE_SCAN_CAP + 1),
@@ -1943,13 +1958,16 @@ export async function handleLoansRateCandles(
         since ?? 0,
       ),
       env.DB.prepare(
-        // Bounded like the unplaced count: past the cap the response says
-        // "at least" (`oneAddressAtLeast`) instead of scanning the range.
-        `SELECT COUNT(*) AS n FROM (
-           SELECT 1 FROM loans l
-            WHERE ${conds.join(' AND ')} AND ${oneAddressSql}
-            LIMIT ?)`,
-      ).bind(...binds, ONE_ADDRESS_COUNT_CAP + 1),
+        // Bounded like the unplaced count, through the partial index whose
+        // WHERE is `leftOutSql`: past the cap the response says "at least"
+        // (`leftOutAtLeast`) instead of scanning the range.
+        `SELECT COUNT(*) AS n,
+                COALESCE(SUM(CASE WHEN ${partiesUnknownLoanSql('l')} THEN 1 ELSE 0 END), 0) AS unknown
+           FROM (
+             SELECT l.init_lender, l.init_borrower FROM loans l
+              WHERE ${conds.join(' AND ')} AND ${leftOutSql}
+              LIMIT ?) l`,
+      ).bind(...binds, LEFT_OUT_COUNT_CAP + 1),
     ]);
     const fills = (rows.results ?? []) as CandleFillRow[];
     const truncated = fills.length > CANDLE_SCAN_CAP;
@@ -1969,11 +1987,23 @@ export async function handleLoansRateCandles(
     const buckets =
       truncated && folded.length > 1 ? folded.slice(1) : folded;
     const unplaced = readUnplacedCount(unplacedRows as D1Result<{ n: number }>);
-    const oneAddressSeen = Number((oneAddressRows.results?.[0] as { n?: number } | undefined)?.n ?? 0);
-    const oneAddressAtLeast = oneAddressSeen > ONE_ADDRESS_COUNT_CAP;
-    const oneAddress = Math.min(oneAddressSeen, ONE_ADDRESS_COUNT_CAP);
+    const lo = (leftOutRows.results?.[0] ?? {}) as { n?: number; unknown?: number };
+    const leftOutSeen = Number(lo.n ?? 0);
+    const openingPartiesUnknown = Number(lo.unknown ?? 0);
+    const oneAddress = leftOutSeen - openingPartiesUnknown;
+    // Past the cap both counts are lower bounds of what the range holds.
+    const leftOutAtLeast = leftOutSeen > LEFT_OUT_COUNT_CAP;
     return jsonResponse(
-      { chainId, buckets, unplaced, truncated, oneAddress, oneAddressAtLeast, counting: countingStatement(oneAddress) },
+      {
+        chainId,
+        buckets,
+        unplaced,
+        truncated,
+        oneAddress,
+        openingPartiesUnknown,
+        leftOutAtLeast,
+        counting: countingStatement(oneAddress, openingPartiesUnknown),
+      },
       200,
       { 'Cache-Control': 'public, max-age=60' },
     );

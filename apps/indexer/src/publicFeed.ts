@@ -54,7 +54,7 @@ import {
   handleLoansRecent,
   handleLoansStats,
 } from './loanRoutes';
-import { NO_VALUE_TOTAL, ONE_ADDRESS_EXCLUDES } from './figureRules';
+import { NO_VALUE_TOTAL, ONE_ADDRESS_EXCLUDES, PARTIES_UNKNOWN_EXCLUDES } from './figureRules';
 
 export const PUBLIC_FEED_PREFIX = '/public/v1';
 export const PUBLIC_FEED_VERSION = 'v1';
@@ -169,7 +169,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     handler: handleLoansStats,
     params: [],
     about: {
-      what: 'Loan counts by status, and the principal lent per lending asset in its own units. `counting` states how they were counted and how many loans had one address on both sides.',
+      what: 'Loan counts by status, and the principal lent per lending asset in its own units. `counting` states how they were counted, how many loans had one address on both sides and how many have opening parties that cannot be established.',
       source: CHAIN_EVENTS,
       excludes: [
         "the temporary loan a lender's sale creates",
@@ -193,6 +193,8 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
         "the temporary loan a lender's sale creates",
         'loans with an NFT on either side',
         ONE_ADDRESS_EXCLUDES,
+        PARTIES_UNKNOWN_EXCLUDES,
+        'when `leftOutAtLeast` is true, the two counts above stopped at 1,000 left-out loans and are lower bounds',
         'intervals with no filled loan (no figure is drawn for them)',
       ],
     },

@@ -327,11 +327,14 @@ describe('GET /loans/stats — the counting statement (#3879)', () => {
     expect(s.counting.oneAddress).toBe(1);
   });
 
-  it('does not leave out a loan whose opening parties are not known', async () => {
+  it('counts a loan whose opening parties are not known on its own line, never as two parties', async () => {
     const h = fresh();
     insert(h, { status: 'active', lendingAsset: ERC20 });
-    parties(h, 1, [null, null], [A, A]);
+    parties(h, 1, [null, null], [A, B]);
+    insert(h, { status: 'active', lendingAsset: ERC20 });
+    parties(h, 2, [A, B]);
     const s = await stats(h);
     expect(s.counting.oneAddress).toBe(0);
+    expect(s.counting.openingPartiesUnknown).toBe(1);
   });
 });

@@ -113,8 +113,10 @@ Three rules hold for every figure the feed publishes.
    its own line (`counting.oneAddress`). It is judged on the opening event
    only: a later sale or handover moves a loan neither in nor out. The rule
    sees one address on both sides only; it cannot see two addresses that
-   belong to one person. A loan whose opening parties are not known is not
-   left out.
+   belong to one person. A loan whose opening parties cannot be established
+   is left out of rate figures too and counted on its own line
+   (`counting.openingPartiesUnknown`); it is never assumed to have two
+   parties.
 3. **No mean across assets or terms.** Every rate figure is per lending asset
    and term range. No figure averages the rates of different assets or terms
    together.
@@ -132,9 +134,10 @@ Each response's `about.excludes` lists this for the route. In short:
 - **Loan totals and rate candles** leave out the temporary loan a lender's
   sale creates: it is a change of holder, not a new loan.
 - **Rate candles** also leave out loans whose opening event names one
-  address on both sides (counted as `oneAddress`; `oneAddressAtLeast` is
-  `true` when the count stopped at its cap of 1,000), loans with an NFT on
-  either side, and
+  address on both sides (counted as `oneAddress`) and loans whose opening
+  parties cannot be established (counted as `openingPartiesUnknown`;
+  `leftOutAtLeast` is `true` when the two counts stopped at their shared cap
+  of 1,000 and are lower bounds), loans with an NFT on either side, and
   loans whose agreed terms the chain has not yet confirmed (these are
   counted, as `unplaced`, but not drawn). An interval with no filled loan
   has no figure; nothing is filled in for it.
