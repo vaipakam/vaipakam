@@ -38,18 +38,21 @@ const SCHEMA = 1;
  * The networks a service may serve: the keeper's list (apps/keeper/src/env.ts)
  * with the deployment folder each one's record lives in. A network whose
  * variable is unset is reported as "no node configured", never skipped.
+ * `env` is the services' variable; `alt` is the same node under the deploy
+ * .env's name (contracts/.env), so the check can run where either file is.
+ * The result names the variable it read, never its value.
  */
 export const NETWORKS = [
-  { slug: 'base-sepolia', chainId: 84532, env: 'RPC_BASE_SEPOLIA', testnet: true },
-  { slug: 'arb-sepolia', chainId: 421614, env: 'RPC_ARB_SEPOLIA', testnet: true },
-  { slug: 'bnb-testnet', chainId: 97, env: 'RPC_BNB_TESTNET', testnet: true },
-  { slug: 'sepolia', chainId: 11155111, env: 'RPC_SEPOLIA', testnet: true },
-  { slug: 'op-sepolia', chainId: 11155420, env: 'RPC_OP_SEPOLIA', testnet: true },
-  { slug: 'base', chainId: 8453, env: 'RPC_BASE', testnet: false },
-  { slug: 'ethereum', chainId: 1, env: 'RPC_ETH', testnet: false },
-  { slug: 'arbitrum', chainId: 42161, env: 'RPC_ARB', testnet: false },
-  { slug: 'optimism', chainId: 10, env: 'RPC_OP', testnet: false },
-  { slug: 'bnb', chainId: 56, env: 'RPC_BNB', testnet: false },
+  { slug: 'base-sepolia', chainId: 84532, env: 'RPC_BASE_SEPOLIA', alt: 'BASE_SEPOLIA_RPC_URL', testnet: true },
+  { slug: 'arb-sepolia', chainId: 421614, env: 'RPC_ARB_SEPOLIA', alt: 'ARB_SEPOLIA_RPC_URL', testnet: true },
+  { slug: 'bnb-testnet', chainId: 97, env: 'RPC_BNB_TESTNET', alt: 'BNB_TESTNET_RPC_URL', testnet: true },
+  { slug: 'sepolia', chainId: 11155111, env: 'RPC_SEPOLIA', alt: 'SEPOLIA_RPC_URL', testnet: true },
+  { slug: 'op-sepolia', chainId: 11155420, env: 'RPC_OP_SEPOLIA', alt: 'OP_SEPOLIA_RPC_URL', testnet: true },
+  { slug: 'base', chainId: 8453, env: 'RPC_BASE', alt: 'BASE_RPC_URL', testnet: false },
+  { slug: 'ethereum', chainId: 1, env: 'RPC_ETH', alt: 'ETHEREUM_RPC_URL', testnet: false },
+  { slug: 'arbitrum', chainId: 42161, env: 'RPC_ARB', alt: 'ARBITRUM_RPC_URL', testnet: false },
+  { slug: 'optimism', chainId: 10, env: 'RPC_OP', alt: 'OPTIMISM_RPC_URL', testnet: false },
+  { slug: 'bnb', chainId: 56, env: 'RPC_BNB', alt: 'BNB_RPC_URL', testnet: false },
   { slug: 'polygon-zkevm', chainId: 1101, env: 'RPC_ZKEVM', testnet: false },
 ];
 
@@ -63,6 +66,13 @@ const REACH_DAYS = [0.04, 1, 7, 30, 90, 365];
 const FILTER_RANGES = [10, 100, 1000, 10000];
 /** Recent blocks read to size a block scan. */
 const SCAN_SAMPLE = 30;
+/** The daily sampled audit's window (design section 4.3). */
+const AUDIT_WINDOW_SECONDS = 30 * 60;
+/** A continuous block scan is kept only under both of these a day. */
+const SCAN_LIMIT_REQUESTS = 20_000;
+const SCAN_LIMIT_MB = 200;
+/** How often the record would poll the explorer, for its daily cost. */
+const EXPLORER_POLL_MINUTES = 5;
 const TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------- transport
@@ -162,9 +172,12 @@ export function watchedAddresses(record) {
   const out = new Set();
   const walk = (v, key) => {
     if (typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)) {
-      // People and the treasury are not contracts the platform calls into.
-      if (!['admin', 'treasury', 'keeperAddress'].includes(key)) out.add(v.toLowerCase());
+      // People and the treasury are not contracts the platform calls into,
+      // and an implementation behind a proxy is reached through its proxy.
+      if (!['admin', 'treasury', 'keeperAddress'].includes(key) && !/Impl$/.test(key)) out.add(v.toLowerCase());
     } else if (v && typeof v === 'object') {
+      // A facet is reached through the Diamond, never called directly.
+      if (key === 'facets') return;
       for (const [k, x] of Object.entries(v)) walk(x, k);
     }
   };
@@ -248,19 +261,100 @@ async function reach(ctx, probe) {
   return { reachDays: furthest, refusedAtDays: firstRefused, reachTried: tried };
 }
 
+/**
+ * Probes the network's explorer API, if one is configured. The explorer is
+ * named only by the environment: EXPLORER_API_<suffix> is its API base URL
+ * (an account/txlist API of the common shape), EXPLORER_KEY_<suffix> its key
+ * if it has one. Neither is written to the result.
+ *
+ * Measured: whether it answers without a key, whether its rows say which
+ * transactions failed, and how far behind the chain head its newest row is
+ * (the source's delay). The record replays a failure at its block, so the
+ * node's past-state reach must cover that delay.
+ */
+async function checkExplorer(net, env, { head, blockTime, rpc, recent, watched }) {
+  const suffix = net.env.replace(/^RPC_/, '');
+  const apiBase = env[`EXPLORER_API_${suffix}`]?.trim();
+  if (!apiBase) return { configured: false };
+  // EXPLORER_KEY_FROM names a variable already holding a key (for example
+  // the deploy .env's explorer key), so the key is never typed on a command.
+  const keyFrom = env.EXPLORER_KEY_FROM?.trim();
+  const key = env[`EXPLORER_KEY_${suffix}`]?.trim() || (keyFrom ? env[keyFrom]?.trim() : undefined);
+  // A busy address shows the explorer's lag; the Diamond may be quiet.
+  let probeAddress = watched[0] ?? null;
+  if (recent) {
+    const tx = await rpc.call('eth_getTransactionByHash', [recent.tx]);
+    if (tx.result?.to) probeAddress = tx.result.to;
+  }
+  if (!probeAddress) return { configured: true, answered: false, error: 'no address to ask about' };
+  const ask = async (withKey) => {
+    const u = new URL(apiBase);
+    u.searchParams.set('chainid', String(net.chainId));
+    u.searchParams.set('module', 'account');
+    u.searchParams.set('action', 'txlist');
+    u.searchParams.set('address', probeAddress);
+    u.searchParams.set('sort', 'desc');
+    u.searchParams.set('page', '1');
+    u.searchParams.set('offset', '25');
+    if (withKey && key) u.searchParams.set('apikey', key);
+    let res;
+    try {
+      res = await fetch(u, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    } catch {
+      return { ok: false, error: 'request failed' };
+    }
+    const text = await res.text();
+    let body = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+    if (!res.ok || !body) return { ok: false, error: scrub(`HTTP ${res.status} ${body?.message ?? ''}`, apiBase) };
+    if (!Array.isArray(body.result)) return { ok: false, error: scrub(`${body.message ?? ''} ${typeof body.result === 'string' ? body.result : ''}`, apiBase) };
+    return { ok: true, rows: body.result };
+  };
+  const keyless = await ask(false);
+  const keyed = keyless.ok ? keyless : key ? await ask(true) : null;
+  const out = {
+    configured: true,
+    answeredWithoutKey: keyless.ok,
+    ...(keyless.ok ? {} : { withoutKeyError: keyless.error }),
+    keyConfigured: Boolean(key),
+    // 'unknown' when it refused without a key and none was given to try.
+    needsKey: keyless.ok ? false : keyed?.ok ? true : 'unknown',
+  };
+  if (!keyed?.ok) return { ...out, answered: false, ...(keyed ? { error: keyed.error } : {}) };
+  const rows = keyed.rows;
+  const newest = rows.reduce((m, r) => Math.max(m, Number(r.blockNumber ?? 0)), 0);
+  // The head read again now: the one from the start of the run is minutes old.
+  const headNow = num((await rpc.call('eth_blockNumber')).result);
+  const lagBlocks = newest ? Math.max(0, headNow - newest) : null;
+  return {
+    ...out,
+    answered: true,
+    marksFailures: rows.length === 0 ? 'unknown (no rows)' : rows.every((r) => 'isError' in r || 'txreceipt_status' in r),
+    delayBlocks: lagBlocks,
+    delaySeconds: lagBlocks === null ? null : Math.round(lagBlocks * blockTime),
+    requestsPerDay: Math.round((1440 / EXPLORER_POLL_MINUTES) * watched.length),
+    pollMinutes: EXPLORER_POLL_MINUTES,
+  };
+}
+
 const CALL_TRACER = { tracer: 'callTracer', tracerConfig: { onlyTopCall: false } };
 // facetAddresses() — any Diamond answers it; any other address returns empty.
 const FACET_ADDRESSES = '0x52ef6b2c';
 
 export async function checkNetwork(net, env = process.env) {
-  const url = env[net.env];
+  const variable = env[net.env] ? net.env : net.alt && env[net.alt] ? net.alt : net.env;
+  const url = env[variable];
   const base = {
     schema: SCHEMA,
     network: net.slug,
     chainId: net.chainId,
     testnet: net.testnet,
     checkedAt: new Date().toISOString(),
-    nodeVariable: net.env,
+    nodeVariable: variable,
     plan: env[`NODE_PLAN_${net.env.replace(/^RPC_/, '')}`]?.trim() || 'not stated',
   };
   if (!url) return { ...base, status: 'no node configured' };
@@ -398,7 +492,27 @@ export async function checkNetwork(net, env = process.env) {
     megabytesPerDay: Math.round((fullBytes / SCAN_SAMPLE) * blocksPerDay / 1024 / 1024),
   };
 
+  // 7. The explorer's list of transactions sent to a contract, which the
+  //    record reads on a network with no trace filter (design section 4.3).
+  const explorer = await checkExplorer(net, env, { head, blockTime, rpc, recent, watched });
+
+  // 8. The daily sampled audit: one random 30-minute window, scanned block
+  //    by block, to measure what the other sources missed.
+  const windowBlocks = Math.ceil(AUDIT_WINDOW_SECONDS / blockTime);
+  const audit = {
+    windowMinutes: AUDIT_WINDOW_SECONDS / 60,
+    windowBlocks,
+    requestsPerDay: Math.round(windowBlocks * (1 + perBlockWatched)),
+    megabytesPerDay: +((fullBytes / SCAN_SAMPLE) * windowBlocks / 1024 / 1024).toFixed(1),
+    // The audit decodes a failure by a replay at its block, so the node must
+    // keep state for the age of the oldest block it may sample (a day).
+    replayCovered: (callAt.reachDays ?? 0) >= 1,
+  };
+
   const filterUsable = traceFilter.answered && (traceFilter.largestRange ?? 0) >= 100;
+  const scanAffordable =
+    blockScan.requestsPerDay.withReceiptPerTransaction <= SCAN_LIMIT_REQUESTS && blockScan.megabytesPerDay <= SCAN_LIMIT_MB;
+  blockScan.affordable = scanAffordable;
   const result = {
     ...base,
     status: 'checked',
@@ -407,7 +521,12 @@ export async function checkNetwork(net, env = process.env) {
     watchedContracts: watched.length,
     capabilities: { traceTransaction: traceTx, traceCall, traceFilter, callAtPastBlock: callAt, blockReceipts },
     blockScan,
-    failedTransactionMode: filterUsable ? 'trace-filter' : 'block-scan',
+    explorer,
+    audit,
+    // Design section 4.3 (after the measured costs): the trace filter where
+    // the node offers it; else a continuous scan only where it is cheap;
+    // else the keeper's own sends, the explorer and the daily audit.
+    failedTransactionMode: filterUsable ? 'trace-filter' : scanAffordable ? 'block-scan' : 'explorer-and-audit',
     ...(filterUsable
       ? { traceFilterRequestsPerDay: Math.ceil(blocksPerDay / traceFilter.largestRange) }
       : {}),
@@ -417,6 +536,9 @@ export async function checkNetwork(net, env = process.env) {
     },
     requestsUsed: rpc.requests(),
   };
+  if (explorer.answered && explorer.delaySeconds !== null) {
+    explorer.replayCoversDelay = (callAt.reachDays ?? 0) * 86400 >= explorer.delaySeconds;
+  }
   return result;
 }
 
