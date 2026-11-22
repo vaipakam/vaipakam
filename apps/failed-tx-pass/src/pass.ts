@@ -403,7 +403,20 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
     const audits: Array<{ fromBlock: number; toBlock: number; found: number; missed: number | null }> = [];
     if (mode === 'list-and-audit' || mode === 'sends-and-audit') {
       const day = dayOf(ctx.now() - DAY);
-      if (!auditPlan || auditPlan.day !== day) {
+      // A window is scanned in full before the next day's is chosen: one
+      // started late in the day, or delayed by an outage, is finished first.
+      const unfinished = auditPlan !== null && (auditedTo ?? auditPlan.fromBlock - 1) < auditPlan.toBlock;
+      if (!auditPlan || (auditPlan.day !== day && !unfinished)) {
+        // Days between the finished window and yesterday get no window of
+        // their own; that is stated, since in sends-and-audit those days
+        // were not watched at all.
+        if (auditPlan && auditPlan.day < day) {
+          const skipped: string[] = [];
+          for (let t = Date.parse(`${auditPlan.day}T00:00:00Z`) / 1000 + DAY; dayOf(t) < day; t += DAY) skipped.push(dayOf(t));
+          if (skipped.length) {
+            alert(`audit-skipped-${skipped[0]}`, `Chain ${chainId}: no audit window was read for ${skipped.length === 1 ? skipped[0] : `${skipped[0]} to ${skipped[skipped.length - 1]}`} (the previous window finished late)${mode === 'sends-and-audit' ? '; those days were not watched' : ''}.`);
+          }
+        }
         auditPlan = await planAudit(ctx, block, day, headNumber);
         auditedTo = null;
       }

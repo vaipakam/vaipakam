@@ -90,7 +90,9 @@ For each network in `FAILED_TX_CHAINS`, independently:
    window is a random 30 minutes of the previous UTC day. Every block in the
    slice is read in full and compared with what was recorded there. A failure
    the list missed is recorded with `found_by = audit` and alerted. The miss
-   rate so far is on the health route.
+   rate so far is on the health route. A window is finished before the next
+   day's is chosen; a day left without a window (after an outage longer than
+   a day) is alerted, and in sends-and-audit that day was not watched.
 7. Writes its cursor, a checkpoint at its top block, any gaps and the audit
    slice.
 

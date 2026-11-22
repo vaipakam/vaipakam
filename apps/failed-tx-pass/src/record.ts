@@ -18,7 +18,7 @@
  * so a passing outage cannot downgrade a record that a trace could still
  * fill.
  */
-import { decodeFunctionData, toFunctionSelector, type Abi, type AbiFunction, type Hex } from 'viem';
+import { decodeFunctionData, getContractAddress, toFunctionSelector, type Abi, type AbiFunction, type Hex } from 'viem';
 import {
   decodeRevert,
   explainTransaction,
@@ -82,9 +82,12 @@ interface RawTx {
   gas: string;
   blockNumber: string | null;
   transactionIndex: string | null;
+  nonce: string;
 }
 interface RawReceipt {
   status: string;
+  /** Set for a contract creation: the address it deployed, or would have. */
+  contractAddress?: string | null;
   blockHash: string;
   blockNumber: string;
   transactionIndex: string;
@@ -243,12 +246,20 @@ export interface RecordContext {
  * transactions with any failed inner call, and a caught one does not fail
  * the transaction). Throws on a node that does not answer.
  */
+/** Stated on the record of a contract creation, whose `contract` is not a called address. */
+export const CREATION_NOTE = 'the called contract (a contract creation: `contract` is the address it would have deployed, and no function was called)';
+
 export async function recordFor(ctx: RecordContext, txHash: string, foundBy: FoundBy): Promise<FailedTxRecord | null> {
-  const r = await recordUnfitted(ctx, txHash, foundBy);
-  return r ? fitRecord(r) : null;
+  const seen = { creation: false };
+  const r = await recordUnfitted(ctx, txHash, foundBy, seen);
+  if (!r) return null;
+  // A creation (found through a failing call its constructor made into a
+  // watched contract) has no top-level `to`: the record names the address it
+  // would have deployed and says so, rather than an empty address.
+  return fitRecord(seen.creation ? { ...r, unavailable: [...(r.unavailable ?? []), CREATION_NOTE] } : r);
 }
 
-async function recordUnfitted(ctx: RecordContext, txHash: string, foundBy: FoundBy): Promise<FailedTxRecord | null> {
+async function recordUnfitted(ctx: RecordContext, txHash: string, foundBy: FoundBy, seen: { creation: boolean }): Promise<FailedTxRecord | null> {
   const { rpc } = ctx;
   const abis = ctx.abis ?? platformAbis();
   const [tx, receipt] = await Promise.all([
@@ -263,7 +274,9 @@ async function recordUnfitted(ctx: RecordContext, txHash: string, foundBy: Found
   const blockNumber = num(receipt.blockNumber);
   const gasUsed = BigInt(receipt.gasUsed);
   const gasLimit = BigInt(tx.gas);
-  const call = decodeCall(abis, tx.input);
+  seen.creation = !tx.to;
+  const call = tx.to ? decodeCall(abis, tx.input) : undefined;
+  const contract = tx.to ?? receipt.contractAddress ?? getContractAddress({ from: tx.from as `0x${string}`, nonce: BigInt(tx.nonce) });
   const base = {
     txHash: txHash.toLowerCase(),
     blockHash: receipt.blockHash.toLowerCase(),
@@ -271,8 +284,8 @@ async function recordUnfitted(ctx: RecordContext, txHash: string, foundBy: Found
     blockTime: num(block.timestamp),
     txIndex: receipt.transactionIndex ? num(receipt.transactionIndex) : null,
     sender: tx.from.toLowerCase(),
-    contract: (tx.to ?? '').toLowerCase(),
-    functionSelector: tx.input && tx.input.length >= 10 ? tx.input.slice(0, 10).toLowerCase() : null,
+    contract: contract.toLowerCase(),
+    functionSelector: tx.to && tx.input && tx.input.length >= 10 ? tx.input.slice(0, 10).toLowerCase() : null,
     functionName: call?.name ?? null,
     loanId: idArg(call?.args, 'loanId'),
     offerId: idArg(call?.args, 'offerId'),

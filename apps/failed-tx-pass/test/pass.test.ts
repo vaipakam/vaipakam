@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { encodeErrorResult, encodeFunctionData, keccak256, parseAbi, toHex } from 'viem';
+import { encodeErrorResult, encodeFunctionData, getContractAddress, keccak256, parseAbi, toHex } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts';
 import { codeNamesFromDeployment } from '@vaipakam/lib/txExplainer';
@@ -68,6 +68,8 @@ interface ModelTx {
   revert?: string;
   trace?: 'ok' | 'refused' | 'gone' | 'wait';
   call?: 'revert' | 'ok' | 'gone';
+  /** A contract creation whose constructor called `to` (the watched contract the trace filter matches). */
+  creation?: boolean;
 }
 
 function modelChain(deployBlock: number, head: number) {
@@ -94,7 +96,7 @@ function modelChain(deployBlock: number, head: number) {
         }
         case 'eth_getTransactionByHash': {
           const t = find(params[0] as string);
-          return (t ? { hash: t.hash, from: '0x' + 'a'.repeat(40), to: t.to, input: t.input, value: '0x0', gas: '0x30d40', blockNumber: hex(t.block), transactionIndex: '0x0' } : null) as T;
+          return (t ? { hash: t.hash, from: '0x' + 'a'.repeat(40), to: t.creation ? null : t.to, input: t.input, value: '0x0', gas: '0x30d40', blockNumber: hex(t.block), transactionIndex: '0x0', nonce: '0x5' } : null) as T;
         }
         case 'eth_getTransactionReceipt': {
           const t = find(params[0] as string);
@@ -388,6 +390,20 @@ describe('the failed transaction pass', () => {
     expect(ix.rows('SELECT audit_day, slow_block_number FROM failed_tx_cursor')).toEqual([{ audit_day: null, slow_block_number: null }]);
   });
 
+  it('records a contract creation found through its constructor, naming the address it would have deployed', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    chain.txs.push({ hash: txHash(28), block: HEAD - 20, to: DIAMOND, input: '0x6080604052', status: 0, revert: REVERT, trace: 'ok', creation: true });
+    const ix = realIndexer();
+    const r = await runChain(context(chain, ix, 'trace-filter', NOW));
+    expect(r.held).toBeUndefined();
+    const expected = getContractAddress({ from: `0x${'a'.repeat(40)}`, nonce: 5n }).toLowerCase();
+    const rows = ix.rows('SELECT contract, function_selector, unavailable FROM failed_tx');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.contract).toBe(expected);
+    expect(rows[0]!.function_selector).toBeNull();
+    expect(String(rows[0]!.unavailable)).toContain('a contract creation');
+  });
+
   it('audits a slice of yesterday, records what the list missed and reports it', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const windowStart = DEPLOY + 86_400; // random() = 0: the window starts at yesterday's midnight
@@ -459,6 +475,27 @@ describe('the failed transaction pass', () => {
     expect(r.audited).toMatchObject({ from: windowStart, to: windowStart + 1 });
     const r2 = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
     expect(r2.audited!.from).toBe(windowStart + 2);
+  });
+
+  it('finishes an unfinished audit window before choosing the next day’s', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const ix = realIndexer();
+    const r1 = await runChain(context(chain, ix, 'explorer-and-audit', NOW));
+    const day1 = ix.rows('SELECT audit_day FROM failed_tx_cursor')[0]!.audit_day;
+    const r2 = await runChain(context(chain, ix, 'explorer-and-audit', NOW + 86_400));
+    expect(r2.audited!.from).toBe(r1.audited!.to + 1);
+    expect(ix.rows('SELECT audit_day FROM failed_tx_cursor')[0]!.audit_day).toBe(day1);
+  });
+
+  it('states the days that got no audit window when a finished window is followed by a gap', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const ix = realIndexer();
+    const whole = (c: RunContext): RunContext => ({ ...c, settings: { ...c.settings, auditBlocksPerRun: 1_000_000 } });
+    await runChain(whole(context(chain, ix, 'explorer-and-audit', NOW)));
+    const r = await runChain(whole(context(chain, ix, 'explorer-and-audit', NOW + 2 * 86_400)));
+    const skipped = r.findings.find((f) => f.key.startsWith('audit-skipped-'));
+    expect(skipped?.level).toBe('alert');
+    expect(skipped?.text).toContain('were not watched');
   });
 
   it('with no explorer key, runs sends-and-audit and states the watched share', async () => {
