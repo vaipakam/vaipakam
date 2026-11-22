@@ -29,6 +29,8 @@ Use these labels consistently when triaging issues, creating project items, or l
 | `testnet-rehearsal` | Items that block or support per-chain testnet rehearsals. |
 | `mainnet-rollout` | Items that gate per-chain mainnet enablement. |
 | `iteration-kickoff` | Applied only by `iteration-kickoff-sync.yml` to its weekly card. It is how that workflow finds the previous card to close, so do not put it on any other issue. |
+| `review-finding` | A finding of the review coverage pass that is tracked on a card. The launch check refuses a mainnet while one is open. The card states what is owed and never how a fault could be used. |
+| `launch-register` | A row of the register of tests and reviews owed before the audit tag or a mainnet (`docs/DesignsAndPlans/CanonicalSpecDesign.md`, the register). Closing the card closes nothing: a row closes by its named proof in the launch check, or by the owner's recorded acceptance. |
 | `breaking-change` | Changes that break API / ABI / on-chain compatibility. Drives the MAJOR semver bump per `.github/release-drafter.yml`. Apply to contract-surface changes that shift function selectors or storage layout, frontend API shape changes consumers pin against, and CCIP message-format changes. Most pre-mainnet work doesn't need this label — it's reserved for genuinely incompatible changes. |
 
 ## Owner Labels (`thread:*`)
