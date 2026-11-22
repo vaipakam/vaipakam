@@ -30,6 +30,14 @@
  *        record could not be read). It never waits and never refuses (#3115).
  *     2. publish.
  *
+ *   node deploy-shared-d1.mjs local    — `pnpm run migrate:rehearsal` (#3894)
+ *     The deploy rehearsal's database: the same apply, verify and seed as
+ *     `apply`, against a LOCAL database built from zero under the run's
+ *     scratch folder (`$VAIPAKAM_REHEARSAL_ROOT/d1`), seeded from the run's
+ *     own archive manifest and bundle. It never touches the remote database
+ *     and publishes nothing. Its own mode, fixed by its own package script,
+ *     because this file takes no arguments.
+ *
  * WHY `verify` DOES NOT WAIT (#3115). Cloudflare Workers Builds runs one build
  * at a time on this account. A keeper or agent build that waited for the
  * indexer's migrations held the only build slot while the indexer build that
@@ -62,10 +70,16 @@
  * this script. Stated in CLAUDE.md's D1 schema discipline section.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { applyRetiredDeployment, readRetiredDeploymentsFile, retiredDeploymentsFromManifest } from './lib/retiredDeploymentSeed.mjs';
+import {
+  applyRetiredDeployment,
+  localD1,
+  readRetiredDeploymentsFile,
+  REMOTE_D1,
+  retiredDeploymentsFromManifest,
+} from './lib/retiredDeploymentSeed.mjs';
 import { deployStamp, wranglerDeploy } from '@vaipakam/lib/deployStamp';
 
 /** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
@@ -90,8 +104,8 @@ const USAGE =
  *  the package script; any further argument is refused. */
 export function admit(args) {
   const [mode, ...rest] = args;
-  if (mode !== 'apply' && mode !== 'verify') {
-    return { ok: false, message: `[deploy] internal: unknown mode "${mode ?? ''}" (expected apply | verify).` };
+  if (mode !== 'apply' && mode !== 'verify' && mode !== 'local') {
+    return { ok: false, message: `[deploy] internal: unknown mode "${mode ?? ''}" (expected apply | verify | local).` };
   }
   if (rest.length > 0) {
     return {
@@ -128,12 +142,12 @@ export function unapplied(stdout, required) {
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
 
-function readMissing(required) {
+function readMissing(required, target = REMOTE_D1) {
   const q = sh(
     'pnpm',
     [
       '--filter', '@vaipakam/indexer', 'exec',
-      'wrangler', 'd1', 'execute', 'vaipakam-warm', '--remote', '--json',
+      'wrangler', 'd1', 'execute', 'vaipakam-warm', ...target, '--json',
       '--command', 'SELECT name FROM d1_migrations',
     ],
     // Bounded: a read that hangs must not hold the build slot. A killed read
@@ -191,6 +205,11 @@ function main() {
     process.exit(2);
   }
   const required = JSON.parse(readFileSync(REQUIRED_PATH, 'utf8'));
+
+  if (gate.mode === 'local') {
+    rehearsalDatabase(required);
+    return;
+  }
 
   if (gate.mode === 'verify') {
     // One read, then publish whatever it says (#3115): waiting here would hold
@@ -265,8 +284,8 @@ function main() {
  * a deploy from a clean checkout seeds exactly what the repository says),
  * plus any `INDEXER_RETIRED_DEPLOYMENTS_FILE` adds. Idempotent per entry.
  */
-function seedRetiredDeployments() {
-  const entries = retiredDeploymentsFromManifest();
+function seedRetiredDeployments({ target = REMOTE_D1, manifest = {} } = {}) {
+  const entries = retiredDeploymentsFromManifest(manifest);
   const file = process.env.INDEXER_RETIRED_DEPLOYMENTS_FILE;
   if (file) {
     if (!existsSync(file)) fail(`[deploy] INDEXER_RETIRED_DEPLOYMENTS_FILE names a missing file: ${file} — not publishing.`);
@@ -280,10 +299,79 @@ function seedRetiredDeployments() {
   }
   console.log(`[deploy] seeding ${entries.length} retired deployment(s) for the indexer's epoch reset`);
   for (const e of entries) {
-    const r = applyRetiredDeployment(e, { cwd: ROOT });
+    const r = applyRetiredDeployment(e, { cwd: ROOT, target });
     if (!r.ok) fail(`[deploy] could not seed retired Diamond ${e.diamond} for chainId=${e.chainId} — not publishing.\n  ${r.output.trim()}`);
     console.log(`  ✓ chainId=${e.chainId}: retired Diamond ${e.diamond} (deploy block ${e.deployBlock}) recorded`);
   }
+}
+
+/** The repository's `contracts/` folder: the deploy rehearsal's scratch
+ *  root is written relative to it. */
+const CONTRACTS_DIR = join(ROOT, '..', '..', 'contracts');
+/**
+ * The rehearsal run's scratch root, from `VAIPAKAM_REHEARSAL_ROOT` (relative
+ * to `contracts/`, as the rehearsal driver sets it). Refused unless it is a
+ * folder INSIDE the rehearsal prefix and names no parent segment, so a local
+ * database can never be built over anything else.
+ */
+export function rehearsalRoot(value, { contractsDir = CONTRACTS_DIR } = {}) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return { ok: false, message: '[rehearsal] VAIPAKAM_REHEARSAL_ROOT is not set; this entry runs only inside a deploy rehearsal.' };
+  }
+  if (value.split(/[\\/]/).includes('..')) {
+    return { ok: false, message: `[rehearsal] refusing VAIPAKAM_REHEARSAL_ROOT=${value}: it names a parent segment.` };
+  }
+  const prefix = join(contractsDir, 'deployments', '.forge-test', 'rehearsal');
+  const abs = isAbsolute(value) ? resolve(value) : resolve(contractsDir, value);
+  const rel = relative(prefix, abs);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    return { ok: false, message: `[rehearsal] refusing VAIPAKAM_REHEARSAL_ROOT=${value}: a run's folder must be inside contracts/deployments/.forge-test/rehearsal/.` };
+  }
+  return { ok: true, root: abs };
+}
+
+/** Where the rehearsal's local database and its inputs live under the root. */
+export function rehearsalPaths(root) {
+  return {
+    persistTo: join(root, 'd1'),
+    manifestPath: join(root, 'archive-manifest.json'),
+    deploymentsPath: join(root, '.bundle', 'contracts-pkg', 'src', 'deployments.json'),
+  };
+}
+
+/**
+ * `local` mode (#3894): build the rehearsal's shared database from zero, the
+ * way `apply` brings the live one current, and publish nothing.
+ */
+function rehearsalDatabase(required) {
+  const r = rehearsalRoot(process.env.VAIPAKAM_REHEARSAL_ROOT);
+  if (!r.ok) fail(r.message);
+  const paths = rehearsalPaths(r.root);
+  // From zero: a database left by an earlier attempt would hide a migration
+  // that no longer applies cleanly.
+  if (existsSync(paths.persistTo) && readdirSync(paths.persistTo).length > 0) {
+    fail(`[rehearsal] ${paths.persistTo} already holds a database; a rehearsal builds its database from zero.`);
+  }
+  for (const [what, p] of [['archive manifest', paths.manifestPath], ['deployments bundle', paths.deploymentsPath]]) {
+    if (!existsSync(p)) fail(`[rehearsal] the run's ${what} is missing: ${p}`);
+  }
+  const target = localD1(paths.persistTo);
+
+  console.log(`[rehearsal] applying every shared migration to a local database under ${paths.persistTo}`);
+  const a = sh('pnpm', ['--filter', '@vaipakam/indexer', 'exec', 'wrangler', 'd1', 'migrations', 'apply', 'vaipakam-warm', ...target], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+    // Non-interactive: running the rehearsal is the consent, as `deploy` is.
+    env: { ...process.env, CI: 'true' },
+  });
+  if (a.status !== 0) fail('[rehearsal] applying the migrations failed.');
+
+  console.log(`[rehearsal] verifying all ${required.length} migrations are recorded`);
+  const missing = readMissing(required, target);
+  if (missing === null) fail('[rehearsal] could not read d1_migrations from the local database.');
+  if (missing.length > 0) fail(`[rehearsal] migrations not applied: ${missing.join(', ')}`);
+
+  seedRetiredDeployments({ target, manifest: { manifestPath: paths.manifestPath, deploymentsPath: paths.deploymentsPath } });
+  console.log('[rehearsal] local database ready; nothing was published.');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main();
