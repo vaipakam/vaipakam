@@ -1166,6 +1166,12 @@ jobs:
       - name: Tests — packages/anvil-harness (fork relay)
         run: pnpm --filter @vaipakam/anvil-harness test
 
+      # The transaction explainer's operator command and the explainer it
+      # wraps (#3917). Only those files: the rest of the library is
+      # typechecked by the apps that import it.
+      - name: Typecheck — packages/lib (transaction explainer)
+        run: pnpm --filter @vaipakam/lib typecheck
+
       - name: Typecheck — packages/push
         run: pnpm --filter @vaipakam/push typecheck
 
