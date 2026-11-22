@@ -206,8 +206,8 @@ final stage.
    (only if the PR changes behaviour — skip for pure docs / chore / CI-config PRs)
 ☐ "Statements" section of the description: the canonical statement ids
    implemented, or "No behaviour change", or "No canonical section covers
-   this change; looked in <domain code>" (see §6.3). A held id (900-999)
-   is cited, never quoted or described. Never edit docs/CanonicalSpec/ or
+   this change; looked in <domain code>" (see §6.3). Ids 900 to 999 are
+   reserved: never write one. Never edit docs/CanonicalSpec/ or
    docs/FunctionalSpecs/ in a PR
 ☐ Locally green:
    `cd contracts && forge build && bash script/predeploy-check.sh`
@@ -890,9 +890,8 @@ the code does" and locks bugs in. The rules are section 15 of
   (`.github/workflows/release-notes-drift.yml`) reads the merged PR's
   description and warns when none is there, when the not-covered answer
   names no domain, or when an id is unknown.
-- **A held statement is cited, never described.** Ids 900 to 999 are held
-  outside the public folder; a PR may cite the id and never quotes or
-  describes the statement.
+- **Ids 900 to 999 are reserved.** Public text never carries one, nor says
+  what such a statement covers; the drift check warns on one.
 - `docs/procedures/FunctionalSpecsCodeVsDocsAudit.md` records code-vs-spec
   divergences (candidate bugs OR stale docs). Code-observed behaviour
   enters either folder ONLY via a recorded owner decision.

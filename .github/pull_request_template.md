@@ -42,8 +42,8 @@ in (a code such as OFR or LON) so a reviewer can check it.
 docs/FunctionalSpecs/ still states that intent, and builders do not edit
 it: out-of-date lines go on the owner's list.
 
-An id from 900 to 999 is a statement held outside the public folder. You
-may cite its id; never quote or describe what it says.
+Ids 900 to 999 are reserved. Never write one here or in any public text,
+and never say what such a statement covers.
 
 A design that changes a canonical statement brings the statement change
 to the owner with the design. The folder changes only after approval,

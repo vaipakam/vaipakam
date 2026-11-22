@@ -14,7 +14,7 @@
 //   node .github/scripts/statement-ids.mjs --selftest
 //
 // Prints one JSON object:
-//   { ids, unknown, held, noBehaviourChange, notCovered, notCoveredDomains,
+//   { ids, unknown, reserved, noBehaviourChange, notCovered, notCoveredDomains,
 //     verdict }
 // verdict is "ids", "no-behaviour-change", "not-covered", "not-covered-unnamed"
 // (the not-covered answer names no domain the author looked in) or "missing".
@@ -25,9 +25,10 @@ import { join } from 'node:path';
 
 // A statement id: a three-letter domain code, a dash, three digits.
 const ID = /\b([A-Z]{3})-(\d{3})\b/g;
-// Ids 900 to 999 of a domain are statements held outside the public folder
-// (CanonicalSpec README, "Some statements are held outside this folder").
-const HELD_FROM = 900;
+// Ids 900 to 999 of a domain are reserved. Public text never carries one, so
+// a description that does is reported (by count only: the merge check never
+// repeats the id) and the id does not count as naming a statement.
+const RESERVED_FROM = 900;
 // A statement heading in a domain file: "### VLT-001 · rule".
 const HEADING = /^#{2,4}\s+([A-Z]{3}-\d{3})\b/gm;
 const NO_CHANGE = /\bno behaviou?r change\b/i;
@@ -70,8 +71,9 @@ function visible(body) {
 export function evaluate(body, known) {
   const text = visible(body);
   const ids = [...new Set([...text.matchAll(ID)].map((m) => `${m[1]}-${m[2]}`))].sort();
-  const held = ids.filter((id) => Number(id.slice(4)) >= HELD_FROM);
-  const unknown = ids.filter((id) => !held.includes(id) && !known.has(id));
+  const reserved = ids.filter((id) => Number(id.slice(4)) >= RESERVED_FROM);
+  const named = ids.filter((id) => !reserved.includes(id));
+  const unknown = named.filter((id) => !known.has(id));
   const noBehaviourChange = NO_CHANGE.test(text);
   const notCoveredLine = text.match(NOT_COVERED)?.[0];
   const notCovered = notCoveredLine !== undefined;
@@ -80,18 +82,22 @@ export function evaluate(body, known) {
     ? [...new Set([...notCoveredLine.matchAll(DOMAIN)].map((m) => m[1]))].sort()
     : [];
   let verdict = 'missing';
-  if (ids.length > 0) verdict = 'ids';
+  if (named.length > 0) verdict = 'ids';
   else if (noBehaviourChange) verdict = 'no-behaviour-change';
   else if (notCovered) verdict = notCoveredDomains.length ? 'not-covered' : 'not-covered-unnamed';
-  return { ids, unknown, held, noBehaviourChange, notCovered, notCoveredDomains, verdict };
+  return { ids: named, unknown, reserved: reserved.length, noBehaviourChange, notCovered, notCoveredDomains, verdict };
 }
 
 function selftest() {
   const known = new Set(['VLT-001', 'VLT-043', 'PRC-010']);
+  // A reserved id made at run time, in a domain with no statements, so this
+  // file carries no reserved id as text.
+  const res = `XCH-${RESERVED_FROM + 99}`;
   const cases = [
     ['names two known ids', 'Implements VLT-001 and VLT-043.', 'ids', []],
     ['an unknown id is reported', 'Implements VLT-002.', 'ids', ['VLT-002']],
-    ['a held id is not unknown', 'Implements VLT-901.', 'ids', []],
+    ['a reserved id names nothing', `Implements ${res}.`, 'missing', [], 1],
+    ['a reserved id beside a known one', `Implements VLT-001 and ${res}.`, 'ids', [], 1],
     ['no behaviour change', 'Refactor only: no behaviour change.', 'no-behaviour-change', []],
     ['american spelling', 'No behavior change.', 'no-behaviour-change', []],
     ['not covered, domain named', 'No canonical section covers this change (looked in OFR).', 'not-covered', []],
@@ -104,9 +110,12 @@ function selftest() {
     ['lowercase is not an id', 'vlt-001', 'missing', []],
   ];
   let failed = 0;
-  for (const [name, body, verdict, unknown] of cases) {
+  for (const [name, body, verdict, unknown, reserved = 0] of cases) {
     const r = evaluate(body, known);
-    const ok = r.verdict === verdict && JSON.stringify(r.unknown) === JSON.stringify(unknown);
+    const ok =
+      r.verdict === verdict &&
+      JSON.stringify(r.unknown) === JSON.stringify(unknown) &&
+      r.reserved === reserved;
     if (!ok) failed++;
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : ` -> ${JSON.stringify(r)}`}`);
   }

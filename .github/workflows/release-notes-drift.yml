@@ -115,6 +115,19 @@ jobs:
             verdict="$(node .github/scripts/statement-ids.mjs --body "$body_file" --folder docs/CanonicalSpec)"
             kind="$(printf '%s' "$verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).verdict))')"
             unknown="$(printf '%s' "$verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).unknown.join(" ")))')"
+            reserved="$(printf '%s' "$verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).reserved))')"
+            # A reserved id is reported by count only, never repeated here.
+            if [ "$reserved" != "0" ]; then
+              ok=0
+              echo "::warning title=Reserved statement id::The description carries $reserved id(s) from the reserved range 900 to 999. Public text never carries one; edit the description to remove it."
+              {
+                echo "### ⚠️ Reserved statement id"
+                echo ""
+                echo "The description carries $reserved id(s) from the reserved range 900"
+                echo "to 999. Public text never carries one, nor says what such a statement"
+                echo "covers. Edit the description to remove it."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
             if [ "$kind" = "missing" ]; then
               ok=0
               echo "::warning title=Statements drift::This merge changed contracts/ or apps/ but its description names no canonical statement ids, does not say \"no behaviour change\", and does not say no canonical section covers it. See docs/CanonicalSpec/README.md."

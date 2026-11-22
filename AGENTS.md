@@ -51,9 +51,8 @@ Neither is ever written from the code. The rules (CanonicalSpecDesign §15):
   review checks the change against the statements it names, checks that the
   named domain really has no section covering it, and flags a behaviour
   change that names none.
-- **A held statement is cited, never described.** Ids 900 to 999 are held
-  outside the public folder. A description, comment or review may cite such
-  an id; it never quotes or describes what the statement says.
+- **Ids 900 to 999 are reserved.** A description, comment or review never
+  carries one, nor says what such a statement covers.
 - **No pull request edits either folder.** A change to a canonical statement
   is approved by the owner with its design and written by the thread that
   keeps the folder; out-of-date lines in `docs/FunctionalSpecs/` go on the

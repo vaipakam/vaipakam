@@ -13,11 +13,11 @@ design, and the thread that keeps the folder writes it once approved.
 A pull request that changes behaviour now names the statements it implements
 in a new "Statements" section of its description. It may instead say it
 changes no behaviour, or that no canonical section covers what it changes,
-naming the domain the author looked in so a reviewer can check it. A
-statement held outside the public folder may be cited by its id but never
-quoted or described. The merge check on main reads the merged description
-and warns when none of the three is there, when the not-covered answer names
-no domain, or when an id names no statement in the folder. It used
+naming the domain the author looked in so a reviewer can check it. Ids 900
+to 999 are reserved and never appear in public text. The merge check on main
+reads the merged description and warns when none of the three is there, when
+the not-covered answer names no domain, when it carries a reserved id, or
+when an id names no statement in the folder. It used
 to look for an edit under the functional specs.
 
 The functional specs' README now lists the sections the canonical folder has
