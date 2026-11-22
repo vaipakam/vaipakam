@@ -57,21 +57,32 @@ function scrub(text) {
     .replace(/\bsections? \d+(\.\d+)*((,| and| to) \d+(\.\d+)*)*/gi, ' section ');
 }
 
+/**
+ * §4 item 4 on any text: a date, or a figure other than zero and one (ids and
+ * section numbers aside). Used on statements and on lifecycle models, whose
+ * states, step names and dimension values could otherwise carry a limit.
+ */
+export function figureFindings(text) {
+  const out = [];
+  if (/\b\d{4}-\d{2}-\d{2}\b|\b(19|20)\d{2}\b/.test(text) || new RegExp(`\\b(${MONTHS})\\b\\s+\\d`).test(text)) out.push({ rule: 'date', message: 'a date; keep it in the record' });
+  const fig = /(^|[^A-Za-z0-9_])(\d+(?:[.,]\d+)*)(?=$|[^A-Za-z0-9_])/g;
+  for (const m of scrub(text).matchAll(fig)) {
+    if (m[2] !== '0' && m[2] !== '1') {
+      out.push({ rule: 'figure', message: `a figure, "${m[2]}"; name the parameter (PRM-…), whose value is in the parameters table` });
+      break;
+    }
+  }
+  return out;
+}
+
 /** The text checks of §4 items 3–6, on one statement. Returns [{rule, message}]. */
 export function textFindings(s, { glossary = [], refused = null } = {}) {
   const out = [];
   const text = statementText(s);
   for (const w of HISTORY_WORDS) if (wordRe(w).test(text)) out.push({ rule: 'history', message: `a word of history, "${w}"; where a statement came from is kept in the record` });
   if (/#\d+|\bissues? \d+|\bpull requests?\b|\bPR \d/i.test(text)) out.push({ rule: 'issue', message: 'an issue or pull request reference; keep it in the record' });
-  if (/\b\d{4}-\d{2}-\d{2}\b|\b(19|20)\d{2}\b/.test(text) || new RegExp(`\\b(${MONTHS})\\b\\s+\\d`).test(text)) out.push({ rule: 'date', message: 'a date; keep it in the record' });
   const scrubbed = scrub(text);
-  const fig = /(^|[^A-Za-z0-9_])(\d+(?:[.,]\d+)*)(?=$|[^A-Za-z0-9_])/g;
-  for (const m of scrubbed.matchAll(fig)) {
-    if (m[2] !== '0' && m[2] !== '1') {
-      out.push({ rule: 'figure', message: `a figure, "${m[2]}"; name the parameter (PRM-…), whose value is in the parameters table` });
-      break;
-    }
-  }
+  out.push(...figureFindings(text));
   if (/`/.test(text)) out.push({ rule: 'code', message: 'text in code type; a statement names no code' });
   const ident = scrubbed.match(/\b[a-z]+[A-Z][A-Za-z0-9]*\b|\b[A-Za-z]+_[A-Za-z0-9_]+\b|\b[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*\b|\b\w+\(\)|\b0x[0-9a-fA-F]+\b|\b\w+\.(sol|ts|tsx|mjs|js|json|md)\b/);
   if (ident) out.push({ rule: 'code', message: `a word shaped like code, "${ident[0]}"; a statement names no function, contract, error, event or file` });
@@ -156,6 +167,14 @@ export function checkSpec(parsed, opts = {}) {
     else byId.set(s.id, s);
   }
   const retired = new Map(record.retired.map((r) => [r.id, r]));
+  // §3.6: ids in the held range are kept in the private records. A public
+  // check without them (no --held) never reports one as missing; a retired
+  // held id is still refused.
+  const isHeldId = (id) => {
+    const n = Number(id.slice(4));
+    return n >= HELD_RANGE[0] && n <= HELD_RANGE[1];
+  };
+  const missing = (id) => !byId.has(id) && !isHeldId(id);
   for (const s of statements) if (retired.has(s.id)) add(s.file, s.line, 'retired', `${s.id} is a retired id (retired by ${retired.get(s.id).by}); an id is never reused`);
 
   // Item 2: the parts each kind requires, the body, the mistake answer.
@@ -181,7 +200,7 @@ export function checkSpec(parsed, opts = {}) {
       const ref = `${m[1]}-${m[2]}`;
       if (ref === s.id || m[1] === 'PRM') continue;
       if (retired.has(ref)) add(s.file, s.line, 'reference', `${s.id} cites ${ref}, which is retired`);
-      else if (!byId.has(ref)) {
+      else if (missing(ref)) {
         if (codes.has(m[1])) add(s.file, s.line, 'reference', `${s.id} cites ${ref}, which does not exist`);
         else add(s.file, s.line, 'reference', `${s.id} cites ${ref}, but no statement of ${m[1]} is in the checked set; a domain not yet drafted is cited as "(${m[1]} owed: …)"`);
       }
@@ -218,11 +237,19 @@ export function checkSpec(parsed, opts = {}) {
     if (!hasSource) add(e.file, e.line, 'record', `${s.id}: the record entry names no source`);
     else if (isNew && mode === 'folder' && !ownerApproval) add(e.file, e.line, 'record', `${s.id}: a new statement enters the folder only with the owner's approval, by date, as its source`);
     else if (isNew && mode === 'draft' && !ownerApproval && !raisedBy && !/\b[A-Z]{2,3} "|"\d/.test(e.sources)) add(e.file, e.line, 'record', `${s.id}: a new statement's entry names what raised it (a threat or mistake id, a model row, the conflict read) or a source`);
-    if (e.approved && e.approved !== approvalHash(s)) add(s.file, s.line, 'approval', `${s.id}: its text differs from the text the owner approved (record ${e.approved}, now ${approvalHash(s)}); a change needs a new approval`);
+    if (!e.approved && mode === 'folder') add(e.file, e.line, 'approval', `${s.id}: the record entry carries no approval hash; the committed folder holds only approved text (${approvalHash(s)} now)`);
+    else if (e.approved && e.approved !== approvalHash(s)) add(s.file, s.line, 'approval', `${s.id}: its text differs from the text the owner approved (record ${e.approved}, now ${approvalHash(s)}); a change needs a new approval`);
   }
 
   // Item 11: parameters.
-  const paramIds = new Set(params.map((p) => p.id));
+  const paramIds = new Set();
+  const paramAt = new Map();
+  for (const p of params) {
+    // §3.2: one row per parameter; per-network values are columns.
+    if (paramAt.has(p.id)) add(p.file, p.line, 'parameter', `${p.id} has two rows (also ${paramAt.get(p.id).file}:${paramAt.get(p.id).line}); a parameter is defined once`);
+    else paramAt.set(p.id, p);
+    paramIds.add(p.id);
+  }
   const used = new Set();
   for (const s of statements) for (const m of statementText(s).matchAll(PARAM_ID_RE)) used.add(`PRM-${m[1]}`);
   for (const s of statements) for (const m of statementText(s).matchAll(PARAM_ID_RE)) {
@@ -242,7 +269,10 @@ export function checkSpec(parsed, opts = {}) {
       for (const st of [r.From, r.To]) if (!states.has(st)) add(m.file, r.line, 'model', `model "${m.name}": the state "${st}" is not in its States list`);
       const cites = [...r['Guarded by'].matchAll(ID_RE)].map((x) => `${x[1]}-${x[2]}`);
       if (!cites.length) add(m.file, r.line, 'model', `model "${m.name}": the row ${r.From} → ${r.Step} → ${r.To} cites no statement`);
-      for (const c of cites) if (!byId.has(c)) add(m.file, r.line, 'model', `model "${m.name}": the row ${r.From} → ${r.Step} cites ${c}, which does not exist`);
+      for (const c of cites) {
+        if (retired.has(c)) add(m.file, r.line, 'model', `model "${m.name}": the row ${r.From} → ${r.Step} cites ${c}, which is retired`);
+        else if (missing(c)) add(m.file, r.line, 'model', `model "${m.name}": the row ${r.From} → ${r.Step} cites ${c}, which does not exist`);
+      }
       const key = `${r.From}|${r.Step}|${r.Who}|${[...new Set(cites)].sort().join(',')}`;
       if (seen.has(key)) add(m.file, r.line, 'model', `model "${m.name}": two rows it cannot tell apart (${r.From}, ${r.Step}, ${r.Who}, guarded by the same statements; also line ${seen.get(key)})`);
       seen.set(key, r.line);
@@ -251,7 +281,10 @@ export function checkSpec(parsed, opts = {}) {
     for (const r of m.refusals) {
       const cites = [...r['Refused by'].matchAll(ID_RE)].map((x) => `${x[1]}-${x[2]}`);
       if (!cites.length) add(m.file, r.line, 'model', `model "${m.name}": the refusal of "${r.Step}" out of state cites no statement`);
-      for (const c of cites) if (!byId.has(c)) add(m.file, r.line, 'model', `model "${m.name}": the refusal of "${r.Step}" cites ${c}, which does not exist`);
+      for (const c of cites) {
+        if (retired.has(c)) add(m.file, r.line, 'model', `model "${m.name}": the refusal of "${r.Step}" cites ${c}, which is retired`);
+        else if (missing(c)) add(m.file, r.line, 'model', `model "${m.name}": the refusal of "${r.Step}" cites ${c}, which does not exist`);
+      }
     }
     for (const st of stepNames) if (!refused.has(st)) add(m.file, m.line, 'model', `model "${m.name}": the step "${st}" has no refusal out of state`);
     // Reachability from the start state.
@@ -268,7 +301,13 @@ export function checkSpec(parsed, opts = {}) {
     for (const d of m.dimensions) {
       const cites = [...d['Named by'].matchAll(ID_RE)].map((x) => `${x[1]}-${x[2]}`);
       if (!cites.length) add(m.file, d.line, 'model', `model "${m.name}": the dimension "${d.Dimension}" is named by no statement`);
+      for (const c of cites) {
+        if (retired.has(c)) add(m.file, d.line, 'model', `model "${m.name}": the dimension "${d.Dimension}" is named by ${c}, which is retired`);
+        else if (missing(c)) add(m.file, d.line, 'model', `model "${m.name}": the dimension "${d.Dimension}" is named by ${c}, which does not exist`);
+      }
     }
+    // §4 item 4 holds in a model too: a limit lives in the parameters table.
+    for (const t of m.texts) for (const f of figureFindings(t.text)) add(m.file, t.line, f.rule, `model "${m.name}": ${f.message}`);
   }
   const accountsByCode = new Map();
   for (const m of models) {

@@ -23,7 +23,25 @@ const RECORD = (rows, extra = '') => `# Record
 ${rows.map((r) => `| ${r[0]} | ${r[1] ?? 'K'} | ${r[2] ?? 'OP "3.3", the Owner row'} | built |`).join('\n')}
 ${extra}`;
 
-const run = (files, opts = {}) => checkSpec(files.map(([name, text]) => parseFile(name, text)), opts);
+// Folder mode needs an approval hash on every record entry. Tests that are
+// not about approval get one signed for each statement as written; a test
+// about approval passes `sign: false` or writes its own Approved column.
+const sign = (parsed) => {
+  const hashOf = new Map(parsed.flatMap((p) => p.statements).map((x) => [x.id, approvalHash(x)]));
+  return parsed.map((p) => {
+    const text = p.lines.map((l) => l.t).join('\n');
+    if (!/^\| Id \| Mark \| Sources \| Build \|$/m.test(text)) return p;
+    const signed = text
+      .replace(/^\| Id \| Mark \| Sources \| Build \|$/m, '| Id | Mark | Sources | Build | Approved |')
+      .replace(/^\| --- \| --- \| --- \| --- \|$/m, '| --- | --- | --- | --- | --- |')
+      .replace(/^(\| ([A-Z]{3}-\d{3}) \|.*\|)$/gm, (row, r, id) => `${r} ${hashOf.get(id) ?? ''} |`);
+    return parseFile(p.file, signed);
+  });
+};
+const run = (files, opts = {}) => {
+  const parsed = files.map(([name, text]) => parseFile(name, text));
+  return checkSpec((opts.mode ?? 'folder') === 'folder' && opts.sign !== false ? sign(parsed) : parsed, opts);
+};
 const rules = (f) => f.map((x) => x.rule);
 const has = (f, rule, re) => f.some((x) => x.rule === rule && re.test(x.message));
 
@@ -97,6 +115,29 @@ test('test 4: an approved statement edited without a new approval is refused', (
   assert.ok(has(run([['vlt.md', edited], ['record.md', rec(approvalHash(s))]]), 'approval', /differs from the text the owner approved/));
 });
 
+test('folder mode refuses a record entry with no approval hash; draft mode takes it', () => {
+  const files = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012']])]];
+  assert.ok(has(run(files, { sign: false }), 'approval', /VLT-012: the record entry carries no approval hash/));
+  assert.deepEqual(run(files, { mode: 'draft' }), []);
+});
+
+test('a parameter defined in two rows is refused, with both places', () => {
+  const f = run([
+    ['vlt.md', STMT('VLT-012', 'rule', '', 'The wait is [PRM-001].')],
+    ['record.md', RECORD([['VLT-012']])],
+    ['parameters.md', '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-001 | The wait | 7 days |\n| PRM-001 | The wait | 30 days |\n'],
+  ]);
+  assert.ok(has(f, 'parameter', /PRM-001 has two rows \(also parameters\.md:3\)/), JSON.stringify(f));
+});
+
+test('a held id (900 to 999) the public check does not hold is never reported missing; a retired one still is', () => {
+  const retired = '\n| Id | Retired by |\n| --- | --- |\n| VLT-902 | owner approval 2026-11-22 |\n';
+  const ok = run([['vlt.md', STMT('VLT-012', 'rule', '', 'As VLT-901 holds.')], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(!has(ok, 'reference', /VLT-901/), JSON.stringify(ok));
+  const gone = run([['vlt.md', STMT('VLT-012', 'rule', '', 'As VLT-902 holds.')], ['record.md', RECORD([['VLT-012']], retired)]]);
+  assert.ok(has(gone, 'reference', /VLT-012 cites VLT-902, which is retired/));
+});
+
 const MODEL = (rows, refusals, states = '- Not created (start): no vault.\n- Open: a vault.\n- Recovered (end): a recovered vault.') => `
 ### Model: a vault
 
@@ -127,6 +168,20 @@ test('test 5: a step with no refusal out of state, two rows it cannot tell apart
   assert.ok(has(f, 'model', /the step "Withdraw" has no refusal out of state/));
   assert.ok(has(f, 'model', /two rows it cannot tell apart/));
   assert.ok(has(f, 'model', /no route from "Not created" reaches the end state "Recovered"/));
+});
+
+test('a model: a held citation passes, a missing dimension citation and a figure in its text are refused', () => {
+  const stmts = REFUSAL('VLT-012') + STMT('VLT-013', 'rule');
+  const model = MODEL(
+    ['| Not created | Create | Anyone | VLT-013 | Open |', '| Open | Recover | The owner | VLT-905 | Recovered |'],
+    ['| Create | VLT-012 |', '| Recover | VLT-012 |'],
+    '- Not created (start): no vault.\n- Open: a vault holding under 25 units.\n- Recovered (end): a recovered vault.',
+  ) + '\n**Dimensions:**\n| Dimension | Values | Named by |\n| --- | --- | --- |\n| Wait | 30 days, 60 days | VLT-099 |\n';
+  const f = run([['vlt.md', stmts + model], ['record.md', RECORD([['VLT-012'], ['VLT-013']])]]);
+  assert.ok(!f.some((x) => /VLT-905/.test(x.message)), JSON.stringify(f));
+  assert.ok(has(f, 'model', /the dimension "Wait" is named by VLT-099, which does not exist/), JSON.stringify(f));
+  assert.ok(has(f, 'figure', /model "a vault": a figure, "25"/));
+  assert.ok(has(f, 'figure', /model "a vault": a figure, "30"/));
 });
 
 test('a model row that cites no statement is refused, and a fund movement resting outside the model\'s accounts', () => {

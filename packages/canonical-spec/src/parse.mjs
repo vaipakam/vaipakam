@@ -142,7 +142,7 @@ function parseStatement(file, lines, start, end) {
 function parseModel(file, lines, start, end) {
   const errors = [];
   const name = MODEL_HEADING.exec(lines[start].t)[1].trim();
-  const m = { name, file, line: lines[start].n, states: [], start: null, ends: [], steps: [], refusals: [], dimensions: [], accounts: [] };
+  const m = { name, file, line: lines[start].n, states: [], start: null, ends: [], steps: [], refusals: [], dimensions: [], accounts: [], texts: [] };
   const err = (line, message) => errors.push({ file, line, message: `model "${name}": ${message}` });
   let section = null;
   for (let i = start + 1; i < end; i++) {
@@ -159,6 +159,7 @@ function parseModel(file, lines, start, end) {
         err(n, `cannot read "${t}" under ${section} (a list item "- …")`);
         continue;
       }
+      m.texts.push({ line: n, text: item[1] });
       if (section === 'Accounts') m.accounts.push(item[1].trim());
       else {
         const st = /^([^:(]+?)(?: \((start|end)\))?:\s*(.+)$/.exec(item[1]);
@@ -191,6 +192,9 @@ function parseModel(file, lines, start, end) {
       for (const r of table.rows) {
         const row = Object.fromEntries(want.map((k, j) => [k, r.cells[j] ?? '']));
         row.line = r.line;
+        // The cells a figure could hide in; citation cells hold ids only.
+        const prose = want.filter((k) => !['Guarded by', 'Refused by', 'Named by'].includes(k)).map((k) => row[k]).join(' ');
+        m.texts.push({ line: r.line, text: prose });
         if (section === 'Steps') m.steps.push(row);
         else if (section === 'Refusals out of state') m.refusals.push(row);
         else m.dimensions.push(row);

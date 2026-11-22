@@ -123,10 +123,10 @@ its domain lists.
 
 | Table | Columns | Where |
 | --- | --- | --- |
-| Record | Id, Mark, Sources[, Approved] | the record file; every statement has exactly one entry |
+| Record | Id, Mark, Sources[, Approved] | the record file; every statement has exactly one entry, and in folder mode an Approved hash |
 | Retired | Id, Retired by | a retired id is never reused |
 | Owed | Owed, Cited by | every owed reference |
-| Parameters | Id, Name, Value | the only place a figure appears |
+| Parameters | Id, Name, Value | the only place a figure appears; one row per parameter (per-network values are columns) |
 | Glossary | Term, Meaning, Instead of | the words a statement uses instead |
 
 ### Wording list
@@ -145,4 +145,15 @@ public tree.
 `--hashes` prints the first 16 hex characters of the SHA-256 of a statement's
 heading, Who, When, body and parts. Editing any of them changes the hash. The
 record's Approved column must then be signed again, or folder mode refuses
-the statement.
+the statement. Folder mode also refuses an entry with no hash at all.
+
+### Held ids
+
+Ids 900 to 999 are held statements, kept in the private records. A check run
+without `--held` never reports a reference to one as missing, in a statement
+or a model. A retired held id is still refused.
+
+### Figures in models
+
+A model's states, step names, who, dimension values and accounts carry no
+figure or date either: a limit lives in the parameters table.
