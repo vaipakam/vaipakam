@@ -60,7 +60,11 @@ function fakeCtx(d, w, over = {}) {
     }
     if (to === A(0x6000 + msgIdx) && sig.startsWith('isSanctioned')) return 'false';
     if (!byDiamond(s, to)) throw new Error(`call to unknown ${to}`);
-    const st = d.settings.find((x) => x.getter === sig && (x.getterArgs ?? []).join(' ') === args.join(' '));
+    // Several rows can read one getter (a switch and a figure of one tuple):
+    // the chain answers the whole tuple, the longest expectation of them.
+    const st = d.settings
+      .filter((x) => x.getter === sig && (x.getterArgs ?? []).join(' ') === args.join(' '))
+      .sort((a, b) => settingExpect(b).length - settingExpect(a).length)[0];
     if (st) return w.settings[s][sig] ?? settingExpect(st).join(' ');
     switch (sig) {
       case 'paused()(bool)': return w.paused[s];
