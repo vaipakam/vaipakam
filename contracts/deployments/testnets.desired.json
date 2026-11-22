@@ -256,6 +256,15 @@
         "list": "https://github.com/1inch/limit-order-protocol",
         "checked": "2026-11-22"
       }
+    },
+    "getSushiswapV3Factory()": {
+      "kind": "venue",
+      "chains": "all",
+      "reason": "SushiSwap v3 has no factory on Base Sepolia, Arbitrum Sepolia or BNB testnet: Sushi's own SUSHISWAP_V3_FACTORY_ADDRESS map (evm/config/features/sushiswap-v3.ts in the sushi package 7.7.0) lists Sepolia, Tatara and Bokuto as its only testnets, and the mainnet factory addresses hold no code on these chains. The Sushi venue is unavailable on these testnets.",
+      "evidence": {
+        "list": "https://www.npmjs.com/package/sushi/v/7.7.0",
+        "checked": "2026-11-22"
+      }
     }
   },
   "_notDeployedHereWhy": "#3893, design ruling 2026-11-22: the readback refuses a zero answer from a Diamond getter that names a deployment contract, and refuses a revert outright, unless the getter is listed here. byDesign: a zero the canonical/mirror split explains (design checks each). venue: an outside contract absent from the chain, with the venue's published deployment list and the date read; where the venue exists, its address is set instead. On mainnet every entry needs the owner's recorded acceptance. awaitingRuling rows are shown, neither met nor failed, and are refused on mainnet.",
