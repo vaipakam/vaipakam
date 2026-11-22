@@ -2,9 +2,10 @@
  * The failed transaction record (#3918, TroubleshootingPictureDesign.md §4.3).
  *
  * `POST /internal/failed-tx` is the ONE write the failed-transaction pass may
- * make. The pass runs as a small Worker of its own with no database binding;
- * it reaches this route under its own token (`FAILED_TX_WRITER_TOKEN`, a
- * Worker secret shared by the two Workers and nothing else), and the route
+ * make. The pass runs as a service of its own on the keeper machine, with no
+ * database binding; it reaches this route under its own token
+ * (`FAILED_TX_WRITER_TOKEN`, a secret it shares with the indexer and nothing
+ * else), and the route
  * accepts three statements and nothing more:
  *
  *   1. `records`  — failed transactions, each with its decoded error and the
@@ -18,10 +19,12 @@
  *   3. `replaced` — a statement that a block range was replaced. It marks the
  *      records and checkpoints in the range and deletes nothing.
  *
- * Every write names a network the bundle's deployment record knows. The
- * Diamond a record belongs to is stamped here from that record, never taken
- * from the caller, so records of a retired Diamond stay told apart from the
- * fresh one's.
+ * Every write names a network the bundle's deployment record knows and the
+ * Diamond it scanned under, which must be the bundle's: a write made under
+ * another deployment is refused with 409 (`deployment mismatch`), as is a
+ * record from a block before the Diamond's deploy block. The Diamond a record
+ * belongs to is stamped from the bundle's record, so records of a retired
+ * Diamond stay told apart from the fresh one's.
  *
  * `GET /health/failed-tx` states, per network, the pass's mode, cursor and
  * the age of the newest block it finished, the last replacement found, the
@@ -97,7 +100,7 @@ export type FailedTxWrite =
   | { kind: 'cursor'; chainId: number; cursor: CursorStatement }
   | { kind: 'replaced'; chainId: number; fromBlock: number; toBlock: number };
 
-type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; status: number };
 
 const HASH = /^0x[0-9a-f]{64}$/;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
@@ -105,10 +108,16 @@ const SELECTOR = /^0x[0-9a-f]{8}$/;
 const UINT = /^(0|[1-9][0-9]{0,77})$/;
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/;
 
-class Refusal extends Error {}
+class Refusal extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+  }
+}
 const refuse = (msg: string): never => {
   throw new Refusal(msg);
 };
+/** The error a write made under another deployment is refused with (HTTP 409). */
+export const DEPLOYMENT_MISMATCH = 'deployment mismatch';
 
 function obj(v: unknown, where: string): Record<string, unknown> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) refuse(`${where} must be an object`);
@@ -211,16 +220,32 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
   try {
     const o = obj(body, 'body');
     const chainId = blockNum(o.chainId, 'chainId');
-    if (!getDeployment(chainId)) refuse(`chain ${chainId} has no deployment record`);
+    const dep = getDeployment(chainId);
+    if (!dep) return refuse(`chain ${chainId} has no deployment record`);
+    // Every write names the Diamond the writer scanned under, and it must be
+    // the one this indexer has adopted: a writer and an indexer on different
+    // bundles across a fresh deploy would otherwise attribute one
+    // deployment's failures, position and ranges to the other.
+    const diamond = lowerMatch(o.diamond, ADDRESS, 'diamond');
+    if (diamond !== dep.diamond.toLowerCase()) {
+      throw new Refusal(`${DEPLOYMENT_MISMATCH}: the write names Diamond ${diamond}, and this indexer's deployment record for chain ${chainId} names ${dep.diamond.toLowerCase()}`, 409);
+    }
     switch (o.kind) {
       case 'records': {
-        onlyKeys(o, ['kind', 'chainId', 'records'], 'body');
+        onlyKeys(o, ['kind', 'chainId', 'diamond', 'records'], 'body');
         const raw = list(o.records, MAX_RECORDS_PER_WRITE, 'records');
         if (raw.length === 0) refuse('records is empty');
-        return { ok: true, value: { kind: 'records', chainId, records: raw.map((r, i) => parseRecord(r, `records[${i}]`)) } };
+        const records = raw.map((r, i) => parseRecord(r, `records[${i}]`));
+        // A block before this Diamond's deploy block belongs to a retired
+        // deployment, whose Diamond this record cannot be stamped with.
+        const early = records.find((r) => r.blockNumber < dep.deployBlock);
+        if (early) {
+          throw new Refusal(`${DEPLOYMENT_MISMATCH}: block ${early.blockNumber} is before this Diamond's deploy block ${dep.deployBlock}`, 409);
+        }
+        return { ok: true, value: { kind: 'records', chainId, records } };
       }
       case 'cursor': {
-        onlyKeys(o, ['kind', 'chainId', 'cursor'], 'body');
+        onlyKeys(o, ['kind', 'chainId', 'diamond', 'cursor'], 'body');
         const c = obj(o.cursor, 'cursor');
         onlyKeys(c, ['mode', 'blockNumber', 'blockTime', 'watchedShareBps', 'checkpoints', 'gaps', 'audits'], 'cursor');
         const mode = oneOf(c.mode, MODES, 'cursor.mode');
@@ -257,14 +282,14 @@ export function parseFailedTxWrite(body: unknown): Parsed<FailedTxWrite> {
         return { ok: true, value: { kind: 'cursor', chainId, cursor } };
       }
       case 'replaced': {
-        onlyKeys(o, ['kind', 'chainId', 'fromBlock', 'toBlock'], 'body');
+        onlyKeys(o, ['kind', 'chainId', 'diamond', 'fromBlock', 'toBlock'], 'body');
         return { ok: true, value: { kind: 'replaced', chainId, ...range(o, 'body') } };
       }
       default:
         return refuse('kind must be records, cursor or replaced');
     }
   } catch (e) {
-    if (e instanceof Refusal) return { ok: false, error: e.message };
+    if (e instanceof Refusal) return { ok: false, error: e.message, status: e.status };
     throw e;
   }
 }
@@ -395,11 +420,19 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
       break;
     }
     case 'replaced': {
-      const marked = await db
-        .prepare(`SELECT COUNT(*) AS n FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL`)
-        .bind(w.chainId, w.fromBlock, w.toBlock)
-        .first<{ n: number }>();
+      // The count is taken inside the batch, just before the marking, so it
+      // is exactly the rows this batch marks: an overlapping retry counts
+      // none of the rows the first one already marked.
       stmts.push(
+        db
+          .prepare(
+            `INSERT INTO failed_tx_range (chain_id, kind, from_block, to_block, marked, recorded_at)
+             VALUES (?1, 'replaced', ?2, ?3,
+               (SELECT COUNT(*) FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL), ?4)
+             ON CONFLICT (chain_id, kind, from_block, to_block) DO UPDATE SET marked = failed_tx_range.marked + excluded.marked,
+               recorded_at = excluded.recorded_at`,
+          )
+          .bind(w.chainId, w.fromBlock, w.toBlock, now),
         db
           .prepare(`UPDATE failed_tx SET replaced_at = ?4 WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL`)
           .bind(w.chainId, w.fromBlock, w.toBlock, now),
@@ -409,14 +442,6 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
              WHERE chain_id = ?1 AND kind = 'checkpoint' AND from_block BETWEEN ?2 AND ?3 AND replaced_at IS NULL`,
           )
           .bind(w.chainId, w.fromBlock, w.toBlock, now),
-        db
-          .prepare(
-            `INSERT INTO failed_tx_range (chain_id, kind, from_block, to_block, marked, recorded_at)
-             VALUES (?1, 'replaced', ?2, ?3, ?4, ?5)
-             ON CONFLICT (chain_id, kind, from_block, to_block) DO UPDATE SET marked = failed_tx_range.marked + excluded.marked,
-               recorded_at = excluded.recorded_at`,
-          )
-          .bind(w.chainId, w.fromBlock, w.toBlock, marked?.n ?? 0, now),
       );
       break;
     }
@@ -449,7 +474,7 @@ const json = (body: unknown, status: number) =>
 /**
  * `POST /internal/failed-tx`. Authenticates from the header before reading
  * the body, caps the body, parses strictly, writes. No CORS: the caller is
- * the pass's Worker, never a browser.
+ * the pass, never a browser.
  */
 export async function handleFailedTxWrite(
   req: Request,
@@ -468,7 +493,7 @@ export async function handleFailedTxWrite(
     return json({ error: 'body is not JSON' }, 400);
   }
   const parsed = parseFailedTxWrite(body);
-  if (!parsed.ok) return json({ error: parsed.error }, 400);
+  if (!parsed.ok) return json({ error: parsed.error }, parsed.status);
   try {
     const written = await applyFailedTxWrite(db, parsed.value, now());
     return json({ ok: true, written }, 200);

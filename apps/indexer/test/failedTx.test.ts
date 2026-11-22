@@ -5,9 +5,22 @@
  * statement under the pass's token, refuses every other write, and a
  * replaced-range statement deletes nothing.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+
+// The real deployment record, with the deploy block moved down so the small
+// block numbers below sit after it (block 400 sits before it).
+vi.mock('@vaipakam/contracts/deployments', async (orig) => {
+  const real = await orig<typeof import('@vaipakam/contracts/deployments')>();
+  return {
+    ...real,
+    getDeployment: (id: number) => {
+      const d = real.getDeployment(id);
+      return d && id === 84532 ? { ...d, deployBlock: 500 } : d;
+    },
+  };
+});
 import { createSqliteD1 } from './helpers/sqliteD1';
 import {
   MAX_EXPLANATION_BYTES,
@@ -24,6 +37,7 @@ const DDL = [readFileSync(new URL('../migrations/0123_failed_transactions.sql', 
 const CHAIN = 84532;
 const TOKEN = 'pass-token-0123456789';
 const NOW = 1_800_000_000;
+const DIAMOND = getDeployment(CHAIN)!.diamond.toLowerCase();
 
 const h64 = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
 const addr = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
@@ -61,12 +75,13 @@ const readBody = async (req: Request, max: number) => {
 
 function setup() {
   const h = createSqliteD1(DDL);
+  // Every write names the Diamond it was made under; the bundle's unless a test says otherwise.
   const post = (body: unknown, token: string | null = TOKEN) =>
     handleFailedTxWrite(
       new Request('https://x/internal/failed-tx', {
         method: 'POST',
         headers: token ? { authorization: `Bearer ${token}` } : {},
-        body: JSON.stringify(body),
+        body: JSON.stringify(body && typeof body === 'object' && !('diamond' in body) ? { ...body, diamond: DIAMOND } : body),
       }),
       h.d1 as D1Write,
       TOKEN,
@@ -238,8 +253,35 @@ describe('GET /health/failed-tx', () => {
 
 describe('parseFailedTxWrite', () => {
   it('lowercases hashes and addresses', () => {
-    const p = parseFailedTxWrite({ kind: 'records', chainId: CHAIN, records: [record({ sender: addr(0xabc).toUpperCase().replace('0X', '0x') })] });
+    const p = parseFailedTxWrite({ kind: 'records', chainId: CHAIN, diamond: DIAMOND, records: [record({ sender: addr(0xabc).toUpperCase().replace('0X', '0x') })] });
     expect(p.ok && p.value.kind === 'records' && p.value.records[0]!.sender).toBe(addr(0xabc));
+  });
+});
+
+describe('the deployment a write was made under', () => {
+  it('refuses with 409 a write naming another Diamond, or a record from before the deploy block, and writes nothing', async () => {
+    const s = setup();
+    const other = await s.post({ kind: 'records', chainId: CHAIN, diamond: addr(0xbad), records: [record()] });
+    expect(other.status).toBe(409);
+    expect(((await other.json()) as { error: string }).error).toMatch(/^deployment mismatch: /);
+    const cursor = await s.post({ kind: 'cursor', chainId: CHAIN, diamond: addr(0xbad), cursor: { mode: 'trace-filter', blockNumber: 600, blockTime: NOW, checkpoints: [], gaps: [], audits: [] } });
+    expect(cursor.status).toBe(409);
+    const replaced = await s.post({ kind: 'replaced', chainId: CHAIN, diamond: addr(0xbad), fromBlock: 600, toBlock: 700 });
+    expect(replaced.status).toBe(409);
+    const early = await s.post({ kind: 'records', chainId: CHAIN, records: [record(), record({ txHash: h64(9), blockNumber: 400 })] });
+    expect(early.status).toBe(409);
+    expect(((await early.json()) as { error: string }).error).toContain('before this Diamond');
+    expect((await s.post({ kind: 'records', chainId: CHAIN, records: [record()] })).status).toBe(200);
+    expect(s.rows('SELECT diamond FROM failed_tx')).toEqual([{ diamond: DIAMOND }]);
+    expect(s.rows('SELECT COUNT(*) AS n FROM failed_tx_cursor')).toEqual([{ n: 0 }]);
+  });
+
+  it('counts a replacement inside its batch, so an overlapping retry adds only what it marked', async () => {
+    const s = setup();
+    await s.post({ kind: 'records', chainId: CHAIN, records: [record(), record({ txHash: h64(2), blockNumber: 1050, blockHash: h64(105) })] });
+    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 1000, toBlock: 1100 });
+    await s.post({ kind: 'replaced', chainId: CHAIN, fromBlock: 1000, toBlock: 1100 });
+    expect(s.rows("SELECT marked FROM failed_tx_range WHERE kind = 'replaced'")).toEqual([{ marked: 2 }]);
   });
 });
 

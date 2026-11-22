@@ -566,11 +566,69 @@ export function tableToBatch(table) {
     if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
     const projection = Object.hasOwn(RESTORE_PROJECTIONS, name) ? RESTORE_PROJECTIONS[name] : null;
     const restored = projection ? projection(row) : row;
-    const values = columns.map((c) => sqlLiteral(restored[c], `table ${name} row ${i} column ${c}`));
-    lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
+    lines.push(...rowStatements(name, columns, colList, pkCols, restored, `table ${name} row ${i}`));
     imported++;
   }
   return { sql: lines.join('\n') + '\n', imported };
+}
+
+/**
+ * D1 refuses a statement over 100,000 bytes, a single large value included
+ * (Cloudflare's import guide, "statement too long"). A row that would not fit
+ * one INSERT is imported in pieces: the INSERT carries each long text value's
+ * first piece, and each further piece is appended by an UPDATE keyed on the
+ * row's primary key, so every statement fits and the value arrives whole
+ * (#3918: a stored explanation may be up to 256 KB). Pieces are cut on code
+ * points, never inside a character. A row without a primary key cannot be
+ * addressed by an UPDATE, so one that does not fit is refused.
+ */
+export const D1_STATEMENT_LIMIT = 100_000;
+const STATEMENT_BUDGET = 90_000;
+const PIECE_BUDGET = 60_000;
+const bytes = (s) => Buffer.byteLength(s, 'utf8');
+
+function splitPieces(value) {
+  const pieces = [];
+  let piece = '';
+  let size = 0;
+  for (const ch of value) {
+    const w = bytes(ch) * (ch === "'" ? 2 : 1);
+    if (size + w > PIECE_BUDGET && piece) {
+      pieces.push(piece);
+      piece = '';
+      size = 0;
+    }
+    piece += ch;
+    size += w;
+  }
+  pieces.push(piece);
+  return pieces;
+}
+
+export function rowStatements(name, columns, colList, pkCols, row, ctx) {
+  const literal = (c, v) => sqlLiteral(v, `${ctx} column ${c}`);
+  const whole = `INSERT INTO "${name}" (${colList}) VALUES (${columns.map((c) => literal(c, row[c])).join(', ')});`;
+  if (bytes(whole) <= STATEMENT_BUDGET) return [whole];
+  if (pkCols.length === 0) fail(`${ctx}: row is over D1's statement limit and the table has no primary key to rebuild it by`);
+  const first = { ...row };
+  const appends = [];
+  for (const c of columns) {
+    const v = row[c];
+    if (typeof v !== 'string' || bytes(literal(c, v)) <= PIECE_BUDGET) continue;
+    if (pkCols.includes(c)) fail(`${ctx}: primary-key column ${c} is over D1's statement limit`);
+    const [head, ...rest] = splitPieces(v);
+    first[c] = head;
+    for (const piece of rest) appends.push([c, piece]);
+  }
+  const where = pkCols.map((c) => `"${c}" = ${literal(c, row[c])}`).join(' AND ');
+  const out = [
+    `INSERT INTO "${name}" (${colList}) VALUES (${columns.map((c) => literal(c, first[c])).join(', ')});`,
+    ...appends.map(([c, piece]) => `UPDATE "${name}" SET "${c}" = "${c}" || ${literal(c, piece)} WHERE ${where};`),
+  ];
+  for (const st of out) {
+    if (bytes(st) > D1_STATEMENT_LIMIT) fail(`${ctx}: a statement is still over D1's ${D1_STATEMENT_LIMIT}-byte limit after splitting`);
+  }
+  return out;
 }
 
 /** Write every archived table's SQL file; returns apply-ordered

@@ -1478,7 +1478,10 @@ For each table:
    > `failed_tx_cursor` and `failed_tx_range` are the pass's position,
    > checkpoints, gaps, audit windows and replaced ranges: restored with the
    > records, the pass resumes where the archive left it and checks its
-   > newest checkpoint against the chain before it scans. Failures between
+   > newest checkpoint against the chain before it scans. A record whose
+   > explanation would put its INSERT over D1's 100,000-byte statement limit
+   > is written as an INSERT with the first piece and UPDATEs appending the
+   > rest, each statement under the limit, so it is restored whole. Failures between
    > the archive and the restore are found again by the pass only if the
    > node still reaches them; the health route's gap list says what it could
    > not cover.
