@@ -88,8 +88,10 @@ and EIP-170 room comes back to `OracleFacet`.
   the delay, so a Chainlink deprecation is a delayed replace, not a new guard.
   The owner replaced this decision on 2026-11-22: a change of unit on a live
   deployment is designed in
-  [`UnitOfAccountChangeDesign.md`](UnitOfAccountChangeDesign.md). Until that
-  is built, the rule here is the one in force.
+  [`UnitOfAccountChangeDesign.md`](UnitOfAccountChangeDesign.md). That design
+  also puts every replacement of the guard, with the unit kept or changed,
+  through one guarded step on the Diamond. Until it is built, the rules here
+  are the ones in force.
 
 ## Where the deploy builds it
 
