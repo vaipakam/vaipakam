@@ -183,16 +183,15 @@ const idSet = (v) => String(v ?? '').split(',').map((x) => x.trim()).filter(Bool
  * `{ values }`, or `{ error }` when the loader refuses the file.
  */
 export function loaderValues(envFile, names, env = process.env) {
-  // The file reaches bash as a positional argument ("$2"), never as command
-  // text; it is still resolved and required to be a regular file first.
+  // A committed script reads the file; the path and the names reach it only
+  // as arguments, never as command text. The path is still resolved and
+  // required to be a regular file, and every name to be UPPER_SNAKE.
   const file = resolve(envFile);
   let st;
   try { st = statSync(file); } catch { return { error: `${envFile}: no such file` }; }
   if (!st.isFile()) return { error: `${envFile}: not a regular file` };
   if (!names.every((n) => /^[A-Z_][A-Z0-9_]*$/.test(n))) return { error: 'a variable name is not UPPER_SNAKE' };
-  const script = '__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"; source "$1" || exit 3; load_env_file "$2" --drop-key-vars >&2 || exit 4; shift 2; '
-    + 'for n in "$@"; do if [ -n "${!n+set}" ]; then printf \'%s\\0%s\\0\' "$n" "${!n}"; fi; done';
-  const r = spawnSync('bash', ['-c', script, 'deploy-plan', join(HERE, 'lib', 'load-env.sh'), file, ...names], { encoding: 'utf8', env });
+  const r = spawnSync('bash', [join(HERE, 'lib', 'env-values.sh'), file, ...names], { encoding: 'utf8', env });
   if (r.status !== 0) return { error: (r.stderr || '').trim().split('\n').filter((l) => /^Error/.test(l)).join('; ') || `the loader refused ${envFile}` };
   const parts = r.stdout.split('\0');
   const values = {};
