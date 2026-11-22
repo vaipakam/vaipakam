@@ -33,6 +33,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {MockERC1271Wallet} from "./mocks/MockERC1271Wallet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
 import {VaultProtectionBase} from "../src/vault/VaultProtectionBase.sol";
@@ -375,6 +376,84 @@ contract ProtectedVaultTest is Test {
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
         _depo().adoptUntracked(K20, address(token), 0, 10 ether, source, deadline, sig);
+    }
+
+    // ─── #3780: a contract wallet adopts through ERC-1271 ────────────────
+
+    uint256 constant WALLET_OWNER_KEY = 0xB0B;
+
+    /// @dev An adoption acknowledgement for `who`, signed by `key`.
+    function _adoptSigFor(address who, uint256 key, uint256 amount, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
+        uint256 nonce = _depo().adoptionNonce(who);
+        bytes32 d = _depo().adoptionDigest(who, K20, address(token), 0, source, amount, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, d);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev A contract wallet with a vault holding 50 untracked tokens.
+    function _walletWithUntracked() internal returns (address wallet) {
+        wallet = address(new MockERC1271Wallet(vm.addr(WALLET_OWNER_KEY)));
+        token.mint(_vault(wallet), 50 ether);
+    }
+
+    function testContractWalletAdoptsWithItsOwnSignature() public {
+        address wallet = _walletWithUntracked();
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _adoptSigFor(wallet, WALLET_OWNER_KEY, 30 ether, deadline);
+        vm.prank(wallet);
+        _depo().adoptUntracked(K20, address(token), 0, 30 ether, source, deadline, sig);
+        assertEq(_tracked(wallet, address(token), 0), 30 ether);
+        assertEq(_depo().untrackedHolding(wallet, K20, address(token), 0), 20 ether);
+        assertEq(_depo().adoptionNonce(wallet), 1);
+    }
+
+    function testContractWalletRefusesAnotherKeysSignature() public {
+        address wallet = _walletWithUntracked();
+        uint256 deadline = block.timestamp + 1 hours;
+        // Signed by a key the wallet does not accept: its ERC-1271 answer
+        // refuses, and nothing is credited.
+        bytes memory sig = _adoptSigFor(wallet, USER_KEY, 30 ether, deadline);
+        vm.prank(wallet);
+        vm.expectRevert(IVaipakamErrors.RecoverySignatureInvalid.selector);
+        _depo().adoptUntracked(K20, address(token), 0, 30 ether, source, deadline, sig);
+        assertEq(_tracked(wallet, address(token), 0), 0);
+        assertEq(_depo().adoptionNonce(wallet), 0);
+    }
+
+    function testContractWalletReplayIsRefused() public {
+        address wallet = _walletWithUntracked();
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _adoptSigFor(wallet, WALLET_OWNER_KEY, 10 ether, deadline);
+        vm.prank(wallet);
+        _depo().adoptUntracked(K20, address(token), 0, 10 ether, source, deadline, sig);
+        // The nonce moved on, so the same signature no longer matches.
+        vm.prank(wallet);
+        vm.expectRevert(IVaipakamErrors.RecoverySignatureInvalid.selector);
+        _depo().adoptUntracked(K20, address(token), 0, 10 ether, source, deadline, sig);
+        assertEq(_tracked(wallet, address(token), 0), 10 ether);
+    }
+
+    function testPlainKeyStillAdoptsAndAMalformedSignatureIsRefusedByName() public {
+        token.mint(_vault(user), 50 ether);
+        uint256 deadline = block.timestamp + 1 hours;
+        // A plain key's own signature adopts exactly as before.
+        bytes memory sig = _adoptSigFor(user, USER_KEY, 30 ether, deadline);
+        vm.prank(user);
+        _depo().adoptUntracked(K20, address(token), 0, 30 ether, source, deadline, sig);
+        assertEq(_tracked(user, address(token), 0), 30 ether);
+        // A key's signature over this digest by someone else, and a
+        // malformed one, both refuse with the adoption's own error.
+        bytes memory other = _adoptSigFor(user, WALLET_OWNER_KEY, 10 ether, deadline);
+        vm.prank(user);
+        vm.expectRevert(IVaipakamErrors.RecoverySignatureInvalid.selector);
+        _depo().adoptUntracked(K20, address(token), 0, 10 ether, source, deadline, other);
+        vm.prank(user);
+        vm.expectRevert(IVaipakamErrors.RecoverySignatureInvalid.selector);
+        _depo().adoptUntracked(K20, address(token), 0, 10 ether, source, deadline, hex"1234");
     }
 
     function testDisownEmitsTheObservedUntrackedAmount() public {
