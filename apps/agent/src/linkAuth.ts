@@ -67,6 +67,8 @@ import {
   type AlertSettingsChange,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
+  buildAlertPhraseMessage,
+  buildAlertPhraseClearMessage,
   isRequestKey,
   requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
@@ -101,13 +103,17 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 /** The alert actions whose message names nothing but the wallet, the
  *  chain and the time. */
-export type AlertAuthAction = 'link' | 'unlink' | 'test-alert';
+export type AlertAuthAction = 'link' | 'unlink' | 'test-alert' | 'clear-phrase';
 
 /** What a signed alert request authorises: one of the fixed actions,
  *  or a settings save, whose message also names the values it saves. */
 export type AlertAuthorisation =
   | AlertAuthAction
-  | { action: 'save-settings'; settings: AlertSettingsChange };
+  | { action: 'save-settings'; settings: AlertSettingsChange }
+  /** #3346 — set the alert phrase: the message names the phrase's
+   *  fingerprint, never the phrase, which the agent recomputes from the
+   *  body's request key and phrase. */
+  | { action: 'set-phrase'; fingerprint: `0x${string}` };
 
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
@@ -116,6 +122,7 @@ const MESSAGE_BUILDERS: Record<
   link: buildTelegramLinkMessage,
   unlink: buildTelegramUnlinkMessage,
   'test-alert': buildTelegramTestMessage,
+  'clear-phrase': buildAlertPhraseClearMessage,
 };
 
 /** How old a request may be once its signature has verified (#3836):
@@ -136,7 +143,9 @@ export function alertRequestMessage(
   const keyHash = requestKeyHash(req.requestKey);
   return typeof auth === 'string'
     ? MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt, keyHash)
-    : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt, keyHash);
+    : auth.action === 'set-phrase'
+      ? buildAlertPhraseMessage(req.wallet, req.chain_id, auth.fingerprint, req.issuedAt, keyHash)
+      : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt, keyHash);
 }
 
 export interface SignedLinkRequest {

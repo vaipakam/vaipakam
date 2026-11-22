@@ -29,8 +29,8 @@ import {
 } from '@vaipakam/lib/alertsMessage';
 import { isUserRejection } from '../lib/errors';
 
-/** The four signed alert requests. */
-export type AlertRequestKind = 'link' | 'unlink' | 'test-alert' | 'save-settings';
+/** The signed alert requests. */
+export type AlertRequestKind = 'link' | 'unlink' | 'test-alert' | 'save-settings' | 'set-phrase' | 'clear-phrase';
 
 /** A signed alert request this browser started and has not had answered. */
 export interface PendingAlertRequest {
@@ -56,7 +56,7 @@ export interface PendingAlertRequest {
  *  never waits. */
 export const ALERT_REQUEST_MAX_AGE_SECONDS = LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS;
 
-const KINDS: readonly AlertRequestKind[] = ['link', 'unlink', 'test-alert', 'save-settings'];
+const KINDS: readonly AlertRequestKind[] = ['link', 'unlink', 'test-alert', 'save-settings', 'set-phrase', 'clear-phrase'];
 
 function storageKey(chainId: number, wallet: string): string {
   return `vaipakam.alerts.pendingRequest.v1.${chainId}.${wallet.toLowerCase()}`;
@@ -186,12 +186,16 @@ export interface AlertServiceAnswer {
  * is also dropped when the owner rejects it in the wallet.
  * Any other failure (a wallet that gave up waiting, a network error) keeps
  * it, to be finished later.
+ *
+ * `unkept` is sent with the request and never stored: the alert phrase
+ * (#3346), which the owner types again to finish a request that waited.
  */
 export async function signAndSendAlertRequest(
   req: PendingAlertRequest,
   signMessage: (message: string) => Promise<string>,
   send: (path: string, body: Record<string, unknown>) => Promise<AlertServiceAnswer>,
   how: 'start' | 'resume' = 'start',
+  unkept: Record<string, unknown> = {},
 ): Promise<AlertServiceAnswer> {
   // Only a new request is written. Finishing one sends what is already
   // kept and writes nothing: a stale card finishing an older request must
@@ -206,6 +210,7 @@ export async function signAndSendAlertRequest(
   }
   const res = await send(req.path, {
     ...req.body,
+    ...unkept,
     issuedAt: req.issuedAt,
     signature,
     requestKey: req.requestKey,

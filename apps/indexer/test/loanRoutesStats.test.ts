@@ -43,6 +43,10 @@ CREATE TABLE loans (
   interest_rate_bps INTEGER NOT NULL DEFAULT 0,
   is_stub           INTEGER NOT NULL DEFAULT 0,
   is_sale_vehicle   INTEGER NOT NULL DEFAULT 0,
+  lender            TEXT,
+  borrower          TEXT,
+  init_lender       TEXT,
+  init_borrower     TEXT,
   PRIMARY KEY (chain_id, loan_id)
 );`;
 
@@ -266,5 +270,71 @@ describe('GET /loans/stats — distinct liquidators (#3366)', () => {
     expect(l.windows['7d'].otherRoutes.byRoute.timeBasedDefault).toEqual({ thirdParty: 1, keeper: 0, events: 1 });
     expect(l.caveats.join(' ')).toMatch(/sells nothing/);
     expect(l.caveats.join(' ')).toMatch(/not independent operators/);
+  });
+});
+
+/** The opening event's parties (`init_*`) and, optionally, today's sides. */
+function parties(
+  h: SqliteD1,
+  loanId: number,
+  opened: [string | null, string | null],
+  now?: [string, string],
+): void {
+  h.db
+    .prepare('UPDATE loans SET init_lender = ?, init_borrower = ?, lender = ?, borrower = ? WHERE loan_id = ?')
+    .run(opened[0], opened[1], (now ?? opened)[0], (now ?? opened)[1], loanId);
+}
+
+describe('GET /loans/stats — the counting statement (#3879)', () => {
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0x2222222222222222222222222222222222222222';
+
+  it('forms no value total and no average rate, and says so', async () => {
+    const h = fresh();
+    insert(h, { status: 'active', lendingAsset: ERC20, principal: '100' });
+    insert(h, { status: 'active', lendingAsset: NFT, principal: '5' });
+    const s = await stats(h);
+    expect(s.averageInterestRateBps).toBeUndefined();
+    expect(s.counting.valueTotal).toBeNull();
+    expect(s.counting.amounts).toMatch(/own asset's smallest units/);
+    // Each asset stays on its own line, in its own units.
+    expect(s.volumeByAsset).toEqual({ [ERC20]: '100', [NFT]: '5' });
+  });
+
+  it('counts a loan opened with one address on both sides on its own line', async () => {
+    const h = fresh();
+    insert(h, { status: 'active', lendingAsset: ERC20 }); // loan 1: A lends to A
+    parties(h, 1, [A, A]);
+    insert(h, { status: 'active', lendingAsset: ERC20 }); // loan 2: A lends to B
+    parties(h, 2, [A, B]);
+    const s = await stats(h);
+    expect(s.counting.oneAddress).toBe(1);
+    expect(s.counting.oneAddressRule).toMatch(/cannot see two addresses that belong to one person/);
+    expect(s.counting.rates).toMatch(/per lending asset and term range/);
+    // The status counts are counts of loans, not rate figures: both stay in.
+    expect(s.active).toBe(2);
+  });
+
+  it('judges by the opening event, so a later sale moves a loan neither in nor out', async () => {
+    const h = fresh();
+    // Loan 1 opened A to B; B later bought the lender side, so B holds both now. Stays in.
+    insert(h, { status: 'active', lendingAsset: ERC20 });
+    parties(h, 1, [A, B], [B, B]);
+    // Loan 2 opened A to A; A later sold the lender side to B. Stays out.
+    insert(h, { status: 'active', lendingAsset: ERC20 });
+    parties(h, 2, [A, A], [B, A]);
+    const s = await stats(h);
+    expect(s.counting.oneAddress).toBe(1);
+  });
+
+  it('counts a loan whose opening parties are not known on its own line, never as two parties', async () => {
+    const h = fresh();
+    insert(h, { status: 'active', lendingAsset: ERC20 });
+    parties(h, 1, [null, null], [A, B]);
+    insert(h, { status: 'active', lendingAsset: ERC20 });
+    parties(h, 2, [A, B]);
+    const s = await stats(h);
+    expect(s.counting.oneAddress).toBe(0);
+    expect(s.counting.openingPartiesUnknown).toBe(1);
   });
 });

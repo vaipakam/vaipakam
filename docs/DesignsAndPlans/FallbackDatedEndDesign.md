@@ -28,7 +28,7 @@ None of these has a date, and three of the four need the lender position's holde
 The finishing step does exactly what the lender's claim without a route does today, up to the point where that claim pays the holder:
 
 1. The recorded split is applied, as it stands when the step runs: the split made at entry, scaled down by any internal match that has closed part of the loan since. The lender's part moves from the borrower's vault to the lender side's vault, held for the lender position's holder to claim. The treasury's part goes to the treasury. The borrower's part, and any collateral the borrower added without curing, stays in the borrower's vault and becomes the borrower position's claim. What an earlier part match already holds for the lender is not touched by the step: it stays held and is paid by the lender's claim, exactly as it would be after a lender's own claim.
-2. The loan becomes final (defaulted), with the same position-token status and the same closing of its reward records as a lender's claim gives it.
+2. The loan becomes final (defaulted), with the same closing of its reward records as a lender's claim gives it. Both position tokens read Loan Defaulted. A lender's claim burns the lender's token because that claim pays the holder. The finish pays nobody, so the lender's token stays live for the holder's own claim, as it does after any time-based default, and each token is closed and burned by its claim.
 3. A request the lender made to the backstop lapses, as it does on a cure.
 
 Then each side collects with its ordinary claim, whenever it likes. The step itself pays no wallet and pays its caller nothing.
@@ -56,7 +56,8 @@ Then each side collects with its ordinary claim, whenever it likes. The step its
 ## 5. Edges
 
 - **A flagged holder.** The step registers both holders under the existing sanctions hold exactly as a claim does. A flagged lender's part is deposited in its own vault and stays locked. The step is not refused because a holder is flagged, since the other side must not be held up.
-- **A token that refuses the lender side's vault.** The lender's part is parked for it by the existing parked-payment path, and the step completes.
+- **A token that refuses the lender side's vault.** The lender's part is parked for it by the existing parked-payment path, and the step completes. The parked record holds one entry per loan, and that is enough here: a lender payment is parked only by a step that ends the loan, or by this finish, so a loan still in the fallback state never carries an earlier one. A later change that parks a payment on a loan that stays open must first make that record hold an entry per asset.
+- **A token that refuses the treasury.** The treasury's part waits under a hold in the borrower's vault, by the existing path for a treasury share a token refuses, and anyone may release it later. The step completes, and so does a lender's claim, because the two share the one disposal. Nothing reports the treasury as having received a part that is waiting.
 - **The global pause.** The step follows the lender's claim: it does not run while paused, and the wait does not run either.
 - **A network that is winding down.** The step stays open in Closing. The earliest Closed day can then count each fallback loan as ending at its date.
 - **A legacy custody row** that is not held in the borrower's vault is refused, as every fallback step refuses it.
@@ -91,7 +92,7 @@ The finishing step after 30 days, in kind, callable by anyone, with no extension
 4. A top-up that does not cure does not move the date, and the top-up is in the borrower's claim after the step.
 5. Paused time is not counted.
 6. A flagged lender holder: the step completes, the lender's part is locked in its own vault, the borrower claims.
-7. A token that refuses the lender side's vault: the step completes with that part parked.
+7. A token that refuses the lender side's vault: the step completes with that part parked. A token that refuses the treasury: the step and a lender's claim both complete, the treasury's part waits under a hold in the borrower's vault, the borrower's claim does not pay it out, and the release moves it once the token allows.
 8. A change of the setting does not move a date already recorded.
 9. The lender's request to the backstop is void after the step.
 10. On a closing network the step runs.

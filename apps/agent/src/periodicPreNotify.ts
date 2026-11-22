@@ -36,6 +36,7 @@ import { getChainConfigs } from './env';
 import { pushRailStatus, sendPush } from '@vaipakam/push';
 import { pushRailConfigOf } from './pushRail';
 import { sendMessage } from './telegram';
+import { phraseCopy } from './i18n';
 import {
   periodicIntervalDays,
   periodicInterestEligibility,
@@ -181,7 +182,9 @@ export const BATCH_READS = 2;
 
 /** The chats linked to one batch's wallets, keyed by lower-cased wallet, or
  *  `unreadable` when the state object did not answer. */
-type BatchChats = ReadonlyMap<string, string | null> | 'unreadable';
+/** Per wallet: the linked chat and the alert phrase that chat was last told
+ *  (#3346), or `unreadable` when the state object could not be read. */
+type BatchChats = ReadonlyMap<string, { chat: string | null; mark: string | null }> | 'unreadable';
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -2245,8 +2248,10 @@ async function readBatchChats(
   const wallets = [...new Set(batch.flatMap((c) => [c.row.borrower, c.row.lender]).map((w) => w.toLowerCase()))];
   budget.remaining -= 1; // the state object call is a subrequest too
   try {
-    const found = await stateStub(env).chatsOf(wallets.map((wallet) => ({ wallet, chainId })));
-    return new Map(wallets.map((w, i) => [w, found[i] ?? null]));
+    // #3346 — each chat with the phrase it was last told, in the one read:
+    // every message to a linked chat leads with it.
+    const found = await stateStub(env).chatMarksOf(wallets.map((wallet) => ({ wallet, chainId })));
+    return new Map(wallets.map((w, i) => [w, { chat: found[i]?.chatId ?? null, mark: found[i]?.mark ?? null }]));
   } catch (err) {
     console.error('[agent] pre-notify chat lookup failed:', err instanceof Error ? err.name : 'error');
     return 'unreadable';
@@ -2356,10 +2361,11 @@ async function pushIfSubscribed(
   // read is a deferred rail (counted below), so the checkpoint stays
   // unstamped and the next tick tries again; it is never read as "no chat".
   const tgUnreadable = chats === 'unreadable';
-  const tgChat = tgUnreadable ? null : (chats.get(wallet.toLowerCase()) ?? null);
+  const tgEntry = tgUnreadable ? null : (chats.get(wallet.toLowerCase()) ?? null);
+  const tgChat = tgEntry?.chat ?? null;
   const tgRoute =
     tgChat && env.TG_BOT_TOKEN
-      ? { chat: tgChat, token: env.TG_BOT_TOKEN }
+      ? { chat: tgChat, token: env.TG_BOT_TOKEN, mark: tgEntry?.mark ?? null, locale: sub.locale }
       : null;
   let attempted = false;
   let delivered = false;
@@ -2426,7 +2432,11 @@ async function pushIfSubscribed(
       // token or a stale chat needs a credential fixed, a transport failure
       // needs an incident checked. The release note promised these were
       // counted separately and the code was folding both into one bucket.
-      const tg = await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`);
+      const tg = await sendMessage(
+        tgRoute.token,
+        tgRoute.chat,
+        phraseCopy.mark(tgRoute.locale, [tgRoute.mark], `${title}\n${body}\n${deepLink}`),
+      );
       if (tg === 'accepted') delivered = true;
       else if (tg === 'refused') refusedRails += 1;
       // `transient` joins the unconfirmed bucket deliberately (#2213 r26

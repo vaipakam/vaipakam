@@ -12,7 +12,12 @@ import {
   LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
 } from '../src/linkAuth';
-import { requestKeyHash } from '@vaipakam/lib/alertsMessage';
+import {
+  alertPhraseFingerprint,
+  buildAlertPhraseClearMessage,
+  buildAlertPhraseMessage,
+  requestKeyHash,
+} from '@vaipakam/lib/alertsMessage';
 
 // Anvil's first two well-known dev keys — fine in a test, never a
 // real key.
@@ -379,5 +384,47 @@ describe('#3836 — a contract-approved request', () => {
     for (const requestKey of [undefined, '0x1234', KEY.toUpperCase().replace('0X', '0x')]) {
       expect(parseSignedLinkRequest({ ...body, requestKey }).ok).toBe(false);
     }
+  });
+});
+
+describe('the alert phrase requests (#3346)', () => {
+  const parse = (signature: string) => {
+    const parsed = parseSignedLinkRequest({ wallet: ACCOUNT_A.address, chain_id: CHAIN_ID, issuedAt: NOW, signature, requestKey: KEY });
+    if (!parsed.ok) throw new Error('parse failed');
+    return parsed.req;
+  };
+
+  it('verifies only for the phrase whose fingerprint was signed', async () => {
+    const fingerprint = alertPhraseFingerprint(KEY, 'blue heron');
+    const message = buildAlertPhraseMessage(ACCOUNT_A.address, CHAIN_ID, fingerprint, NOW, KEY_HASH);
+    // The signed text never carries the phrase.
+    expect(message).not.toContain('blue heron');
+    const req = parse(await ACCOUNT_A.signMessage({ message }));
+    expect((await verifySignedLinkRequest(req, NOW, EMPTY_ENV, { action: 'set-phrase', fingerprint }, NEVER)).ok).toBe(true);
+    const other = alertPhraseFingerprint(KEY, 'red kite');
+    const v = await verifySignedLinkRequest(req, NOW, CHAIN_ENV, { action: 'set-phrase', fingerprint: other }, DENY);
+    expect(v.ok).toBe(false);
+  });
+
+  it("a contract wallet's approval of the text naming one network is refused for another", async () => {
+    // The approval the contract gives is over the exact text, which names
+    // its network; the checker stands in for that network's contract.
+    const fingerprint = alertPhraseFingerprint(KEY, 'blue heron');
+    const approved = buildAlertPhraseMessage(ACCOUNT_A.address, CHAIN_ID, fingerprint, NOW, KEY_HASH);
+    const checker: ChainSigChecker = async (_rpc, chainId, _wallet, message) => chainId === CHAIN_ID && message === approved;
+    const env = { RPC_BASE_SEPOLIA: 'http://rpc.test', RPC_ARB_SEPOLIA: 'http://rpc2.test' } as Env;
+    const sig = `0x${'11'.repeat(65)}`;
+    const onA = parseSignedLinkRequest({ wallet: ACCOUNT_A.address, chain_id: CHAIN_ID, issuedAt: NOW, signature: sig, requestKey: KEY });
+    const onB = parseSignedLinkRequest({ wallet: ACCOUNT_A.address, chain_id: 421614, issuedAt: NOW, signature: sig, requestKey: KEY });
+    if (!onA.ok || !onB.ok) throw new Error('parse failed');
+    const a = await verifySignedLinkRequest(onA.req, NOW, env, { action: 'set-phrase', fingerprint }, checker);
+    expect(a).toMatchObject({ ok: true, via: 'chain' });
+    expect((await verifySignedLinkRequest(onB.req, NOW, env, { action: 'set-phrase', fingerprint }, checker)).ok).toBe(false);
+  });
+
+  it('a removal has its own text, which no other action accepts', async () => {
+    const req = parse(await ACCOUNT_A.signMessage({ message: buildAlertPhraseClearMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH) }));
+    expect((await verifySignedLinkRequest(req, NOW, EMPTY_ENV, 'clear-phrase', NEVER)).ok).toBe(true);
+    expect((await verifySignedLinkRequest(req, NOW, CHAIN_ENV, 'unlink', DENY)).ok).toBe(false);
   });
 });

@@ -8,14 +8,21 @@
  * DISTINCT so no signature can ever cross actions.
  */
 import { describe, expect, it } from 'vitest';
+import { keccak256, toHex } from 'viem';
 import {
   alertRequestUnused,
+  ALERT_PHRASE_MAX,
+  alertPhraseFingerprint,
+  alertPhraseProblem,
+  buildAlertPhraseClearMessage,
+  buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
   isRequestKey,
   newRequestKey,
+  normaliseAlertPhrase,
   requestKeyHash,
 } from './alertsMessage';
 
@@ -158,6 +165,9 @@ describe('the four messages as a family', () => {
     (wallet: string, chainId: number, issuedAt: number, keyHash: string) =>
       buildAlertSettingsMessage(wallet, chainId, {}, issuedAt, keyHash),
     buildTelegramTestMessage,
+    (wallet: string, chainId: number, issuedAt: number, keyHash: string) =>
+      buildAlertPhraseMessage(wallet, chainId, `0x${'ab'.repeat(32)}`, issuedAt, keyHash),
+    buildAlertPhraseClearMessage,
   ];
 
   it('are mutually distinct — no signature can cross actions', () => {
@@ -226,5 +236,65 @@ describe('alertRequestUnused (#3836)', () => {
     expect(alertRequestUnused(409, 'request-superseded')).toBe(false);
     expect(alertRequestUnused(401, 'verification_failed')).toBe(false);
     expect(alertRequestUnused(503, 'order-unavailable')).toBe(false);
+  });
+});
+
+describe('the alert phrase (#3346)', () => {
+  it('produces the frozen byte sequences, verbatim, naming only a fingerprint', () => {
+    const fp = alertPhraseFingerprint(KEY, 'blue heron');
+    expect(buildAlertPhraseMessage(WALLET, 84532, fp.toUpperCase().replace('0X', '0x'), 1747000000, KEY_HASH)).toBe(
+      'Vaipakam — Set the alert phrase\n' +
+        '\n' +
+        "I request that this wallet's alert phrase be set. The phrase is\n" +
+        'not in this message; the line below is its fingerprint. Signing\n' +
+        'this message proves ownership of the wallet. It is not a\n' +
+        'transaction and costs no gas.\n' +
+        '\n' +
+        `Phrase fingerprint: ${fp}\n` +
+        '\n' +
+        `Wallet: ${LOWER}\n` +
+        'Chain id: 84532\n' +
+        'Issued at (unix): 1747000000\n' +
+        KEY_LINE,
+    );
+    expect(buildAlertPhraseMessage(WALLET, 84532, fp, 1, KEY_HASH)).not.toContain('blue heron');
+    expect(buildAlertPhraseClearMessage(WALLET, 84532, 1747000000, KEY_HASH)).toBe(
+      'Vaipakam — Remove the alert phrase\n' +
+        '\n' +
+        "I request that this wallet's alert phrase be removed, so alerts no\n" +
+        'longer lead with it. Signing this message proves ownership of the\n' +
+        'wallet. It is not a transaction and costs no gas.\n' +
+        '\n' +
+        `Wallet: ${LOWER}\n` +
+        'Chain id: 84532\n' +
+        'Issued at (unix): 1747000000\n' +
+        KEY_LINE,
+    );
+  });
+
+  it('binds the fingerprint to the tag, the request key and the phrase', () => {
+    const other = `0x${'22'.repeat(32)}` as const;
+    expect(alertPhraseFingerprint(KEY, 'blue heron')).not.toBe(alertPhraseFingerprint(other, 'blue heron'));
+    expect(alertPhraseFingerprint(KEY, 'blue heron')).not.toBe(alertPhraseFingerprint(KEY, 'blue herons'));
+    expect(alertPhraseFingerprint(KEY, 'blue heron')).toMatch(/^0x[0-9a-f]{64}$/);
+    // Pinned, so the app and the agent can never compute it differently.
+    expect(alertPhraseFingerprint(KEY, 'blue heron')).toBe(
+      keccak256(toHex(new TextEncoder().encode(`Vaipakam alert phrase v1${String.fromCharCode(0x11).repeat(32)}blue heron`))),
+    );
+  });
+
+  it('trims and composes what was typed, and refuses the rest by name', () => {
+    expect(normaliseAlertPhrase('  blue heron ')).toBe('blue heron');
+    expect(alertPhraseProblem('blue heron')).toBeNull();
+    expect(alertPhraseProblem('blue  heron')).toBeNull();
+    expect(alertPhraseProblem(' blue heron')).toBe('not-normalised');
+    expect(alertPhraseProblem('cafe\u0301')).toBe('not-normalised');
+    expect(alertPhraseProblem('ab')).toBe('too-short');
+    expect(alertPhraseProblem('x'.repeat(ALERT_PHRASE_MAX + 1))).toBe('too-long');
+    expect(alertPhraseProblem('நீல நாரை')).toBeNull();
+    expect(alertPhraseProblem('v2.5 heron')).toBeNull();
+    for (const bad of ['blue\u202eheron', 'blue\u200bheron', 'blue\theron', 'evil.example', 'a/b heron', 'heron:1', '@heron']) {
+      expect(alertPhraseProblem(bad)).toBe('bad-characters');
+    }
   });
 });

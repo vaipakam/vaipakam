@@ -21,6 +21,7 @@
  */
 import { formatAlert, pushTitle } from './hfCopy';
 import { protectedCopy, shortAddress } from './protectedCopy';
+import { DOMAIN_DOT, PLAIN } from './plainText';
 
 /** The LOCK outcomes the keeper reports (`protectedTelegram.ts`). */
 export const LOCK_OUTCOMES = ['locked', 'locked-again', 'already-locked', 'not-protected', 'not-allowed', 'expired', 'refused'] as const;
@@ -48,13 +49,6 @@ export interface AddressedAlert {
 }
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-/** Free text filled into a message: letters, digits, spaces and the few marks
- *  an amount or token label needs. No `/` or `:`, so no link can be formed. */
-const PLAIN = /^[\p{L}\p{N} .,#×()_\-…?]{1,96}$/u;
-/** A dot before a letter, as in a bare domain (`evil.example`). Telegram makes
- *  a bare domain a link, so such a dot is shown as a one-dot leader (`․`),
- *  which keeps a token label such as `USDC.e` readable and never links. */
-const DOMAIN_DOT = /\.(?=\p{L})/gu;
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
 
 /** `s` reduced to what a free field of a message accepts (`PLAIN`): every
