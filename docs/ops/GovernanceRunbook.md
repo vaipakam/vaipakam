@@ -840,7 +840,17 @@ run, queue one operation that lifts every pause that has no entry meeting
 the rule ([`IncidentRunbook.md`](IncidentRunbook.md) §3.8, recorded in
 [`AssetPauseLog.md`](AssetPauseLog.md)). The canceller removal is its own
 single-call `schedule`, and the lift waits behind it, so a pause the
-compromised key placed can last two delays.
+compromised key placed can last two delays. Two conditions make that hold:
+
+- The canceller removal is queued alone, as the exact 68-byte single call
+  `revokeRole(CANCELLER_ROLE, key)`. The Timelock refuses to let the
+  canceller being removed cancel only that exact call
+  (`CancellerRemovalNotCancellable`); a batch, or the same call encoded
+  with padding, stays cancellable by the thief.
+- The compromised key holds no `PROPOSER_ROLE`. A proposer is a canceller
+  in its own right and could cancel its own removal as proposer. The
+  handover gate refuses a Pauser Safe that is also the governance Safe, and
+  its holder check names any proposer other than the governance Safe.
 
 The same rule cuts the other way, and it is a deliberate trade. If the
 Governance Safe (the proposer) is the one compromised, the canceller cannot
