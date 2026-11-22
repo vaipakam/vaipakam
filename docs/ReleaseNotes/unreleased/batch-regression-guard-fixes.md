@@ -1,7 +1,0 @@
-## Notification billing and backstop recovery run under the vault guard
-
-The vault outflow guard refuses any vault movement made outside a guarded action. Three admin and service entry points reached a vault movement without holding the guard, so each would have been refused every time once the guard and they met on one branch: billing a paid notification, returning backstop cash to the treasury, and sweeping warehoused backstop collateral to the treasury. All three now hold the guard. For notification billing, the payer's tier update now goes out when the guard is released, after the bill is recorded, instead of before it; a failed tier push still never undoes the bill.
-
-## A settlement leg gets enough gas for a VPFI move
-
-Each attempt to move a settlement leg is given a fixed gas budget, and an attempt that runs out is treated as if the token refused delivery, so the leg is parked. A VPFI move refreshes both owners' tier records, and after a long quiet period that refresh alone could exhaust the budget, parking a leg that would have delivered. The attempt now does only the token move: the tier refreshes it would trigger are noted and run in the settling step right after the move succeeds, outside the attempt's budget. A refused or parked move notes nothing, so no refresh runs for a balance that did not change. The budget stays at its original size; the funds were never at risk, but the leg no longer parks without cause.
