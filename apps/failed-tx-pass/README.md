@@ -71,6 +71,11 @@ For each network in `FAILED_TX_CHAINS`, independently:
      network or tier the key does not cover), the run falls back to
      sends-and-audit, says so in an alert and on the cursor (with the watched
      share), and asks the list again next run.
+     Explorer requests are paced per key, not per network (at least 400 ms
+     apart for the whole process), because one Etherscan v2 key's rate limit
+     covers every network it serves and the networks run at once. A request
+     the explorer still refuses for its rate limit is retried within the run
+     with growing waits, four times, before the run holds.
    - **sends-and-audit**: no explorer key. The keeper's own sends are this
      mode's continuous source, and they arrive with the keeper decision record
      (§4.4), which is not built yet. Until then the daily audit is the only
@@ -94,6 +99,10 @@ its reason, and is alerted. Alerts (a cursor more than 30 minutes behind, a
 gap, an audit miss, a state no longer reachable, a replacement deeper than
 the checkpoints held) go to the operator chat when `TG_OPS_*` is set. The
 same condition is alerted again after six hours if it is still present.
+An alert the chat did not accept is kept in the state directory and sent on
+later runs until it is accepted, so a one-shot alert (an audit miss, a
+refused list) is not lost to a chat outage. At most 200 are kept; past that
+the oldest give way and the next message says how many were dropped.
 
 The **block-scan** mode is not built. No network's measured cost puts it
 inside the bound, and a capability result that selects it is refused by name.

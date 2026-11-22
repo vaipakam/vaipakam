@@ -194,6 +194,8 @@ function context(chain: ReturnType<typeof modelChain>, indexer: IndexerClient, m
 }
 
 const HEAD = DEPLOY + Math.floor(2.5 * 86_400);
+/** A first run that looks back far enough for the lists to cover yesterday's audit window. */
+const wide = (c: RunContext): RunContext => ({ ...c, settings: { ...c.settings, firstRunLookbackSeconds: 2 * 86_400 } });
 const NOW = BASE + (HEAD - DEPLOY) + 60;
 
 // ─── Tests ───────────────────────────────────────────────────────────────
@@ -301,7 +303,7 @@ describe('the failed transaction pass', () => {
     stopping.indexer = {
       state: inner.state.bind(inner),
       write: async (body) => {
-        if ((body as { kind?: string }).kind === 'records') throw new RpcFailure('transient', null, 'stopped');
+        if ((body as { kind?: string }).kind === 'cursor') throw new RpcFailure('transient', null, 'stopped');
         return inner.write(body);
       },
     };
@@ -319,6 +321,7 @@ describe('the failed transaction pass', () => {
     const ix = realIndexer();
     await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
     chain.setHead(HEAD + 100);
+    chain.txs.push({ hash: txHash(27), block: HEAD + 60, to: DIAMOND, input: repay(27n), status: 0, revert: REVERT, trace: 'ok' });
     const inner = listedExplorer(chain);
     let switched = false;
     const switching: Explorer = {
@@ -335,6 +338,8 @@ describe('the failed transaction pass', () => {
     expect(r.held).toMatch(/changed while the run read/);
     expect(ix.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: HEAD }]);
     expect(ix.rows("SELECT from_block FROM failed_tx_range WHERE kind = 'checkpoint'")).toEqual([{ from_block: HEAD }]);
+    // Its records travel with the checkpoint, so none from the old branch is live.
+    expect(ix.rows('SELECT COUNT(*) AS n FROM failed_tx')).toEqual([{ n: 0 }]);
   });
 
   it('runs as sends-and-audit, and says so, when the explorer will not serve the list', async () => {
@@ -388,7 +393,7 @@ describe('the failed transaction pass', () => {
     const windowStart = DEPLOY + 86_400; // random() = 0: the window starts at yesterday's midnight
     chain.txs.push({ hash: txHash(10), block: windowStart + 3, to: DIAMOND, input: repay(16n), status: 0, revert: REVERT, trace: 'ok' });
     const ix = realIndexer();
-    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(10)]))));
+    const r = await runChain(wide(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(10)])))));
     expect(r.audited).toEqual({ from: windowStart, to: windowStart + defaultSettings(planFor(cap('explorer-and-audit'), true)).auditBlocksPerRun - 1, found: 1, missed: 1 });
     expect(ix.rows('SELECT tx_hash, found_by FROM failed_tx')).toEqual([{ tx_hash: txHash(10), found_by: 'audit' }]);
     expect(r.findings.some((f) => f.level === 'alert' && f.key === `audit-missed-${txHash(10)}`)).toBe(true);
@@ -397,12 +402,25 @@ describe('the failed transaction pass', () => {
     expect(r2.audited!.from).toBe(r.audited!.to + 1);
   });
 
+  it('does not count as misses the finds in a window the list was never asked about', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const windowStart = DEPLOY + 86_400;
+    chain.txs.push({ hash: txHash(26), block: windowStart + 3, to: DIAMOND, input: repay(26n), status: 0, revert: REVERT, trace: 'ok' });
+    const ix = realIndexer();
+    // A first run looks back one day: the list starts after yesterday's midnight window.
+    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
+    expect(r.audited).toMatchObject({ from: windowStart, found: 1, missed: null });
+    expect(r.findings.some((f) => f.key.startsWith('audit-missed-'))).toBe(false);
+    expect(ix.rows('SELECT tx_hash, found_by FROM failed_tx')).toEqual([{ tx_hash: txHash(26), found_by: 'audit' }]);
+    expect(ix.rows("SELECT found, missed FROM failed_tx_range WHERE kind = 'audit'")).toEqual([{ found: 1, missed: null }]);
+  });
+
   it('keeps an audit miss a miss when the slice is read again after an interrupted run', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const windowStart = DEPLOY + 86_400;
     chain.txs.push({ hash: txHash(24), block: windowStart + 3, to: DIAMOND, input: repay(24n), status: 0, revert: REVERT, trace: 'ok' });
     const ix = realIndexer();
-    const ctx = context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(24)])));
+    const ctx = wide(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(24)]))));
     const inner = ctx.indexer;
     ctx.indexer = {
       state: inner.state.bind(inner),
@@ -414,7 +432,7 @@ describe('the failed transaction pass', () => {
     const r1 = await runChain(ctx);
     expect(r1.held).toBeDefined();
     expect(ix.rows('SELECT found_by FROM failed_tx')).toEqual([{ found_by: 'audit' }]);
-    const r2 = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(24)]))));
+    const r2 = await runChain(wide(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(24)])))));
     expect(r2.audited).toMatchObject({ from: windowStart, found: 1, missed: 1 });
     expect(ix.rows("SELECT found, missed FROM failed_tx_range WHERE kind = 'audit'")).toEqual([{ found: 1, missed: 1 }]);
   });

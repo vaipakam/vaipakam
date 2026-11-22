@@ -20,6 +20,8 @@ export class ExplorerFailure extends Error {
      */
     readonly kind: 'transient' | 'unreadable' | 'refused',
     message: string,
+    /** The explorer refused for its rate limit (retried within the run before it holds). */
+    readonly rateLimited = false,
   ) {
     super(message);
     this.name = 'ExplorerFailure';
@@ -40,11 +42,74 @@ export interface Explorer {
 const PAGE_SIZE = 1000;
 const MAX_PAGES = 10;
 
-export function txlistExplorer(opts: { apiBase: string; apiKey: string; chainId: number; fetch?: typeof fetch; timeoutMs?: number }): Explorer {
+/**
+ * Etherscan v2 allows a key a few calls a second across EVERY network it
+ * serves, and the pass runs its networks concurrently under one key. So
+ * requests are paced per key, not per network: each waits its turn behind the
+ * previous request made with the same key, at least this far apart.
+ */
+export const MIN_REQUEST_GAP_MS = 400;
+/** A rate-limited request is retried within the run this many times, waiting longer each time. */
+export const RATE_LIMIT_RETRIES = 4;
+const RETRY_BASE_MS = 1_000;
+
+export interface Pacer {
+  /** Resolves when the caller may send its next request with `key`. */
+  turn(key: string): Promise<void>;
+}
+
+export function keyPacer(gapMs: number, sleep: (ms: number) => Promise<void>, clock: () => number = Date.now): Pacer {
+  const next = new Map<string, Promise<number>>();
+  return {
+    turn(key) {
+      // Chain each request behind the previous one for the same key, so
+      // concurrent callers are served one at a time, gapMs apart.
+      const prev = next.get(key) ?? Promise.resolve(0);
+      const mine = prev.then(async (lastAt) => {
+        const wait = lastAt + gapMs - clock();
+        if (wait > 0) await sleep(wait);
+        return clock();
+      });
+      next.set(key, mine);
+      return mine.then(() => undefined);
+    },
+  };
+}
+
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** One pacer for the process: every explorer built here shares it, whatever its network. */
+const sharedPacer = keyPacer(MIN_REQUEST_GAP_MS, realSleep);
+
+export function txlistExplorer(opts: {
+  apiBase: string;
+  apiKey: string;
+  chainId: number;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+  pacer?: Pacer;
+  sleep?: (ms: number) => Promise<void>;
+}): Explorer {
   const f = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  const pacer = opts.pacer ?? sharedPacer;
+  const sleep = opts.sleep ?? realSleep;
 
+  // A rate limit is retried here, with growing waits, before it reaches the
+  // run as a hold: a refusal caused by the pass's own concurrency must not
+  // stop a network's progress. Other failures go straight through.
   const page = async (address: string, from: number, to: number, n: number) => {
+    for (let attempt = 0; ; attempt++) {
+      await pacer.turn(opts.apiKey);
+      try {
+        return await pageOnce(address, from, to, n);
+      } catch (e) {
+        if (!(e instanceof ExplorerFailure) || !e.rateLimited || attempt >= RATE_LIMIT_RETRIES) throw e;
+        await sleep(RETRY_BASE_MS * 2 ** attempt);
+      }
+    }
+  };
+
+  const pageOnce = async (address: string, from: number, to: number, n: number) => {
     const u = new URL(opts.apiBase);
     u.searchParams.set('chainid', String(opts.chainId));
     u.searchParams.set('module', 'account');
@@ -62,7 +127,8 @@ export function txlistExplorer(opts: { apiBase: string; apiKey: string; chainId:
     } catch (e) {
       throw new ExplorerFailure('transient', `the explorer did not answer (${e instanceof Error ? e.name : 'error'})`);
     }
-    if (res.status === 429 || res.status >= 500) throw new ExplorerFailure('transient', `explorer HTTP ${res.status}`);
+    if (res.status === 429) throw new ExplorerFailure('transient', `explorer HTTP 429`, true);
+    if (res.status >= 500) throw new ExplorerFailure('transient', `explorer HTTP ${res.status}`);
     let body: { status?: string; message?: string; result?: unknown };
     try {
       body = (await res.json()) as typeof body;
@@ -74,7 +140,8 @@ export function txlistExplorer(opts: { apiBase: string; apiKey: string; chainId:
     const why = cleanMessage(typeof body.result === 'string' ? `${body.message}: ${body.result}` : body.message);
     // A rate limit is a wait; anything else (a bad key, a network or tier the
     // plan does not cover) means the list cannot be read on this network.
-    throw new ExplorerFailure(/rate limit|max calls|too many/i.test(why) ? 'transient' : 'unreadable', `explorer: ${why}`);
+    const limited = /rate limit|max calls|too many/i.test(why);
+    throw new ExplorerFailure(limited ? 'transient' : 'unreadable', `explorer: ${why}`, limited);
   };
 
   const range = async (address: string, from: number, to: number): Promise<FoundTx[]> => {

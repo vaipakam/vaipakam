@@ -255,7 +255,7 @@ const REQUIRED_TABLE_COLUMNS = {
     'explanation_cut', 'unavailable', 'gas_used', 'gas_limit', 'used_all_gas', 'not_reproduced',
     'state_unreachable', 'replaced_at', 'recorded_at',
   ],
-  failed_tx_cursor: ['chain_id', 'diamond', 'mode', 'block_number', 'block_time', 'watched_share_bps', 'slow_block_number', 'audit_day', 'audit_from', 'audit_to', 'updated_at'],
+  failed_tx_cursor: ['chain_id', 'diamond', 'mode', 'block_number', 'block_time', 'watched_share_bps', 'slow_block_number', 'list_from_block', 'audit_day', 'audit_from', 'audit_to', 'updated_at'],
   failed_tx_range: [
     'chain_id', 'kind', 'from_block', 'to_block', 'block_hash', 'reason', 'found', 'missed',
     'marked', 'replaced_at', 'recorded_at',

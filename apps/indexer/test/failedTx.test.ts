@@ -221,6 +221,27 @@ describe('POST /internal/failed-tx', () => {
   });
 });
 
+describe('records carried by the cursor write', () => {
+  it('stores them with the cursor and its checkpoint in one statement, and refuses one above the cursor', async () => {
+    const s = setup();
+    const ok = await s.post({
+      kind: 'cursor',
+      chainId: CHAIN,
+      cursor: { mode: 'list-and-audit', blockNumber: 1000, blockTime: NOW, checkpoints: [{ blockNumber: 1000, blockHash: h64(100) }], records: [record()] },
+    });
+    expect(ok.status).toBe(200);
+    expect(s.rows('SELECT tx_hash FROM failed_tx')).toEqual([{ tx_hash: h64(1) }]);
+    expect(s.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: 1000 }]);
+    const above = await s.post({
+      kind: 'cursor',
+      chainId: CHAIN,
+      cursor: { mode: 'list-and-audit', blockNumber: 999, blockTime: NOW, checkpoints: [], records: [record({ txHash: h64(3) })] },
+    });
+    expect(above.status).toBe(400);
+    expect(s.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: 1000 }]);
+  });
+});
+
 describe('GET /health/failed-tx', () => {
   it('states the mode, cursor age, newest live checkpoint, last replacement, gaps and miss rate', async () => {
     const s = setup();
@@ -238,6 +259,8 @@ describe('GET /health/failed-tx', () => {
         audits: [
           { fromBlock: 100, toBlock: 200, found: 3, missed: 1 },
           { fromBlock: 300, toBlock: 400, found: 1, missed: 0 },
+          // Read where the list was never asked: recorded, not a miss.
+          { fromBlock: 500, toBlock: 600, found: 2, missed: null },
         ],
       },
     });
@@ -253,7 +276,7 @@ describe('GET /health/failed-tx', () => {
         newestCheckpoint: { blockNumber: 1900, blockHash: h64(19) },
         lastReplacement: { fromBlock: 2000, toBlock: 2000, foundAt: NOW, marked: 0 },
         gaps: { count: 1, latest: { fromBlock: 10, toBlock: 20, reason: 'node unreachable' } },
-        audit: { windows: 2, found: 4, missed: 1, missRateBps: 2500 },
+        audit: { windows: 2, found: 4, missed: 1, missRateBps: 2500, unmeasured: 1 },
         recordsLast24h: 1,
       },
     ]);
@@ -345,6 +368,7 @@ describe('GET /internal/failed-tx/state', () => {
         blockNumber: 2000,
         blockTime: NOW - 30,
         slowBlockNumber: 1900,
+        listFromBlock: 1200,
         auditPlan: { day: '2026-11-21', fromBlock: 1700, toBlock: 1800 },
         checkpoints: [{ blockNumber: 1500, blockHash: h64(15) }, { blockNumber: 2000, blockHash: h64(20) }],
         gaps: [],
@@ -355,7 +379,7 @@ describe('GET /internal/failed-tx/state', () => {
     const { status, body } = await s.state(`chainId=${CHAIN}&from=900&to=1100`);
     expect(status).toBe(200);
     expect(body.cursor).toEqual({
-      mode: 'list-and-audit', blockNumber: 2000, blockTime: NOW - 30, watchedShareBps: null, slowBlockNumber: 1900,
+      mode: 'list-and-audit', blockNumber: 2000, blockTime: NOW - 30, watchedShareBps: null, slowBlockNumber: 1900, listFromBlock: 1200,
       auditPlan: { day: '2026-11-21', fromBlock: 1700, toBlock: 1800 },
     });
     expect(body.checkpoints).toEqual([{ blockNumber: 1500, blockHash: h64(15) }]);

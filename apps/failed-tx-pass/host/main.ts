@@ -26,6 +26,7 @@ import { codeNamesFromDeployment } from '@vaipakam/lib/txExplainer';
 import { planFor, type CapabilityResult } from '../src/chains';
 import { txlistExplorer } from '../src/explorer';
 import { indexerClient } from '../src/indexer';
+import { delivered, dueAlerts, parseAlertState } from '../src/alerts';
 import { alertBatches, defaultSettings, runChain, type Finding, type RunResult } from '../src/pass';
 import { jsonRpc } from '../src/rpc';
 
@@ -39,32 +40,31 @@ const need = (k: string): string => {
   return v;
 };
 
-/** An alert is sent again only after this long, while its condition lasts. */
-const REPEAT_SECONDS = 6 * 3600;
-
 async function sendAlerts(findings: Finding[], now: number): Promise<void> {
   const alerts = findings.filter((f) => f.level === 'alert');
   const token = env('TG_OPS_BOT_TOKEN');
   const chat = env('TG_OPS_CHAT_ID');
   const dir = env('STATE_DIRECTORY');
   const file = dir ? join(dir, 'alerts-sent.json') : undefined;
-  let sent: Record<string, number> = {};
-  if (file && existsSync(file)) {
-    try {
-      sent = JSON.parse(readFileSync(file, 'utf8')) as Record<string, number>;
-    } catch {
-      sent = {};
-    }
-  }
-  const due = alerts.filter((a) => now - (sent[`${a.chainId}:${a.key}`] ?? 0) >= REPEAT_SECONDS);
   for (const a of alerts) process.stdout.write(`ALERT ${a.text}\n`);
+  const stored = parseAlertState(file && existsSync(file) ? readFileSync(file, 'utf8') : undefined);
+  const planned = dueAlerts(stored, alerts, now);
+  const due = planned.due;
+  let state = planned.state;
+  // With no operator chat configured the journal is the only destination:
+  // nothing is held for a chat that does not exist.
+  if (!token || !chat) state = { ...state, pending: [], dropped: 0 };
   if (due.length && token && chat) {
     // Telegram takes 4,096 characters a message: the due alerts go out in as
-    // many messages as they need, and an alert is marked sent only once the
-    // message carrying it was accepted. A refused message stops the rest, which
-    // stay due for the next run.
+    // many messages as they need, and an alert leaves the pending list only
+    // once the message carrying it was accepted. A refused message stops the
+    // rest, which stay pending for the next run.
+    let first = true;
     for (const batch of alertBatches(due)) {
-      const text = ['Failed transaction pass', ...batch.map((a) => `• ${a.text}`)].join('\n');
+      const lines = ['Failed transaction pass'];
+      const reportDropped = first && state.dropped > 0;
+      if (reportDropped) lines.push(`• ${state.dropped} earlier alert(s) could not be kept while the operator chat was unreachable; read the unit journal.`);
+      const text = [...lines, ...batch.map((a) => `• ${a.text}`)].join('\n');
       try {
         const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
@@ -76,19 +76,18 @@ async function sendAlerts(findings: Finding[], now: number): Promise<void> {
           process.stdout.write(`the operator chat refused the alert (HTTP ${res.status})\n`);
           break;
         }
-        for (const a of batch) sent[`${a.chainId}:${a.key}`] = now;
+        state = delivered(state, batch, now, reportDropped);
+        first = false;
       } catch (e) {
         process.stdout.write(`the operator chat did not answer (${e instanceof Error ? e.name : 'error'})\n`);
         break;
       }
     }
   }
+  if (state.pending.length) process.stdout.write(`${state.pending.length} alert(s) not delivered; kept for the next run\n`);
   if (file) {
-    // Forget conditions that have cleared, so a recurrence alerts at once.
-    const live = new Set(alerts.map((a) => `${a.chainId}:${a.key}`));
-    for (const k of Object.keys(sent)) if (!live.has(k)) delete sent[k];
     mkdirSync(dir!, { recursive: true });
-    writeFileSync(file, JSON.stringify(sent));
+    writeFileSync(file, JSON.stringify(state));
   }
 }
 
@@ -96,7 +95,7 @@ function summary(r: RunResult): string {
   const parts = [`chain ${r.chainId} (${r.mode})`];
   if (r.scanned) parts.push(`scanned ${r.scanned.from}-${r.scanned.to}`);
   parts.push(`${r.records} record(s)`);
-  if (r.audited) parts.push(`audit ${r.audited.from}-${r.audited.to}: ${r.audited.found} found, ${r.audited.missed} missed`);
+  if (r.audited) parts.push(`audit ${r.audited.from}-${r.audited.to}: ${r.audited.found} found, ${r.audited.missed === null ? "misses not measured" : `${r.audited.missed} missed`}`);
   if (r.held) parts.push(`HELD: ${r.held}`);
   return parts.join('; ');
 }

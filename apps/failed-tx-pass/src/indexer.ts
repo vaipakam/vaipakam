@@ -12,6 +12,7 @@ export interface PassState {
     blockTime: number;
     watchedShareBps: number | null;
     slowBlockNumber: number | null;
+    listFromBlock: number | null;
     auditPlan: { day: string; fromBlock: number; toBlock: number } | null;
   } | null;
   checkpoints: Array<{ blockNumber: number; blockHash: string }>;

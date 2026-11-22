@@ -17,5 +17,16 @@ export const MAX_UNAVAILABLE_BYTES = 4 * 1024;
 /** Records in one write. */
 export const MAX_RECORDS_PER_WRITE = 20;
 
+/** Everything a record holds besides those fields, at most (ids, names, hashes, flags). */
+const RECORD_FIXED_BYTES = 4 * 1024;
+/** A cursor statement besides its records, at most (checkpoints, gaps and audit slices). */
+const CURSOR_FIXED_BYTES = 256 * 1024;
+/**
+ * The request body the route reads at most: a full write of records at every
+ * field's bound, with the cursor statement they can travel in.
+ */
+export const MAX_FAILED_TX_BODY =
+  MAX_RECORDS_PER_WRITE * (MAX_EXPLANATION_BYTES + MAX_ERROR_VALUES_BYTES + MAX_UNAVAILABLE_BYTES + RECORD_FIXED_BYTES) + CURSOR_FIXED_BYTES;
+
 /** The UTF-8 size of a value's JSON. */
 export const jsonBytes = (v: unknown): number => new TextEncoder().encode(JSON.stringify(v)).length;

@@ -97,7 +97,8 @@ export interface RunResult {
   held?: string;
   scanned?: { from: number; to: number };
   records: number;
-  audited?: { from: number; to: number; found: number; missed: number };
+  /** `missed` null: nothing was measured (the list was not asked about that slice). */
+  audited?: { from: number; to: number; found: number; missed: number | null };
   findings: Finding[];
 }
 
@@ -338,9 +339,27 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
       // not built yet, so the cursor only marks the blocks passed.
     }
 
-    // 5. Decode and write.
+    // 5. Decode. The records travel in the cursor write (below), so a record
+    // is never stored without the checkpoint that lets a later run find its
+    // block replaced. One write carries at most RECORDS_PER_WRITE, so the run
+    // stops at the block before the one that would overflow it.
     const records: FailedTxRecord[] = [];
-    const ordered = [...found.entries()].sort((x, y) => x[1].blockNumber - y[1].blockNumber);
+    const ordered = [...found.entries()].sort((x, y) => x[1].blockNumber - y[1].blockNumber).filter(([, f]) => f.blockNumber <= to);
+    // A block holding more failures than one write: stored ahead of the
+    // cursor in plain record writes, the one case where a record precedes its
+    // checkpoint (the next run's checkpoint check still covers the block once
+    // the cursor write lands).
+    let overfull: number | null = null;
+    if (ordered.length > RECORDS_PER_WRITE) {
+      const first = ordered[0]![1].blockNumber;
+      const cut = ordered[RECORDS_PER_WRITE]![1].blockNumber - 1;
+      if (cut >= first) to = cut;
+      else {
+        overfull = first;
+        to = first;
+      }
+      if (slow !== null) slow = Math.min(slow, to);
+    }
     for (const [hash, f] of ordered) {
       if (f.blockNumber > to) continue;
       try {
@@ -356,19 +375,32 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
       }
     }
     const kept = records.filter((r) => r.blockNumber <= to);
-    await sameBranch();
-    for (let i = 0; i < kept.length; i += RECORDS_PER_WRITE) {
-      await indexer.write({ kind: 'records', chainId, records: kept.slice(i, i + RECORDS_PER_WRITE) });
+    let carried = kept;
+    if (overfull !== null && to === overfull) {
+      await sameBranch();
+      for (let i = 0; i < kept.length; i += RECORDS_PER_WRITE) {
+        await indexer.write({ kind: 'records', chainId, records: kept.slice(i, i + RECORDS_PER_WRITE) });
+      }
+      carried = [];
+      note(`overfull-${overfull}`, `Chain ${chainId}: block ${overfull} holds more failed transactions than one write carries; its records were stored ahead of the cursor.`);
     }
     result.records += kept.length;
     for (const r of kept) if (r.stateUnreachable) alert(`unreachable-${r.txHash}`, `Chain ${chainId}: ${r.txHash} failed, but the node no longer held its block's state; the record holds the receipt only.`);
     const cursorTo = Math.max(start, to);
     if (from <= cursorTo) result.scanned = { from, to: cursorTo };
+    // The first block of the lists' present unbroken coverage: set when the
+    // network enters list-and-audit, kept while it stays, cleared when it
+    // leaves. An audit slice below it was never asked of the list.
+    let listFrom: number | null = null;
+    if (mode === 'list-and-audit') {
+      const kept0 = state.cursor?.mode === 'list-and-audit' ? (state.cursor.listFromBlock ?? null) : null;
+      listFrom = kept0 === null ? from : Math.min(kept0, from);
+    }
 
     // 6. The audit slice.
     let auditPlan = state.cursor?.auditPlan ?? null;
     let auditedTo = state.auditedTo;
-    const audits: Array<{ fromBlock: number; toBlock: number; found: number; missed: number }> = [];
+    const audits: Array<{ fromBlock: number; toBlock: number; found: number; missed: number | null }> = [];
     if (mode === 'list-and-audit' || mode === 'sends-and-audit') {
       const day = dayOf(ctx.now() - DAY);
       if (!auditPlan || auditPlan.day !== day) {
@@ -377,6 +409,11 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
       }
       if (auditPlan) {
         const covered = mode === 'sends-and-audit' || (cursorTo >= auditPlan.toBlock && (slow ?? cursorTo) >= auditPlan.toBlock);
+        // A miss is measured only where the list was asked about the whole
+        // window; elsewhere (sends-and-audit, or a window from before the
+        // lists' coverage began) the audit records what it finds and states
+        // that nothing was measured.
+        const measured = mode === 'list-and-audit' && listFrom !== null && listFrom <= auditPlan.fromBlock;
         const next = (auditedTo ?? auditPlan.fromBlock - 1) + 1;
         if (!covered) {
           note('audit-waits', `Chain ${chainId}: the audit of ${auditPlan.day} waits for the list to reach block ${auditPlan.toBlock}.`);
@@ -412,7 +449,7 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
             for (const m of missed) {
               const r = await recordFor({ rpc, chainId, mode, nameOf: ctx.nameOf }, m.hash, 'audit');
               if (r) audited.push(r);
-              if (mode === 'list-and-audit') {
+              if (measured) {
                 alert(`audit-missed-${m.hash}`, `Chain ${chainId}: the audit found ${m.hash} (block ${m.blockNumber}), a failed transaction the explorer's list did not return. It is now recorded; open a card for the miss.`);
               }
             }
@@ -420,8 +457,10 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
               await indexer.write({ kind: 'records', chainId, records: audited.slice(i, i + RECORDS_PER_WRITE) });
             }
             result.records += audited.length;
-            audits.push({ fromBlock: next, toBlock: doneTo, found: failures.length, missed: missed.length });
-            result.audited = { from: next, to: doneTo, found: failures.length, missed: missed.length };
+            // The audit's records lie in the previous day, far below every
+            // checkpoint, so they are written on their own.
+            audits.push({ fromBlock: next, toBlock: doneTo, found: failures.length, missed: measured ? missed.length : null });
+            result.audited = { from: next, to: doneTo, found: failures.length, missed: measured ? missed.length : null };
           }
         }
       }
@@ -439,10 +478,12 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
         blockTime: num(top.timestamp),
         watchedShareBps: mode === 'sends-and-audit' ? Math.round((settings.auditWindowSeconds * 10_000) / DAY) : null,
         slowBlockNumber: mode === 'list-and-audit' ? (slow ?? cursorTo) : null,
+        listFromBlock: listFrom,
         auditPlan: mode === 'trace-filter' ? null : auditPlan,
         checkpoints: [{ blockNumber: cursorTo, blockHash: top.hash.toLowerCase() }],
         gaps,
         audits,
+        records: carried,
       },
     });
     behind(result, num(top.timestamp), ctx.now(), settings.behindSeconds);
