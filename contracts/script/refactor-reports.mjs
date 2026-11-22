@@ -479,6 +479,29 @@ function errorSig(err) {
   return `${err.name}(${typeList(err)})`;
 }
 
+/**
+ * A parameter's canonical ABI type, as the catalogue (and the selector) spell
+ * it: an enum is `uint8`, a contract `address`, a struct a tuple of its
+ * members, a user-defined value type its underlying type.
+ */
+export function abiType(t, byId) {
+  if (!t) return '?';
+  if (t.nodeType === 'ArrayTypeName') return `${abiType(t.baseType, byId)}[${t.length?.value ?? ''}]`;
+  if (t.nodeType === 'FunctionTypeName') return 'function';
+  if (t.nodeType === 'UserDefinedTypeName') {
+    const d = byId.get(t.referencedDeclaration);
+    if (d?.nodeType === 'EnumDefinition') return 'uint8';
+    if (d?.nodeType === 'ContractDefinition') return 'address';
+    if (d?.nodeType === 'StructDefinition') return `(${d.members.map((m) => abiType(m.typeName, byId)).join(',')})`;
+    if (d?.nodeType === 'UserDefinedValueTypeDefinition') return abiType(d.underlyingType, byId);
+    return '?';
+  }
+  return (t.typeDescriptions?.typeString ?? t.name ?? '?').replace(/ payable$/, '');
+}
+
+/** An error's ABI signature (the catalogue's `signature`). */
+export const errorAbiSig = (err, byId) => `${err.name}(${(err.parameters?.parameters ?? []).map((p) => abiType(p.typeName, byId)).join(',')})`;
+
 export function ambiguousErrors(units, manifest, ctx = makeContext(units, manifest.facets), catalogue = undefined) {
   const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId);
   // View entry points can raise too; the rule is per entry function.
@@ -537,7 +560,7 @@ export function ambiguousErrors(units, manifest, ctx = makeContext(units, manife
     if (!c) continue;
     for (const id of c.usedErrors ?? []) {
       const d = ctx.byId.get(id);
-      if (d?.nodeType === 'ErrorDefinition') declared.add(errorSig(d));
+      if (d?.nodeType === 'ErrorDefinition') declared.add(errorAbiSig(d, ctx.byId));
     }
   }
   // Rows are keyed by selector; the signature is in the row.

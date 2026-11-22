@@ -239,6 +239,15 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         if (seen.has(target.id)) return false;
         seen.add(target.id);
         helperDepth++;
+        // The helper's own modifiers run first, up to their placeholders,
+        // under the same rules as the entry's.
+        for (const m of target.modifiers ?? []) {
+          const md = ctx.byId.get(m.modifierName?.referencedDeclaration);
+          if (md?.nodeType !== 'ModifierDefinition') continue;
+          for (const a of m.arguments ?? []) if (visit(a, conditional, depth + 1, true) === true) return (helperDepth--, seen.delete(target.id), true);
+          const derived = mostDerived(md, lineage, ctx);
+          if (derived?.body && visitAll(derived.body.statements, conditional, depth + 1, true) === true) return (helperDepth--, seen.delete(target.id), true);
+        }
         const r = visitAll(target.body.statements, conditional, depth + 1, inModifier);
         helperDepth--;
         seen.delete(target.id);

@@ -18,6 +18,8 @@ import {
   keccak256Hex,
   ledgerProblems,
   runReports,
+  abiType,
+  errorAbiSig,
 } from '../../../contracts/script/refactor-reports.mjs';
 
 const require = createRequire(import.meta.url);
@@ -118,4 +120,21 @@ test('event-category lint: reads the tags from the AST in the artifacts', () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an error is compared with the catalogue by its ABI signature: enum uint8, contract address, struct tuple, value type underlying', () => {
+  const byId = new Map([
+    [1, { nodeType: 'EnumDefinition' }],
+    [2, { nodeType: 'ContractDefinition' }],
+    [3, { nodeType: 'StructDefinition', members: [{ typeName: { nodeType: 'ElementaryTypeName', typeDescriptions: { typeString: 'uint256' } } }, { typeName: { nodeType: 'UserDefinedTypeName', referencedDeclaration: 1 } }] }],
+    [4, { nodeType: 'UserDefinedValueTypeDefinition', underlyingType: { nodeType: 'ElementaryTypeName', typeDescriptions: { typeString: 'uint64' } } }],
+  ]);
+  const u = (id) => ({ typeName: { nodeType: 'UserDefinedTypeName', referencedDeclaration: id } });
+  const err = { name: 'E', parameters: { parameters: [
+    { typeName: { nodeType: 'ElementaryTypeName', typeDescriptions: { typeString: 'address payable' } } },
+    u(1), u(2), u(3), u(4),
+    { typeName: { nodeType: 'ArrayTypeName', baseType: u(1).typeName, length: { value: '3' } } },
+  ] } };
+  assert.equal(errorAbiSig(err, byId), 'E(address,uint8,address,(uint256,uint8),uint64,uint8[3])');
+  assert.equal(abiType(undefined, byId), '?');
 });

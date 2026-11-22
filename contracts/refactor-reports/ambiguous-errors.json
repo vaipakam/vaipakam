@@ -1,13 +1,13 @@
 {
   "report": "ambiguous-errors",
   "counts": {
-    "entries": 1425,
+    "entries": 1388,
     "counts": {
       "ambiguous": 1369,
       "text": 19,
       "reasonless": 0,
-      "errors": 1522,
-      "uncatalogued": 37
+      "errors": 1519,
+      "uncatalogued": 0
     }
   },
   "entries": [
@@ -1398,43 +1398,6 @@
     "text MetricsFacet.getNFTPositionSummary(uint256) text#1 (src/facets/MetricsFacet.sol)",
     "text ProfileFacet.updateKYCStatus(address,bool) text#1 (src/facets/ProfileFacet.sol)",
     "text RewardReporterFacet.closeDay(uint256) text#1 (src/facets/RewardReporterFacet.sol)",
-    "text UniV3Adapter.constructor(address) text#1 (src/adapters/UniV3Adapter.sol)",
-    "uncatalogued CategoryNeedsOwner(uint256,enum:VaipakamFeedRegistry.Category)",
-    "uncatalogued ChangePending(enum:IRateReference.Kind,bytes32)",
-    "uncatalogued ChangePending(enum:PriceGuardState.Kind,bytes32)",
-    "uncatalogued CollectionTakeRefused(uint256,uint256,enum:CollectionOfferFacet.TakeFailure)",
-    "uncatalogued FallbackCustodyMoveMisdirected(uint256,enum:LibFallbackCustody.Move)",
-    "uncatalogued FallbackLenderMoveInvalid(enum:LibFallbackCustody.Move)",
-    "uncatalogued GrantRefused(enum:VaultOutflowTypes.GrantClass,address)",
-    "uncatalogued InvalidChange(enum:IRateReference.Kind,bytes32,bytes32)",
-    "uncatalogued InvalidChange(enum:PriceGuardState.Kind,bytes32,bytes32)",
-    "uncatalogued InvalidTransition(enum:LibVaipakam.LoanStatus,enum:LibVaipakam.LoanStatus)",
-    "uncatalogued NoProposal(enum:PositionNFT.Component)",
-    "uncatalogued NoSecondaryRemovalPending(enum:PriceGuardState.Source)",
-    "uncatalogued NoStartingReference(address,enum:IRateReference.Outcome)",
-    "uncatalogued NotAContract(enum:PriceGuardState.Kind,address)",
-    "uncatalogued NotCrossChainRoute(enum:SanctionsDelistingTimelock.Route)",
-    "uncatalogued NotPending(uint256,enum:SanctionsDelistingTimelock.Status)",
-    "uncatalogued NotReady(enum:IRateReference.Kind,bytes32,uint64)",
-    "uncatalogued NotReady(enum:PriceGuardState.Kind,bytes32,uint256)",
-    "uncatalogued NothingPending(enum:IRateReference.Kind,bytes32)",
-    "uncatalogued NothingPending(enum:PriceGuardState.Kind,bytes32)",
-    "uncatalogued OracleFreshnessUnknown(enum:SanctionsDelistingTimelock.Route)",
-    "uncatalogued OracleStale(enum:SanctionsDelistingTimelock.Route,uint256,uint32)",
-    "uncatalogued OutflowDestinationRefused(enum:VaultOutflowTypes.OutflowClass,address)",
-    "uncatalogued OutflowRecipientInvalid(enum:VaultOutflowTypes.OutflowClass,address)",
-    "uncatalogued PrepayLoanNotActive(uint256,enum:LibVaipakam.LoanStatus)",
-    "uncatalogued ProposalNotPending(uint256,enum:VaipakamFeedRegistry.State)",
-    "uncatalogued ProposalPending(enum:PositionNFT.Component)",
-    "uncatalogued RouteConflict(uint256,enum:LibPositionNFT.RouteReason,enum:LibPositionNFT.RouteReason)",
-    "uncatalogued RouteNotOpen(uint256,enum:LibPositionNFT.RouteReason,enum:LibPositionNFT.RouteReason)",
-    "uncatalogued SecondaryAlreadyRemoved(enum:PriceGuardState.Source)",
-    "uncatalogued SecondaryRemovalNotReady(enum:PriceGuardState.Source,uint256)",
-    "uncatalogued SecondaryRemovalPending(enum:PriceGuardState.Source,uint256)",
-    "uncatalogued SignedCollectionTakeRefused(bytes32,uint256,enum:CollectionOfferFacet.TakeFailure)",
-    "uncatalogued UnsupportedCollateralForParallelSale(enum:LibVaipakam.AssetType)",
-    "uncatalogued UnsupportedCollateralForV1(enum:LibVaipakam.AssetType)",
-    "uncatalogued UnsupportedPrincipalForParallelSale(enum:LibVaipakam.AssetType)",
-    "uncatalogued UnsupportedPrincipalForV1(enum:LibVaipakam.AssetType)"
+    "text UniV3Adapter.constructor(address) text#1 (src/adapters/UniV3Adapter.sol)"
   ]
 }

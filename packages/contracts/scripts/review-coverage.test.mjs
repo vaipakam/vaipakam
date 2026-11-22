@@ -163,6 +163,7 @@ import {
   makeReviewBranches,
   copiedFrom,
   requireReviewableSlice,
+  sourcesDifferFromTree,
   reviewDescription,
   descriptionProblems,
   buildDeclarations,
@@ -355,7 +356,7 @@ test('copy: it differs from the pinned commit by exactly the workflow files and 
   assert.match(strippedCopyProblems({ diff: [...good.slice(0, 2), { status: 'M', path: '.github/dependabot.yml' }], pinnedPaths })[0], /changes \.github\/dependabot\.yml instead of leaving it out/);
 });
 
-test('review branches on a history-free copy: the fix is transplanted, the base is the head\'s parent line, the head restores the reviewed tree (§3, §5)', () => {
+function historyFreeCopy() {
   const dir = mkdtempSync(join(tmpdir(), 'rc-branches-'));
   const g = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', ...a], { cwd: dir, encoding: 'utf8' }).trim();
   g('init', '-q', '-b', 'main');
@@ -363,14 +364,16 @@ test('review branches on a history-free copy: the fix is transplanted, the base 
   mkdirSync(join(dir, 'contracts', 'src'), { recursive: true });
   mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
   writeFileSync(join(dir, 'contracts', file), readFileSync(join(FIXTURE, file)));
-  writeFileSync(join(dir, 'contracts', 'src', 'Other.sol'), '// other\n');
+  // A trailing blank line: the fix's patch then ends in a blank context line,
+  // which a trimmed patch would corrupt.
+  writeFileSync(join(dir, 'contracts', 'src', 'Other.sol'), '// other\n\n');
   writeFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'on: push\n');
   g('add', '-A');
   g('commit', '-q', '-m', 'production');
   const production = g('rev-parse', 'HEAD');
   // The fix, on production: touches another file and the workflows (which the copy never carries).
   g('checkout', '-q', '-b', 'fix');
-  writeFileSync(join(dir, 'contracts', 'src', 'Other.sol'), '// other, fixed\n');
+  writeFileSync(join(dir, 'contracts', 'src', 'Other.sol'), '// other, fixed\n\n');
   writeFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'on: pull_request\n');
   g('commit', '-q', '-am', 'fix');
   // The copy: a root commit of the production tree without the workflows.
@@ -381,6 +384,11 @@ test('review branches on a history-free copy: the fix is transplanted, the base 
   const copy = g('commit-tree', tree, '-m', `Review copy of ${production}, without workflows`);
   assert.equal(copiedFrom(`Review copy of ${production}, without workflows`), production);
   const slice = decls(file).filter((d) => d.label === 'Original.add(uint256)');
+  return { dir, g, file, copy, slice };
+}
+
+test('review branches on a history-free copy: the fix is transplanted, the base is the head\'s parent line, the head restores the reviewed tree (§3, §5)', () => {
+  const { dir, g, file, copy, slice } = historyFreeCopy();
   const unit = { name: 'Original', slices: [{ declarations: slice }] };
   const r = makeReviewBranches({ clone: dir, unit, slice: 0, pinned: copy, fix: 'fix', parse: () => new Map([[file, UNITS[file]]]) });
   assert.deepEqual(r.problems, []);
@@ -389,6 +397,25 @@ test('review branches on a history-free copy: the fix is transplanted, the base 
   assert.match(g('diff', `${r.base}...${r.head}`), /\+\s*function add\(/);
   assert.equal(g('show', `${r.head}:contracts/src/Other.sol`), '// other, fixed', 'the fix is in the reviewed tree');
   assert.throws(() => g('show', `${r.head}:.github/workflows/ci.yml`), 'the stripped paths stay stripped');
+});
+
+test('the size limit holds on the reviewed tree: a slice the fix makes too long is refused (§3.2)', () => {
+  const { dir, file, copy, slice } = historyFreeCopy();
+  const unit = { name: 'Original', limit: 1, slices: [{ declarations: slice }] };
+  assert.throws(() => makeReviewBranches({ clone: dir, unit, slice: 0, pinned: copy, fix: 'fix', parse: () => new Map([[file, UNITS[file]]]) }), /lines in the reviewed tree, over the 1-line limit/);
+});
+
+test('open: the workspace\'s sources are compared with the head, changed, missing and extra files named', () => {
+  const { dir, g } = historyFreeCopy();
+  const ws = mkdtempSync(join(tmpdir(), 'rc-ws-'));
+  mkdirSync(join(ws, 'src'), { recursive: true });
+  for (const p of ['src/Original.sol', 'src/Other.sol']) writeFileSync(join(ws, p), execFileSync('git', ['show', `main:contracts/${p}`], { cwd: dir }));
+  assert.deepEqual(sourcesDifferFromTree(dir, 'main', ws), []);
+  writeFileSync(join(ws, 'src', 'Other.sol'), '// changed\n');
+  writeFileSync(join(ws, 'src', 'New.sol'), '// new\n');
+  assert.deepEqual(sourcesDifferFromTree(dir, 'main', ws), ['src/New.sol', 'src/Other.sol']);
+  assert.deepEqual(sourcesDifferFromTree(dir, 'fix', ws).includes('src/Original.sol'), false);
+  void g;
 });
 
 test('a slice of one declaration over the limit is refused, never reviewed whole (§3.2)', () => {

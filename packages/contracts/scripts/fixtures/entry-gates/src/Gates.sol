@@ -140,6 +140,15 @@ contract GFacet is Guarded {
         LibGate.requireNotFlagged(msg.sender);
     }
 
+    function viaModifiedHelper() external nonReentrant {
+        _screenAfterPoke();
+        LibGate.s().x = 10;
+    }
+
+    function _screenAfterPoke() internal pokesFirst {
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
     modifier pokesFirst() {
         other.poke();
         _;

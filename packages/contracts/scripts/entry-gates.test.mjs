@@ -48,10 +48,13 @@ test('reading: modifiers, calls before the first state change, and where it stop
   const out = carried('modifierCallsOut');
   assert.match(out.stoppedAt, /external call \(IOther\.poke\)/, 'a modifier is exempt for its lock writes, not for a call out');
   assert.ok(!out.calls.has(FLAG));
+  const helperMod = carried('viaModifiedHelper');
+  assert.match(helperMod.stoppedAt, /external call \(IOther\.poke\)/, 'a helper\'s modifier runs before its body');
+  assert.ok(!helperMod.calls.has(FLAG));
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaModifiedHelper', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);
