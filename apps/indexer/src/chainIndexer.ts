@@ -96,7 +96,7 @@ import {
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
 import { recordPositionMove } from './positionFlowMoves';
-import { maybeRefreshProtocolConfig } from './configSnapshot';
+import { isSettingsHistoryEvent, maybeRefreshProtocolConfig, readSettingsAt } from './configSnapshot';
 import {
   collectPushHints,
   pushHintStats,
@@ -172,6 +172,7 @@ import {
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
+import { fillSettingsHistory, historyAddresses, historyStatements, type RawLog } from './stateHistory';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -2623,6 +2624,9 @@ async function runChainPass(
     // blocks above it are what is pending. Before the heal lanes, which spend
     // what is left of the budget by design.
     const quietPendingChanged = await refreshPendingLane(env, client, chainId, diamond, lastBlock, budget);
+    // #3921 — the settings history's values, after the pending lane (which
+    // users read) and before the heal lanes (which take what is left).
+    await fillSettingsHistoryStep(env, budget, chainId, client, diamond, lastBlock);
     const quietHeal = await runHealLanes(
       client,
       diamond,
@@ -2689,6 +2693,12 @@ async function runChainPass(
   // (Alchemy free tier, publicnode) reject ranges > 10k blocks, so we
   // page through MAX_RANGE_PER_CALL at a time.
   const allLogs: DecodedLog[] = [];
+  // #3921 — every log of every platform contract on the network, decoded or
+  // not, for the event history (`stateHistory.ts`). The handlers still see
+  // only the Diamond's and the position token's logs (`allLogs`).
+  const historyLogs: RawLog[] = [];
+  const scannedSet = new Set(scannedAddresses(diamond).map((a) => a.toLowerCase()));
+  const historyAddrs = historyAddresses(chainId, [...scannedSet]);
   let cursor = scanFrom;
   while (cursor <= windowTo) {
     const chunkEnd =
@@ -2710,12 +2720,14 @@ async function runChainPass(
       // and are skipped.
       const rawLogs = await client.getLogs({
         // #3205: plus the chain's PositionNFT, whose `Transfer` events
-        // keep the holder columns current.
-        address: scannedAddresses(diamond),
+        // keep the holder columns current. #3921: plus every other
+        // platform contract, for the event history only.
+        address: historyAddrs,
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
-      allLogs.push(...decodeScannedLogs(rawLogs));
+      allLogs.push(...decodeScannedLogs(rawLogs.filter((l) => scannedSet.has(l.address.toLowerCase()))));
+      historyLogs.push(...(rawLogs as unknown as RawLog[]));
     } catch (err) {
       console.error(
         `[chainIndexer] getLogs ${cursor}-${chunkEnd} failed`,
@@ -2799,7 +2811,7 @@ async function runChainPass(
   // so the ingest loop retries. Every time a handler reads is chain time.
   const blockTimestamps = new Map<bigint, number>();
 
-  const scanBlock = async (blockNumber: bigint, logs: DecodedLog[]) => {
+  const scanBlock = async (blockNumber: bigint, logs: DecodedLog[], raw: readonly RawLog[]) => {
     try {
       const block = await client.getBlock({ blockNumber });
       blockTimestamps.set(blockNumber, Number(block.timestamp));
@@ -2808,6 +2820,26 @@ async function runChainPass(
       if (isRefusing(budget)) throw err;
       throw new BlockTimeUnavailable(blockNumber, err);
     }
+    // #3921 — the block's event, settings and facet history, in one batch of
+    // its own before the handlers, so the block is recorded whole or not at
+    // all. A block the budget stops after this is recorded again by the next
+    // pass, which changes nothing: every statement is keyed, INSERT OR IGNORE.
+    const history = historyStatements({
+      db: env.DB,
+      chainId,
+      diamond,
+      blockAt: blockTimestamps.get(blockNumber)!,
+      logs: raw,
+      isSettingsEvent: isSettingsHistoryEvent,
+    });
+    if (history.length > 0) await env.DB.batch(history as D1PreparedStatement[]);
+    // A block that carries only other platform contracts' logs runs no
+    // handler: none of them reads those contracts.
+    const done = logs.length > 0 ? await handleBlock(blockNumber, logs) : EMPTY_BLOCK_RESULT;
+    return done;
+  };
+
+  const handleBlock = async (blockNumber: bigint, logs: DecodedLog[]) => {
 
     const offer = await processOfferLogs(
       logs,
@@ -2900,6 +2932,12 @@ async function runChainPass(
     const activity = await recordActivityEvents(logs, env, chainId, blockTimestamps);
     return { offer, loan, signed, activity };
   };
+  const EMPTY_BLOCK_RESULT: Awaited<ReturnType<typeof handleBlock>> = {
+    offer: { newOffers: 0, statusUpdates: 0 },
+    loan: { newLoans: 0, statusUpdates: 0, entitlementUpdates: 0, ownershipTransfers: 0 },
+    signed: 0,
+    activity: 0,
+  };
 
   const offerStats = { newOffers: 0, statusUpdates: 0 };
   const loanStats = { newLoans: 0, statusUpdates: 0, entitlementUpdates: 0, ownershipTransfers: 0 };
@@ -2908,18 +2946,25 @@ async function runChainPass(
   /** The logs of the blocks this pass FINISHED — everything after the cursor
    *  write (notifications, push hints, the config refresh) reads these. */
   const scannedLogs: DecodedLog[] = [];
-  const blocks = logsByBlock(allLogs);
+  // Every block with a log of any platform contract, each with the decoded
+  // logs its handlers read (none for a block of other contracts' logs only).
+  const decodedByBlock = new Map(logsByBlock(allLogs).map((b) => [b.blockNumber, b.logs] as const));
+  const blocks = logsByBlock(historyLogs).map(({ blockNumber, logs: raw }) => ({
+    blockNumber,
+    logs: decodedByBlock.get(blockNumber) ?? [],
+    raw,
+  }));
   let stoppedAt: bigint | null = null;
   /** #2757 — the stop was a block whose time could not be read, not the
    *  budget: nothing of that block was written, and the pass is a failure
    *  the ingest loop retries, not progress. */
   let stoppedForBlockTime = false;
   try {
-    for (const [i, { blockNumber, logs }] of blocks.entries()) {
+    for (const [i, { blockNumber, logs, raw }] of blocks.entries()) {
       if (i === 1) holdBack(budget, SCAN_TAIL_RESERVE);
       let done: Awaited<ReturnType<typeof scanBlock>>;
       try {
-        done = await scanBlock(blockNumber, logs);
+        done = await scanBlock(blockNumber, logs, raw);
       } catch (err) {
         if (err instanceof BlockTimeUnavailable && err.blockNumber === blockNumber) {
           console.error(
@@ -3162,6 +3207,11 @@ async function runChainPass(
     stoppedAt === null && scanTo === head
       ? await refreshPendingLane(env, client, chainId, diamond, scanTo, budget)
       : false;
+  // #3921 — the settings history's values, read at the end of each block
+  // that changed them, a few blocks a pass and only within the budget: after
+  // the pending lane (which users read), before the heal lanes (which take
+  // what is left).
+  await fillSettingsHistoryStep(env, budget, chainId, client, diamond, scanTo);
   const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } =
     stoppedAt === null
       ? await runHealLanes(
@@ -8213,6 +8263,44 @@ function decodeScannedLogs(
     out.push({ ...raw, eventName: decoded.eventName, args: decoded.args } as unknown as DecodedLog);
   }
   return out;
+}
+
+/** #3921 — what reading the settings at one block costs: the bundle, the
+ *  loupe check on its host, the settings multicall, the grace schedule and
+ *  the pause log (external), and the row update (D1). Generous on purpose:
+ *  it gates a backlog that waits for the next pass at no harm. */
+const SETTINGS_READ_COST: Cost = { external: 6, d1Queries: 1 };
+/** Blocks of settings changes read per pass at most. */
+const SETTINGS_FILL_BLOCKS_PER_PASS = 4;
+
+/**
+ * #3921 — fill the settings history's pending rows at or below `through`
+ * (`stateHistory.fillSettingsHistory`), each read pinned to its block, while
+ * this pass affords another read and the scan's tail. Fail-open: the history
+ * is not what the cursor or any route depends on, and a row not read now is
+ * read by a later pass.
+ */
+async function fillSettingsHistoryStep(
+  env: Env,
+  budget: TickBudget,
+  chainId: number,
+  client: PublicClient,
+  diamond: Address,
+  through: bigint,
+): Promise<void> {
+  try {
+    if (!affords(budget, plus({ external: 0, d1Queries: 1 }, SCAN_TAIL_RESERVE))) return;
+    await fillSettingsHistory({
+      db: env.DB,
+      chainId,
+      throughBlock: Number(through),
+      maxBlocks: SETTINGS_FILL_BLOCKS_PER_PASS,
+      canRead: () => affords(budget, plus(SETTINGS_READ_COST, SCAN_TAIL_RESERVE)),
+      read: (blockNumber) => readSettingsAt({ client, diamond, chainId, blockNumber }),
+    });
+  } catch (err) {
+    console.warn(`[chainIndexer] chain ${chainId}: settings history fill failed`, redactedError(err));
+  }
 }
 
 /** The last block a pass starting at `scanFrom` reads logs for, given a settled `head` at or above it. */

@@ -27,12 +27,15 @@ import {
   PROTOCOL_KNOB_SETTER_EVENTS,
   abiDescribesGetterAt,
   abiOutputNames as abiOutputNamesOf,
+  anyTransportFailure,
   readProtocolConfigBundle,
   readProtocolKnobGetters,
   type ProtocolBundleRead,
   type ProtocolKnobRead,
 } from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { MULTICALL3_ADDRESS } from '@vaipakam/lib/multicall';
+import { VALUE_NOT_CARRIED_GETTER_NAMES } from './stateHistory';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A call that reached a Diamond without the getter: the decoded name, the
@@ -316,7 +319,7 @@ function isStoredKnobValue(v: unknown): boolean {
 
 /** The settings stored beside the tuples (#2071), or null when the column
  *  is empty or does not hold the shape the refresh writes. */
-function storedKnobs(json: string | null | undefined): ProtocolKnobRead | null {
+function storedKnobs(json: string | null | undefined): Pick<ProtocolKnobRead, 'values' | 'unreported'> | null {
   if (!json) return null;
   try {
     const k = JSON.parse(json) as { values?: unknown; unreported?: unknown };
@@ -783,4 +786,99 @@ export async function handleConfigSnapshot(
     console.error('[configSnapshot] route failed', redactedError(err));
     return jsonResponse({ error: 'config-failed' }, 500);
   }
+}
+
+/** #3921 — the settings changes the settings history records: the config
+ *  snapshot's own list and the pause events, less `DiamondCut`, which the
+ *  facet history records. */
+export function isSettingsHistoryEvent(name: string): boolean {
+  return name !== 'DiamondCut' && (isConfigEventName(name) || isPauseEventName(name));
+}
+
+/**
+ * The values the settings events that do not carry them stand for
+ * (`VALUE_NOT_CARRIED_GETTERS`), read at the block in one multicall.
+ * Each getter's answer is `{ value }`, or `{ notAnswered }` when the chain
+ * refused it at this block (a Diamond without the getter); a node failure
+ * throws, so the block is retried rather than recorded without the value.
+ */
+export async function readEventValueGetters(opts: {
+  client: PublicClient;
+  diamond: Address;
+  blockNumber: bigint;
+}): Promise<Record<string, { value: unknown } | { notAnswered: string }>> {
+  const results = await opts.client.multicall({
+    contracts: VALUE_NOT_CARRIED_GETTER_NAMES.map((functionName) => ({
+      address: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName,
+    })) as never,
+    allowFailure: true,
+    blockNumber: opts.blockNumber,
+    multicallAddress: MULTICALL3_ADDRESS,
+  });
+  if (anyTransportFailure(results as readonly { status: string; error?: unknown }[])) {
+    throw new Error('the event-value multicall failed at the node');
+  }
+  const out: Record<string, { value: unknown } | { notAnswered: string }> = {};
+  VALUE_NOT_CARRIED_GETTER_NAMES.forEach((name, i) => {
+    const r = results[i] as { status: string; result?: unknown; error?: unknown };
+    out[name] = r.status === 'success' ? { value: r.result } : { notAnswered: describeFailure(r.error) };
+  });
+  return out;
+}
+
+/**
+ * #3921 — the protocol's settings as read at the end of one block, for the
+ * settings history: the config bundle (labelled with this build's output
+ * names, or the reason it could not be decoded), the single-output and
+ * labelled settings, the grace schedule and the pause log. Any failed read
+ * throws, so the caller counts an attempt rather than storing a partial
+ * answer as the block's settings. A getter the Diamond did not route at that
+ * block is a definitive answer, never a failure: the grace schedule is then
+ * the default (`[]`), and the knob and pause-log readers report it themselves.
+ */
+export async function readSettingsAt(opts: {
+  client: PublicClient;
+  diamond: Address;
+  chainId: number;
+  blockNumber: bigint;
+}): Promise<Record<string, unknown>> {
+  const [bundle, bundleAbiBound, knobs, eventValues, pauseLog] = await Promise.all([
+    readProtocolConfigBundle({
+      client: opts.client,
+      diamond: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      blockNumber: opts.blockNumber,
+    }) as Promise<ProtocolBundleRead>,
+    abiDescribesChainGetter({ ...opts, functionName: 'getProtocolConfigBundle' }),
+    readProtocolKnobGetters({
+      client: opts.client,
+      diamond: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      guardAbi: PriceGuardABI as Abi,
+      blockNumber: opts.blockNumber,
+      facets: getDeployment(opts.chainId)?.facets,
+    }),
+    readEventValueGetters(opts),
+    readPauseLog({ client: opts.client, diamond: opts.diamond, blockNumber: opts.blockNumber }).then(pauseLogToJson),
+  ]);
+  // A setting the node failed to answer is not a setting the chain did not
+  // have: throw, so the history retries the block rather than recording it
+  // as unreported for good (Codex #4016 r1).
+  if (knobs.transportFailed) throw new Error('the settings multicall failed at the node');
+  return {
+    // The output names only when the loupe shows this build's ABI is the
+    // code that answered at this block (as the snapshot row, #2073);
+    // otherwise the values by position alone.
+    bundle:
+      bundle.kind === 'read'
+        ? bundleAbiBound
+          ? { values: bundle.values }
+          : { positional: bundle.positional }
+        : { unreadable: bundle.reason },
+    knobs: { values: knobs.values, unreported: knobs.unreported },
+    eventValues,
+    pauseLog,
+  };
 }

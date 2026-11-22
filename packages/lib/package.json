@@ -70,6 +70,10 @@
       "types": "./src/failedTxBounds.ts",
       "default": "./src/failedTxBounds.ts"
     },
+    "./watchedContracts": {
+      "types": "./src/watchedContracts.ts",
+      "default": "./src/watchedContracts.ts"
+    },
     "./errorDescription": {
       "types": "./src/errorDescription.ts",
       "default": "./src/errorDescription.ts"

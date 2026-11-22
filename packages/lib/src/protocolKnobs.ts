@@ -40,7 +40,16 @@
  * runtime dependency on `@vaipakam/contracts`; both callers pass the
  * Diamond ABI they already compile against.
  */
-import { getAbiItem, toFunctionSelector, type Abi, type Address, type PublicClient } from 'viem';
+import {
+  AbiDecodingZeroDataError,
+  BaseError,
+  ContractFunctionRevertedError,
+  getAbiItem,
+  toFunctionSelector,
+  type Abi,
+  type Address,
+  type PublicClient,
+} from 'viem';
 import type { DeploymentFacets } from '@vaipakam/contracts/deployments';
 import { MULTICALL3_ADDRESS } from './multicall.js';
 import { describeShapeMismatch, readStaticReturn } from './staticReturn.js';
@@ -330,6 +339,26 @@ export interface ProtocolKnobRead {
    *  that names no guard). Stated, never left implicit: a key in neither
    *  list means the reader did not ask for it. */
   unreported: string[];
+  /** #3921 — whether any setting went unreported because the request itself
+   *  failed (the node or the transport), not because the chain answered with
+   *  a revert or no code. `allowFailure` turns a failed request into failure
+   *  results like any revert; a reader that must not record a passing outage
+   *  as "not reported" (the settings history) retries on this instead. */
+  transportFailed: boolean;
+}
+
+/** A failure result that is the chain's own answer (a revert, or no code at
+ *  the address), as opposed to a request that never got one. */
+function isChainAnswer(error: unknown): boolean {
+  if (!(error instanceof BaseError)) return false;
+  return (
+    error.walk((e) => e instanceof ContractFunctionRevertedError || e instanceof AbiDecodingZeroDataError) !== null
+  );
+}
+
+/** Whether any multicall result failed for a reason other than the chain's answer. */
+export function anyTransportFailure(results: readonly { status: string; error?: unknown }[]): boolean {
+  return results.some((r) => r.status === 'failure' && !isChainAnswer(r.error));
 }
 
 function toKnobValue(v: unknown): ProtocolKnobValue | null {
@@ -391,6 +420,7 @@ export async function readProtocolKnobGetters(opts: {
   });
   const values: Record<string, ProtocolKnobPublished> = {};
   const unreported: string[] = [];
+  let transportFailed = anyTransportFailure(results as readonly { status: string; error?: unknown }[]);
   PROTOCOL_KNOB_GETTERS.forEach((k, i) => {
     const r = results[i];
     const v = r && r.status === 'success' ? toKnobValue(r.result) : null;
@@ -427,6 +457,7 @@ export async function readProtocolKnobGetters(opts: {
       blockNumber: opts.blockNumber,
       multicallAddress: MULTICALL3_ADDRESS,
     });
+    if (anyTransportFailure(answers as readonly { status: string; error?: unknown }[])) transportFailed = true;
     PRICE_GUARD_KNOB_GETTERS.forEach((k, i) => {
       const r = answers[i];
       const v = r && r.status === 'success' ? toKnobValue(r.result) : null;
@@ -436,7 +467,7 @@ export async function readProtocolKnobGetters(opts: {
   } else {
     unreported.push(...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key));
   }
-  return { values, unreported };
+  return { values, unreported, transportFailed };
 }
 
 function labelledKeys(g: LabelledKnobGetter): readonly string[] {

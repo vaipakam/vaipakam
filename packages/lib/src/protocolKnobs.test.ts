@@ -4,7 +4,15 @@
  * explicit list of what the chain did not answer.
  */
 import { describe, expect, it } from 'vitest';
-import { getAbiItem, toFunctionSelector, type Abi, type PublicClient } from 'viem';
+import {
+  ContractFunctionExecutionError,
+  ContractFunctionRevertedError,
+  HttpRequestError,
+  getAbiItem,
+  toFunctionSelector,
+  type Abi,
+  type PublicClient,
+} from 'viem';
 import { DIAMOND_ABI_VIEM, PriceGuardABI } from '@vaipakam/contracts/abis';
 import {
   EVENTLESS_PROTOCOL_KNOBS,
@@ -141,6 +149,27 @@ describe('readProtocolKnobGetters', () => {
     expect(r.unreported).not.toContain('minHealthFactor');
     expect(r.unreported).toContain('rewardGraceSeconds');
     expect(r.unreported).toContain('pythOracle');
+  });
+
+  it('tells a request that failed at the node from the chain answering with a revert (#3921)', async () => {
+    const run = (error: unknown) =>
+      readProtocolKnobGetters({
+        client: {
+          multicall: async (args: { contracts: readonly unknown[] }) =>
+            args.contracts.map(() => ({ status: 'failure', error })),
+        } as unknown as PublicClient,
+        diamond: '0x00000000000000000000000000000000000000dd',
+        abi: DIAMOND_ABI_VIEM,
+        guardAbi: GUARD_ABI,
+        blockNumber: 1n,
+        facets: undefined,
+      });
+    const reverted = new ContractFunctionExecutionError(
+      new ContractFunctionRevertedError({ abi: [], functionName: 'getMinHealthFactor', message: 'FunctionDoesNotExist()' }),
+      { abi: [], functionName: 'getMinHealthFactor', contractAddress: '0x00000000000000000000000000000000000000dd' },
+    );
+    expect((await run(reverted)).transportFailed).toBe(false);
+    expect((await run(new HttpRequestError({ url: 'https://node.invalid' }))).transportFailed).toBe(true);
   });
 
   it('throws when the batch itself fails, leaving the meaning to the caller', async () => {
