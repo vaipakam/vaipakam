@@ -406,7 +406,8 @@ const fnKey = (contract, fn) => `${contract.name}.${fn.name || fn.kind}(${typeLi
 // ─── Report 1: silent functions ──────────────────────────────────────────
 
 export function silentFunctions(units, manifest, ctx = makeContext(units, manifest.facets)) {
-  const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId);
+  // receive() and fallback() are entry points too: anyone can reach them.
+  const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId, { special: true });
   const out = [];
   for (const e of entries) {
     const c = ctx.contracts.get(e.contract);
@@ -527,6 +528,20 @@ function errorOf(call, ctx) {
   return d?.nodeType === 'ErrorDefinition' ? d : undefined;
 }
 
+/**
+ * The error an argument names by its selector (`E.selector`). Passed to a
+ * call, that is a typed raise: the shared revert wrapper
+ * (`LibRevert.bubbleOnFailureTyped(ok, data, E.selector)`) reverts with E, so
+ * each such call is a raise site of E, the same reading error-raisers.mjs
+ * takes. A `.selector` compared with something is a decode, never an argument.
+ */
+function errorOfSelectorArg(a, ctx) {
+  while (a?.nodeType === 'TupleExpression' && a.components?.length === 1) a = a.components[0];
+  if (a?.nodeType !== 'MemberAccess' || a.memberName !== 'selector') return undefined;
+  const d = ctx.byId.get(a.expression?.referencedDeclaration);
+  return d?.nodeType === 'ErrorDefinition' ? d : undefined;
+}
+
 function errorSig(err) {
   return `${err.name}(${typeList(err)})`;
 }
@@ -555,7 +570,8 @@ export function abiType(t, byId) {
 export const errorAbiSig = (err, byId) => `${err.name}(${(err.parameters?.parameters ?? []).map((p) => abiType(p.typeName, byId)).join(',')})`;
 
 export function ambiguousErrors(units, manifest, ctx = makeContext(units, manifest.facets), catalogue = undefined) {
-  const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId);
+  // receive() and fallback() are entry points too: anyone can reach them.
+  const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId, { special: true });
   // View entry points can raise too; the rule is per entry function.
   const viewEntries = [];
   for (const name of shippedNames(manifest)) {
@@ -574,17 +590,19 @@ export function ambiguousErrors(units, manifest, ctx = makeContext(units, manife
   const ambiguous = [];
   for (const e of [...entries, ...viewEntries]) {
     const sites = new Map();
-    reach(e.fn, ctx.contracts.get(e.contract), ctx, (n) => {
-      let err;
-      if (n.nodeType === 'RevertStatement') err = errorOf(n.errorCall, ctx);
-      else if (n.nodeType === 'FunctionCall' && n.expression?.name === 'require' && n.arguments?.[1]?.nodeType === 'FunctionCall') err = errorOf(n.arguments[1], ctx);
+    const record = (err, site) => {
       if (!err || (err.parameters?.parameters ?? []).length) return;
       // Grouped by what the caller receives (the ABI signature, so the
       // selector), not by declaration: two `Bad()` errors declared in
       // different places revert with the same data.
       const sig = errorAbiSig(err, ctx.byId);
       if (!sites.has(sig)) sites.set(sig, { err, ids: new Set() });
-      sites.get(sig).ids.add(n.id);
+      sites.get(sig).ids.add(site);
+    };
+    reach(e.fn, ctx.contracts.get(e.contract), ctx, (n) => {
+      if (n.nodeType === 'RevertStatement') record(errorOf(n.errorCall, ctx), n.id);
+      else if (n.nodeType === 'FunctionCall' && n.expression?.name === 'require' && n.arguments?.[1]?.nodeType === 'FunctionCall') record(errorOf(n.arguments[1], ctx), n.id);
+      else if (n.nodeType === 'FunctionCall') for (const a of n.arguments ?? []) record(errorOfSelectorArg(a, ctx), n.id);
     });
     for (const { err, ids } of sites.values()) if (ids.size > 1) ambiguous.push(`${e.key} :: ${errorSig(err)} x${ids.size}`);
   }
@@ -676,7 +694,8 @@ export function writeOnlyStorage(units, manifest, ctx = makeContext(units, manif
     });
   }
   // Functions a state-changing entry point reaches.
-  const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId);
+  // receive() and fallback() are entry points too: anyone can reach them.
+  const { entries } = entryPoints(units, shippedNames(manifest), ctx.byId, { special: true });
   const live = new Set();
   for (const e of entries) for (const id of reach(e.fn, ctx.contracts.get(e.contract), ctx).functions) live.add(id);
   // Modifiers reached are bodies too: include them by marking their ids.

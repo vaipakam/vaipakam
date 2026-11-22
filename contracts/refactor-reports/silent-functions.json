@@ -1,8 +1,8 @@
 {
   "report": "silent-functions",
   "counts": {
-    "entries": 55,
-    "checked": 986
+    "entries": 61,
+    "checked": 992
   },
   "entries": [
     "AggregatorAdapterFactoryFacet.initializeAdapterImplementation()",
@@ -27,6 +27,7 @@
     "EncumbranceMutateFacet.releaseOfferPrincipalLien(uint256)",
     "FlashLoanLiquidator.liquidateViaAaveV3(uint256,uint256,uint256,address,bytes)",
     "FlashLoanLiquidator.liquidateViaBalancerV2(uint256,uint256,uint256,address,bytes)",
+    "FlashLoanLiquidator.receive()",
     "InteractionRewardsFacet.transferLenderRewardEntry(uint256,address)",
     "LenderIntentFacet.releaseIntentExposure(uint256)",
     "MarketLedgerFacet.onSlotFilled(uint256)",
@@ -47,18 +48,23 @@
     "RewardReconciliationFacet.reconciliationReleaseAbsorbed(uint256,uint256,bool,bool)",
     "RewardReconciliationFacet.reconciliationTakeFresh(uint256,uint256,bool)",
     "RewardReconciliationFacet.reconciliationTakeRecycled(uint256,uint256,bool,bool,uint256)",
+    "SanctionsClearanceAttestor.receive()",
+    "SanctionsDelistingTimelock.receive()",
     "SwapAttemptFacet.swapAttempt(struct:LibSwap.Sale,uint256,bytes)",
     "VaipakamNFTFacet.markOfferPositions(uint256,uint256)",
     "VaipakamNFTMetadataFacet.setContractImageURI(string)",
+    "VaipakamRewardMessenger.receive()",
     "VaipakamTimelock.onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
     "VaipakamTimelock.onERC1155Received(address,address,uint256,uint256,bytes)",
     "VaipakamTimelock.onERC721Received(address,address,uint256,bytes)",
+    "VaipakamTimelock.receive()",
     "VaipakamVaultImplementation.depositERC1155(address,uint256,uint256)",
     "VaipakamVaultImplementation.depositERC20(address,uint256)",
     "VaipakamVaultImplementation.depositERC721(address,uint256)",
     "VaipakamVaultImplementation.protect(bytes)",
     "VaipakamVaultImplementation.setRental1155(address,uint256,uint256,address,uint64,uint256)",
     "VaipakamVaultImplementation.setUser(address,uint256,address,uint64)",
-    "VaultOutflowFacet.vaultGrant(address,struct:VaultOutflowTypes.Grant)"
+    "VaultOutflowFacet.vaultGrant(address,struct:VaultOutflowTypes.Grant)",
+    "VaultProtection.fallback()"
   ]
 }

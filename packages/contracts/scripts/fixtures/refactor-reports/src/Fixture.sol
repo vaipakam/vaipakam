@@ -12,6 +12,18 @@ library LibErr {
     error Bad();
 }
 
+library LibRevTyped {
+    // The shared revert wrapper's shape: reverts with the error a selector names.
+    function bubble(bool ok, bytes4 sel) internal pure {
+        if (!ok) {
+            assembly ("memory-safe") {
+                mstore(0, sel)
+                revert(0, 4)
+            }
+        }
+    }
+}
+
 library LibLoud {
     /// @custom:event-category state-change/loan-mutation
     event Did(uint256 x);
@@ -47,6 +59,7 @@ contract AFacet {
     bytes4 internal constant LOUD_BY_MEMBER = BFacet.loud.selector;
 
     uint256 internal neverRead;
+    uint256 internal receivedOnly;
     uint256 internal readByEntry;
     uint256 internal readOnlyInView;
     uint256 public publicOnly;
@@ -174,6 +187,22 @@ contract AFacet {
     function oneSite(uint256 a) external {
         if (a == 1) revert Bad();
         emit Skipped();
+    }
+
+    function typedWrapperSites(bool a, bool b) external {
+        LibRevTyped.bubble(a, Bad.selector);
+        LibRevTyped.bubble(b, Bad.selector);
+        emit Skipped();
+    }
+
+    function typedThenDecode(bool a, bytes memory data) external {
+        LibRevTyped.bubble(a, Bad.selector);
+        if (bytes4(data) == Bad.selector) emit Skipped();
+    }
+
+    // receive() is an entry point: it writes a field nothing reads, silently.
+    receive() external payable {
+        receivedOnly = msg.value;
     }
 
     function textRevert() external pure {

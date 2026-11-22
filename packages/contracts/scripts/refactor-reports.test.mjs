@@ -75,6 +75,16 @@ test('ambiguous errors: two raise sites of one parameterless error in one entry 
   assert.ok(!has('ambiguous-errors', 'ambiguous AFacet.oneSite('));
 });
 
+test('ambiguous errors: each typed revert-wrapper call naming E.selector is a raise site of E; a comparison is not', () => {
+  assert.ok(has('ambiguous-errors', 'ambiguous AFacet.typedWrapperSites(bool,bool) :: Bad() x2'));
+  assert.ok(!has('ambiguous-errors', 'ambiguous AFacet.typedThenDecode('), '`bytes4(data) == Bad.selector` decodes, it raises nothing');
+});
+
+test('receive() is an entry point for every report', () => {
+  assert.ok(has('silent-functions', 'AFacet.receive()'), 'it writes and emits nothing');
+  assert.ok(R['write-only-storage'].entries.includes('AFacet.receivedOnly'), 'written only by receive(), read nowhere');
+});
+
 test('ambiguous errors: text reverts and errors missing from the catalogue are listed', () => {
   assert.ok(has('ambiguous-errors', 'text AFacet.textRevert()'));
   assert.ok(has('ambiguous-errors', 'uncatalogued Failed()'));
