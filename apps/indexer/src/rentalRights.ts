@@ -25,6 +25,7 @@
  */
 
 import type { Env } from './env';
+import { LAST_EVENT_UPSERT_SET } from './lastEvent';
 import type { Cost } from './subrequestBudget';
 
 /** The decoded log fields this module reads. */
@@ -32,6 +33,8 @@ export interface RentalLog {
   eventName: string;
   args: Record<string, unknown>;
   blockNumber: bigint;
+  /** Optional: an event replayed from `activity_events` does not carry it. */
+  transactionIndex?: number | null;
   logIndex: number;
 }
 
@@ -45,6 +48,8 @@ export interface RentalRightRow {
   expires: number;
   quantity: string;
   blockNumber: number;
+  /** The update's transaction position, null where not in hand (#3921 B2). */
+  txIndex: number | null;
   logIndex: number;
 }
 
@@ -70,6 +75,7 @@ export function rentalRightRows(logs: readonly RentalLog[]): RentalRightRow[] {
       expires: Number(expires > MAX_STORED_EXPIRY ? MAX_STORED_EXPIRY : expires),
       quantity: BigInt(a.quantity as bigint).toString(),
       blockNumber: Number(log.blockNumber),
+      txIndex: log.transactionIndex ?? null,
       logIndex: log.logIndex,
     });
   }
@@ -112,22 +118,30 @@ export interface RentalDb {
  * list, whatever its length, so a busy scan or a seed page costs one D1 query
  * rather than one per event. `json_each` hands the rows over in array order,
  * and the later-update rule makes that order irrelevant anyway.
+ *
+ * #3921 B2 — the row names the update that set it in the three shared
+ * last-event columns as well; the later-update rule makes them move forward
+ * only, like every other derived row's.
  */
 const UPSERT_ROWS = `INSERT INTO rental_rights
     (chain_id, loan_id, collection, token_id, owner, user, expires, quantity,
-     block_number, log_index, updated_at)
+     block_number, log_index, updated_at,
+     last_event_block, last_event_tx_index, last_event_log_index)
   SELECT ?,
          json_extract(value, '$.loanId'), json_extract(value, '$.collection'),
          json_extract(value, '$.tokenId'), json_extract(value, '$.owner'),
          json_extract(value, '$.user'), json_extract(value, '$.expires'),
          json_extract(value, '$.quantity'), json_extract(value, '$.blockNumber'),
-         json_extract(value, '$.logIndex'), ?
+         json_extract(value, '$.logIndex'), ?,
+         json_extract(value, '$.blockNumber'), json_extract(value, '$.txIndex'),
+         json_extract(value, '$.logIndex')
     FROM json_each(?) WHERE true
   ON CONFLICT (chain_id, loan_id) DO UPDATE SET
     collection = excluded.collection, token_id = excluded.token_id,
     owner = excluded.owner, user = excluded.user, expires = excluded.expires,
     quantity = excluded.quantity, block_number = excluded.block_number,
-    log_index = excluded.log_index, updated_at = excluded.updated_at
+    log_index = excluded.log_index, updated_at = excluded.updated_at,
+    ${LAST_EVENT_UPSERT_SET}
   WHERE excluded.block_number > rental_rights.block_number
      OR (excluded.block_number = rental_rights.block_number
          AND excluded.log_index > rental_rights.log_index)`;

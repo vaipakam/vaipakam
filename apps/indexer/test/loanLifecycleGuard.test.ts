@@ -67,12 +67,12 @@ describe('the status diagram', () => {
 });
 
 describe('judgeObservation', () => {
-  const at = (status: number, fromInitiation = true): TrackedLoan => ({ status, fromInitiation, lastBlock: 10, lastLogIndex: 3 });
+  const at = (status: number, fromInitiation = true): TrackedLoan => ({ status, fromInitiation, lastBlock: 10, lastTxIndex: null, lastLogIndex: 3 });
   const obs = (from: number, to: number, block = 11, logIndex = 0) => lifecycleObservations([moved(1, from, to, block, logIndex)])[0];
 
   it('accepts an allowed move from the status last seen', () => {
     expect(judgeObservation(at(S.Active), obs(S.Active, S.FallbackPending))).toEqual({
-      next: { status: S.FallbackPending, fromInitiation: true, lastBlock: 11, lastLogIndex: 0 },
+      next: { status: S.FallbackPending, fromInitiation: true, lastBlock: 11, lastTxIndex: null, lastLogIndex: 0 },
       reasons: [],
       expected: S.Active,
     });
@@ -93,7 +93,7 @@ describe('judgeObservation', () => {
   it('checks a loan first seen part-way through its life against the diagram only', () => {
     const first = judgeObservation(null, obs(S.FallbackPending, S.Active));
     expect(first).toEqual({
-      next: { status: S.Active, fromInitiation: false, lastBlock: 11, lastLogIndex: 0 },
+      next: { status: S.Active, fromInitiation: false, lastBlock: 11, lastTxIndex: null, lastLogIndex: 0 },
       reasons: [],
       expected: null,
     });
@@ -116,13 +116,36 @@ describe('judgeObservation', () => {
 describe('recordLoanLifecycle', () => {
   const db = () => createSqliteD1(migrations());
 
+  it('names the last announcement by block, transaction and log (#3921 B2)', async () => {
+    const h = db();
+    await recordLoanLifecycle(h.d1 as never, CHAIN, [{ ...initiated(3, 100, 5), transactionIndex: 4 }], times(100));
+    await recordLoanLifecycle(h.d1 as never, CHAIN, [{ ...moved(3, S.Active, S.Repaid, 102, 0), transactionIndex: 1 }], times(102));
+    // A replayed older announcement is not applied, so the columns stay.
+    await recordLoanLifecycle(h.d1 as never, CHAIN, [{ ...initiated(3, 100, 5), transactionIndex: 4 }], times(100));
+    expect(
+      h.db.prepare('SELECT last_event_block, last_event_tx_index, last_event_log_index FROM loan_lifecycle_state WHERE loan_id = 3').get(),
+    ).toEqual({ last_event_block: 102, last_event_tx_index: 1, last_event_log_index: 0 });
+  });
+
   it('tracks a loan from initiation through settlement with no violation, in chain order whatever the log order', async () => {
     const h = db();
     const logs = [moved(1, S.Repaid, S.Settled, 101, 2), moved(1, S.Active, S.Repaid, 101, 1), initiated(1, 100, 5)];
     const r = await recordLoanLifecycle(h.d1 as never, CHAIN, logs, times(100, 101));
     expect(r).toEqual({ applied: 3, violations: 0 });
     expect(h.db.prepare('SELECT * FROM loan_lifecycle_state').all()).toEqual([
-      { chain_id: CHAIN, loan_id: 1, status: S.Settled, from_initiation: 1, last_block: 101, last_log_index: 2 },
+      {
+        chain_id: CHAIN,
+        loan_id: 1,
+        status: S.Settled,
+        from_initiation: 1,
+        last_block: 101,
+        last_log_index: 2,
+        // #3921 B2 — the shared columns name the same announcement; these
+        // fixtures carry no transaction position.
+        last_event_block: 101,
+        last_event_tx_index: null,
+        last_event_log_index: 2,
+      },
     ]);
     expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_lifecycle_violation').get()).toEqual({ n: 0 });
   });

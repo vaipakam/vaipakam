@@ -150,6 +150,95 @@ describe('a figure read back at its event\'s block names the block, not the even
       DIAMOND,
     );
     expect(lastEvent(h, 'loans', 'loan_id', 11)).toEqual([600, null, null]);
+    // The new obligor's participation row is the handover's own record.
+    const p = h.db
+      .prepare(
+        `SELECT last_event_block, last_event_tx_index, last_event_log_index FROM loan_participants
+          WHERE loan_id = 11 AND wallet = '0x00000000000000000000000000000000000000be'`,
+      )
+      .get() as object;
+    expect(Object.values(p)).toEqual([600, 1, 3]);
+  });
+});
+
+describe('the loan side tables name their last event (#3921 B2)', () => {
+  const row = (h: SqliteD1, table: string, loanId: number) =>
+    Object.values(
+      h.db
+        .prepare(
+          `SELECT last_event_block, last_event_tx_index, last_event_log_index FROM ${table}
+            WHERE chain_id = ? AND loan_id = ?`,
+        )
+        .get(CHAIN, loanId) as object,
+    );
+
+  it('a swap-to-repay commit names the commit', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 20);
+    await run(h, [
+      log(
+        'SwapToRepayIntentCommitted',
+        {
+          loanId: 20n,
+          orderHash: `0x${'cd'.repeat(32)}`,
+          committedBy: '0x00000000000000000000000000000000000000c1',
+          makerAmount: 5n,
+          takerAmount: 6n,
+          deadline: 9_999n,
+        },
+        700n,
+        6,
+        2,
+      ),
+    ]);
+    expect(row(h, 'swap_to_repay_intents', 20)).toEqual([700, 2, 6]);
+  });
+
+  function seedListing(h: SqliteD1, loanId: number) {
+    h.db
+      .prepare(
+        `INSERT INTO prepay_listings (chain_id, loan_id, order_hash, ask_price, conduit, lister,
+           posted_at, updated_at, grace_period_end, block_number, tx_hash, log_index)
+         VALUES (?, ?, '0xo', '1', '0xc', '0xl', 1, 1, 1, 1, '0xt', 0)`,
+      )
+      .run(CHAIN, loanId);
+  }
+  const partialRepay = (h: SqliteD1, loanId: number, client: unknown) =>
+    processLoanLogs(
+      [log('PartialRepaid', { loanId: BigInt(loanId), newPrincipal: 50n }, 800n, 4, 1)] as never,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[800n, 1_700_000_000]]),
+      client as never,
+      DIAMOND,
+    );
+
+  it('a listing\'s grace end read at the event\'s block names that block', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 21);
+    seedListing(h, 21);
+    await partialRepay(h, 21, { readContract: async () => ({ graceEnd: 123n }) });
+    expect(row(h, 'prepay_listings', 21)).toEqual([800, null, null]);
+  });
+
+  it('a grace end the pinned read could not give is from an unnamed block, so the row says unknown', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 22);
+    seedListing(h, 22);
+    h.db.prepare('UPDATE prepay_listings SET last_event_block = 5 WHERE loan_id = 22').run();
+    // The pinned read fails, the head read answers: its block is not named.
+    const client = {
+      readContract: async (q: { blockNumber?: bigint }) => {
+        if (q.blockNumber !== undefined) throw new Error('no history');
+        return { graceEnd: 456n };
+      },
+    };
+    await partialRepay(h, 22, client);
+    const g = h.db.prepare('SELECT grace_period_end FROM prepay_listings WHERE loan_id = 22').get() as {
+      grace_period_end: number;
+    };
+    expect(g.grace_period_end).toBe(456);
+    expect(row(h, 'prepay_listings', 22)).toEqual([null, null, null]);
   });
 });
 

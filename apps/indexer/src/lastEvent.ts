@@ -29,8 +29,11 @@
  * that came last on chain. Taking the later of the stored position and the
  * new one makes the columns name the latest event that wrote the row, in
  * chain order, whatever order the handlers ran in, and a re-scan of an
- * older block cannot move them back. A position with no block (unknown)
- * never replaces a known one. The log index is unique within a block, so
+ * older block cannot move them back. One exception, so the row never names a
+ * source that did not produce its figures: a write whose figures came from a
+ * source it cannot name (an unpinned read; {@link UNKNOWN_POSITION}) makes
+ * the row unknown, whatever it named before. A STORED unknown, by contrast,
+ * gives way to any known position. The log index is unique within a block, so
  * block and log index order the events; the transaction index rides along.
  *
  * Which tables carry the columns, and why the others do not, is
@@ -93,13 +96,39 @@ export function lastEventBinds(p: RowPosition): [number | null, number | null, n
  * with (interpolated as `${LAST_EVENT_SET}`; the SQL guard substitutes it
  * before preparing, so the statement is still checked against the schema).
  * It takes three binds, {@link lastEventBinds}, and keeps whichever of the
- * stored position and the new one is later: by block (an unknown block is
- * never later), then by log index, where a read (no log index) counts as
+ * stored position and the new one is later: an incoming unknown first (see
+ * the exception above), then by block (a stored unknown is never later),
+ * then by log index, where a read (no log index) counts as
  * after every log of its block. SET expressions read the row as it was, so
  * the stored position is the one before this write.
  */
-export const LAST_EVENT_SET =
-  `(last_event_block, last_event_tx_index, last_event_log_index) = (` +
-  `SELECT column1, column2, column3 FROM (VALUES (?, ?, ?), ` +
-  `(last_event_block, last_event_tx_index, last_event_log_index)) ` +
-  `ORDER BY column1 IS NULL, column1 DESC, ifnull(column3, 2147483647) DESC LIMIT 1)`;
+export const LAST_EVENT_SET = laterOf('?, ?, ?');
+
+/**
+ * The same assignment for an upsert's `ON CONFLICT ... DO UPDATE SET`, whose
+ * new position is the one the INSERT carried (`excluded.*`) rather than three
+ * binds: a statement that inserts many rows at once (one bound JSON array)
+ * has no per-row bind to give. Same rule, same ordering, one definition.
+ */
+export const LAST_EVENT_UPSERT_SET = laterOf(
+  'excluded.last_event_block, excluded.last_event_tx_index, excluded.last_event_log_index',
+);
+
+/** The one ordering both forms share: an incoming unknown, else the later of
+ *  `incoming` and the stored position, by block (a stored unknown never
+ *  later), then log index, a read (no log index) counting as after every log
+ *  of its block. */
+function laterOf(incoming: string): string {
+  const [b, t, l] = incoming.split(',').map((x) => x.trim());
+  // A compound SELECT, not a VALUES list: SQLite refuses a VALUES row that
+  // reads `excluded.*` inside an upsert ("no such column: column1"), and the
+  // two forms must stay one rule.
+  // `n` marks the incoming row: an incoming unknown sorts first, a stored
+  // unknown last.
+  return (
+    `(last_event_block, last_event_tx_index, last_event_log_index) = (` +
+    `SELECT b, t, l FROM (SELECT ${b} AS b, ${t} AS t, ${l} AS l, 1 AS n ` +
+    `UNION ALL SELECT last_event_block, last_event_tx_index, last_event_log_index, 0) ` +
+    `ORDER BY (b IS NULL AND n = 1) DESC, b IS NULL, b DESC, ifnull(l, 2147483647) DESC LIMIT 1)`
+  );
+}
