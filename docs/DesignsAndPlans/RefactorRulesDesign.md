@@ -247,7 +247,7 @@ before.
 The model, the two categories, the tag and the closed list of categories of
 the May 2026 audit all stand. So does its rule against repeating what the
 log already carries: no block time, no sender, no value that can be computed
-from the others. This rule adds four things.
+from the others. This rule adds five things.
 
 **1. Every change an outside reader needs to rebuild state emits exactly
 once, from the place that writes it.** Where one library is the only writer
@@ -277,7 +277,15 @@ Two categories are added to the closed list for these, **Default** names:
 **3. Storage that only outside readers need becomes an event** (rule 1,
 step 2).
 
-**4. The checks.** Report 2 refuses a state-changing function whose
+**4. A change of a setting carries its new value in full.** The event of a
+settings change holds every value the change wrote, so the settings in force
+before any transaction can be rebuilt from the events in order. Reading the
+settings back at the block of the change gives only the block's last values,
+which is wrong for a transaction between two changes in one block. The
+interface document (section 8.1) lists each settings event with the values
+it carries, and the pass adds what is missing.
+
+**5. The checks.** Report 2 refuses a state-changing function whose
 reachable code contains no emit, unless the function is listed with its
 reason. Report 3 refuses a caught failure that neither reverts nor emits,
 unless listed. The category lint refuses an untagged event.

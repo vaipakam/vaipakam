@@ -124,7 +124,7 @@ and from what each mode was measured to cost there.
 | Mode | How | Sees | Cost |
 | --- | --- | --- | --- |
 | **Trace filter** | One request per block range for every call into the watched contracts that failed | Direct calls and calls made through another contract | A few thousand requests a day |
-| **List and audit** | Three sources, below | Direct calls, with the miss rate measured | A few thousand requests a day |
+| **List and audit** | Three sources, below | Direct calls, with the miss rate measured | Measured at 8,000 to 11,000 requests and under 100 MB a day for a test network, most of it the audit |
 | **Block scan** | Read every block's transactions, keep those sent to a watched contract, read the receipt of each | Direct calls only | Measured on the public test networks at 190,000 to 430,000 requests and 2 to 4 GB a day for one network |
 
 A trace filter is used wherever the node has one. A continuous block scan is
@@ -135,15 +135,27 @@ used only where its measured cost is inside a stated bound (**Default**
 - **The keeper's own sends.** Section 4.4 records every one, so a failed one
   is known at once.
 - **The network explorer's list** of transactions sent to each watched
-  contract, read every few minutes and kept where the transaction failed.
-  It covers direct calls by anyone, which is what a block scan covers. It
-  is an outside source of **where to look**. What is stored is read from
-  the network's own node: the receipt and the explanation.
+  contract, kept where the transaction failed. The deployment record marks
+  the contracts users call directly (the Diamond, the position token, the
+  VPFI token). Those are read every few minutes (**Default** 5) and the
+  rest hourly, which the capability check measured at about 1,800 requests
+  a day against 11,000 for reading all of them every 5 minutes. It covers
+  direct calls by anyone, which is what a block scan covers. It is an
+  outside source of **where to look**. What is stored is read from the
+  network's own node: the receipt and the explanation.
 - **A sampled audit.** Each day one window of blocks chosen at random
   (**Default** 30 minutes) is scanned in full and compared with what the two
   sources above found in it. A failure they missed is recorded, raises an
   alert and becomes a card. The health route shows the miss rate measured so
   far. Completeness in this mode is a measured figure, never a claim.
+
+**Where the list cannot be read** (the explorer refuses the network, or
+offers it only on a tier the owner has not chosen to pay for), the mode is
+**sends and audit**: the keeper's own sends, and an audit window as long as
+the bound allows. The health route then states, as a plain figure, the
+share of the day in which failures by others are watched, and says the rest
+of the day is not watched. A network on a trace filter does not read the
+list at all and needs no key for it.
 
 Every record names the source that found it.
 
@@ -301,8 +313,17 @@ Four small histories, each written when the thing changes.
 
 - **Settings.** Today the indexer keeps one current copy of the protocol's
   settings and reads it again when a governance event passes. It now also
-  appends a row per change, read at the block of the change, with the event
-  and the transaction that caused it.
+  appends a row per change, with the event and the transaction that caused
+  it. The row's values come from **the event's own values**, applied to the
+  row before it, never from reading the settings back at the block: a read
+  at the block gives the block's last values, which is wrong for a
+  transaction between two changes in one block. Where an event does not
+  carry a value it changed, the row takes that value from a read at the end
+  of the block and marks it "as at the end of the block". If that setting
+  changed more than once in the block, the earlier rows mark the value "not
+  known" for the stretch between. The companion design (section 6, point 4)
+  makes every settings event carry its values in full, so after the pass no
+  row needs either mark.
 - **Facets.** Every change to the Diamond's routing is recorded from its
   event: which code, at which address, serves which function. Together with
   the code hashes recorded at deploy, this names the code at any address.
@@ -490,7 +511,10 @@ the record does not reach far enough.
 8. Every send through the shared sender has a decision row naming its pass
    and subject.
 9. Settings changed twice give three answers for three blocks: before, between
-   and after.
+   and after. Two changes of one setting in one block, with a transaction
+   between them, give that transaction the first change's values, taken
+   from the event. A change whose event lacks a value is marked "as at the
+   end of the block", and "not known" between two such changes in a block.
 10. A derived row names the event that last changed it, and that event
     exists in the event history. An informational event with no handler is
     in the event history too.
@@ -531,6 +555,9 @@ the record does not reach far enough.
     row, and the case file answers "not in the feed" for a time inside the
     gap, "not reached" for a subject past a cap, and "not known" for a time
     no run covered.
+21. A network whose list cannot be read runs in sends and audit mode, and
+    its health line states the share of the day that is watched and says
+    the rest is not.
 
 ## 9. Residuals
 
@@ -539,6 +566,10 @@ the record does not reach far enough.
   network is in, and a failed call through a contract wallet or a batching
   contract is not recorded there unless the capability check found that the
   explorer's list holds such calls.
+- **Sends and audit watches part of the day.** Where the list cannot be
+  read, a failure by someone else outside the audit window is not recorded.
+  The share watched is stated on the health route, and a paid key or a node
+  with a trace filter for that network is the owner's choice.
 - **List and audit depends on an outside list for where to look.** A
   failure the list leaves out is found only if the audit window holds it.
   The miss rate is published on the health route, and a rate above zero is
