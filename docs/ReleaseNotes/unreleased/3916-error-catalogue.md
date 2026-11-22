@@ -1,4 +1,4 @@
-## Troubleshooting — one error catalogue every reader uses (PR #<n>)
+## Troubleshooting — one error catalogue every reader uses (PR #3943)
 
 Every error the platform's contracts can raise now has one catalogue entry, generated from the compiled interfaces: its name, its 4-byte selector and the values it carries. About 1,500 errors are listed, including a handful raised only by contracts the platform deploys without exporting their interface (the swap adapters, the reward custody holder), which the compiler's syntax tree supplies. Beside each entry, a second generated file lists every entry function whose reachable code can raise it, following internal calls, self-calls through the Diamond (so an error raised inside a host such as the fallback custody facet is listed under the liquidation and default that self-call it), and calls to the platform's own contracts, the price guard and its reader included. The list is a place to look, not a proof that some input reaches the raise; inline assembly and calls to outside contracts are not followed, and the file says so.
 
