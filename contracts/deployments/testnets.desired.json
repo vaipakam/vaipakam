@@ -199,6 +199,26 @@
       "getter": "getFusionLimitOrderProtocol()(address)",
       "value": "0x111111125421cA6dc452d289314280a0f8842A65",
       "source": "On-chain evidence read 2026-11-22: 1inch Router v6 (which carries Limit Order Protocol v4) answers on Base Sepolia: eip712Domain() names \"1inch Aggregation Router\" version 6. Its published list names mainnets only; design ruling 2026-11-22: where the venue exists, set the address."
+    },
+    {
+      "chains": "all",
+      "setter": "setInstantMarketEnabled(bool)",
+      "getter": "getInstantMarketConfig()(bool,uint8)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's; the instant market is a feature, so it is on"
+    },
+    {
+      "chains": "all",
+      "setter": "setInstantMaxFills(uint8)",
+      "getter": "getInstantMarketConfig()(bool,uint8)",
+      "args": [
+        "2"
+      ],
+      "expect": [
+        "true",
+        "2"
+      ],
+      "source": "design ruling 2026-11-22, instant borrow source cap (designs/notes/2026-11-22-instant-borrow-source-cap.md): 2 on every network until the gas suite shows room; Ethereum's per-transaction cap is the tightest"
     }
   ],
   "sanctionsClearance": {
