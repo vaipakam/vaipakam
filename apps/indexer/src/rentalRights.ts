@@ -17,8 +17,9 @@
  * again (deploymentEpoch.ts).
  *
  * ACTIVE. A row is active while its quantity is not '0' and its expiry is
- * after the time asked about. An expiry fires no event, so a row stops being
- * active by time alone; `isActiveRental` is the one statement of that.
+ * not before the time asked about: the vault's own comparison
+ * (`expires >= block.timestamp`). An expiry fires no event, so a row stops
+ * being active by time alone; `isActiveRental` is the one statement of that.
  */
 
 /** The decoded log fields this module reads. */
@@ -71,9 +72,24 @@ export function rentalRightRows(logs: readonly RentalLog[]): RentalRightRow[] {
   return out;
 }
 
-/** Whether a stored rental gives its user a right at `at` (unix seconds). */
+/**
+ * Whether a stored rental gives its user a right at `at` (unix seconds), by
+ * the vault's own comparison: still the user while `expires >= at`.
+ */
 export function isActiveRental(row: { quantity: string; expires: number }, at: number): boolean {
-  return row.quantity !== '0' && row.expires > at;
+  return row.quantity !== '0' && row.expires >= at;
+}
+
+/**
+ * The time a rental read judges "active" at: the later of the server's clock
+ * and the chain time the index holds (the latest block time it recorded at or
+ * below `asOf`). A server clock running behind the chain therefore cannot
+ * show a rental the chain already treats as ended. The answer can say
+ * "ended" a few seconds before the chain's newest block does, which is the
+ * safe side.
+ */
+export function rentalActiveAt(serverNow: number, chainTime: number | null): number {
+  return Math.max(Math.floor(serverNow), chainTime ?? 0);
 }
 
 interface Statement {

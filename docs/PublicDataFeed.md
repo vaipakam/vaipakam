@@ -41,8 +41,9 @@ already publishes: every row restates one `VaultRentalUpdated` event, and an
 ERC-721 renter can also be read from the owner's vault. They do not hide who
 rents. `by-collection` lists every renter of a collection, and anyone can
 read every collection, or the events themselves, and work out what one
-address rents. Both answer from the event-built rental table alone, so they
-can never join anything the platform keeps for a wallet; a test holds that.
+address rents. Both answer from the event-built rental table, reading
+beside it only the latest block time the index recorded, so they can never
+join anything the platform keeps for a wallet; a test holds that.
 
 ## Versioning
 
@@ -112,10 +113,15 @@ today are testnets; the platform is not live on any mainnet.
 | `/rentals/by-collection` | Each active rental of one collection: `rentalId`, `tokenId`, `user`, `expires`, `quantity`, and the `owner` of the vault holding the item. 200 a page by rental id; pass `nextCursor` back as `cursor`. | `collection` (required, exactly one), `tokenId`, `cursor` |
 | `/rentals/may-use` | The active rentals in one collection that name one address as `user`: what that address may use there, until when, and how many units. `truncated` is `true` past 500. | `collection` and `user` (both required, exactly one each), `tokenId` |
 
-**Active**, for both rental reads, means not cleared and not past its expiry
-at `activeAt`, the time of the answer. An expiry fires no event, so a rental
-past its expiry is left out even when the indexer has seen no block since;
-`asOf` names the block the clearings are known through. For an ERC-1155
+**Active**, for both rental reads, means not cleared and with an expiry not
+before `activeAt`: the vault's own comparison (`expires >= activeAt`). Each
+answer states `asOf` (`block`, the block the clearings are known through, and
+`chainTime`, the latest block time the index recorded at or below it) and
+`activeAt`, the later of the server's time and `chainTime`. A server clock
+behind the chain therefore cannot show a rental the chain already treats as
+ended. An expiry fires no event, so a rental past its expiry is left out even
+when the indexer has seen no block since. The feed can say "ended" a few
+seconds before the chain's newest block does; that is the safe side. For an ERC-1155
 item several rentals of one token can be active at once, one row each.
 
 The rental reads refuse a repeated `collection` or `user`, a list, and a

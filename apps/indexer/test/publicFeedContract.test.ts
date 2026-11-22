@@ -364,8 +364,8 @@ describe('(c) the tables each route reads', () => {
       ],
       // #3882 — the event-built rental table and nothing else behind both
       // rental reads (the cursor is the envelope's own read).
-      '/rentals/by-collection': ['indexer_cursor', 'rental_rights'],
-      '/rentals/may-use': ['indexer_cursor', 'rental_rights'],
+      '/rentals/by-collection': ['activity_events', 'indexer_cursor', 'rental_rights'],
+      '/rentals/may-use': ['activity_events', 'indexer_cursor', 'rental_rights'],
     });
   });
 

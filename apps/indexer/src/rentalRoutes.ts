@@ -15,20 +15,32 @@
  * the owner's vault. The routes are a convenience over that data. They do not
  * hide who rents: by-collection lists every renter of a collection.
  *
- * WHAT THEY NEVER DO. Each reads `rental_rights` and nothing else, so it can
- * never join anything the platform keeps for a wallet (alert links,
- * subscriptions, settings). Each takes exactly one collection, and may-use
+ * WHAT THEY NEVER DO. Each reads `rental_rights`, plus the cursor and the
+ * latest recorded block time for `asOf`, so it can never join anything the
+ * platform keeps for a wallet (alert links, subscriptions, settings). Each takes exactly one collection, and may-use
  * exactly one user: a repeated parameter, a list or a wildcard is refused.
  * `publicFeedContract.test.ts` holds both.
  *
- * ACTIVE is judged at `activeAt`, the time of the answer (`isActiveRental`):
- * an expiry is a time, not an event, so a rental past its expiry is not
- * active even when the indexer has seen no block since. The feed envelope's
- * `asOf` names the block the clearings are known through.
+ * ACTIVE is judged at `activeAt` by the vault's own comparison
+ * (`expires >= activeAt`, `isActiveRental`). `activeAt` is the later of the
+ * server's clock and the chain time the index holds at or below `asOf`
+ * (`rentalActiveAt`), so a server clock behind the chain cannot show a rental
+ * the chain already treats as ended. An expiry is a time, not an event, so a
+ * rental past its expiry is not active even when the indexer has seen no
+ * block since. Each answer states `asOf` (the block the clearings are known
+ * through, and the chain time held for it) and `activeAt`. The answer can
+ * say "ended" a few seconds before the chain's newest block does: the safe
+ * side.
+ *
+ * The chain time is read from `activity_events` (the latest recorded block
+ * time at or below the cursor), which, like `rental_rights`, the indexer
+ * rebuilds from the chain alone and which holds nothing kept for a wallet.
  */
 import { type Env } from './env';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, requestedChainId } from './servedChain';
+import { CURSOR_KIND } from './chainIndexer';
+import { rentalActiveAt } from './rentalRights';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const TOKEN_ID_RE = /^\d{1,78}$/;
@@ -75,6 +87,30 @@ function tokenIdOf(raw: string | null): string | null | undefined {
   return v < UINT256_LIMIT ? v.toString() : undefined;
 }
 
+interface RentalAsOf {
+  block: number | null;
+  chainTime: number | null;
+}
+
+/**
+ * The block the clearings are known through, and the latest chain time the
+ * index recorded at or below it. Read before the rentals, so every clearing
+ * at or below `block` is in the answer.
+ */
+async function readAsOf(env: Env, chainId: number): Promise<RentalAsOf> {
+  const row = await env.DB.prepare(
+    `SELECT c.last_block AS last_block,
+            (SELECT a.block_at FROM activity_events a
+              WHERE a.chain_id = c.chain_id AND a.block_number <= c.last_block AND a.block_at IS NOT NULL
+              ORDER BY a.block_number DESC LIMIT 1) AS chain_time
+       FROM indexer_cursor c
+      WHERE c.chain_id = ? AND c.kind = ?`,
+  )
+    .bind(chainId, CURSOR_KIND)
+    .first<{ last_block: number; chain_time: number | null }>();
+  return { block: row?.last_block ?? null, chainTime: row?.chain_time ?? null };
+}
+
 interface RentalDbRow {
   loan_id: number;
   token_id: string;
@@ -110,13 +146,14 @@ export async function handleRentalsByCollection(req: Request, env: Env): Promise
   const tokenId = tokenIdOf(tokenRaw.value);
   if (tokenId === undefined) return json({ error: 'one-value-required', parameter: 'tokenId' }, 400, 60);
 
-  const activeAt = Math.floor(Date.now() / 1000);
   try {
+    const asOf = await readAsOf(env, chainId);
+    const activeAt = rentalActiveAt(Date.now() / 1000, asOf.chainTime);
     const res = await env.DB.prepare(
       `SELECT loan_id, token_id, owner, user, expires, quantity
          FROM rental_rights
         WHERE chain_id = ? AND collection = ? AND (? IS NULL OR token_id = ?)
-          AND quantity <> '0' AND expires > ? AND loan_id > ?
+          AND quantity <> '0' AND expires >= ? AND loan_id > ?
         ORDER BY loan_id
         LIMIT ?`,
     )
@@ -135,6 +172,7 @@ export async function handleRentalsByCollection(req: Request, env: Env): Promise
     return json({
       collection: collection.value!.toLowerCase(),
       tokenId,
+      asOf,
       activeAt,
       rentals: page.map(rentalOf),
       nextCursor: rows.length > RENTALS_PAGE ? String(page[page.length - 1].loan_id) : null,
@@ -160,13 +198,14 @@ export async function handleRentalsMayUse(req: Request, env: Env): Promise<Respo
   const tokenId = tokenIdOf(tokenRaw.value);
   if (tokenId === undefined) return json({ error: 'one-value-required', parameter: 'tokenId' }, 400, 60);
 
-  const activeAt = Math.floor(Date.now() / 1000);
   try {
+    const asOf = await readAsOf(env, chainId);
+    const activeAt = rentalActiveAt(Date.now() / 1000, asOf.chainTime);
     const res = await env.DB.prepare(
       `SELECT loan_id, token_id, owner, user, expires, quantity
          FROM rental_rights
         WHERE chain_id = ? AND collection = ? AND user = ? AND (? IS NULL OR token_id = ?)
-          AND quantity <> '0' AND expires > ?
+          AND quantity <> '0' AND expires >= ?
         ORDER BY loan_id
         LIMIT ?`,
     )
@@ -185,6 +224,7 @@ export async function handleRentalsMayUse(req: Request, env: Env): Promise<Respo
       collection: collection.value!.toLowerCase(),
       user: user.value!.toLowerCase(),
       tokenId,
+      asOf,
       activeAt,
       rentals: rows.slice(0, MAY_USE_CAP).map(rentalOf),
       // True when the address holds more than the cap in this collection;

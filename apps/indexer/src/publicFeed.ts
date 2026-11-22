@@ -105,7 +105,10 @@ interface FeedRoute {
 
 const CHAIN_EVENTS = "the Diamond's own events on this chain, as the indexer recorded them";
 const RENTALS_SOURCE =
-  "the Diamond's VaultRentalUpdated events on this chain, one row per rental. Public on chain: an ERC-721 renter can also be read from the owner's vault";
+  "the Diamond's VaultRentalUpdated events on this chain, one row per rental, and the latest block time the index recorded at or below asOf (for activeAt). Public on chain: an ERC-721 renter can also be read from the owner's vault";
+/** What "active" means in both rental reads (#3882, design §12). */
+const ACTIVE_RULE =
+  "Active means not cleared and with an expiry not before `activeAt` (the vault's own comparison). `activeAt` is the later of the server's time and the chain time the index holds for `asOf`, both stated in the answer, so it can say \"ended\" a few seconds before the chain's newest block does: the safe side.";
 
 /**
  * The v1 subset. Adding a route is additive; changing a route's shape or
@@ -241,7 +244,8 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
   },
   {
     // #3882 — the rental reads (ProjectKitDesign.md §6, §12). Both answer
-    // from the event-built rental table alone, for exactly one collection.
+    // from the event-built rental table (and the latest recorded block time,
+    // for activeAt), for exactly one collection.
     pattern: /^\/rentals\/by-collection$/,
     path: '/rentals/by-collection',
     target: '/rentals/by-collection',
@@ -249,7 +253,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     params: ['collection', 'tokenId', 'cursor'],
     about: {
       what:
-        "Each active rental of one collection: rental id, token id, user, expiry, quantity, and the owner of the vault holding the item. Active means not cleared and not past its expiry at `activeAt`, the time of the answer. Paginated by rental id (`nextCursor`).",
+        "Each active rental of one collection: rental id, token id, user, expiry, quantity, and the owner of the vault holding the item. " + ACTIVE_RULE + " Paginated by rental id (`nextCursor`).",
       source: RENTALS_SOURCE,
       excludes: [
         'cleared rentals and rentals past their expiry',
@@ -265,7 +269,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     params: ['collection', 'user', 'tokenId'],
     about: {
       what:
-        'The active rentals in one collection that name one address as user: what that address may use there, until when, and how many units. `truncated` is true past 500 rentals.',
+        "The active rentals in one collection that name one address as user: what that address may use there, until when, and how many units. " + ACTIVE_RULE + " `truncated` is true past 500 rentals.",
       source: RENTALS_SOURCE,
       excludes: [
         'cleared rentals and rentals past their expiry',

@@ -10,11 +10,13 @@ import { createSqliteD1 } from './helpers/sqliteD1';
 import {
   MAX_STORED_EXPIRY,
   isActiveRental,
+  rentalActiveAt,
   recordRentalRights,
   rentalRightRows,
   type RentalLog,
 } from '../src/rentalRights';
 import { handleRentalsByCollection, handleRentalsMayUse } from '../src/rentalRoutes';
+import { CURSOR_KIND } from '../src/chainIndexer';
 import type { Env } from '../src/env';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -131,6 +133,40 @@ describe('rental rights table (#3882)', () => {
     expect(isActiveRental(t.rows()[0] as { quantity: string; expires: number }, NOW)).toBe(false);
     const res = await handleRentalsByCollection(new Request(`https://x/rentals/by-collection?chainId=${CHAIN}&collection=${NFT}`), t.env);
     expect(((await res.json()) as { rentals: unknown[] }).rentals).toEqual([]);
+  });
+
+  it('uses the vault comparison: still active at the expiry second itself', () => {
+    expect(isActiveRental({ quantity: '1', expires: NOW }, NOW)).toBe(true);
+    expect(isActiveRental({ quantity: '1', expires: NOW - 1 }, NOW)).toBe(false);
+    expect(isActiveRental({ quantity: '0', expires: NOW + 10 }, NOW)).toBe(false);
+  });
+
+  it('judges active at the later of the server clock and the chain time held, and states both', async () => {
+    expect(rentalActiveAt(1_000.9, null)).toBe(1_000);
+    expect(rentalActiveAt(1_000, 1_200)).toBe(1_200);
+    expect(rentalActiveAt(1_300, 1_200)).toBe(1_300);
+    // A server clock behind the chain cannot revive a rental the chain
+    // already treats as ended: chain time at the cursor is past its expiry.
+    const t = db();
+    await recordRentalRights(t.d1, CHAIN, [ev({ loanId: 1, block: 10, expires: BigInt(NOW + 100) })], NOW);
+    t.h.db
+      .prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)')
+      .run(CHAIN, CURSOR_KIND, 50, NOW);
+    t.h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (?, 40, 0, '0x01', 'LoanRepaid', '{}', ?), (?, 60, 0, '0x02', 'LoanRepaid', '{}', ?)`,
+      )
+      .run(CHAIN, NOW + 500, CHAIN, NOW + 900);
+    const res = await handleRentalsMayUse(
+      new Request(`https://x/rentals/may-use?chainId=${CHAIN}&collection=${NFT}&user=${RENTER}`),
+      t.env,
+    );
+    const body = (await res.json()) as { asOf: unknown; activeAt: number; rentals: unknown[] };
+    // Block 60 is past the cursor, so the chain time held is block 40's.
+    expect(body.asOf).toEqual({ block: 50, chainTime: NOW + 500 });
+    expect(body.activeAt).toBe(NOW + 500);
+    expect(body.rentals).toEqual([]);
   });
 
   it('holds a uint64 expiry above the signed range at the largest stored value', () => {
