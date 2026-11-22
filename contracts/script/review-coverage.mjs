@@ -51,7 +51,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findSolc } from './check-signer-seam.mjs';
-import { routedCallAt } from './refactor-reports.mjs';
+import { mostDerived, routedCallAt } from './refactor-reports.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 export const CONTRACTS_DIR = join(HERE, '..');
@@ -484,12 +484,15 @@ const startOf = (node) => Number(node.src.split(':')[0]);
  * The functions and modifiers a body calls directly, by node id: internal
  * calls, library calls and modifiers. Routed self-calls through the Diamond
  * are another facet's unit, so they are listed as outside calls by selector.
+ * `lineage` is the contract the code is dispatched in: a virtual function or
+ * modifier resolves to its override there, as `reach` resolves it (an
+ * abstract base declaration has no body; its override does).
  */
-function directCallees(fn, ctx, walk) {
+function directCallees(fn, ctx, walk, lineage = ctx.contractOf.get(fn.id)?.linearizedBaseContracts) {
   const ids = new Set();
   const selectors = new Set();
   for (const m of fn.modifiers ?? []) {
-    const d = ctx.byId.get(m.modifierName?.referencedDeclaration);
+    const d = mostDerived(ctx.byId.get(m.modifierName?.referencedDeclaration), lineage, ctx);
     if (d?.nodeType === 'ModifierDefinition') ids.add(d.id);
   }
   // The body and the arguments of its modifier invocations (`guard(LibArg.prepare())`
@@ -498,7 +501,10 @@ function directCallees(fn, ctx, walk) {
   for (const c of code) walk(c, (n) => {
     if (n.nodeType === 'FunctionCall') {
       const e = n.expression;
-      const d = e?.referencedDeclaration === undefined ? undefined : ctx.byId.get(e.referencedDeclaration);
+      let d = e?.referencedDeclaration === undefined ? undefined : ctx.byId.get(e.referencedDeclaration);
+      // `super.f()` names the base it means; any other virtual call dispatches.
+      const viaSuper = e?.nodeType === 'MemberAccess' && e.expression?.nodeType === 'Identifier' && e.expression.name === 'super';
+      if (d?.nodeType === 'FunctionDefinition' && !viaSuper) d = mostDerived(d, lineage, ctx);
       if (d?.nodeType === 'FunctionDefinition' && d.body) {
         const lib = ctx.contractOf.get(d.id)?.contractKind === 'library';
         const ext = d.visibility === 'external' && e.nodeType === 'MemberAccess';
@@ -508,7 +514,7 @@ function directCallees(fn, ctx, walk) {
     // A self-call of a standalone contract lands in its own code (part of the
     // unit); a facet's goes through the Diamond.
     const owner = ctx.contractOf.get(fn.id);
-    const r = routedCallAt(n, ctx, ctx.selfRoutes ? ctx.selfRoutes(owner?.linearizedBaseContracts) : ctx.routes);
+    const r = routedCallAt(n, ctx, ctx.selfRoutes ? ctx.selfRoutes(lineage) : ctx.routes);
     // A hit in the contract's own table is its own code; a facet's is another unit.
     if (r && owner && r.contract === owner && !ctx.facetIds?.has(owner.id)) ids.add(r.fn.id);
     else if (r) selectors.add(`${r.contract.name}.${r.fn.name}`);
@@ -629,6 +635,13 @@ export function fileLevelOwner(decls, path) {
 export function describeSlice(unit, index, { ctx, walk, decls }) {
   const slice = unit.slices[index];
   const inUnit = new Set(slice.declarations.map((d) => `${d.path}:${d.start}`));
+  // Code the unit's contract inherits is dispatched in that contract; any
+  // other code in its own.
+  const unitLineage = ctx.contracts.get(unit.name)?.linearizedBaseContracts ?? [];
+  const lineageOf = (node) => {
+    const owner = ctx.contractOf.get(node.id);
+    return owner && unitLineage.includes(owner.id) ? unitLineage : owner?.linearizedBaseContracts;
+  };
   // Callers across the tree, by declaration key.
   const callers = new Map();
   const nodeOf = new Map();
@@ -638,7 +651,7 @@ export function describeSlice(unit, index, { ctx, walk, decls }) {
       if (!owner) continue;
       const key = `${ctx.pathOf(owner.id)}:${startOf(node)}`;
       nodeOf.set(key, node);
-      for (const cid of directCallees(node, ctx, walk).ids) {
+      for (const cid of directCallees(node, ctx, walk, lineageOf(node)).ids) {
         const co = ctx.contractOf.get(cid);
         if (!co) continue;
         const ck = `${ctx.pathOf(co.id)}:${startOf(ctx.byId.get(cid))}`;
@@ -657,7 +670,7 @@ export function describeSlice(unit, index, { ctx, walk, decls }) {
     out.push(`- \`${d.path}:${d.lineStart}-${d.lineEnd}\` ${d.label}`);
     const node = nodeOf.get(`${d.path}:${d.start}`);
     if (node) {
-      const { ids, selectors } = directCallees(node, ctx, walk);
+      const { ids, selectors } = directCallees(node, ctx, walk, lineageOf(node));
       const outside = [];
       for (const cid of ids) {
         const co = ctx.contractOf.get(cid);
@@ -812,6 +825,32 @@ export function reviewPrProblems({ base, head, pinned, baseTree, headTree, unitP
   return p;
 }
 
+/** The two branch names `branches` cuts for one slice. */
+export function reviewBranchNames(unitName, slice) {
+  const tag = `${unitName.toLowerCase()}-${slice}`;
+  return { head: `${REVIEW_PREFIX}${tag}-head`, base: `${REVIEW_PREFIX}${tag}-base` };
+}
+
+/**
+ * Refusals before `open` posts a review-only pull request: the base and head
+ * must be the pair `branches` cut for this slice, and the pull request's own
+ * diff (`changed`, the paths that differ between them) must be exactly the
+ * slice's files, so the reviewer sees the slice's declarations and nothing
+ * else. `slicePaths` are repository-relative.
+ */
+export function openProblems({ base, head, unitName, slice, changed, slicePaths }) {
+  const p = [];
+  const want = reviewBranchNames(unitName, slice);
+  if (base !== want.base) p.push(`base ${base} is not ${want.base}, the base cut for ${unitName} slice ${slice}`);
+  if (head !== want.head) p.push(`head ${head} is not ${want.head}, the head cut for ${unitName} slice ${slice}`);
+  const expected = new Set(slicePaths);
+  const extra = changed.filter((x) => !expected.has(x));
+  const missing = [...expected].filter((x) => !changed.includes(x));
+  if (extra.length) p.push(`the pull request would show files outside the slice: ${extra.slice(0, 5).join(', ')}`);
+  if (missing.length) p.push(`the pull request would not show the slice's files: ${missing.slice(0, 5).join(', ')}`);
+  return p;
+}
+
 /**
  * Refusals before the one-way copy of a pinned commit to the review
  * repository (design §3.1, §10.16): its workflows must be switched off, and
@@ -876,8 +915,7 @@ const gitDiffNames = (clone) => (a, b) => run('git', ['diff', '--name-only', a, 
  */
 export function makeReviewBranches({ clone, unit, slice, pinned, fix, fixBase, solc, parse = (fs) => parseSources(fs, solc) }) {
   const tag = `${unit.name.toLowerCase()}-${slice + 1}`;
-  const head = `${REVIEW_PREFIX}${tag}-head`;
-  const base = `${REVIEW_PREFIX}${tag}-base`;
+  const { head, base } = reviewBranchNames(unit.name, slice + 1);
   const git = (args, opts = {}) => run('git', args, { cwd: clone, ...opts });
   const commit = (msg) => git(['-c', 'user.name=review-coverage', '-c', 'user.email=review-coverage@invalid', 'commit', '-q', '--allow-empty', '-m', msg]);
   const work = `${REVIEW_PREFIX}${tag}-work`;
@@ -1167,6 +1205,14 @@ async function reviewRepoCommand(cmd, rest) {
       const index = Number(f.slice) - 1;
       const unit = unitFromRecord(record, { unit: f.unit, slice: index + 1 }, decls);
       requireReviewableSlice(unit, index);
+      // The base actually named here, against the head: the pull request
+      // shows their diff, so it must be the slice's files and nothing else.
+      const slicePaths = [...new Set(unit.slices[index].declarations.map((d) => `contracts/${d.path}`))];
+      const opened = openProblems({ base: f.base, head: f.head, unitName: unit.name, slice: index + 1, changed: run('git', ['diff', '--name-only', `${f.base}...${f.head}`], { cwd: f.clone }).split('\n').filter(Boolean), slicePaths });
+      if (opened.length) {
+        for (const p of opened) console.error(`  ✗ ${p}`);
+        return 1;
+      }
       const { entryPoints } = await import('./check-permissionless-steps.mjs');
       const shipped = [...g.manifest.facets, ...g.manifest.standalone, ...(g.manifest.proxy ?? [])];
       const entries = entryPoints(g.units, shipped, g.ctx.byId, { special: true }).entries.filter((e) => e.contract === unit.name);

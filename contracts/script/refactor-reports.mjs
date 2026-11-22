@@ -461,6 +461,17 @@ function flagTest(cond, flagId) {
     const inner = flagTest(cond.subExpression, flagId);
     return inner === 'ok' ? 'failed' : inner === 'failed' ? 'ok' : undefined;
   }
+  // `ok == false`, `true != ok` and the like: a comparison with a bool literal.
+  if (cond?.nodeType === 'BinaryOperation' && (cond.operator === '==' || cond.operator === '!=')) {
+    const lit = (x) => (x?.nodeType === 'Literal' && x.kind === 'bool' ? x.value === 'true' : undefined);
+    const l = lit(cond.leftExpression);
+    const r = lit(cond.rightExpression);
+    const side = l === undefined ? flagTest(cond.leftExpression, flagId) : flagTest(cond.rightExpression, flagId);
+    const value = l === undefined ? r : l;
+    if (side === undefined || value === undefined) return undefined;
+    const same = value === (cond.operator === '==');
+    return same ? side : side === 'ok' ? 'failed' : 'ok';
+  }
   if (cond?.nodeType === 'BinaryOperation' && (cond.operator === '||' || cond.operator === '&&')) {
     const sides = [flagTest(cond.leftExpression, flagId), flagTest(cond.rightExpression, flagId)];
     if (cond.operator === '||' && sides.includes('failed')) return 'failed';

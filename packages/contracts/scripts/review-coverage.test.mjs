@@ -161,6 +161,8 @@ import {
   baseFiles,
   locateInHead,
   makeReviewBranches,
+  openProblems,
+  reviewBranchNames,
   readSliceRecord,
   unitFromRecord,
   copiedFrom,
@@ -246,6 +248,21 @@ test('unit: a helper called in a modifier argument is a call the description lis
   const u = deriveUnit('EntryFacet', { ...g, ledger: { entries: {} }, shared: ['LibArg'] });
   const text = describeSlice(u, 0, g);
   assert.match(text, /EntryFacet\.guarded\(\)\n  - calls outside the unit: [^\n]*LibArg\.prepare\(\)/);
+});
+
+test('unit: a virtual call in inherited code resolves to the unit contract\'s override, as reach does', () => {
+  const g = graph();
+  const u = deriveUnit('LeftFacet', { ...g, ledger: { entries: {} }, limit: 4 });
+  const text = u.slices.map((_, i) => describeSlice(u, i, g)).join('\n');
+  assert.match(text, /LeftFacet\.hook\(\)\n  - called by: [^\n]*DispatchBase\.common\(\)/, 'the override is called by the base helper');
+});
+
+test('open: the base and head are the pair cut for the slice, and their diff is the slice\'s files', () => {
+  const { head, base } = reviewBranchNames('AFacet', 2);
+  const ok = { base, head, unitName: 'AFacet', slice: 2, changed: ['contracts/src/A.sol'], slicePaths: ['contracts/src/A.sol'] };
+  assert.deepEqual(openProblems(ok), []);
+  assert.match(openProblems({ ...ok, base: 'claude/review-other-base' }).join('\n'), /is not claude\/review-afacet-2-base/);
+  assert.match(openProblems({ ...ok, changed: ['contracts/src/Fix.sol'] }).join('\n'), /outside the slice: contracts\/src\/Fix\.sol[\s\S]*would not show the slice's files/);
 });
 
 test('base files: the head with the unit\'s declarations cut out, nothing else', () => {

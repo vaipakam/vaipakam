@@ -3,7 +3,7 @@
 The refactor pass (RefactorRulesDesign) now has four of its five reports, built from the compiler's own syntax tree in the pre-deploy gate's existing one-job build. Nothing is recompiled for them. The four are:
 
 - **Silent functions.** State-changing entry points whose reachable code emits no event.
-- **Swallowed failures.** A failed call, caught, low-level or a plain send of native currency, whose handling neither reverts nor emits, including a failure tested inside a compound condition such as "failed or returned too little".
+- **Swallowed failures.** A failed call, caught, low-level or a plain send of native currency, whose handling neither reverts nor emits, including a failure tested inside a compound condition such as "failed or returned too little", or by comparing the result with true or false.
 - **Ambiguous errors.** An entry that can raise one parameterless error from more than one place, plus every text revert and every error missing from the coming catalogue.
 - **Write-only storage.** Fields that contract code writes and that only views read, or nothing does.
 

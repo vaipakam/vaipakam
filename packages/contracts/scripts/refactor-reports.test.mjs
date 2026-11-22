@@ -66,6 +66,8 @@ test('swallowed failures: a catch or failed low-level call that neither reverts 
   assert.ok(!has('swallowed-failures', 'AFacet.flagChecked()'));
   assert.ok(has('swallowed-failures', 'AFacet.compoundSwallows() lowlevel#1'), 'a failure side inside `||` is a failure test');
   assert.ok(!has('swallowed-failures', 'AFacet.compoundChecked()'), '`!(ok && x)` reverting is a handled failure');
+  assert.ok(has('swallowed-failures', 'AFacet.comparedSwallows() lowlevel#1'), '`ok == false` is a failure test');
+  assert.ok(!has('swallowed-failures', 'AFacet.comparedChecked()'), '`false == ok` reverting is a handled failure');
   assert.ok(!has('swallowed-failures', 'AFacet.successReturnsThenReverts()'), '`if (ok) return; revert ...` handles the failure after the branch');
   assert.ok(has('swallowed-failures', 'AFacet.successReturnsThenSwallows() lowlevel#1'), 'the code after a success-only return is the failure path, and it is read');
 });

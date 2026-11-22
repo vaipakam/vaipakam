@@ -168,6 +168,18 @@ contract AFacet {
         emit Skipped();
     }
 
+    function comparedSwallows() external {
+        (bool ok, ) = address(ext).call("");
+        if (ok == false) return;
+        emit Skipped();
+    }
+
+    function comparedChecked() external {
+        (bool ok, ) = address(ext).call("");
+        if (false == ok) revert Bad();
+        emit Skipped();
+    }
+
     function compoundChecked() external {
         (bool ok, bytes memory ret) = address(ext).call("");
         if (!(ok && ret.length >= 32)) revert Failed();
