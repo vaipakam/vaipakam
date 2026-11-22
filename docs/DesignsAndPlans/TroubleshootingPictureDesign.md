@@ -37,7 +37,7 @@ None of these records is served by a public route.
 | Record | Holds | Personal data | Kept, **Default** | Lives in |
 | --- | --- | --- | --- | --- |
 | Error catalogue | Every error, where it can be raised, its meaning and remedy | None | With the code | The contracts package |
-| Failed transactions | Public chain data: the transaction, its sender, the function, the decoded error, the block and its hash | Public chain addresses only, as the event history already holds | 400 days | The shared database |
+| Failed transactions | Public chain data: the transaction, its sender, the function, the decoded error, the explanation taken at the time, the block and its hash | Public chain addresses only, as the event history already holds | 400 days | The shared database |
 | Keeper decisions | Per pass and subject: acted, skipped, refused, unread or failed, with the reason | None. Loan and offer ids, no wallet. An address inside a reason is withheld (4.4) | 180 days | The keeper's private database |
 | Keeper pass runs | Per run: the pass, its switch, what it read, how long it took, how it ended | None | 180 days | The keeper's private database |
 | Settings history | The settings after each change, with the block and transaction of the change | None | For the life of the deployment | The shared database |
@@ -87,8 +87,10 @@ happened on chain is not shown here" and lists what differed. It is never
 presented as what happened.
 
 The rebuild needs the parent block's state, which every node keeps for
-recent blocks. For an old block it needs a node that keeps old state, and
-section 4.3 exists so that an old failure never depends on that.
+recent blocks. For an old block it needs a node that keeps old state.
+Section 4.3 stores the explanation of every failed transaction at the time,
+so an old failure does not depend on that. A successful transaction is not
+stored there, and explaining an old one needs a node that keeps old state.
 
 **Which code a selector belonged to.** The explainer resolves each function
 through the Diamond's own routing at that block and the facet history of
@@ -122,20 +124,32 @@ whether the node answers a trace filter, a transaction trace and a call at a
 past block, how far back each reaches, and what a full block scan costs on
 that node. Its result is committed per network and selects the mode.
 
-**Decoding.** For each failed transaction the pass records, in this order of
-preference: the error and the call path from the node's trace; or the error
-from replaying the call at the parent block. The record says which one it
-used. A replay at the parent block runs against the state just before the
-block, not at the transaction's exact place in it, so the record marks it as
-a replay and never presents it as the trace. If the replay succeeds where
-the transaction failed, the record says "not reproduced", and adds whether
-the transaction used all the gas it was given.
+**Decoding, and what is kept of it.** The explanation is taken while the
+node can still give it, and the **whole** of it is stored. A later reader
+never has to ask a node for an old trace. For each failed transaction the
+pass uses the best of three sources and the record says which:
 
-**What it stores:** the network, the block and its time, the transaction,
-the sender, the contract and function called, the arguments' loan and offer
-ids where the function names them, the error's selector, name and values,
-the call path when a trace gave one, the mode and the decoding used, and the
-gas facts.
+| Source | What the record keeps | What it cannot hold |
+| --- | --- | --- |
+| The node's trace | The explainer's complete output as data: every function entered with its arguments, every event emitted before the failure, the error and its values, the gas at each step | Nothing |
+| The rebuild of section 4.2, where the capability check says the machine can run one, and it matches the receipt | The same complete output, marked as rebuilt | Nothing. A rebuild that does not match is not stored as the explanation |
+| A replay of the call at the parent block | The error and its values only, marked as a replay. It runs against the state just before the block, not at the transaction's place in it | The call path, the arguments of inner calls, the events before the failure and the gas by step. The record lists these as "not available for this transaction", and they cannot be recovered later |
+
+If the replay succeeds where the transaction failed, the record says "not
+reproduced", and adds whether the transaction used all the gas it was given.
+
+The explainer and the case file read a stored explanation first. They ask a
+node only for a transaction the record does not hold, and they show a
+partial record as partial, with the list of what it lacks.
+
+**What it stores:** the network, the block, its hash and its time, the
+transaction, the sender, the contract and function called, the arguments'
+loan and offer ids where the function names them, the error's selector,
+name and values, the source used, the stored explanation of that source,
+the mode, and the gas facts. A stored explanation is kept whole up to a
+stated size (**Default** 256 KB a record). Above it the call path, the
+error and the events are kept and the longest argument values are cut, each
+with a mark that says so.
 
 **Where it runs.** On the always-on machine, as its own read-only service
 beside the keeper, with its own unit and memory cap and **no signing key**.
@@ -280,16 +294,25 @@ which.
 
 | The attempt | What the record gives | What the case file says |
 | --- | --- | --- |
-| The call and its caller both follow from the loan or offer and the flow, with no free input: a full repayment, a claim, a cancellation, switching an instruction off | The call, and the caller as the party the chain names for that position at that time | A replay at the block nearest the record's time, with the error and its values. Marked as a replay near that time, not the attempt itself |
-| The caller follows from the position, and the action has a free input: a part repayment, added collateral, a changed amount | The call without its input | "Not replayed: the amount is not in the record." The error's name with its catalogue meaning and remedy |
+| The call follows from the loan or offer and the flow, with no free input, **and** the record's shortened wallet matches a party the chain names for that position at that time: a claim, a cancellation, switching an instruction off, a full repayment by the borrower | The call, and a caller consistent with the record | A replay at the block nearest the record's time, with the error and its values. Marked as a replay near that time by a caller consistent with the record's shortened wallet, not the attempt itself |
+| The call follows as above, and the record's shortened wallet matches no party of the position: a repayment made by someone else, which anyone may make | The call without its caller | "Not replayed: the caller is not a party of this position and is not in the record." Beside it, and headed as such, "what the position's holder would have met": a call by the holder, which is not the attempt and may differ in balance, approval and screening |
+| A party's action with a free input: a part repayment, added collateral, a changed amount | The call without its input | "Not replayed: the amount is not in the record." The error's name with its catalogue meaning and remedy |
 | The caller is not named by the chain: creating an offer, accepting one, a first deposit | Neither the caller nor the inputs | "Cannot be replayed from the retained record." The error's name with its catalogue meaning and remedy |
 
-The error's name and selector are in every record, so the catalogue's
-meaning and remedy are always available. What is missing in the second and
-third rows is the error's values and the exact state the caller was in.
+**The caller is checked, never assumed.** The record keeps the wallet only
+shortened and as a keyed hash. The case file shortens each party the chain
+names in the same way and compares. A match says "consistent with the
+record", because a shortened wallet is not unique. It does not say "the same
+wallet". The keyed hash is not used here: its key stays with the service
+that writes the record. A record from a session with no wallet connected
+has nothing to compare, and falls in the second row.
 
-A user who writes to support and states their wallet makes the caller known,
-since the record's keyed hash can then be matched. The inputs stay unknown.
+The error's name and selector are in every record, so the catalogue's
+meaning and remedy are always available. What is missing below the first
+row is the error's values and the exact state the caller was in.
+
+A user who writes to support and states their wallet gives a candidate
+caller, which is checked the same way. The inputs stay unknown.
 
 **Default: nothing is added to that record.** The first drill (section 5)
 counts how many attempts of each row could be answered from records alone.
@@ -350,7 +373,7 @@ was not told what was done, finds the cause from the case file.
 alone, with no question to the person who caused it.
 
 Drill 1 is run once for each row of the table in section 4.7. For the rows
-that cannot be replayed, the pass is that the error's meaning and remedy
+that are not replayed, the pass is that the error's meaning and remedy
 were enough to name the cause. The drill reports the count per row, and that
 count is what the owner's decision in 4.7 rests on.
 
@@ -389,8 +412,8 @@ the record does not reach far enough.
    and a failed call to an unrelated contract, records the first, records
    the second in trace-filter mode and states it as unseen in block-scan
    mode, and records neither of the others.
-3. A replay at the parent block is marked as a replay. A replay that
-   succeeds is recorded as not reproduced.
+3. A replay at the parent block is marked as a replay and stores the error
+   only. A replay that succeeds is recorded as not reproduced.
 4. A range the pass cannot scan is recorded as a gap and reported by the
    health route.
 5. The record route accepts a well-formed record, a cursor with its
@@ -422,8 +445,15 @@ the record does not reach far enough.
     naming the platform's own contract keeps that address.
 16. A case file for a refused offer creation says that the attempt cannot
     be replayed from the retained record, and gives the error's meaning and
-    remedy. One for a refused full repayment holds a replay marked as near
-    that time.
+    remedy. One for a full repayment refused to the borrower holds a replay
+    marked as near that time by a caller consistent with the record. One
+    for a full repayment refused to a third wallet holds no replay of the
+    attempt, and heads the holder's call as not the attempt.
+17. A failed transaction recorded from a trace is explained in full from
+    the record alone, with the node unreachable: the inner calls with their
+    arguments and the events before the failure. One recorded from a
+    parent-block replay shows the error and the list of what is not
+    available.
 
 ## 9. Residuals
 
