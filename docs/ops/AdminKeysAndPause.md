@@ -66,6 +66,16 @@ gives up the root.
 
 Pausing is a **brake**, not a wrench. Anything structural requires governance → timelock.
 
+### The per-asset pause has a written rule (#3880)
+
+`pauseAsset` refuses new exposure to one named asset; repayment, claims and
+withdrawals stay open (what else it refuses is listed in the rule). It is used only where the asset's own code is shown to take, freeze or
+block what vaults hold, or to break a close-out. It is never used for the
+asset's price, its reputation, or at anyone's request. Each use is published
+with its reason, and lifting it goes through the delayed route. The full
+rule, with what counts as shown and how a use is published, is in
+[`IncidentRunbook.md`](IncidentRunbook.md) §3.8.
+
 ### Permissionless callers vs. role-gated admins
 
 Not every off-chain actor that interacts with the Diamond holds a role.

@@ -93,6 +93,12 @@ A "residual" below is a stated limit, not a bug report.
 - **Pause.** One switch stops new positions and owner outflows. Close-outs
   stay open, and the pause cannot hold an escape withdrawal past its window,
   which protects users from the admin.
+- **Per-asset pause, under a written rule** (#3880). It refuses new exposure
+  to one named asset; repayment, claims and withdrawals stay open. It may be used only where the
+  asset's own code is shown to take, freeze or block what vaults hold, or to
+  break a close-out; never for price, reputation, or on request. Each use is
+  published with its reason, and only the delayed route lifts it
+  ([rule](../ops/IncidentRunbook.md)).
 - **Governance delay.** A 48h Timelock on every admin change, a canceller,
   and a revoke-only emergency role.
 - **Storage-layout guard.** No in-place upgrade can silently move a field.
