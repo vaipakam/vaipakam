@@ -6,7 +6,7 @@
  * contract its runtime code hash, size and interface hash; the storage layout's
  * recorded file; the gas suite's figures; the full regression's manifests; the
  * compiler, its settings, the build tool and every vendored library; and the
- * source tree itself. Every hash here is SHA-256, written as 64 lower-case hex
+ * digest of the source tree (§3.2's rule, baseline records left out). Every hash here is SHA-256, written as 64 lower-case hex
  * characters, and named so in the record (`hash: "sha256"`).
  *
  * Nothing here runs a build or reads git: the two command-line tools do that
@@ -39,15 +39,23 @@ export function canonicalJson(value) {
   return `${JSON.stringify(sort(value), null, 2)}\n`;
 }
 
-/** The deployable contracts: every cut facet, the Diamond proxy and every standalone contract the app ships. */
-export function deployableNames(manifest) {
-  const names = [...(manifest.facets ?? []), ...(manifest.proxy ?? []), ...(manifest.standalone ?? [])];
-  const seen = new Set();
-  for (const n of names) {
-    if (seen.has(n)) throw new Error(`baseline: ${n} is named twice in diamond-facets.json`);
-    seen.add(n);
-  }
-  return names.sort();
+/** Byte-wise path order (LC_ALL=C), so every machine sorts alike. */
+const byBytes = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/**
+ * The source digest rule (§3.2): every tracked file of a commit except those
+ * under `contracts/baseline/`, as the sorted lines "<path>\t<git object id>\n"
+ * (a file's id is the hash of its content; a submodule's is its pinned
+ * commit), hashed once with SHA-256. `entries` is [{path, oid}].
+ */
+export const SOURCE_DIGEST_RULE = 'sha256 over the byte-sorted lines "<path>\\t<git object id>\\n" of every tracked file, contracts/baseline/ left out';
+export function sourceDigest(entries) {
+  const lines = entries
+    .filter((e) => !e.path.startsWith(`${RECORD_DIR}/`))
+    .map((e) => e.path)
+    .sort(byBytes);
+  const oid = new Map(entries.map((e) => [e.path, e.oid]));
+  return sha256(lines.map((p) => `${p}\t${oid.get(p)}\n`).join(''));
 }
 
 /**
@@ -79,35 +87,104 @@ export function interfaceHash(abi) {
   return sha256(entries.join(''));
 }
 
-/** Find `<Name>.json` in a forge `out/` directory (one level of `<File>.sol/` folders). */
-export function findArtifact(outDir, name) {
-  const direct = join(outDir, `${name}.sol`, `${name}.json`);
-  if (existsSync(direct)) return direct;
-  const hits = [];
-  for (const d of readdirSync(outDir)) {
-    const p = join(outDir, d, `${name}.json`);
-    if (existsSync(p)) hits.push(p);
+const metadataOf = (artifact) => (typeof artifact.metadata === 'string' ? JSON.parse(artifact.metadata) : artifact.metadata);
+
+/**
+ * Every artifact in a forge `out/` directory (one level of `<File>.sol/`
+ * folders), with the source it was compiled from: [{key, artifact}], where the
+ * key is "<source path>:<contract name>".
+ */
+export function readArtifacts(outDir) {
+  const out = [];
+  for (const d of readdirSync(outDir).sort(byBytes)) {
+    const dir = join(outDir, d);
+    let files;
+    try {
+      files = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const f of files.sort(byBytes)) {
+      if (!f.endsWith('.json')) continue;
+      const artifact = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+      const target = Object.entries(metadataOf(artifact)?.settings?.compilationTarget ?? {})[0];
+      if (target) out.push({ key: `${target[0]}:${target[1]}`, artifact });
+    }
   }
-  if (hits.length > 1) throw new Error(`baseline: ${name} has ${hits.length} artifacts (${hits.join(', ')}); a deployable name must be unique`);
-  return hits[0];
+  return out;
 }
 
-/** What a record holds for one contract, from its forge artifact. */
-export function contractEntry(artifact) {
+/**
+ * The deployables: every contract compiled from `src/` that has runtime code.
+ * The rule reads the build itself, never a hand-kept list, so a contract a
+ * deploy script creates is in the record whether or not an app ships its ABI.
+ */
+export function deployables(artifacts) {
+  const out = new Map();
+  for (const { key, artifact } of artifacts) {
+    if (!key.startsWith('src/')) continue;
+    if (!String(artifact.deployedBytecode?.object ?? '').replace(/^0x/, '')) continue;
+    if (out.has(key)) throw new Error(`baseline: ${key} has two artifacts; one build has one of each contract`);
+    out.set(key, artifact);
+  }
+  return out;
+}
+
+/**
+ * The names of the build's immutables, by AST id: "<contract>.<variable>".
+ * Read from the artifacts' ASTs, which a build made with `--ast` carries.
+ */
+export function immutableNames(artifacts) {
+  const names = new Map();
+  const walk = (node, contract) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const n of node) walk(n, contract);
+      return;
+    }
+    const here = node.nodeType === 'ContractDefinition' ? node.name : contract;
+    if (node.nodeType === 'VariableDeclaration' && node.mutability === 'immutable') names.set(node.id, `${here}.${node.name}`);
+    for (const k of Object.keys(node)) if (node[k] && typeof node[k] === 'object') walk(node[k], here);
+  };
+  for (const { artifact } of artifacts) if (artifact.ast) walk(artifact.ast, null);
+  return names;
+}
+
+/**
+ * What a record holds for one contract, from its forge artifact: the runtime
+ * code hash with every value fixed at construction blanked (§3.2), its size,
+ * its interface hash and, when it has any, its immutables by name with the
+ * byte ranges blanked, so a deployed copy can be compared on any chain.
+ */
+export function contractEntry(artifact, names = new Map()) {
   const hex = String(artifact.deployedBytecode?.object ?? '').replace(/^0x/, '');
   if (!hex || !/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2) throw new Error('baseline: artifact carries no runtime code');
-  const meta = typeof artifact.metadata === 'string' ? JSON.parse(artifact.metadata) : artifact.metadata;
+  const code = Buffer.from(hex, 'hex');
+  const immutables = [];
+  for (const [id, ranges] of Object.entries(artifact.deployedBytecode?.immutableReferences ?? {})) {
+    const name = names.get(Number(id));
+    if (!name) throw new Error(`baseline: immutable #${id} has no name in this build; build with --ast so every immutable is recorded by name`);
+    const rs = ranges.map((r) => ({ start: r.start, length: r.length })).sort((a, b) => a.start - b.start);
+    for (const r of rs) {
+      if (r.start < 0 || r.start + r.length > code.length) throw new Error(`baseline: immutable ${name} lies outside the runtime code`);
+      code.fill(0, r.start, r.start + r.length);
+    }
+    immutables.push({ name, ranges: rs });
+  }
+  immutables.sort((a, b) => byBytes(a.name, b.name));
+  const meta = metadataOf(artifact);
   return {
-    runtimeHash: sha256(Buffer.from(hex, 'hex')),
-    size: hex.length / 2,
+    runtimeHash: sha256(code),
+    size: code.length,
     interfaceHash: interfaceHash(artifact.abi ?? []),
+    ...(immutables.length ? { immutables } : {}),
     compiler: meta?.compiler?.version,
   };
 }
 
 /** The compiler settings that change code, from an artifact's metadata (its own target left out). */
 export function codeSettings(artifact) {
-  const meta = typeof artifact.metadata === 'string' ? JSON.parse(artifact.metadata) : artifact.metadata;
+  const meta = metadataOf(artifact);
   if (!meta?.settings) throw new Error('baseline: artifact carries no metadata settings');
   const { compilationTarget, remappings, ...rest } = meta.settings;
   return { compiler: meta.compiler?.version, settings: rest };
@@ -117,28 +194,25 @@ export function codeSettings(artifact) {
  * Read every deployable's entry from `outDir`. All must have been built by one
  * compiler with one set of settings; a mixed build is refused by name.
  */
-export function collectContracts(outDir, names) {
+export function collectContracts(outDir) {
+  const artifacts = readArtifacts(outDir);
+  const found = deployables(artifacts);
+  if (!found.size) throw new Error(`baseline: no contract compiled from src/ in ${outDir}`);
+  const needNames = [...found.values()].some((a) => Object.keys(a.deployedBytecode?.immutableReferences ?? {}).length);
+  const names = needNames ? immutableNames(artifacts) : new Map();
   const contracts = {};
   let build;
-  const missing = [];
-  for (const n of names) {
-    const p = findArtifact(outDir, n);
-    if (!p) {
-      missing.push(n);
-      continue;
-    }
-    const art = JSON.parse(readFileSync(p, 'utf8'));
-    const { compiler, ...entry } = contractEntry(art);
+  for (const [n, art] of [...found].sort((a, b) => byBytes(a[0], b[0]))) {
+    const { compiler, ...entry } = contractEntry(art, names);
     contracts[n] = entry;
     const s = codeSettings(art);
     const text = canonicalJson(s);
     if (!build) build = { text, value: s, from: n };
     else if (build.text !== text) {
-      throw new Error(`baseline: ${n} was built with ${canonicalJson(s).trim()} but ${build.from} with ${build.text.trim()}: one build, one compiler`);
+      throw new Error(`baseline: ${n} was built with ${text.trim()} but ${build.from} with ${build.text.trim()}: one build, one compiler`);
     }
     if (compiler && compiler !== s.compiler) throw new Error(`baseline: ${n} reports two compilers`);
   }
-  if (missing.length) throw new Error(`baseline: no artifact for ${missing.join(', ')} in ${outDir}`);
   return { contracts, build: build?.value };
 }
 
@@ -162,7 +236,18 @@ export function collectGas(dir) {
  */
 export function collectRegression(dir) {
   if (!existsSync(dir)) throw new Error(`baseline: no regression manifests at ${dir}`);
-  const files = readdirSync(dir).filter((f) => f.endsWith('.tsv')).sort();
+  // The same set `--verify-shards` reads: every *.tsv under the folder, at any
+  // depth, keyed by its path relative to the folder.
+  const files = [];
+  const walk = (rel) => {
+    for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(r);
+      else if (e.isFile() && e.name.endsWith('.tsv')) files.push(r);
+    }
+  };
+  walk('');
+  files.sort(byBytes);
   if (!files.length) throw new Error(`baseline: no *.tsv regression manifests in ${dir}`);
   const manifests = {};
   const digests = new Set();
@@ -215,6 +300,9 @@ export function compareBuild(record, built) {
     if (r.runtimeHash !== b.runtimeHash) diffs.push(`${n}: runtime code hash ${b.runtimeHash}, the record has ${r.runtimeHash}`);
     if (r.size !== b.size) diffs.push(`${n}: ${b.size} bytes, the record has ${r.size}`);
     if (r.interfaceHash !== b.interfaceHash) diffs.push(`${n}: interface hash ${b.interfaceHash}, the record has ${r.interfaceHash}`);
+    if (canonicalJson(r.immutables ?? []) !== canonicalJson(b.immutables ?? [])) {
+      diffs.push(`${n}: immutables ${JSON.stringify(b.immutables ?? [])}, the record has ${JSON.stringify(r.immutables ?? [])}`);
+    }
   }
   for (const n of Object.keys(bc).sort()) if (!rc[n]) diffs.push(`${n}: in this build, not in the record`);
   return diffs;
@@ -226,12 +314,14 @@ export const recordHash = (text) => sha256(text);
 /**
  * Check the tag's own facts, given what git reports. Returns every refusal as
  * a sentence. `t` is {annotated, signed, message, recordText, changedFiles,
- * parentTree, parentCommit} for the tag `tag`.
+ * sourceDigest, parentCommit} for the tag `tag`: `signed` is whether git
+ * verified the signature, never whether the message looks signed, and
+ * `sourceDigest` is the tagged commit's digest by {@link sourceDigest}.
  */
 export function checkTagFacts(tag, t) {
   const out = [];
   if (!t.annotated) out.push(`${tag} is a lightweight tag; the series is annotated and signed`);
-  if (!t.signed) out.push(`${tag} carries no signature; the series is signed`);
+  if (!t.signed) out.push(`${tag}'s signature does not verify (git tag -v) with the keys this machine trusts; the series is signed`);
   if (t.recordText == null) {
     out.push(`${tag} names a commit with no ${recordPath(tag)}`);
     return out;
@@ -251,7 +341,7 @@ export function checkTagFacts(tag, t) {
     return out;
   }
   if (record.tag !== tag) out.push(`${recordPath(tag)} is the record of ${record.tag}, not ${tag}`);
-  if (record.source?.tree !== t.parentTree) out.push(`the record was built from tree ${record.source?.tree}, but the tagged commit's parent has tree ${t.parentTree}`);
+  if (record.source?.digest !== t.sourceDigest) out.push(`the record names source digest ${record.source?.digest}, but the tagged commit, baseline records left out, digests to ${t.sourceDigest}`);
   if (record.source?.commit !== t.parentCommit) out.push(`the record was built from commit ${record.source?.commit}, but the tagged commit's parent is ${t.parentCommit}`);
   return out;
 }

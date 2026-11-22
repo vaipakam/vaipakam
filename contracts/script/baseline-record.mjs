@@ -7,15 +7,17 @@
  * steps before it already produced, so nothing is run twice:
  *
  *   - `--out DIR`: the forge build of this commit (default `contracts/out`,
- *     from `FOUNDRY_PROFILE=default forge build --skip test`);
+ *     from `FOUNDRY_PROFILE=default forge build --skip test --ast`; the AST
+ *     names every immutable);
  *   - `--gas DIR`: the gas suite's figures (default `contracts/out-gas-suite`,
  *     written by the full regression, #3915);
  *   - `--manifests DIR`: the full regression's `--manifest` files, which this
  *     tool requires `run-regression.sh --verify-shards DIR` to accept;
  *   - the storage-layout guard's recorded file, hashed as committed.
  *
- * The record names the commit and tree it was built from (a file cannot name
- * the commit that contains it), the tag's message carries the record's hash,
+ * The record names the commit it was built from and the digest of its source
+ * (§3.2's rule: every tracked file but contracts/baseline/; a file cannot name
+ * the commit that contains it, nor hash a tree that contains it), the tag's message carries the record's hash,
  * and the tag names the commit that adds the record: each binds the other two.
  * `docs/procedures/BaselineTagging.md` is the procedure; `baseline-check.mjs`
  * is the check.
@@ -34,37 +36,27 @@ import {
   collectContracts,
   collectGas,
   collectRegression,
-  deployableNames,
   recordHash,
   recordPath,
+  SOURCE_DIGEST_RULE,
   sha256,
+  sourceDigest,
 } from './lib/baseline.mjs';
+import { librariesAt, treeEntries } from './lib/baseline-git.mjs';
 
 const CONTRACTS_DIR = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const REPO = resolve(CONTRACTS_DIR, '..');
-const FACETS_MANIFEST = join(REPO, 'packages/contracts/scripts/diamond-facets.json');
 const LAYOUT_FILE = join(CONTRACTS_DIR, 'storage-layout/layout.golden.json');
 
 const git = (args, cwd = REPO) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-
-/** Every vendored library under contracts/lib: a submodule's pinned commit, or a vendored folder's tree. */
-export function vendoredLibraries(cwd = REPO) {
-  const out = {};
-  for (const line of git(['ls-tree', 'HEAD', 'contracts/lib/'], cwd).split('\n').filter(Boolean)) {
-    const [meta, path] = line.split('\t');
-    const [, type, hash] = meta.split(' ');
-    out[path.replace(/^contracts\/lib\//, '')] = { type: type === 'commit' ? 'submodule' : 'vendored', hash };
-  }
-  return out;
-}
 
 /** The build tool's version line (`forge --version`, first line). */
 export function forgeVersion() {
   return execFileSync('forge', ['--version'], { encoding: 'utf8' }).split('\n')[0].trim();
 }
 
-export function buildRecord({ tag, outDir, gasDir, manifestsDir, source, forge, libraries, layoutText, facetsManifest }) {
-  const { contracts, build } = collectContracts(outDir, deployableNames(facetsManifest));
+export function buildRecord({ tag, outDir, gasDir, manifestsDir, source, forge, libraries, layoutText }) {
+  const { contracts, build } = collectContracts(outDir);
   return {
     schema: RECORD_SCHEMA,
     hash: 'sha256',
@@ -115,11 +107,10 @@ export function main(argv = process.argv.slice(2)) {
     outDir: opt.out,
     gasDir: opt.gas,
     manifestsDir: opt.manifests,
-    source: { commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']) },
+    source: { commit: git(['rev-parse', 'HEAD']), digest: sourceDigest(treeEntries(REPO, 'HEAD')), digestRule: SOURCE_DIGEST_RULE },
     forge: forgeVersion(),
-    libraries: vendoredLibraries(),
+    libraries: librariesAt(REPO, 'HEAD'),
     layoutText: readFileSync(LAYOUT_FILE),
-    facetsManifest: JSON.parse(readFileSync(FACETS_MANIFEST, 'utf8')),
   });
   const text = canonicalJson(record);
   const dest = join(REPO, rel);

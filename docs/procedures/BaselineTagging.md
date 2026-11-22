@@ -23,13 +23,14 @@ is made this way and checked the same way.
 From a clean checkout of exactly that commit, in `contracts/`:
 
 ```bash
-FOUNDRY_PROFILE=default forge build --skip test
+FOUNDRY_PROFILE=default forge build --skip test --ast
 bash script/run-regression.sh --manifest ../baseline-manifests/full.tsv
 ```
 
 The regression runs the gas suite with everything else and writes its figures
-to `out-gas-suite/`. A sharded run works too: put every shard's manifest in
-the same folder.
+to `out-gas-suite/`. `--ast` changes no code: it lets the record name every
+value a contract fixes at construction. A sharded run works too: put every
+shard's manifest in the same folder, at any depth.
 
 ## 2. Write the record
 
@@ -37,8 +38,11 @@ the same folder.
 node script/baseline-record.mjs --tag v0.9-pre-refactor --manifests ../baseline-manifests
 ```
 
-It refuses a working tree with uncommitted changes, a missing gas suite, and
-manifests that `run-regression.sh --verify-shards` does not accept. It writes
+It refuses a working tree with uncommitted changes, a missing gas suite, a
+build without the AST, and manifests that `run-regression.sh --verify-shards`
+does not accept. The record holds every contract compiled from `src/` that
+has runtime code, read from the build itself, so a contract a deploy script
+creates is in it whether or not an app ships its interface. It writes
 `contracts/baseline/v0.9-pre-refactor.json` and prints the line the tag
 message must carry:
 
@@ -54,8 +58,9 @@ git commit -m "Baseline record for v0.9-pre-refactor"
 ```
 
 That commit changes nothing else. The record names its parent (the commit it
-was built from) and that commit's tree, so the commit you tag is the one that
-adds the record. Land it on `main` through a pull request like any other
+was built from) and the digest of its source: every tracked file except those
+under `contracts/baseline/`, as the sorted lines of path and git object id,
+hashed once. The commit you tag is the one that adds the record. Land it on `main` through a pull request like any other
 change; a record is docs-sized and needs no Codex loop beyond a docs pass.
 
 ## 4. Tag it, signed and annotated
@@ -77,14 +82,17 @@ the record again from the new `main`.
 ## 5. Check it
 
 ```bash
-node contracts/script/baseline-check.mjs --tag v0.9-pre-refactor --verify-signature
+node contracts/script/baseline-check.mjs --tag v0.9-pre-refactor
 ```
 
-It rebuilds the tagged commit in a temporary worktree and refuses, by name, on
+The check always verifies the tag's signature with `git tag -v`, so import
+the signer's public key first (the key GitHub shows as verified for the
+account that pushed). A message that only looks signed is refused. It rebuilds the tagged commit in a temporary worktree and refuses, by name, on
 any difference: the tag unsigned or lightweight, the message without the
-record's hash, the commit changing more than the record, another source tree,
-another library pin or storage layout, another build tool or compiler, or any
-deployable's runtime code hash, size or interface hash. It must pass before
+record's hash, the commit changing more than the record, another source
+digest, another library pin or storage layout, another build tool or
+compiler, or any deployable's runtime code hash, size, interface hash or
+immutables. It must pass before
 anything below happens.
 
 ## 6. The same point everywhere else
