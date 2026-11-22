@@ -1,4 +1,4 @@
-## Troubleshooting — the failed transaction pass (PR #<n>)
+## Troubleshooting — the failed transaction pass (PR #4011)
 
 A new service finds every failed transaction sent to a contract in a network's deployment record. It decodes each one while the node still holds the state, and stores it in the failed transaction record (#3918). Failures by anyone, from any front end, are now kept with their error decoded at the time. Before this, they were found only if someone happened to look while a node still had the block.
 
