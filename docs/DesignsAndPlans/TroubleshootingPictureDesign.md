@@ -361,6 +361,12 @@ event that last changed it: the block and the position in it. So a wrong
 figure is followed back to the transaction that produced it, and the
 explainer shows what that transaction did.
 
+As chosen for the build: every table the indexer derives by replay carries
+three columns for that event, `last_event_block`, `last_event_tx_index` and
+`last_event_log_index`. They are set at each place a row is written, and a
+static check fails any write that leaves them unset. Triggers in the database
+were not taken, because they would spend the query budget of each block.
+
 **A request reference.** The app sends a short random reference with every
 request to a service. The service returns it and writes it into its log line
 and into the service error record when the request fails or is refused. When
