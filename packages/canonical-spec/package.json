@@ -1,0 +1,14 @@
+{
+  "name": "@vaipakam/canonical-spec",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "The canonical specification's folder check (#3948): reads docs/CanonicalSpec and refuses what the folder rules forbid. No dependencies.",
+  "bin": {
+    "canonical-spec-check": "./bin/check.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node bin/check.mjs"
+  }
+}
