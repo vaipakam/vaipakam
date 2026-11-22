@@ -60,7 +60,10 @@ record sha256 <64 hex characters>
 
 ## 3. Commit the record alone
 
+From the repository root (step 2 left you in `contracts/`):
+
 ```bash
+cd ..
 git add contracts/baseline/v0.9-pre-refactor.json
 git commit -m "Baseline record for v0.9-pre-refactor"
 ```
@@ -88,6 +91,8 @@ landed on `main` in between, the parent is wrong and the check refuses: make
 the record again from the new `main`.
 
 ## 5. Check it
+
+From the repository root:
 
 ```bash
 node contracts/script/baseline-check.mjs --tag v0.9-pre-refactor
