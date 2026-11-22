@@ -449,3 +449,22 @@ test('a citation cell\'s prose is read by the figure and parameter checks', () =
   const f = run([['vlt.md', STMT('VLT-012', 'rule', '', 'A vault holds at most PRM-001.') + model], ['params.md', params], ['record.md', RECORD([['VLT-012']])]]);
   assert.ok(has(f, 'parameter', /model "a vault" names PRM-777/), JSON.stringify(f));
 });
+
+test('every separate mistake answer names its own action', () => {
+  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n\n### VLT-M02 · b\n\n**Who:** the owner.\n';
+  const mk = (fm) => run([['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', `- **For the mistake:** ${fm}\n- **Tests owed:**`)], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(mk('VLT-M01, refuse; VLT-M02.'), 'mistake', /the answer "VLT-M02\." names no action/));
+  assert.ok(!has(mk('VLT-M01 and M02, refuse.'), 'mistake', /names no action/));
+});
+
+test('a model step with an empty cell is refused', () => {
+  const p = parseFile('vlt.md', MODEL(['| Open | Close | | VLT-901 | Recovered |'], ['| Close | VLT-901 |']));
+  assert.ok(p.errors.some((e) => /the Steps row's Who cell is empty/.test(e.message)), JSON.stringify(p.errors));
+});
+
+test('a model in its own file still lends its accounts to its domain', () => {
+  const fm = STMT('VLT-020', 'fund movement', '- **From:** the owner\'s vault.\n- **To:** the owner\'s vault.\n- **Comes to rest in:** a vault\'s free balance.\n- **Amount:** the amount owed.\n- **Rounding:** down, in the vault\'s favour.\n');
+  const model = MODEL(['| Not created | Create | Anyone | VLT-020 | Open |', '| Open | Recover | The owner | VLT-020 | Recovered |'], ['| Create | VLT-020 |', '| Recover | VLT-020 |']);
+  const f = run([['vlt.md', fm], ['vlt-model.md', model], ['record.md', RECORD([['VLT-020']])]]);
+  assert.ok(!has(f, 'account', /./), JSON.stringify(f));
+});

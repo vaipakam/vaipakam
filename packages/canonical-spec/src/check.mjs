@@ -337,7 +337,10 @@ export function checkSpec(parsed, opts = {}) {
   }
   const accountsByCode = new Map();
   for (const m of models) {
-    const code = (statements.find((s) => s.file === m.file) ?? {}).code;
+    // A model's domain is the domain of the statements that guard its steps,
+    // wherever its file sits (§3.5 lets a domain split its files).
+    const guard = m.steps.flatMap((r) => [...r['Guarded by'].matchAll(ID_RE)].map((x) => x[1]))[0];
+    const code = guard ?? (statements.find((s) => s.file === m.file) ?? {}).code;
     if (!code) continue;
     if (!accountsByCode.has(code)) accountsByCode.set(code, new Set());
     for (const a of m.accounts) accountsByCode.get(code).add(a.toLowerCase().replace(/\.$/, ''));
@@ -359,6 +362,13 @@ export function checkSpec(parsed, opts = {}) {
     const first = ids[0]?.slice(0, 3);
     if (first) for (const x of fm.matchAll(/(?<![A-Z]-)\bM(\d{2,3})\b/g)) ids.push(`${first}-M${x[1]}`);
     const ans = /\b(refuse|bound|undo|warn only)\b/i.exec(fm);
+    // Separate answers are separated by ";", and each names its own action;
+    // ids grouped before one action share it ("VLT-M15, VLT-M18 and M21, refuse").
+    for (const seg of fm.split(';')) {
+      if (/\b(?:[A-Z]{3}-)?M\d{2,3}\b/.test(seg) && !/\b(refuse|bound|undo|warn only)\b/i.test(seg)) {
+        add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: the answer "${seg.trim()}" names no action (refuse, bound, undo or warn only)`);
+      }
+    }
     if (!ids.length) add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: **For the mistake:** names no mistake id`);
     if (!ans) add(s.file, s.partLines['For the mistake'], 'mistake', `${s.id}: **For the mistake:** names no answer (refuse, bound, undo or warn only)`);
     // Each warn-only answer carries its own reason, whatever answers precede it

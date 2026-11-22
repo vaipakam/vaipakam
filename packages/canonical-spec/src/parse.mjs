@@ -193,6 +193,9 @@ function parseModel(file, lines, start, end) {
       if (want.join('|') !== table.header.join('|')) err(n, `the ${section} table's columns must be ${want.join(' | ')}`);
       for (const r of table.rows) {
         const row = Object.fromEntries(want.map((k, j) => [k, r.cells[j] ?? '']));
+        // Every cell of a model row says something: a step names its party
+        // ("nobody" for a step no one takes), its guard and both states.
+        for (const k of want) if (!row[k].trim()) err(r.line, `the ${section} row's ${k} cell is empty`);
         row.line = r.line;
         // Every cell is text the figure, parameter and reference checks read,
         // citation cells included: a citation cell may carry a short prose
