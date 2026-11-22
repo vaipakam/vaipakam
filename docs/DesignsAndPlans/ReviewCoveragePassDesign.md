@@ -472,6 +472,23 @@ part.
   signing or transaction-building module, directly or through an import,
   and refuses one that is on no list. A hand-kept list would miss the new
   file that signs.
+- **What a signing path reads is in scope with it.** A file that signs
+  takes the address it sends to, the interface it encodes against and the
+  network it uses from somewhere else: the deployment addresses, the
+  interface bundle, the network settings, the code that loads the
+  environment. A change there redirects a signed transaction without
+  touching a file that signs. So the check also follows each in-scope
+  file's own imports downwards, to every module and every data file it
+  reads, and those join the scope. A value read from the environment or
+  from a store joins as a named input of the unit, with where it is set.
+- **A unit's mark covers what it read.** The hash a review mark is taken
+  over includes the unit's files and every file and data file its signing
+  paths read. A change to any of them makes the mark stale for every unit
+  that reads it, and the ledger's check lists those units by name. The
+  deployment addresses change with every deploy, so their part of the
+  hash is taken over the fields a signing path reads and their shape, and
+  a redeploy to new addresses shows as a listed change that the unit's
+  reviewer confirms, not as a silent pass.
 - **The same two layers,** inside the same size limit, with the planted
   runs, the cross reader and the closing lines of section 8.
 - **Six lenses of its own:** keys and secrets; what is signed and for

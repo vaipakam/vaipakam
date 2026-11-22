@@ -107,7 +107,7 @@ The withdrawal is refused, and nothing moves.
 | An authority adds | **Held by** and **changed by** |
 | A setting adds | The parameter's id. Its bounds, its delay and who may change it are in the parameters table |
 | A never adds | **Against:** the id of the threat it answers (section 8.1), and **Watch:** what in the chain's own data would show a breach, or the reason nothing would (section 21.6) |
-| An always possible adds | **From:** the states it holds in, and **by:** the step or steps that reach the outcome it promises. It states what a party can always do (repay, withdraw a free balance, collect a claim), where a never states what can never happen |
+| An always possible adds | **From:** the states it holds in, **by:** the step or steps that reach the outcome it promises, and **except under:** each condition that delays or stops it, with the statement that says for how long, or "nothing". It states what a party can always do (repay, withdraw a free balance, collect a claim), where a never states what can never happen. A promise with a limit it does not name fails its own tests |
 | A statement that answers a mistake adds | **For the mistake:** its id and which of the four answers this is (section 8.2). A warn-only answer adds its reason |
 | Tests owed | The defaults for the kind (section 10.1), or the defaults with a stated addition |
 
@@ -160,9 +160,11 @@ Three more tables complete it.
 
 **Conditions of the platform are dimensions of every step that moves
 funds.** They are defined once, in the platform domain, and every model
-inherits them: the platform is paused, the asset is paused, the caller is
-flagged, the caller has not accepted the current Terms, a price is not
-available, the network's sequencer was down. For each condition a step
+inherits them: the platform is paused, the asset is paused, a party to
+the step is flagged, the sanctions screen cannot be read, the caller has
+not accepted the current Terms, a price is missing or not vouched for, the
+network's sequencer was down. The platform domain's own list is the one
+that counts, and this sentence follows it. For each condition a step
 that moves funds has a stated outcome, by a statement of its own or by the
 platform statement that covers it. A fund-moving step with no outcome
 under a condition fails the check.
@@ -201,6 +203,18 @@ the independence rule made mechanical. "The code does this" is not a
 source, so nothing the code happens to do can be written in by any drafter,
 whatever they have read. A statement with no source is a **new** statement
 and reaches the owner as a question (section 6).
+
+**A new statement is carried in a draft by what raised it.** A threat, a
+mistake or a gap in a model can show a rule no document states, and that
+rule has to pass the folder check before the owner sees it (section 7,
+steps 2 and 5). So the record entry of a new statement carries the mark
+**new** and, in place of a source, what raised it: the id of the threat or
+the mistake, the model row that had no statement, or the conflict read's
+finding. The check accepts that form in a draft and in no other place.
+When the owner approves the statement, his approval, by date, becomes its
+source, and only then may it enter the folder. "The code does this" is not
+something that can raise a statement either: the forms above are the whole
+list.
 
 ### 3.5 Domains and codes
 
@@ -250,7 +264,19 @@ codes.
 3. A fund movement between two things lives with the step that causes it.
 
 Every other domain cites the statement by id and never states it again.
-The check refuses a cross-domain reference made in any other way.
+The check refuses a cross-domain reference made in any other way, with one
+form for a domain that is not drafted yet.
+
+**A reference to a domain not yet drafted is written as owed.** The early
+domains depend on later ones: the vault's rules name the deploy domain
+before it exists. Such a reference is written as the domain's code, the
+word "owed" and a short phrase for the rule, as in "(DPL owed: where the
+treasury is)". The record of the citing domain lists each one, and the
+record of the named domain lists it as owed once that domain has a record.
+The check accepts the form while the named domain is not complete (section
+4). It refuses an owed reference that the citing domain's record does not
+list, and one whose named domain is complete. When the owed statement is
+approved, the reference is rewritten to its id in the same change.
 
 **The platform domain is drafted and approved first,** because every
 other draft is read against it. It restates the owner's standing product
@@ -273,6 +299,31 @@ wording: it is a proposed change to a standing rule, and reaches the owner
 as that. **Default:** the list above is the starting set, and a rule joins
 it only by the owner's decision.
 
+### 3.6 Statements held outside the public folder
+
+A few statements cannot be published while publishing them would itself
+do harm, as a never whose threat is still open cannot. Such a statement is
+**held**. It is part of the specification in every other way.
+
+- It has a permanent id in the held range of its domain, 900 to 999, and
+  the marker "held" beside its kind.
+- It is written in the same block, with the same parts, and is kept with
+  the private records (section 8.1) in one file for each domain.
+- The owner decides that a statement is held, and decides when it stops
+  being held. It then enters the folder under the same id.
+- **The tools read both places.** The code check traces code to a held
+  statement as to any other, so that code is never reported as "spec
+  silent". The catalogue lists what a held statement owes, in the private
+  records, and its tests carry its id. The four numbers of section 14
+  count held statements. The folder check treats the held range as
+  reserved and reports none of its ids as missing or unknown.
+- Why a statement is held is written in the private records and nowhere
+  in the repository.
+
+**Default:** nothing is held unless the owner says so, and the count of
+held statements for each domain is published with the four numbers, so a
+reader knows the public folder is not the whole of it.
+
 ## 4. The folder check
 
 One command, run by CI on every change to the folder. It refuses:
@@ -291,9 +342,13 @@ One command, run by CI on every change to the folder. It refuses:
    state no route reaches.
 8. A fund movement that comes to rest in a kind of account the model does
    not list.
-9. A cross-domain reference not made by id, and a reference to an id that
-   does not exist or is retired.
-10. A statement with no entry in the record, an entry with no source, and a
+9. A cross-domain reference made neither by id nor in the owed form of
+   section 3.5, a reference to an id that does not exist or is retired,
+   and an owed reference to a domain that is complete.
+10. A statement with no entry in the record, and an entry with no source.
+    In a draft, an entry marked new may name what raised it in place of a
+    source (section 3.4). In the folder, no entry may: every statement
+    there has a document source or the owner's approval by date. Also a
     statement in an approved section whose text differs from the text the
     owner approved without a new approval in the record.
 11. A parameter no statement uses, and a parameter id the table lacks.
@@ -303,6 +358,11 @@ One command, run by CI on every change to the folder. It refuses:
     parser fails closed:** a block it cannot read stops the check with the
     file and the line. It is never skipped, because a skipped statement
     would owe no tests and nobody would see it missing.
+
+**The check has two modes.** The **draft** mode runs on a section before
+the owner has seen it, and the **folder** mode on everything under
+`docs/CanonicalSpec/`. They differ in item 10 only. Every other item is
+the same in both, so a draft that passes needs no rework to enter.
 
 **Closing a domain** is a second set of checks, run when the last section
 of a domain becomes canonical. A domain is **complete** when all of these
@@ -594,6 +654,16 @@ is committed, so it can be read, and a check refuses a stale one.
 | Never | An invariant held through random walks, and one abuse case for the threat it answers |
 | Always possible | A path from every state it names to the outcome it promises, a functional test from each of those states under every condition of the platform it holds through, and a check after every step of the random walks that the promised step would still succeed |
 
+**Each test owed is one obligation with an id of its own.** A refusal
+that covers three states and two parties owes six tests, and a setting
+owes one at each bound. The catalogue lists each as a row whose id is the
+statement, the kind of test and a short key made from what tells it apart
+from its neighbours: the state, the party, the condition, the bound, as in
+`VLT-014 functional locked.owner`. A statement that owes one test of a
+kind has an empty key. The key is made from the content of the row, so it
+is stable while the statement and the model are, and a changed model shows
+as obligations added and removed, by name.
+
 **A statement that cites two models owes a joint path.** A loan that
 closes while its lender's position is listed for sale, or a vault that is
 locked while a loan it backs falls due, is governed by a statement that
@@ -635,17 +705,22 @@ From each lifecycle model a **path generator** lists:
 4. Every end state, by every route that repeats no state.
 5. Every value of every dimension, on every step that moves funds.
 6. On the other steps, every pair of values of two dimensions at least
-   once, and every pairing that a statement names.
+   once.
+7. On every step, whether or not it moves funds, every combination of
+   values that a statement names. A statement that says "a single NFT held
+   by a later holder" puts that pair on every step it covers.
 
 A condition of the platform is a dimension like any other, with one
 difference: each is applied **alone**, to every step that moves funds, and
-two together only where a statement names the pair. Six conditions on
-every fund-moving step is a list that can be finished. Six crossed is not.
+two together only where a statement names the pair. Each condition alone
+on every fund-moving step is a list that can be finished. All of them
+crossed is not.
 
 A full cross of every dimension would be tens of thousands of paths that
 differ in nothing a statement mentions, so it is not asked for. A
-combination that should matter and is not reached by items 5 and 6 is a
-missing statement, which is the right place to fix it. Whether this rule
+combination that should matter and is not reached by items 5 to 7 is a
+missing statement, which is the right place to fix it: once the statement
+names the combination, item 7 generates it. Whether this rule
 gives a usable number is one of the things the pilot measures.
 
 **Size.** Scouted for the loan, the largest model: on the order of forty
@@ -682,18 +757,22 @@ and every balance with the reference model's. Adding a path adds no code.
 
 | Tests | The mark |
 | --- | --- |
-| Contract tests and invariants | A documentation tag on the test function: `@custom:spec VLT-014 unit` |
-| Tests in the packages, the keeper, the indexer and the apps | The id and kind first in the test's title: `[VLT-014 unit]` |
+| Contract tests and invariants | A documentation tag on the test function, one for each obligation it satisfies: `@custom:spec VLT-014 functional locked.owner` |
+| Tests in the packages, the keeper, the indexer and the apps | The obligation first in the test's title: `[VLT-014 functional locked.owner]` |
 | Browser tests | The same, in the title |
 | A path the runner takes | Nothing by hand. The path's id carries its statements |
 
 A tool reads the tags from the compiler's syntax tree and the titles from
-the test runners' own listings. It refuses a tag that names an id that does
-not exist or is retired.
+the test runners' own listings. It refuses a tag that names a statement
+that does not exist or is retired, and a tag whose key matches no
+obligation the catalogue lists for that statement and kind. A test that
+satisfies several obligations carries a tag for each. A tag with no key
+counts only where the statement owes one test of that kind, so several
+tests of one case can never stand in for a case nobody wrote.
 
 **The gap report** is generated in CI from the catalogue and the tags, and
-is not committed: for each statement, each test it owes and the tests that
-carry it, with every owed test that has none listed by name.
+is not committed: for each statement, each obligation and the tests that
+carry it, with every obligation that has none listed by its id.
 
 **The tests that exist are kept and mapped.** For each section that
 becomes canonical, a mapping pass goes through the existing tests of its
@@ -1004,6 +1083,24 @@ running report.
     closed card with an unread proof as open.
 36. A never statement with a Watch part and no watcher is on the gap
     list.
+37. A draft whose new statement names the threat that raised it passes
+    the check in draft mode and is refused in folder mode until the
+    owner's approval is its source. An entry that names nothing is
+    refused in both.
+38. An owed reference to a domain with no canonical section passes. The
+    same reference fails once that domain is complete, and one missing
+    from the citing domain's record fails at once.
+39. A refusal that covers three states and two parties shows six
+    obligations in the catalogue. Six tests tagged for one of them leave
+    five on the gap report, each by its id, and a tag whose key matches
+    no obligation is refused.
+40. A statement that names a pair of dimension values on a fund-moving
+    step puts a path with that pair in the generated list.
+41. An always possible statement with a limit it does not name fails
+    under that condition, by name.
+42. A statement in the held range is traced by the code check and owes
+    its tests like any other, the public check reports no missing id for
+    it, and the published numbers count it.
 
 ## 17. Alternatives considered
 
