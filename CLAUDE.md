@@ -1272,6 +1272,18 @@ presence, not path feasibility).
 - **App copy is keyed** by the error name, or by its full signature when two
   errors share a name, so a translation never crosses meanings.
 
+**Explaining a transaction** (#3917): `EXPLAIN_RPC_URL=<node> pnpm --filter
+@vaipakam/lib explain-tx --chain <id> --tx <hash>` (or an unsent attempt:
+`--from --to --data --block [--value]`; `--json <path>` writes the data). It
+prints each function entered by depth with its arguments, the events (marking
+those a failed call undid), where it stopped with the catalogue's meaning, and
+the gas per step. The trace is the node's own, else a local anvil copy rebuilt
+from the parent block with the block's earlier transactions applied, compared
+with the receipt; a mismatch is headed "approximate replay". The code that ran
+is read from the trace's delegate-call addresses, never from a route lookup.
+The explainer itself is the pure `@vaipakam/lib/txExplainer`; the endpoint is
+read from the environment and never printed.
+
 ## Worker ABI consumption (Stage 3 split)
 
 The Stage 3 source-tree refactor (see

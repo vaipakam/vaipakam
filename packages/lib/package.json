@@ -261,10 +261,16 @@
     "./telegramAlerts/message": {
       "types": "./src/telegramAlerts/message.ts",
       "default": "./src/telegramAlerts/message.ts"
+    },
+    "./txExplainer": {
+      "types": "./src/txExplainer.ts",
+      "default": "./src/txExplainer.ts"
     }
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc -p bin/tsconfig.json",
+    "explain-tx": "tsx bin/explain-tx.ts"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
@@ -280,6 +286,8 @@
     "viem": "^2.0.0"
   },
   "devDependencies": {
+    "@types/node": "^24",
+    "tsx": "^4.19.2",
     "typescript": "^6.0.0",
     "viem": "^2.48.4",
     "vitest": "^4.1.4"
