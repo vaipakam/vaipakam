@@ -334,9 +334,9 @@ describe('GET /internal/failed-tx/state', () => {
     expect((await s.state(`chainId=${CHAIN}`, null)).status).toBe(401);
     expect((await s.state('chainId=999999')).status).toBe(400);
     expect((await s.state(`chainId=${CHAIN}&from=1&to=30000`)).status).toBe(400);
-    expect((await s.state(`chainId=${CHAIN}`)).body).toEqual({ cursor: null, checkpoints: [], auditedTo: null, recorded: null });
+    expect((await s.state(`chainId=${CHAIN}`)).body).toEqual({ cursor: null, checkpoints: [], auditedTo: null, recorded: null, recordedByOthers: null });
 
-    await s.post({ kind: 'records', chainId: CHAIN, records: [record()] });
+    await s.post({ kind: 'records', chainId: CHAIN, records: [record(), record({ txHash: h64(2), blockHash: h64(101), blockNumber: 1001, foundBy: 'audit' })] });
     await s.post({
       kind: 'cursor',
       chainId: CHAIN,
@@ -360,7 +360,9 @@ describe('GET /internal/failed-tx/state', () => {
     });
     expect(body.checkpoints).toEqual([{ blockNumber: 1500, blockHash: h64(15) }]);
     expect(body.auditedTo).toBe(1740);
-    expect(body.recorded).toEqual([record().txHash.toLowerCase()]);
+    expect([...body.recorded].sort()).toEqual([h64(1), h64(2)].map((h) => h.toLowerCase()).sort());
+    // The audit's own find is not coverage by the other sources.
+    expect(body.recordedByOthers).toEqual([h64(1).toLowerCase()]);
   });
 
   it('refuses a read naming another Diamond, and does not resume from a position written under one', async () => {

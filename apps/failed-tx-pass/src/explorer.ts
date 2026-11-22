@@ -13,7 +13,12 @@ import { cleanMessage } from './rpc';
 
 export class ExplorerFailure extends Error {
   constructor(
-    readonly kind: 'transient' | 'refused',
+    /**
+     * transient: a wait. unreadable: the explorer will not serve this list at
+     * all (a bad key, a network or tier the plan does not cover). refused:
+     * one range it cannot answer (more rows in one block than it pages).
+     */
+    readonly kind: 'transient' | 'unreadable' | 'refused',
     message: string,
   ) {
     super(message);
@@ -67,9 +72,9 @@ export function txlistExplorer(opts: { apiBase: string; apiKey: string; chainId:
     if (body.status === '1' && Array.isArray(body.result)) return body.result as Array<Record<string, string>>;
     if (body.status === '0' && /no transactions found/i.test(String(body.message)) && Array.isArray(body.result)) return [];
     const why = cleanMessage(typeof body.result === 'string' ? `${body.message}: ${body.result}` : body.message);
-    // A rate limit is a wait; anything else (a bad key, a network the plan
-    // does not cover) is a refusal the operator must see.
-    throw new ExplorerFailure(/rate limit|max calls|too many/i.test(why) ? 'transient' : 'refused', `explorer: ${why}`);
+    // A rate limit is a wait; anything else (a bad key, a network or tier the
+    // plan does not cover) means the list cannot be read on this network.
+    throw new ExplorerFailure(/rate limit|max calls|too many/i.test(why) ? 'transient' : 'unreadable', `explorer: ${why}`);
   };
 
   const range = async (address: string, from: number, to: number): Promise<FoundTx[]> => {

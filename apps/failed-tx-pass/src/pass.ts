@@ -121,6 +121,8 @@ interface Block {
 }
 
 class Hold extends Error {}
+/** The explorer will not serve the list on this network: the run falls back to sends-and-audit. */
+class ListUnreadable extends Error {}
 
 const isWait = (e: unknown) => (e instanceof RpcFailure && e.kind === 'transient') || (e instanceof ExplorerFailure && e.kind === 'transient');
 const why = (e: unknown) => (e instanceof Error ? e.message : 'unknown failure');
@@ -135,7 +137,10 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
     state: (_chainId: number, span?: { from: number; to: number }) => ctx.indexer.state(chainId, plan.diamond, span),
     write: (body: Record<string, unknown>) => ctx.indexer.write({ ...body, diamond: plan.diamond }),
   };
-  const result: RunResult = { chainId, mode: plan.mode, records: 0, findings: [] };
+  // The mode this run actually runs: the plan's, unless the explorer will not
+  // serve the list (§4.3: then sends-and-audit, with the watched share stated).
+  let mode: ChainPlan['mode'] = plan.mode;
+  const result: RunResult = { chainId, mode, records: 0, findings: [] };
   const alert = (key: string, text: string) => result.findings.push({ chainId, level: 'alert', key, text });
   const note = (key: string, text: string) => result.findings.push({ chainId, level: 'note', key, text });
   const mismatch = (e: unknown): boolean => {
@@ -232,6 +237,20 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
     }
     const from = start + 1;
     let to = Math.min(headNumber, start + settings.maxBlocksPerRun);
+    // The branch this run scans: the hash of the range's top block, read
+    // before anything is found. A block hash commits to every block below it,
+    // so while that top block keeps this hash, everything the run read below
+    // it is on the same branch. It is checked again before records are
+    // written and after the checkpoint's block is read; a change holds the run
+    // with nothing past the last checkpoint stored, and the next run's
+    // checkpoint check finds the replacement.
+    const plannedTo = to;
+    const plannedHash = from <= to ? (await block(plannedTo)).hash.toLowerCase() : undefined;
+    const sameBranch = async (): Promise<void> => {
+      if (plannedHash === undefined) return;
+      const now = (await block(plannedTo)).hash.toLowerCase();
+      if (now !== plannedHash) throw new Hold(`block ${plannedTo} changed while the run read the range below it; nothing past the last checkpoint is stored`);
+    };
     const found = new Map<string, { foundBy: FoundBy; blockNumber: number }>();
     const gaps: Array<{ fromBlock: number; toBlock: number; reason: string }> = [];
     const add = (hash: string, blockNumber: number, foundBy: FoundBy) => {
@@ -266,37 +285,52 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
         }
       } else if (plan.mode === 'list-and-audit') {
         if (!ctx.explorer) throw new Error('list-and-audit mode without an explorer');
-        const listed = async (addresses: string[], a: number, b: number): Promise<void> => {
-          for (const address of addresses) {
-            try {
-              for (const t of await ctx.explorer!.failedSentTo(address, a, b)) add(t.hash, t.blockNumber, 'explorer-list');
-            } catch (e) {
-              if (isWait(e)) throw new Hold(`the explorer did not answer (${why(e)})`);
-              gaps.push({ fromBlock: a, toBlock: b, reason: `the explorer refused the list for ${address}: ${why(e)}` });
-              alert(`explorer-refused-${address}`, `Chain ${chainId}: the explorer refused the list for ${address} (${why(e)}); blocks ${a} to ${b} recorded as a gap for it.`);
+        try {
+          const listed = async (addresses: string[], a: number, b: number): Promise<void> => {
+            for (const address of addresses) {
+              try {
+                for (const t of await ctx.explorer!.failedSentTo(address, a, b)) add(t.hash, t.blockNumber, 'explorer-list');
+              } catch (e) {
+                if (isWait(e)) throw new Hold(`the explorer did not answer (${why(e)})`);
+                if (e instanceof ExplorerFailure && e.kind === 'unreadable') throw new ListUnreadable(why(e));
+                gaps.push({ fromBlock: a, toBlock: b, reason: `the explorer refused the list for ${address}: ${why(e)}` });
+                alert(`explorer-refused-${address}`, `Chain ${chainId}: the explorer refused the list for ${address} (${why(e)}); blocks ${a} to ${b} recorded as a gap for it.`);
+              }
             }
+          };
+          // Each list is asked again over the overlap behind its position, for
+          // what the explorer indexed late; transactions already recorded there
+          // are not decoded again.
+          const overlap = Math.ceil(settings.listOverlapSeconds / plan.blockTimeSeconds);
+          const back = (a: number) => Math.max(plan.deployBlock, a - overlap);
+          await listed(plan.direct, back(from), to);
+          const slowFrom = (slow ?? start) + 1;
+          let lowest = back(from);
+          if ((to - slowFrom + 1) * plan.blockTimeSeconds >= HOUR) {
+            const rest = plan.watched.filter((a) => !plan.direct.includes(a));
+            lowest = Math.min(lowest, back(slowFrom));
+            await listed(rest, back(slowFrom), to);
+            slow = to;
           }
-        };
-        // Each list is asked again over the overlap behind its position, for
-        // what the explorer indexed late; transactions already recorded there
-        // are not decoded again.
-        const overlap = Math.ceil(settings.listOverlapSeconds / plan.blockTimeSeconds);
-        const back = (a: number) => Math.max(plan.deployBlock, a - overlap);
-        await listed(plan.direct, back(from), to);
-        const slowFrom = (slow ?? start) + 1;
-        let lowest = back(from);
-        if ((to - slowFrom + 1) * plan.blockTimeSeconds >= HOUR) {
-          const rest = plan.watched.filter((a) => !plan.direct.includes(a));
-          lowest = Math.min(lowest, back(slowFrom));
-          await listed(rest, back(slowFrom), to);
-          slow = to;
-        }
-        for (let a = lowest; a < from; a += STATE_RECORDED_RANGE) {
-          const b = Math.min(from - 1, a + STATE_RECORDED_RANGE - 1);
-          for (const h of (await indexer.state(chainId, { from: a, to: b })).recorded ?? []) found.delete(h);
-        }
-        for (const [hash, f] of found) {
-          if (f.blockNumber < from) note(`listed-late-${hash}`, `Chain ${chainId}: the explorer listed ${hash} (block ${f.blockNumber}) after its block was first read; it is recorded now.`);
+          for (let a = lowest; a < from; a += STATE_RECORDED_RANGE) {
+            const b = Math.min(from - 1, a + STATE_RECORDED_RANGE - 1);
+            for (const h of (await indexer.state(chainId, { from: a, to: b })).recorded ?? []) found.delete(h);
+          }
+          for (const [hash, f] of found) {
+            if (f.blockNumber < from) note(`listed-late-${hash}`, `Chain ${chainId}: the explorer listed ${hash} (block ${f.blockNumber}) after its block was first read; it is recorded now.`);
+          }
+        } catch (e) {
+          if (!(e instanceof ListUnreadable)) throw e;
+          // The list cannot be read here: this run is sends-and-audit, and the
+          // cursor says so with the share of the day that is watched. Each run
+          // asks the list again, so the network returns to list-and-audit by
+          // itself once the explorer serves it.
+          mode = 'sends-and-audit';
+          result.mode = mode;
+          found.clear();
+          gaps.length = 0;
+          slow = null;
+          alert('explorer-unreadable', `Chain ${chainId}: the explorer will not serve the transaction list (${why(e)}); the network runs as sends-and-audit, watched only during its audit window, until it does.`);
         }
       }
       // sends-and-audit: the keeper's own sends are the only continuous
@@ -310,7 +344,7 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
     for (const [hash, f] of ordered) {
       if (f.blockNumber > to) continue;
       try {
-        const r = await recordFor({ rpc, chainId, mode: plan.mode, nameOf: ctx.nameOf }, hash, f.foundBy);
+        const r = await recordFor({ rpc, chainId, mode, nameOf: ctx.nameOf }, hash, f.foundBy);
         if (r) records.push(r);
       } catch (e) {
         if (!isWait(e)) throw e;
@@ -322,6 +356,7 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
       }
     }
     const kept = records.filter((r) => r.blockNumber <= to);
+    await sameBranch();
     for (let i = 0; i < kept.length; i += RECORDS_PER_WRITE) {
       await indexer.write({ kind: 'records', chainId, records: kept.slice(i, i + RECORDS_PER_WRITE) });
     }
@@ -334,14 +369,14 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
     let auditPlan = state.cursor?.auditPlan ?? null;
     let auditedTo = state.auditedTo;
     const audits: Array<{ fromBlock: number; toBlock: number; found: number; missed: number }> = [];
-    if (plan.mode === 'list-and-audit' || plan.mode === 'sends-and-audit') {
+    if (mode === 'list-and-audit' || mode === 'sends-and-audit') {
       const day = dayOf(ctx.now() - DAY);
       if (!auditPlan || auditPlan.day !== day) {
         auditPlan = await planAudit(ctx, block, day, headNumber);
         auditedTo = null;
       }
       if (auditPlan) {
-        const covered = plan.mode === 'sends-and-audit' || (cursorTo >= auditPlan.toBlock && (slow ?? cursorTo) >= auditPlan.toBlock);
+        const covered = mode === 'sends-and-audit' || (cursorTo >= auditPlan.toBlock && (slow ?? cursorTo) >= auditPlan.toBlock);
         const next = (auditedTo ?? auditPlan.fromBlock - 1) + 1;
         if (!covered) {
           note('audit-waits', `Chain ${chainId}: the audit of ${auditPlan.day} waits for the list to reach block ${auditPlan.toBlock}.`);
@@ -369,13 +404,15 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
             doneTo = b;
           }
           if (doneTo >= next) {
-            const recorded = new Set((await indexer.state(chainId, { from: next, to: doneTo })).recorded ?? []);
+            // Coverage by the other sources only: a slice read again after an
+            // interrupted run must not count the audit's own earlier finds.
+            const recorded = new Set((await indexer.state(chainId, { from: next, to: doneTo })).recordedByOthers ?? []);
             const missed = failures.filter((x) => !recorded.has(x.hash));
             const audited: FailedTxRecord[] = [];
             for (const m of missed) {
-              const r = await recordFor({ rpc, chainId, mode: plan.mode, nameOf: ctx.nameOf }, m.hash, 'audit');
+              const r = await recordFor({ rpc, chainId, mode, nameOf: ctx.nameOf }, m.hash, 'audit');
               if (r) audited.push(r);
-              if (plan.mode === 'list-and-audit') {
+              if (mode === 'list-and-audit') {
                 alert(`audit-missed-${m.hash}`, `Chain ${chainId}: the audit found ${m.hash} (block ${m.blockNumber}), a failed transaction the explorer's list did not return. It is now recorded; open a card for the miss.`);
               }
             }
@@ -392,16 +429,17 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
 
     // The cursor, its checkpoint, gaps and audit slices, in one statement.
     const top = await block(cursorTo);
+    await sameBranch();
     await indexer.write({
       kind: 'cursor',
       chainId,
       cursor: {
-        mode: plan.mode,
+        mode,
         blockNumber: cursorTo,
         blockTime: num(top.timestamp),
-        watchedShareBps: plan.mode === 'sends-and-audit' ? Math.round((settings.auditWindowSeconds * 10_000) / DAY) : null,
-        slowBlockNumber: plan.mode === 'list-and-audit' ? (slow ?? cursorTo) : null,
-        auditPlan: plan.mode === 'trace-filter' ? null : auditPlan,
+        watchedShareBps: mode === 'sends-and-audit' ? Math.round((settings.auditWindowSeconds * 10_000) / DAY) : null,
+        slowBlockNumber: mode === 'list-and-audit' ? (slow ?? cursorTo) : null,
+        auditPlan: mode === 'trace-filter' ? null : auditPlan,
         checkpoints: [{ blockNumber: cursorTo, blockHash: top.hash.toLowerCase() }],
         gaps,
         audits,

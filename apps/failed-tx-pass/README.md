@@ -48,7 +48,10 @@ For each network in `FAILED_TX_CHAINS`, independently:
    range again. A disagreeing read holds the run. The rewind is kept in what
    is stored: a cursor above the newest unmarked checkpoint is read as a
    marked replacement and scanned again from that checkpoint, so a run that
-   stops between the marking and its cursor write loses nothing.
+   stops between the marking and its cursor write loses nothing. A run also
+   reads its range's top block before it scans and again before it stores
+   anything; if the chain replaced it in between, the run holds with nothing
+   past the last checkpoint stored.
 4. Finds failed transactions after its cursor, by the network's mode. The
    mode comes from the node capability check's committed result
    (`ops/node-capability/results/<slug>.json`, #3913). Those results reach
@@ -64,6 +67,10 @@ For each network in `FAILED_TX_CHAINS`, independently:
      list is asked again over the hour behind its position, because the
      explorer can index a transaction after the node already shows the block
      settled; what it lists later than that is the audit's to find.
+     When the explorer will not serve the list at all (a bad key, or a
+     network or tier the key does not cover), the run falls back to
+     sends-and-audit, says so in an alert and on the cursor (with the watched
+     share), and asks the list again next run.
    - **sends-and-audit**: no explorer key. The keeper's own sends are this
      mode's continuous source, and they arrive with the keeper decision record
      (§4.4), which is not built yet. Until then the daily audit is the only

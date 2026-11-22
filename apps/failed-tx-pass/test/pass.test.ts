@@ -13,11 +13,11 @@ import { codeNamesFromDeployment } from '@vaipakam/lib/txExplainer';
 import { createSqliteD1 } from '../../indexer/test/helpers/sqliteD1';
 import { handleFailedTxState, handleFailedTxWrite, type D1Write } from '../../indexer/src/failedTx';
 import { planFor, watchedAddresses, type CapabilityResult } from '../src/chains';
-import { boundErrorValues, boundExplanation, CUT_MARK, MAX_EXPLANATION_BYTES } from '../src/record';
+import { boundErrorValues, boundExplanation, CUT_MARK, fitRecord, MAX_EXPLANATION_BYTES } from '../src/record';
 import { MAX_ERROR_VALUES_BYTES, jsonBytes } from '@vaipakam/lib/failedTxBounds';
 import { ALERT_MESSAGE_CHARS, alertBatches, defaultSettings, runChain, type RunContext } from '../src/pass';
 import { RpcFailure, hex, type Rpc } from '../src/rpc';
-import type { Explorer } from '../src/explorer';
+import { ExplorerFailure, type Explorer } from '../src/explorer';
 import { IndexerFailure, type IndexerClient } from '../src/indexer';
 
 const DDL = ['0123_failed_transactions.sql', '0124_failed_tx_pass_state.sql'].map((f) =>
@@ -314,6 +314,44 @@ describe('the failed transaction pass', () => {
     expect(ix.rows('SELECT tx_hash FROM failed_tx').map((x) => x.tx_hash)).toEqual([txHash(22)]);
   });
 
+  it('holds, storing no checkpoint, when the range it read is replaced during the run', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const ix = realIndexer();
+    await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
+    chain.setHead(HEAD + 100);
+    const inner = listedExplorer(chain);
+    let switched = false;
+    const switching: Explorer = {
+      async failedSentTo(address, from, to) {
+        const out = await inner.failedSentTo(address, from, to);
+        if (!switched) {
+          switched = true;
+          chain.replaceFrom(HEAD + 50);
+        }
+        return out;
+      },
+    };
+    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW, switching));
+    expect(r.held).toMatch(/changed while the run read/);
+    expect(ix.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: HEAD }]);
+    expect(ix.rows("SELECT from_block FROM failed_tx_range WHERE kind = 'checkpoint'")).toEqual([{ from_block: HEAD }]);
+  });
+
+  it('runs as sends-and-audit, and says so, when the explorer will not serve the list', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const ix = realIndexer();
+    const refusing: Explorer = {
+      async failedSentTo() {
+        throw new ExplorerFailure('unreadable', 'explorer: Free API access is not supported for this chain');
+      },
+    };
+    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW, refusing));
+    expect(r.mode).toBe('sends-and-audit');
+    expect(r.findings.some((f) => f.level === 'alert' && f.key === 'explorer-unreadable')).toBe(true);
+    expect(ix.rows('SELECT mode, watched_share_bps, slow_block_number FROM failed_tx_cursor')).toEqual([{ mode: 'sends-and-audit', watched_share_bps: 208, slow_block_number: null }]);
+    expect(ix.rows("SELECT COUNT(*) AS n FROM failed_tx_range WHERE kind = 'gap'")).toEqual([{ n: 0 }]);
+  });
+
   it('alerts when its state cannot be read', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const ix = realIndexer();
@@ -357,6 +395,28 @@ describe('the failed transaction pass', () => {
     // The next run continues the window where this one stopped.
     const r2 = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
     expect(r2.audited!.from).toBe(r.audited!.to + 1);
+  });
+
+  it('keeps an audit miss a miss when the slice is read again after an interrupted run', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const windowStart = DEPLOY + 86_400;
+    chain.txs.push({ hash: txHash(24), block: windowStart + 3, to: DIAMOND, input: repay(24n), status: 0, revert: REVERT, trace: 'ok' });
+    const ix = realIndexer();
+    const ctx = context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(24)])));
+    const inner = ctx.indexer;
+    ctx.indexer = {
+      state: inner.state.bind(inner),
+      write: async (body) => {
+        if ((body as { kind?: string }).kind === 'cursor') throw new RpcFailure('transient', null, 'stopped');
+        return inner.write(body);
+      },
+    };
+    const r1 = await runChain(ctx);
+    expect(r1.held).toBeDefined();
+    expect(ix.rows('SELECT found_by FROM failed_tx')).toEqual([{ found_by: 'audit' }]);
+    const r2 = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(24)]))));
+    expect(r2.audited).toMatchObject({ from: windowStart, found: 1, missed: 1 });
+    expect(ix.rows("SELECT found, missed FROM failed_tx_range WHERE kind = 'audit'")).toEqual([{ found: 1, missed: 1 }]);
   });
 
   it('stops the audit slice at a block the node gives no receipts for, and reads it again next run', async () => {
@@ -463,6 +523,25 @@ describe('the plan and the record bounds', () => {
     const [row] = ix.rows('SELECT error_values, explanation_cut FROM failed_tx');
     expect(String(row!.error_values)).toContain(CUT_MARK);
     expect(row!.explanation_cut).toBe(1);
+  });
+
+  it('fits a replay record whose raw revert data is over the explanation bound', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const raw = '0xdeadbeef' + 'ab'.repeat(140 * 1024);
+    chain.txs.push({ hash: txHash(25), block: HEAD - 10, to: DIAMOND, input: repay(25n), status: 0, revert: raw, trace: 'refused', call: 'revert' });
+    const ix = realIndexer();
+    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
+    expect(r.records).toBe(1);
+    const [row] = ix.rows('SELECT source, explanation, explanation_cut FROM failed_tx');
+    expect(row).toMatchObject({ source: 'replay', explanation_cut: 1 });
+    expect(String(row!.explanation)).toContain(CUT_MARK);
+  });
+
+  it('states that an explanation is not stored when no cut makes it fit', () => {
+    const many = Object.fromEntries(Array.from({ length: 40_000 }, (_, i) => [`k${i}`, i]));
+    const out = fitRecord({ explanation: many, errorValues: null, unavailable: null, explanationCut: false } as never);
+    expect((out.explanation as { notStored?: string }).notStored).toBeDefined();
+    expect(out.unavailable).toContain('the explanation (over the record size bound)');
   });
 
   it('splits alerts into messages the operator chat takes, every alert in one of them', () => {

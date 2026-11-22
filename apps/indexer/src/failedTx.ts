@@ -579,6 +579,12 @@ export interface FailedTxPassState {
   auditedTo: number | null;
   /** Live records in the asked block range, by transaction hash (lowercase). */
   recorded: string[] | null;
+  /**
+   * The same, less those the audit itself found: what the other sources
+   * covered. The audit compares with this, so a slice read again after an
+   * interrupted run cannot count its own earlier finds as covered.
+   */
+  recordedByOthers: string[] | null;
 }
 
 /**
@@ -650,15 +656,17 @@ export async function handleFailedTxState(
       auditedTo = a?.t ?? null;
     }
     let recorded: string[] | null = null;
+    let recordedByOthers: string[] | null = null;
     if (span) {
-      recorded = (
+      const rows =
         (
           await db
-            .prepare(`SELECT DISTINCT tx_hash FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL`)
+            .prepare(`SELECT tx_hash, found_by FROM failed_tx WHERE chain_id = ?1 AND block_number BETWEEN ?2 AND ?3 AND replaced_at IS NULL`)
             .bind(chainId, span.from, span.to)
-            .all<{ tx_hash: string }>()
-        ).results ?? []
-      ).map((r) => r.tx_hash);
+            .all<{ tx_hash: string; found_by: string }>()
+        ).results ?? [];
+      recorded = [...new Set(rows.map((r) => r.tx_hash))];
+      recordedByOthers = [...new Set(rows.filter((r) => r.found_by !== 'audit').map((r) => r.tx_hash))];
     }
     const state: FailedTxPassState = {
       cursor: c
@@ -674,6 +682,7 @@ export async function handleFailedTxState(
       checkpoints,
       auditedTo,
       recorded,
+      recordedByOthers,
     };
     return json(state, 200);
   } catch (e) {

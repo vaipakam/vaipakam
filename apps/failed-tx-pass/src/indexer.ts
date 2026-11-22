@@ -17,6 +17,8 @@ export interface PassState {
   checkpoints: Array<{ blockNumber: number; blockHash: string }>;
   auditedTo: number | null;
   recorded: string[] | null;
+  /** The same, less the audit's own finds: what the other sources covered. */
+  recordedByOthers: string[] | null;
 }
 
 export interface IndexerClient {

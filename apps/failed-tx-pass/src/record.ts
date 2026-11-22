@@ -196,12 +196,38 @@ export function boundErrorValues(args: unknown, max = MAX_ERROR_VALUES_BYTES): {
   return r.fits ? { value, cut: r.cut, dropped: false } : { value: null, cut: true, dropped: true };
 }
 
-/** A record fitted to the route's field bounds before it is written. */
-function fitRecord(r: FailedTxRecord): FailedTxRecord {
-  const ev = boundErrorValues(r.errorValues);
-  if (!ev.cut) return r;
-  const unavailable = ev.dropped ? [...(r.unavailable ?? []), 'the error values (over the record size bound; the explanation keeps them where it can)'] : r.unavailable;
-  return { ...r, errorValues: ev.value as FailedTxRecord['errorValues'], explanationCut: true, unavailable };
+/**
+ * A record fitted to the route's field bounds before it is written: the one
+ * place every record passes, whatever its source. The explanation (a trace's
+ * already cut by `boundExplanation`, a replay's raw revert data, a fallback's
+ * kept error) is cut again over every string value if it is still over, and
+ * replaced by a statement that it is not stored if even that does not fit;
+ * the error values are cut to their own bound. Whatever is not stored is
+ * named in `unavailable`. A record over a bound would be refused by the route
+ * on every run, since the cursor moves only after the records are stored.
+ */
+export function fitRecord(r: FailedTxRecord): FailedTxRecord {
+  let out = r;
+  const unavailable = [...(r.unavailable ?? [])];
+  if (r.explanation !== null && r.explanation !== undefined && size(r.explanation) > MAX_EXPLANATION_BYTES) {
+    const value = structuredClone(r.explanation);
+    const cut = cutLongest(value, MAX_EXPLANATION_BYTES, true);
+    if (cut.fits) out = { ...out, explanation: value, explanationCut: true };
+    else {
+      out = {
+        ...out,
+        explanation: { notStored: 'The explanation was over the record size bound even with every value cut, so it is not stored.' },
+        explanationCut: true,
+      };
+      unavailable.push('the explanation (over the record size bound)');
+    }
+  }
+  const ev = boundErrorValues(out.errorValues);
+  if (ev.cut) {
+    out = { ...out, errorValues: ev.value as FailedTxRecord['errorValues'], explanationCut: true };
+    if (ev.dropped) unavailable.push('the error values (over the record size bound; the explanation keeps them where it can)');
+  }
+  return out === r ? r : { ...out, unavailable: unavailable.length ? unavailable : null };
 }
 
 export interface RecordContext {
