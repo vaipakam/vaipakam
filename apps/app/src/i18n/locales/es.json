@@ -2692,6 +2692,8 @@
         "SwapToRepayIntentForceCancelled": "Swap-para-reembolsar cancelado",
         "SwapToRepayIntentLotPulled": "Garantía tomada para swap-para-reembolsar",
         "FallbackCustodyMoved": "Custodia de la garantía actualizada",
+        "FallbackEndScheduled": "Fecha de liquidación fijada tras una venta fallida",
+        "FallbackFinishedInKind": "Liquidado en especie en su fecha de liquidación",
         "PeriodicInterestSettled": "Intereses liquidados",
         "PeriodicInterestAutoLiquidated": "Autoliquidado por intereses",
         "RepayPartialPeriodAdvanced": "Período de intereses avanzado",

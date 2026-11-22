@@ -2692,6 +2692,8 @@
         "SwapToRepayIntentForceCancelled": "swap-to-repay 已取消",
         "SwapToRepayIntentLotPulled": "swap-to-repay 抵押品已取出",
         "FallbackCustodyMoved": "抵押品托管已更新",
+        "FallbackEndScheduled": "出售失败后已设定结算日期",
+        "FallbackFinishedInKind": "已于结算日期以实物结算",
         "PeriodicInterestSettled": "利息已结算",
         "PeriodicInterestAutoLiquidated": "因利息自动清算",
         "RepayPartialPeriodAdvanced": "利息周期已推进",

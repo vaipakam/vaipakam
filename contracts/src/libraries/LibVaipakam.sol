@@ -9066,6 +9066,32 @@ library LibVaipakam {
         ///      (`LegalFacet.requireMayOpen`, through `LibTerms`). Appended —
         ///      append-only.
         uint64 networkClosingSince;
+        /// @dev #3865 — the wait, in days, after which anyone may finish a
+        ///      loan left in the fallback state in kind. 0 = never set, read
+        ///      as `LibFallbackEnd.DEFAULT_WAIT_DAYS` (30). Written only by
+        ///      `FallbackCustodyFacet.setFallbackEndWaitDays` (ADMIN_ROLE,
+        ///      behind the governance timelock), bounded 14 to 90.
+        uint16 fallbackEndWaitDays;
+        /// @dev #3865 — per loan, when it last entered the fallback state and
+        ///      the wait in force at that moment. Overwritten at every entry
+        ///      (`FallbackCustodyFacet.enterFallback`, through
+        ///      `LibFallbackEnd.record`) and never moved otherwise: a part
+        ///      internal match and a top-up that does not cure leave it as it
+        ///      is. A cure leaves a stale record behind, which no reader
+        ///      treats as current: `LibFallbackEnd.endAt` reads it only while
+        ///      the loan is FallbackPending under a live snapshot, which only
+        ///      a new entry (that overwrites it) can bring back. Appended —
+        ///      append-only.
+        mapping(uint256 => FallbackEndRecord) fallbackEnd;
+    }
+
+    /// @notice #3865 — when a loan entered the fallback state and the wait,
+    ///         in seconds, recorded for it then. The date itself is never
+    ///         stored: `LibLoanClock.fallbackEnd` derives it, adding the
+    ///         paused time since entry like every other loan deadline.
+    struct FallbackEndRecord {
+        uint64 enteredAt;
+        uint32 waitSeconds;
     }
 
     /// @notice #3849 — what the backstop lent in one lending asset on one UTC

@@ -453,7 +453,7 @@ library FacetSelectors {
         s[4] = OfferPreviewFacet.previewSignedOfferAccept.selector;
     }
 
-    /// @notice Full external selector surface of {FallbackCustodyFacet} (4).
+    /// @notice Full external selector surface of {FallbackCustodyFacet} (8).
     ///
     /// @dev    #1566 slice 2. The fallback flows - entering the fallback, the
     ///         retried swap and the disposal of the fallback collateral - moved
@@ -474,11 +474,16 @@ library FacetSelectors {
     ///         refresh and the tests cannot disagree about the surface, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function fallbackCustody() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](8);
         s[0] = FallbackCustodyFacet.enterFallback.selector;
         s[1] = FallbackCustodyFacet.retryFallbackSwap.selector;
         s[2] = FallbackCustodyFacet.disposeFallbackCustody.selector;
         s[3] = FallbackCustodyFacet.getFallbackCustody.selector;
+        // #3865 — the dated in-kind finish, its date and its setting.
+        s[4] = FallbackCustodyFacet.finishFallbackInKind.selector;
+        s[5] = FallbackCustodyFacet.getFallbackEnd.selector;
+        s[6] = FallbackCustodyFacet.setFallbackEndWaitDays.selector;
+        s[7] = FallbackCustodyFacet.getFallbackEndWaitDays.selector;
     }
 
     /// @notice Full external selector surface of {SwapAttemptFacet} (1).

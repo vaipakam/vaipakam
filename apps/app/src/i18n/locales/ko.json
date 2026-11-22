@@ -2692,6 +2692,8 @@
         "SwapToRepayIntentForceCancelled": "스왑 상환 취소됨",
         "SwapToRepayIntentLotPulled": "swap-to-repay collateral 인출됨",
         "FallbackCustodyMoved": "collateral 보관 업데이트됨",
+        "FallbackEndScheduled": "매각 실패 후 정산일 설정됨",
+        "FallbackFinishedInKind": "정산일에 현물로 정산됨",
         "PeriodicInterestSettled": "이자 정산됨",
         "PeriodicInterestAutoLiquidated": "interest로 auto-liquidated",
         "RepayPartialPeriodAdvanced": "이자 기간 진행됨",

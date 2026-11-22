@@ -267,6 +267,11 @@
       "issue": "#3246",
       "why": "moves a recovered account's free balance on to the recovery address its own record names (a payout that reached it after the clawback); the keeper pass is to be built, disarmed, with the protected-account work"
     },
+    "FallbackCustodyFacet.finishFallbackInKind(uint256)": {
+      "class": "gap",
+      "issue": "#3865",
+      "why": "after a loan's dated end has passed, finishes a loan left in the fallback state in kind on the split it already records (lender, treasury and borrower slices; nothing is sold or priced, the caller is paid nothing). The keeper pass (read FallbackEndScheduled rows, call it where getFallbackEnd reports finishable, shipped disarmed) is owed by the keeper thread"
+    },
     "SettlementLegFacet.releaseParkedTreasury(address,address)": {
       "class": "gap",
       "issue": "#3669",

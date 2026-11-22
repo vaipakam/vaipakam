@@ -30,7 +30,7 @@ library LibTestSettlementLeg {
 
     /// @dev Mirrors `DeployDiamond._getSettlementLegSelectors`.
     function selectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](16);
         s[0] = SettlementLegFacet.deliverLenderDueOrPark.selector;
         s[1] = SettlementLegFacet.moveInKindCollateralOrPark.selector;
         s[2] = SettlementLegFacet.inKindMove.selector;
@@ -46,5 +46,8 @@ library LibTestSettlementLeg {
         s[11] = SettlementLegFacet.vaultLegToStoredLender.selector;
         s[12] = SettlementLegFacet.payRepaymentLegs.selector;
         s[13] = SettlementLegFacet.payRentalLegs.selector;
+        // #3865 — a fallback's lender slice at its dated in-kind finish.
+        s[14] = SettlementLegFacet.moveFallbackSliceOrPark.selector;
+        s[15] = SettlementLegFacet.fallbackSliceMove.selector;
     }
 }

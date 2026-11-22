@@ -126,6 +126,10 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // the failed liquidation, a claim, a cure, a match).
   SwapToRepayIntentLotPulled: { label: 'Swap-to-repay collateral taken', category: 'loan-repay', priority: 12 },
   FallbackCustodyMoved: { label: 'Collateral custody updated', category: 'collateral', priority: 12 },
+  // #3865 — emitted beside LiquidationFallback at entry: below it, so the
+  // failed sale names the row.
+  FallbackEndScheduled: { label: 'Settlement date set after a failed sale', category: 'loan-default', priority: 11 },
+  FallbackFinishedInKind: { label: 'Settled in kind on its settlement date', category: 'loan-default', priority: 90 },
   // Periodic interest
   PeriodicInterestSettled: { label: 'Interest settled', category: 'loan-repay', priority: 50 },
   PeriodicInterestAutoLiquidated: { label: 'Auto-liquidated for interest', category: 'loan-default', priority: 85 },

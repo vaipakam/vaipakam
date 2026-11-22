@@ -2692,6 +2692,8 @@
         "SwapToRepayIntentForceCancelled": "இடமாற்றம்-திருப்பிச்செலுத்தல் ரத்துசெய்யப்பட்டது",
         "SwapToRepayIntentLotPulled": "இடமாற்றம்-திருப்பிச்செலுத்தலுக்கான பிணையம் எடுக்கப்பட்டது",
         "FallbackCustodyMoved": "பிணையக் காப்பு புதுப்பிக்கப்பட்டது",
+        "FallbackEndScheduled": "விற்பனை தோல்விக்குப் பின் தீர்வு தேதி நிர்ணயிக்கப்பட்டது",
+        "FallbackFinishedInKind": "தீர்வு தேதியில் பொருளாகத் தீர்க்கப்பட்டது",
         "PeriodicInterestSettled": "வட்டி தீர்க்கப்பட்டது",
         "PeriodicInterestAutoLiquidated": "வட்டிக்காக தானாகக் கலைக்கப்பட்டது",
         "RepayPartialPeriodAdvanced": "வட்டிக் காலம் முன்னேற்றப்பட்டது",
