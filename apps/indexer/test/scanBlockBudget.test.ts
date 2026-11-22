@@ -305,7 +305,10 @@ describe('a heavy block left unfinished (Codex #2836 r1)', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const HEAVY = EVENT_BLOCKS[1]!;
-    eventsInBlock = { [HEAVY]: 20 };
+    // Eight events: heavy enough to outrun the allowance inside the handlers,
+    // light enough that the block's history batch (#3921, one statement per
+    // log, written before the handlers) still fits.
+    eventsInBlock = { [HEAVY]: 8 };
     const h = chainDb();
     const stopped = await pass(h);
     // The tier's own allowance runs out inside the heavy block: the cursor
@@ -314,7 +317,7 @@ describe('a heavy block left unfinished (Codex #2836 r1)', () => {
     expect(cursorOf(h)).toBe(HEAVY - 1);
     const partial = recordedIn(h, HEAVY);
     expect(partial).toBeGreaterThan(0);
-    expect(partial).toBeLessThan(20);
+    expect(partial).toBeLessThan(8);
     // That pass is the only one that can announce what the block already
     // wrote (Codex #2836 r3): it says which block it left, its hints claim no
     // completeness, and every key goes out on it.
@@ -326,14 +329,14 @@ describe('a heavy block left unfinished (Codex #2836 r1)', () => {
     let passes = 0;
     while (cursorOf(h) < HEAVY && passes++ < 5) await pass(h);
     expect(cursorOf(h)).toBeGreaterThanOrEqual(HEAVY);
-    expect(recordedIn(h, HEAVY)).toBe(20);
+    expect(recordedIn(h, HEAVY)).toBe(8);
   });
 
   it('runs no heal lane after it: they read at the recorded block, and the block wrote newer rows (Codex #2836 r5)', { timeout: 120_000 }, async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const HEAVY = EVENT_BLOCKS[1]!;
-    eventsInBlock = { [HEAVY]: 20 };
+    eventsInBlock = { [HEAVY]: 8 };
     // The same stopped pass with and without a row the heal lanes would
     // re-read: the row adds no chain read, so no heal ran.
     const bare = await passWithMethods(chainDb());

@@ -4,6 +4,7 @@
  * and the contracts it watches, read from the deployment record.
  */
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { watchedAddresses } from '@vaipakam/lib/watchedContracts';
 import type { PassMode } from './record';
 
 /** The capability check's committed result, the fields the pass reads. */
@@ -31,29 +32,11 @@ export interface ChainPlan {
   diamond: string;
 }
 
-/** Keys of the deployment record that are people or the treasury, not contracts called into. */
-const NOT_CONTRACTS = new Set(['admin', 'treasury', 'keeperAddress']);
 /** The contracts users call directly (§4.3): read every few minutes. */
 const DIRECT_KEYS = ['diamond', 'positionNFT', 'vpfiToken'];
 
-/**
- * Every contract address in a deployment record, by the capability check's
- * rule: not people or the treasury, not an implementation behind a proxy
- * (reached through its proxy), not a facet (reached through the Diamond).
- */
-export function watchedAddresses(record: Record<string, unknown>): string[] {
-  const out = new Set<string>();
-  const walk = (v: unknown, key: string) => {
-    if (typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)) {
-      if (!NOT_CONTRACTS.has(key) && !/Impl$/.test(key)) out.add(v.toLowerCase());
-    } else if (v && typeof v === 'object') {
-      if (key === 'facets') return;
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) walk(x, k);
-    }
-  };
-  walk(record, '');
-  return [...out].sort();
-}
+/** The deployment record's contracts, by the shared rule (`@vaipakam/lib/watchedContracts`). */
+export { watchedAddresses };
 
 /**
  * The pass's plan for a network. `explorerConfigured` decides list-and-audit

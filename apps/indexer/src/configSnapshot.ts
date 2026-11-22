@@ -784,3 +784,74 @@ export async function handleConfigSnapshot(
     return jsonResponse({ error: 'config-failed' }, 500);
   }
 }
+
+/** #3921 — the settings changes the settings history records: the config
+ *  snapshot's own list and the pause events, less `DiamondCut`, which the
+ *  facet history records. */
+export function isSettingsHistoryEvent(name: string): boolean {
+  return name !== 'DiamondCut' && (isConfigEventName(name) || isPauseEventName(name));
+}
+
+/**
+ * #3921 — the protocol's settings as read at the end of one block, for the
+ * settings history: the config bundle (labelled with this build's output
+ * names, or the reason it could not be decoded), the single-output and
+ * labelled settings, the grace schedule and the pause log. Any failed read
+ * throws, so the caller counts an attempt rather than storing a partial
+ * answer as the block's settings. A getter the Diamond did not route at that
+ * block is a definitive answer, never a failure: the grace schedule is then
+ * the default (`[]`), and the knob and pause-log readers report it themselves.
+ */
+export async function readSettingsAt(opts: {
+  client: PublicClient;
+  diamond: Address;
+  chainId: number;
+  blockNumber: bigint;
+}): Promise<Record<string, unknown>> {
+  const [bundle, bundleAbiBound, knobs, graceBuckets, pauseLog] = await Promise.all([
+    readProtocolConfigBundle({
+      client: opts.client,
+      diamond: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      blockNumber: opts.blockNumber,
+    }) as Promise<ProtocolBundleRead>,
+    abiDescribesChainGetter({ ...opts, functionName: 'getProtocolConfigBundle' }),
+    readProtocolKnobGetters({
+      client: opts.client,
+      diamond: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      guardAbi: PriceGuardABI as Abi,
+      blockNumber: opts.blockNumber,
+      facets: getDeployment(opts.chainId)?.facets,
+    }),
+    (
+      opts.client.readContract({
+        address: opts.diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getGraceBuckets',
+        blockNumber: opts.blockNumber,
+      }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>
+    ).catch((err: unknown) => {
+      const raw = (err as { data?: unknown })?.data;
+      if (MISSING_SELECTOR.test(typeof raw === 'string' ? raw : '') || MISSING_SELECTOR.test(String(err))) {
+        return [] as const;
+      }
+      throw err;
+    }),
+    readPauseLog({ client: opts.client, diamond: opts.diamond, blockNumber: opts.blockNumber }).then(pauseLogToJson),
+  ]);
+  return {
+    // The output names only when the loupe shows this build's ABI is the
+    // code that answered at this block (as the snapshot row, #2073);
+    // otherwise the values by position alone.
+    bundle:
+      bundle.kind === 'read'
+        ? bundleAbiBound
+          ? { values: bundle.values }
+          : { positional: bundle.positional }
+        : { unreadable: bundle.reason },
+    knobs,
+    graceBuckets,
+    pauseLog,
+  };
+}
