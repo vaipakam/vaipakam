@@ -4,6 +4,8 @@
     "alert_channel_changes": "pending removals of a user's Telegram alert chat under protected mode (#3246); the user's own request, and a redeploy must not drop a pending change or the user's cancel of it",
     "asset_ranking": "public market-cap rankings of tokens, keyed by the TOKEN's chain (#3446); not a chain projection of any Diamond, refreshed whole by the keeper's daily pass, so a fresh Diamond must not wipe it",
     "asset_ranking_run": "the last ranking fetch per source and token chain (#3446); describes the public list above, not a Diamond",
+    "asset_issuer_check": "the off-chain checker's latest issuer-powers run per token, keyed by the TOKEN's chain (#3433); not a chain projection of any Diamond",
+    "asset_issuer_finding": "each check's result for a token in that run (#3433); describes the token's own code, not a Diamond",
     "diag_errors": "frontend error captures \u2014 the page's own diagnostics, keyed by chain only for filtering; nothing in them is a chain object",
     "loan_orphans": "the operator's record of loan rows withdrawn because the chain had no such loan (#2197); each entry names the Diamond it is about and nothing reads it against live ids, and a replay cannot recreate it, so a redeploy must not erase it",
     "support_tickets": "durable user support requests (#1040); user content, and a ticket about a retired Diamond is still the user's ticket",
