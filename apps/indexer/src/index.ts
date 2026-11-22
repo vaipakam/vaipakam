@@ -74,6 +74,7 @@ import {
   resolveD1Binding,
 } from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
+import { handleRepaymentRecord, handleRepaymentRecordPreflight } from './repaymentRecord';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
 import { handleAssetIssuerPowers } from './issuerPowers';
@@ -736,6 +737,18 @@ export default {
       if (req.method === 'OPTIONS') return handlePublicFeedPreflight();
       if (req.method === 'GET') return handlePublicFeed(req, resolved);
       return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /repayment-record/{address} ────────────────────────────
+    // #3778 — a count of what an address did as a borrower or renter here,
+    // from the platform's own events, with its limits stated.
+    {
+      const m = url.pathname.match(/^\/repayment-record\/([^/]+)$/);
+      if (m) {
+        if (req.method === 'OPTIONS') return handleRepaymentRecordPreflight();
+        if (req.method === 'GET') return handleRepaymentRecord(req, resolved, m[1]);
+        return new Response('Not found', { status: 404 });
+      }
     }
 
     // ─── /activity ──────────────────────────────────────────────

@@ -99,6 +99,22 @@ export function ratesEligibleSql(alias: string): string {
 }
 
 /**
+ * Rule 2 for one loan row already read, for a figure that classifies rows
+ * in code rather than in SQL (the repayment record, whose reads stay static
+ * text). The same three answers the SQL helpers above give, in the same
+ * order: unknown first (either party missing), then one address, else two.
+ * `figureRules.test.ts` executes both against the real schema and holds
+ * them equal.
+ */
+export function openingPartiesOf(
+  initLender: string | null | undefined,
+  initBorrower: string | null | undefined,
+): 'two' | 'one' | 'unknown' {
+  if (initLender == null || initBorrower == null) return 'unknown';
+  return initLender === initBorrower ? 'one' : 'two';
+}
+
+/**
  * How many left-out loans a bounded figure counts before it says "at
  * least" instead (the rate candles; the unplaced count does the same).
  */

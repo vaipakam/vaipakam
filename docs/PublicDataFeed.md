@@ -26,6 +26,15 @@ wallet's own page (claimables, notifications, loans by participant) are
 chain data too, but they are not part of the feed. Addresses appear exactly
 as they do on chain.
 
+Every table the feed reads is one the indexer rebuilds from the chain alone
+(the indexer's table classification calls these replay-derived). It never
+reads a table born off chain, or one that mixes the two. A test holds both
+rules, and records the tables each route reads.
+
+One route takes an address: the repayment record. A route that takes an
+address joins the feed only when a design names it public, and none lists,
+ranks, searches or filters addresses by their record.
+
 ## Versioning
 
 The prefix carries the version: `/public/v1`. Within v1:
@@ -90,6 +99,7 @@ today are testnets; the platform is not live on any mainnet.
 | `/loans/stats` | Loan counts by status, and the principal lent per lending asset in that asset's own smallest units. `counting` states how it counted (see below). | |
 | `/loans/rate-candles` | The agreed rates of this platform's own past loans for one pair and term, by interval (open, high, low, close). `fills` is each interval's sample size. | `lendingAsset`, `collateralAsset`, `durationDays` (all required), `interval` (`1h`, `4h`, `1d`), `range` (`7d`, `30d`, `90d`, `all`) |
 | `/loans/{id}` | One loan by id, with its status. | |
+| `/repayment-record/{address}` | A count of how the loans and rentals one address held as borrower or renter here closed, with the statements of what it is and is not. An address with no history gets an empty record, not an error. The rules are in [`RepaymentRecordDerivation.md`](RepaymentRecordDerivation.md). | |
 
 Each route takes only the parameters listed (and `chainId`). Any other
 parameter is refused with `400` and `{"error": "unknown-parameter",
@@ -117,6 +127,8 @@ Three rules hold for every figure the feed publishes.
    is left out of rate figures too and counted on its own line
    (`counting.openingPartiesUnknown`); it is never assumed to have two
    parties.
+   The repayment record applies the same test to the loans it counts and
+   states both counts under `leftOut`.
 3. **No mean across assets or terms.** Every rate figure is per lending asset
    and term range. No figure averages the rates of different assets or terms
    together.
@@ -143,6 +155,16 @@ Each response's `about.excludes` lists this for the route. In short:
   has no figure; nothing is filled in for it.
 - **Recent loans for one pair and term** leave out loans whose agreed terms the
   chain has not yet confirmed.
+- **The repayment record** covers this network only, from where its index
+  begins (`historyBegins`), and leaves out the temporary loan a lender's
+  sale creates and anything outside this platform. Loans opened with one
+  address on both sides, and loans whose opening parties are unknown, are
+  counted under `leftOut` rather than in any class, and so are loans whose
+  holder at a needed moment cannot be told apart because two changes of the
+  borrower position share one block (`leftOut.holderUnresolved`). A payment
+  by another address counts for the holder. The fees the address paid are not stated
+  yet (`feesPaid.stated` is `false`, with the reason), never shown as a
+  partial sum.
 
 ## Errors
 

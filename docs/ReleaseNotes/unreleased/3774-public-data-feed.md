@@ -8,7 +8,7 @@ The open offer book always leaves out offers past their expiry, which can still 
 
 Nothing kept privately for a wallet is served. The per-wallet convenience reads (claimables, notifications, loans by participant) are left out of the feed, and any path outside the list answers 404.
 
-Each route lists the parameters it takes; only those and the chain reach the handler, and any other is refused with a 400 naming it. Tests pin each route's parameters and field names (a field may be added, never removed or renamed) and record the tables each route reads, none of them keyed to a wallet.
+Each route lists the parameters it takes; only those and the chain reach the handler, and any other is refused with a 400 naming it. Tests pin each route's parameters and field names (a field may be added, never removed or renamed) and record the tables each route reads, each one the indexer rebuilds from the chain alone.
 
 A new per-IP limiter, `PUBLIC_FEED_RATELIMIT` (120 a minute, one budget across every feed route), is taken before any read. Cloudflare counts it per location, so the figure is approximate. A refusal states the limit and the period and carries Retry-After. Like every limiter here it fails closed.
 
