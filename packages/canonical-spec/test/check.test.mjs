@@ -292,7 +292,7 @@ test('parameters: one no statement uses, and an id the table lacks, are refused'
 
 test('test 42: a held statement sits in the held range; the public check reports nothing missing for it', () => {
   const held = STMT('VLT-901', 'rule · held');
-  const parsedHeld = parseFile('held.md', held.replace('rule · held', 'rule · held'));
+  const parsedHeld = parseFile('held.md', held);
   assert.equal(parsedHeld.statements[0].held, true);
   const f = checkSpec([parsedHeld, parseFile('record.md', RECORD([['VLT-901']]))]);
   assert.deepEqual(f.filter((x) => x.rule === 'held'), []);
