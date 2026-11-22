@@ -150,7 +150,15 @@ at which prices cannot be read.
 5. **Apply.** Anyone runs the final call. It accepts only checks made within the check window
    (a parameter, proposed at one hour), checks any asset that came into use since, reads the
    wrapped coin and the assets with the most pledged value again at that moment, and applies.
-   A keeper pass backs the check and the apply, and ships disarmed.
+   A check older than the window is no check: the asset's page is run again first. A keeper
+   pass backs the check and the apply, and ships disarmed.
+
+A book too large to read in one transaction cannot have every asset read at the instant of
+the apply. Two things cover the time between an asset's page and the apply. The window
+bounds it to an hour, in which the two guards' readings of one asset move together unless
+one of them is at fault. And the settling time (G13) checks again at the point of use: for
+its length, no step on a loan goes ahead unless both guards allow it, so a reading that
+parted from the other after its page cannot be acted on.
 
 ### 4. The guards
 
@@ -159,7 +167,7 @@ at which prices cannot be read.
 | G1 | Only governance proposes. The wait is at least the price guard's own. The guardian may cancel. One change may be pending at a time. Only the guard the proposal named is ever applied (section 2) | A change nobody had time to read, and a guard swapped in late under an earlier proposal's wait |
 | G2 | The change is atomic (section 2) | A threshold compared with a price in another unit, and a window with no prices |
 | G3 | **The two guards must agree on every asset in use.** For each asset in use, and for the network's wrapped coin, the two guards' prices give the rate that asset implies. The highest and the lowest implied rate may differ by no more than twice the price tolerance (a parameter, proposed at 1%). No single asset is the anchor | A new guard that misprices any asset, the wrapped coin included. With the implied rates that close, no pair's price, and so no loan-to-value or health factor, differs between the guards by more than twice the tolerance |
-| G4 | An asset the old guard vouches for and the new one does not fails the change | A liquid asset silently becoming unpriced, which would change how a default on it settles |
+| G4 | **The new guard must price what is in use.** At the apply the new guard must vouch for every asset in use that the old guard has a source for, whether or not the old guard can vouch at that moment. It holds on both kinds of change. The only exception is an asset the proposal names as one the new guard will not price, with the reason | A liquid asset silently becoming unpriced, which would change how a default on it settles, and a change that lands with the loan book unpriced |
 | G5 | An asset the old guard has a source for but cannot vouch for at that moment fails a checked change, unless the proposal named it exempt | A stale moment used to pass an unchecked price |
 | G6 | The rate governance named must lie within the proposal's stated drift (at most the rate drift cap, proposed at 5%) of the middle of the implied rates, as read in the final call | A mistyped or inverted rate, and a rate gone stale during the wait |
 | G7 | The rate of one change, and the scale after it, lie inside fixed ranges | A figure overflowing or rounding to nothing |
@@ -181,8 +189,10 @@ after the change is priced by the new guard like any new asset.
 **A change without the old guard.** If the old unit's feeds are gone, the old guard vouches
 for little or nothing. That path is never fallen into: it is chosen in the proposal, and it
 waits twice the unit change wait. On it, an asset the old guard cannot vouch for is no
-failure (G5 is off). Every asset the old guard still vouches for is checked in full (G3, G4
-and G6 among those assets). Where it vouches for none, the rate is governance's named figure
+failure (G5 is off). Every asset the old guard still vouches for is checked in full (G3 and
+G6 among those assets), and G4 holds as on a checked change: the new guard must vouch for
+every asset in use the old guard has a source for, so the change cannot land with the loan
+book unpriced. Where the old guard vouches for none, the rate is governance's named figure
 alone, and the record and the event say the rate was unchecked. What a wrong rate can do
 then is bounded by G10: thresholds scale wrongly until governance resets them or changes
 back (G8), and reward weights of loans opened after the change are off against those before.
