@@ -42,15 +42,18 @@ export const REPO_ROOT = join(CONTRACTS_DIR, '..');
  * The chains the deploy scripts know. `canonicalReward` marks the chain
  * `Deployments.isCanonicalRewardChainId` names: the configure step makes it
  * the canonical reward chain whatever a desired-state file says, so the file's
- * role must agree (a test pins this set to that function).
+ * role must agree (a test pins this set to that function). `ccipSelector` is
+ * the CCIP chain selector `Deployments.ccipSelectorForChainId` maps the chain
+ * to, which the configure step stores on each messenger's lane (a test pins
+ * these to that function too).
  */
 export const CHAINS = {
-  'base-sepolia': { chainId: 84532, prefix: 'BASE_SEPOLIA', network: 'testnet', canonicalReward: true },
-  sepolia: { chainId: 11155111, prefix: 'SEPOLIA', network: 'testnet' },
-  'arb-sepolia': { chainId: 421614, prefix: 'ARB_SEPOLIA', network: 'testnet' },
-  'op-sepolia': { chainId: 11155420, prefix: 'OP_SEPOLIA', network: 'testnet' },
-  'bnb-testnet': { chainId: 97, prefix: 'BNB_TESTNET', network: 'testnet' },
-  'polygon-amoy': { chainId: 80002, prefix: 'POLYGON_AMOY', network: 'testnet' },
+  'base-sepolia': { chainId: 84532, prefix: 'BASE_SEPOLIA', network: 'testnet', ccipSelector: '10344971235874465080', canonicalReward: true },
+  sepolia: { chainId: 11155111, prefix: 'SEPOLIA', network: 'testnet', ccipSelector: '16015286601757825753' },
+  'arb-sepolia': { chainId: 421614, prefix: 'ARB_SEPOLIA', network: 'testnet', ccipSelector: '3478487238524512106' },
+  'op-sepolia': { chainId: 11155420, prefix: 'OP_SEPOLIA', network: 'testnet', ccipSelector: '5224473277236331295' },
+  'bnb-testnet': { chainId: 97, prefix: 'BNB_TESTNET', network: 'testnet', ccipSelector: '13264668187771770619' },
+  'polygon-amoy': { chainId: 80002, prefix: 'POLYGON_AMOY', network: 'testnet', ccipSelector: '16281711391670634445' },
 };
 
 /** The source of a testnet setting copied from the deployment being replaced (design ruling 2026-11-22, item 6b). */

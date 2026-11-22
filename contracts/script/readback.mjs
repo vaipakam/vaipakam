@@ -184,7 +184,10 @@ export function readback(d, ctx) {
       for (const name of roles) cmp(`roles.admin.${name}`, s, 'admin holds every grantable role', D, 'hasRole(bytes32,address)(bool)', [roleHash(name), admin], ['true']);
       cmp('roles.owner', s, 'ERC-173 owner is the admin', D, 'owner()(address)', [], [admin]);
     }
-    if (deployer && deployer !== admin) {
+    // A deployer that cannot be identified is a failure to read, never a pass:
+    // otherwise a missing input would hide roles the deploy key kept.
+    if (!deployer) R.push(row('roles.deployer', s, `${d.roles.deployer} set to an address`, env[d.roles.deployer] ?? 'unset', UNREADABLE, 'roles'));
+    else if (deployer !== admin) {
       for (const name of roles) cmp(`roles.deployer.${name}`, s, 'deployer renounced every role', D, 'hasRole(bytes32,address)(bool)', [roleHash(name), deployer], ['false']);
     }
     for (const [bot, h] of Object.entries(d.roles.bots ?? {})) {
@@ -221,9 +224,12 @@ export function readback(d, ctx) {
       const t = slugs.find((x) => CHAINS[x].chainId === id);
       if (!msg) { R.push(row(`lane.${t}`, s, 'a messenger in addresses.json', 'none', NOT_MET, 'cross-chain lane')); continue; }
       const sel = ask(s, msg, 'chainSelectorOf(uint256)(uint64)', [String(id)]);
+      // The exact selector the configure step stores, never merely a non-zero
+      // one: the messenger sends to whatever chain the stored selector names.
+      const wantSel = CHAINS[t].ccipSelector;
       R.push(sel.ok
-        ? row(`lane.${t}.selector`, s, 'a CCIP selector for the chain', sel.w[0], sel.w[0] !== '0' ? MET : NOT_MET, 'cross-chain lane')
-        : row(`lane.${t}.selector`, s, 'a CCIP selector for the chain', sel.err, UNREADABLE, 'cross-chain lane'));
+        ? row(`lane.${t}.selector`, s, `${t}'s CCIP selector ${wantSel}`, sel.w[0], sel.w[0] === wantSel ? MET : NOT_MET, 'cross-chain lane')
+        : row(`lane.${t}.selector`, s, `${t}'s CCIP selector ${wantSel}`, sel.err, UNREADABLE, 'cross-chain lane'));
       const peer = records[t]?.ccipMessenger?.toLowerCase();
       if (!peer) R.push(row(`lane.${t}.peer`, s, `${t}'s messenger`, `no messenger recorded for ${t}`, NOT_MET, 'cross-chain lane'));
       else cmp(`lane.${t}.peer`, s, 'cross-chain lane', msg, 'remoteMessengerOf(uint256)(address)', [String(id)], [peer]);

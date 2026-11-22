@@ -55,7 +55,7 @@ function fakeCtx(d, w, over = {}) {
     const msgIdx = slugs.indexOf(s);
     if (to.toLowerCase() === w.records[s].ccipMessenger.toLowerCase()) {
       const t = slugs.find((x) => CHAINS[x].chainId === Number(args[0]));
-      if (sig.startsWith('chainSelectorOf')) return '1234';
+      if (sig.startsWith('chainSelectorOf')) return w.selectorsOf?.[`${s}>${t}`] ?? CHAINS[t].ccipSelector;
       if (sig.startsWith('remoteMessengerOf')) return w.peers[`${s}>${t}`] ?? w.records[t].ccipMessenger;
     }
     if (to === A(0x6000 + msgIdx) && sig.startsWith('isSanctioned')) return 'false';
@@ -309,4 +309,39 @@ test('a getter awaiting a ruling is shown, neither met nor failed, and a revert 
   const base = fakeCtx(d, w);
   const rows2 = readback(d, { ...base, call: (s, to, sig, args) => { if (sig === 'getRateModel()(address)') throw new Error('execution reverted: FunctionDoesNotExist'); return base.call(s, to, sig, args); } });
   assert.equal(bad(rows2).filter((x) => x.endsWith('getter.getRateModel()')).length, 3);
+});
+
+test('a lane whose selector names another chain fails, even when non-zero', () => {
+  const d = desired();
+  const w = world(d);
+  w.selectorsOf = { 'arb-sepolia>base-sepolia': CHAINS['bnb-testnet'].ccipSelector };
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['arb-sepolia lane.base-sepolia.selector']);
+});
+
+test('the CCIP selectors are the ones Deployments.ccipSelectorForChainId maps', () => {
+  const src = readFileSync(join(CONTRACTS_DIR, 'script/lib/Deployments.sol'), 'utf8');
+  const body = src.match(/function ccipSelectorForChainId\(uint256 cid\)[^{]*\{([\s\S]*?)\n    \}/)[1];
+  const map = new Map([...body.matchAll(/cid == (\d+)\)\s*return (\d+);/g)].map((m) => [Number(m[1]), m[2]]));
+  for (const [slug, c] of Object.entries(CHAINS)) assert.equal(c.ccipSelector, map.get(c.chainId), slug);
+});
+
+test('an unidentified deployer is unreadable on every chain, never a silent pass', () => {
+  const d = desired();
+  const w = world(d);
+  w.roles['base-sepolia'].add(`ADMIN_ROLE|${DEPLOYER}`);
+  const rows = readback(d, fakeCtx(d, w, { env: { ADMIN_ADDRESS: ADMIN, TREASURY_ADDRESS: TREASURY } }));
+  const r = rows.filter((x) => x.id === 'roles.deployer');
+  assert.equal(r.length, 3);
+  assert.ok(r.every((x) => x.result === UNREADABLE));
+});
+
+test("the committed file accounts for the mirrors' unset remittance keeper and the one-shot interface initializer", () => {
+  const d = desired();
+  const w = world(d);
+  for (const s of Object.keys(d.chains)) {
+    // The getter is also a Base setting's read-back, so the fake answers it from the settings.
+    if (s !== 'base-sepolia') w.settings[s]['getRewardRemittanceKeeper()(address)'] = `0x${'0'.repeat(40)}`;
+    w.created.get(CHAINS[s].chainId).push({ address: A(0xb000), name: 'DiamondInterfacesInit' });
+  }
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w, { getters: [...GETTERS, 'getRewardRemittanceKeeper()'] }))), []);
 });

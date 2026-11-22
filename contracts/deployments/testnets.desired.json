@@ -244,6 +244,14 @@
       ],
       "reason": "The reward remittance receiver takes Base's budget on a mirror; Base sends remittances and receives none."
     },
+    "getRewardRemittanceKeeper()": {
+      "kind": "byDesign",
+      "chains": [
+        "arb-sepolia",
+        "bnb-testnet"
+      ],
+      "reason": "Remitting the reward budget is a Base-only action, so the remittance keeper is set on Base alone; a mirror keeps the zero default, under which only the admin could remit and the mirror never does."
+    },
     "getBuybackRemittanceReceiver()": {
       "kind": "byDesign",
       "chains": [
@@ -286,6 +294,9 @@
         "checked": "2026-11-22"
       }
     }
+  },
+  "notRecorded": {
+    "DiamondInterfacesInit": "A one-shot initializer DeployDiamond creates and runs once inside the diamond cut that writes the ERC-165 table; nothing calls it afterwards, so the deploy keeps its address in a local variable and writes no record of it."
   },
   "_notDeployedHereWhy": "#3893, design ruling 2026-11-22: the readback refuses a zero answer from a Diamond getter that names a deployment contract, and refuses a revert outright, unless the getter is listed here. byDesign: a zero the canonical/mirror split explains (design checks each). venue: an outside contract absent from the chain, with the venue's published deployment list and the date read; where the venue exists, its address is set instead. On mainnet every entry needs the owner's recorded acceptance. awaitingRuling rows are shown, neither met nor failed, and are refused on mainnet.",
   "manual": [],
