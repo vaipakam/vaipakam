@@ -84,7 +84,7 @@ const SHARED_DATABASE = 'vaipakam-warm';
 //   'hybrid'           — archived nightly; §4 import through the
 //                        converter's RESTORE_PROJECTIONS, the projected
 //                        part re-derived by the §6 replay (#1481).
-const CLASSIFICATION = {
+export const CLASSIFICATION = {
   // born-off-chain (mirrors backup.ts ARCHIVE_TABLES_REQUIRED[_ONCE_MIGRATED])
   diag_errors: { class: 'born-off-chain', reason: 'frontend error captures' },
   diag_legal_holds: { class: 'born-off-chain', reason: 'operator legal-hold register' },
