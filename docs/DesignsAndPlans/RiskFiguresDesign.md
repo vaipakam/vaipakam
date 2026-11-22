@@ -99,14 +99,14 @@ is a way to add the higher health floor at once.
   the cap of every deeper tier (section 3).
 - A rise needs two readings in different hours. A refresh lifts the cap that
   applies past the higher of the default and the cap that applied before it
-  only as far as the lower of its reading and the reading before it, and only
-  where that earlier reading was found in an earlier hour, counted as the
-  hourly checkpoints count hours (section 9). Otherwise the cap stays at that
-  bound. The rule is measured against the cap that applies, so a waiting
+  only as far as the lower of its reading and the tier's reading before it,
+  and only where that earlier reading was found in an earlier hour, counted as
+  the hourly checkpoints count hours (section 9). Otherwise the cap stays at
+  that bound. The rule is measured against the cap that applies, so a waiting
   reading that falls and still lies above that cap lifts nothing in the same
-  hour. The first reading for a tier is held to the default. A refresh that
-  lowers the cap applies at once. So a refresh timed to a spike lifts no cap
-  past that bound.
+  hour. The first reading for a tier applies no higher than the default. A
+  refresh that lowers the cap applies at once. So a refresh timed to a spike
+  lifts no cap past that bound.
 - A reading past half the usable age raises a notice while it still applies.
 
 **The peer reading.** Anyone may refresh it.
@@ -213,7 +213,7 @@ on each loan.
 ## 8. Concentration
 
 `CollateralConcentrationDesign.md` keeps the measure and the graded response.
-This design adds four rules to it.
+This design adds seven rules to it.
 
 - **The pledged amount equals the liens.** For each asset the platform keeps
   the amount pledged under the live collateral liens of priced loans, with the
@@ -223,10 +223,36 @@ This design adds four rules to it.
 - **A release is never refused for the amount.** No release of collateral, and
   no close-out that makes one, is refused because of the pledged amount. Where
   the amount is less than a release takes, it stops at zero, and an event
-  names the asset and what was short. From then, until governance has set the
-  amount right, a new loan on that asset has the response of the high
-  threshold. The keeper alerts operators on the event. A fault in this record
-  so costs new loans room, and never holds a party's collateral.
+  names the asset and what was short. From then the amount is short, until it
+  is set right. The keeper alerts operators on the event. A fault in this
+  record so costs new loans room, and never holds a party's collateral.
+- **New exposure stops while the amount is short.** The exposure limit
+  (`LiquidityTiersAndExposureDesign.md`, section 6) reads the same amount, and
+  a short amount understates what is pledged. So while an asset's amount is
+  short the exposure limit reads the asset as at its limit: every step that
+  would take on new exposure in it is refused, by name, with the asset. A new
+  loan that takes on none, one that replaces a loan and pledges nothing more,
+  has the response of the high threshold. A release, a top-up, a cure and a
+  repayment are never refused for it, and no open loan is changed. The stop is
+  stated. An event marks its start and another its end, and the readings, the
+  previews and the app say that new loans on the asset are stopped until the
+  record is corrected.
+- **The amount is set right by a count of the liens.** A correction is a count
+  of the live liens, made on the chain. Every lien made, changed or ended
+  while a count runs moves the running total for the part already counted, in
+  the same step, so no lien is missed and the count never comes out low. Only
+  a count that has finished sets the amount: one still running, or left
+  unfinished, sets nothing. Anyone may make the count, at any time, where it
+  can be made in steps, and governance's own step is the fallback. A count
+  made while the amount is not short sets the amount to its total where the
+  two differ, and starts no stop. Every correction that changes the amount
+  states the figure before it and the figure after it in an event, whether a
+  stop was in force or not: a difference either way means a writer of the
+  amount is at fault. The stop ends only by a correction.
+- **No correction is below the liens.** No correction ever sets the pledged
+  amount below the total of the live liens on that asset, by the count that
+  anyone makes or by governance's step, with a stop in force or without. This
+  is held as an invariant beside the first rule of this section.
 - **The level a loan records does not depend on the keeper.** It is measured
   against the size the exposure limit uses, the lower of the asset's measured
   tier and its proven tier, which does not lapse. So no loan is marked for its
@@ -309,7 +335,9 @@ away:
   lifting. Lifting gives nothing back. The tier is then earned again from the
   tier governance set, a step at a time
   (`LiquidityTiersAndExposureDesign.md`, section 4).
-- **A short pledged amount** (section 8), until governance has set it right.
+- **A short pledged amount** (section 8), until a count of the liens has set
+  it right: new exposure in the asset stops, and a new loan that takes on none
+  has the response of the high threshold.
 
 What this costs: governance cannot give one asset a tighter cap or threshold
 than its tier has. It can pause the asset, or lower its confidence tier and
@@ -370,8 +398,17 @@ parameters table.
   range between a loan's opening and each close-out.
 - The pledged amount set against the sum of liens after every step that
   touches a lien. A release larger than the amount on every route that
-  releases collateral, a new loan on that asset before and after the amount is
-  set right, and the alert.
+  releases collateral, a second short release while the amount is short, and
+  the alert.
+- While an asset's amount is short and after it is set right: a new loan, a
+  top-up, a cure, a repayment, a release, and a loan that replaces a loan with
+  nothing more pledged and with more. The event at the start of the stop and
+  the one at its end, and the preview.
+- A count by anyone and by governance. A lien made, changed and ended behind
+  and ahead of a running count. A correction one smallest part below the
+  total of the live liens and at it, by each route. A count left unfinished.
+  A count while the amount is not short that finds more, less and the same.
+  The figures the event states.
 - A loan opened while every confidence tier had lapsed: the level it records.
 - Two callers of a checkpoint in one hour, a distrusted price at the hour, a
   slot written in a pause, a second write by each actor, and the newest slot
@@ -409,6 +446,20 @@ parameters table.
 10. **Give collateral with no tier the shallowest tier's own figures.** Not
    taken: an asset that has earned no tier should not have the terms of one
    that has.
+11. **Leave the response of the high threshold as the only effect of a short
+   amount.** Not taken. The exposure limit reads the same amount, so new
+   exposure would pass that the limit is meant to refuse. A lower cap does not
+   bound the total.
+12. **A careful running total instead of a stop.** Not taken: once the record
+   is found short the true amount is not known, so no figure built from the
+   record keeps the limit. Only a count of the liens does.
+13. **A correction that governance states freely.** Not taken: the amount is a
+   fact the liens prove, so a correction is a count, open to anyone where that
+   is practical, and never below the total of the live liens.
+14. **A count that starts again at any change of a lien on the asset.** Not
+   taken: on a busy asset such a count might never finish, and anyone could
+   keep it from finishing with a small change. The count instead keeps its
+   running total true for the part already counted.
 
 ## 15. Recommendation
 
@@ -418,8 +469,10 @@ section 12 confirmed first.
 ## 16. Open items
 
 - The ranges marked "to be stated" in section 12.
-- The step by which governance sets a pledged amount right, and how a lowering
-  of a confidence tier is published, are stated with the governance steps.
+- Whether the count that anyone may make is practical at the size of the loan
+  book is the builder's to raise, not to decide silently. Governance's
+  fallback step, and how a lowering of a confidence tier is published, are
+  stated with the governance steps.
 - The alerts for an ageing peer reading and for a short pledged amount are
   stated with the keeper's passes.
 - The close-out's own figures are classed by the rule of section 7 when the

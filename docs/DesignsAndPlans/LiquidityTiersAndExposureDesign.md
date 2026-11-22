@@ -185,6 +185,10 @@ second. A third threshold refuses:
   changed by a later rise in what is pledged or a later fall in depth.
 - **The refusal says why.** A step past the limit is refused by name, with the
   asset and the room left, and the previews show the same room.
+- **While an asset's pledged amount is short** the limit reads the asset as at
+  its limit, so new exposure in it is refused until a count of the liens has
+  set the amount right. The top-up, the cure and the repayment stay open, as
+  does every release (`RiskFiguresDesign.md`, section 8).
 
 What this costs: a new asset has the smallest limit until its first tier is
 earned, and one more record is kept for each asset. This changes the decision
@@ -216,8 +220,9 @@ these steps act on a named asset, and each only takes away or records what the
 asset earned by the one rule every asset is held to: the mute of a rate
 source, the confirmation of a fall of an exchange rate, the guardian's stop of
 one asset's price, the keeper's step of a confidence tier, governance's
-lowering of a confidence tier (section 4), and the step by which governance
-sets an asset's pledged amount right (`RiskFiguresDesign.md`, section 8). No
+lowering of a confidence tier (section 4), and the count that sets an asset's
+pledged amount right, with governance's step as its fallback
+(`RiskFiguresDesign.md`, section 8). No
 setting gives a named asset a figure of its own (`RiskFiguresDesign.md`,
 section 11).
 
