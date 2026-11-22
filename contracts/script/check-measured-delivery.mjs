@@ -178,6 +178,28 @@ function buildArtifacts() {
   return undefined;
 }
 
+/**
+ * The one way an AST check reads its build: the units, plus every reason they
+ * cannot be read as one compilation job. AST ids are numbered per job, so
+ * units from two jobs share ids and every reference resolved across them can
+ * land on an unrelated declaration; a check must refuse such a build, never
+ * read it. Returns `{ units, problems }`; read only when `problems` is empty.
+ *
+ * @param {string} outDir  the artifact directory (with build-info/)
+ */
+export function loadOneJobBuild(outDir) {
+  let build;
+  try {
+    build = loadBuild(outDir);
+  } catch (e) {
+    return { units: [], problems: [`cannot read ${relative(process.cwd(), outDir)}: ${e.message} — run check-measured-delivery.mjs first, or pass --out`] };
+  }
+  if (build.problems.length) return { units: [], problems: build.problems };
+  const units = [...build.units.values()];
+  const problems = oneJobProblems(units, readBuildInfos(outDir));
+  return { units: problems.length ? [] : units, problems };
+}
+
 function readBuildInfos(outDir) {
   const dir = join(outDir, 'build-info');
   let names;
@@ -269,13 +291,7 @@ export function main(argv = process.argv.slice(2)) {
     }
     outDir = BUILD_OUT_DIR;
   }
-  const build = loadBuild(outDir);
-  if (build.problems.length) {
-    for (const p of build.problems) console.error(`  ✗ ${p}`);
-    return 1;
-  }
-  const units = [...build.units.values()];
-  const jobProblems = oneJobProblems(units, readBuildInfos(outDir));
+  const { units, problems: jobProblems } = loadOneJobBuild(outDir);
   if (jobProblems.length) {
     for (const p of jobProblems.slice(0, 10)) console.error(`  ✗ ${p}`);
     if (jobProblems.length > 10) console.error(`  ✗ ... and ${jobProblems.length - 10} more`);

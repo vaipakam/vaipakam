@@ -81,8 +81,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { relative, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTRACTS_DIR, FACETS_FILE, loadBuild } from './storage-layout-guard.mjs';
-import { BUILD_OUT_DIR } from './check-measured-delivery.mjs';
+import { CONTRACTS_DIR, FACETS_FILE } from './storage-layout-guard.mjs';
+import { BUILD_OUT_DIR, loadOneJobBuild } from './check-measured-delivery.mjs';
 import { entryPoints } from './check-permissionless-steps.mjs';
 import { makeContext, mostDerived, reach, routedCallAt } from './refactor-reports.mjs';
 
@@ -158,6 +158,10 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
 
   // The continuations the placeholders of the modifiers being read run.
   const placeholders = [];
+  // The code each modifier wrapping the code being read runs after its
+  // placeholder (innermost last): a `return` there still runs it.
+  const postambles = [];
+  const postambleCache = new Map();
   /**
    * One call of a function with its modifiers, as solidity runs it: each
    * modifier's body in order, its placeholder running the next modifier (and
@@ -178,7 +182,12 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
       const { m, body } = mods[i];
       for (const a of m.arguments ?? []) if (visit(a, cond, depth, true) === true) return true;
       if (!body) return runFrom(i + 1, cond);
-      placeholders.push((c) => runFrom(i + 1, c));
+      placeholders.push((c) => {
+        postambles.push({ id: body.id, stmts: afterPlaceholder(body.statements), depth: depth + 1 });
+        const r = runFrom(i + 1, c);
+        postambles.pop();
+        return r;
+      });
       const r = visitAll(body.statements, cond, depth + 1, true);
       placeholders.pop();
       return r === true;
@@ -343,16 +352,34 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
     }
     return false;
   };
-  // Inside a helper, a statement that may return hands control back to the
-  // caller, which goes on: whatever follows it in the helper runs only on
-  // some paths. (In the entry or a modifier, an early return ends the call
-  // before any later state change, so it does not weaken a check.)
+  // Whether the code of a wrapping modifier after its placeholder may change
+  // state. Read on the side: what it finds is not recorded.
+  const postambleMayChange = () => postambles.some((p) => {
+    if (!postambleCache.has(p.id)) {
+      const saved = { stoppedAt, calls: new Map(calls), unseen: unseen.length };
+      placeholders.push(() => false);
+      const r = visitAll(p.stmts, true, p.depth, true) === true;
+      placeholders.pop();
+      stoppedAt = saved.stoppedAt;
+      calls.clear();
+      for (const [k, v] of saved.calls) calls.set(k, v);
+      unseen.length = saved.unseen;
+      postambleCache.set(p.id, r);
+    }
+    return postambleCache.get(p.id);
+  });
+  // A statement that may return hands control to whatever runs next: in a
+  // helper, its caller; in any function, the code its modifiers run after
+  // their placeholders. If that code may change state, whatever follows the
+  // statement runs only on some paths before a state change, so a check
+  // there is conditional. (When nothing that runs next can change state, an
+  // early return ends the call before any state change and weakens nothing.)
   const visitAll = (stmts, conditional, depth, inModifier) => {
     let cond = conditional;
     for (const s of stmts ?? []) {
       const r = visit(s, cond, depth, inModifier);
       if (r === true || r === 'placeholder') return r;
-      if (helperDepth > 0 && mayReturn(s)) cond = true;
+      if (!cond && mayReturn(s) && (helperDepth > 0 || postambleMayChange())) cond = true;
     }
     return false;
   };
@@ -360,6 +387,26 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
   const modifiers = (fn.modifiers ?? []).map((m) => m.modifierName?.name ?? ctx.byId.get(m.modifierName?.referencedDeclaration)?.name ?? '?');
   invoke(fn, false, 0, false);
   return { calls, modifiers, stoppedAt, unseen };
+}
+
+/**
+ * The statements of a modifier body after the one holding its (first)
+ * placeholder: what the modifier runs once the code it wraps has run or
+ * returned. When the placeholder is nested (in a branch or a loop), the whole
+ * statement holding it is included too, so code after it in that statement
+ * is read; its code before the placeholder is read as well, which can only
+ * err towards finding a state change.
+ */
+function afterPlaceholder(stmts = []) {
+  const holds = (n) => {
+    if (!n || typeof n !== 'object') return false;
+    if (n.nodeType === 'PlaceholderStatement') return true;
+    for (const v of Object.values(n)) if (Array.isArray(v) ? v.some(holds) : v && typeof v === 'object' && holds(v)) return true;
+    return false;
+  };
+  const i = stmts.findIndex(holds);
+  if (i < 0) return [];
+  return stmts.slice(stmts[i].nodeType === 'PlaceholderStatement' ? i + 1 : i);
 }
 
 /** Whether a statement contains a `return` of its own (not one in a nested function). */
@@ -535,22 +582,15 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`  · entry gates: no rules file at ${relative(process.cwd(), rulesPath)} (the rules stay in the review repository until the check reports nothing)`);
     return 0;
   }
-  let build;
-  try {
-    build = loadBuild(outDir);
-  } catch (e) {
-    console.error(`  ✗ cannot read ${relative(process.cwd(), outDir)}: ${e.message} — run check-measured-delivery.mjs first, or pass --out`);
+  const { units, problems: buildProblems } = loadOneJobBuild(outDir);
+  if (buildProblems.length) {
+    for (const p of buildProblems.slice(0, 5)) console.error(`  ✗ ${p}`);
     return 1;
   }
-  if (build.problems.length) {
-    for (const p of build.problems) console.error(`  ✗ ${p}`);
-    return 1;
-  }
-  const units = [...build.units.values()];
   const manifest = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));
   const shipped = [...manifest.facets, ...manifest.standalone];
   const ctx = makeContext(units, manifest.facets);
-  const { entries } = entryPoints(units, shipped, ctx.byId);
+  const { entries } = entryPoints(units, shipped, ctx.byId, { special: true });
   if (list) {
     const doc = existsSync(rulesPath) ? JSON.parse(readFileSync(rulesPath, 'utf8')) : { rules: [] };
     const gates = callChecks(doc);

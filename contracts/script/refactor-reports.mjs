@@ -86,12 +86,12 @@
  *
  * CLI: node contracts/script/refactor-reports.mjs check|write|list [--out <dir>] [--report <name>]
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTRACTS_DIR, FACETS_FILE, keccak256, loadBuild } from './storage-layout-guard.mjs';
-import { BUILD_OUT_DIR, oneJobProblems } from './check-measured-delivery.mjs';
+import { CONTRACTS_DIR, FACETS_FILE, keccak256 } from './storage-layout-guard.mjs';
+import { BUILD_OUT_DIR, loadOneJobBuild } from './check-measured-delivery.mjs';
 import { entryPoints, indexNodes } from './check-permissionless-steps.mjs';
 
 export const REPORTS_DIR = join(CONTRACTS_DIR, 'refactor-reports');
@@ -751,22 +751,9 @@ export function main(argv = process.argv.slice(2)) {
     console.error('usage: refactor-reports.mjs check|write|list [--out <dir>] [--report <name>]');
     return 2;
   }
-  let build;
-  try {
-    build = loadBuild(outDir);
-  } catch (e) {
-    console.error(`  ✗ cannot read ${relative(process.cwd(), outDir)}: ${e.message} — run check-measured-delivery.mjs first, or pass --out`);
-    return 1;
-  }
-  if (build.problems.length) {
-    for (const p of build.problems) console.error(`  ✗ ${p}`);
-    return 1;
-  }
-  const units = [...build.units.values()];
-  const infos = readdirSync(join(outDir, 'build-info')).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(readFileSync(join(outDir, 'build-info', n), 'utf8')));
-  const jobProblems = oneJobProblems(units, infos);
-  if (jobProblems.length) {
-    for (const p of jobProblems.slice(0, 5)) console.error(`  ✗ ${p}`);
+  const { units, problems: buildProblems } = loadOneJobBuild(outDir);
+  if (buildProblems.length) {
+    for (const p of buildProblems.slice(0, 5)) console.error(`  ✗ ${p}`);
     return 1;
   }
   const manifest = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));

@@ -208,6 +208,22 @@ contract GFacet is Guarded {
         LibGate.s().x = 15;
     }
 
+    function earlyReturnThenPostamble(bool skip) external nonReentrant pokesAfter {
+        if (skip) return;
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 17;
+    }
+
+    function earlyReturnLockOnly(bool skip) external nonReentrant {
+        if (skip) return;
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 18;
+    }
+
+    receive() external payable {
+        LibGate.s().x = 16;
+    }
+
     function pureBuiltinsFirst() external nonReentrant {
         bytes memory b = abi.encode(msg.sender, keccak256(new bytes(1)));
         uint256[] memory xs = new uint256[](1);

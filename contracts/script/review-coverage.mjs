@@ -1121,7 +1121,7 @@ async function reviewRepoCommand(cmd, rest) {
       requireReviewableSlice(unit, index);
       const { entryPoints } = await import('./check-permissionless-steps.mjs');
       const shipped = [...g.manifest.facets, ...g.manifest.standalone];
-      const entries = entryPoints(g.units, shipped, g.ctx.byId).entries.filter((e) => e.contract === unit.name);
+      const entries = entryPoints(g.units, shipped, g.ctx.byId, { special: true }).entries.filter((e) => e.contract === unit.name);
       const body = reviewDescription(describeSlice(unit, index, { ...g, decls }), gates.checklist(doc, entries, { shipped, ctx: g.ctx }));
       if (typeof f['body-file'] === 'string') {
         const problems = descriptionProblems(readFileSync(f['body-file'], 'utf8'), body);
@@ -1188,12 +1188,11 @@ async function reviewRepoCommand(cmd, rest) {
 
 /** The full build's units and a context for the call graph (unit tool only). */
 export async function loadGraph() {
-  const { loadBuild } = await import('./storage-layout-guard.mjs');
-  const { BUILD_OUT_DIR } = await import('./check-measured-delivery.mjs');
+  const { BUILD_OUT_DIR, loadOneJobBuild } = await import('./check-measured-delivery.mjs');
   const rr = await import('./refactor-reports.mjs');
-  const build = loadBuild(BUILD_OUT_DIR);
-  if (build.problems.length) throw new Error(`${build.problems[0]} (run check-measured-delivery.mjs first)`);
-  const units = [...build.units.values()];
+  // One compilation job only: AST ids are numbered per job.
+  const { units, problems } = loadOneJobBuild(BUILD_OUT_DIR);
+  if (problems.length) throw new Error(`${problems[0]} (run check-measured-delivery.mjs first)`);
   // The Diamond's routing table: a selector the unit's code names resolves to
   // the facet that hosts it.
   const manifest = JSON.parse(readFileSync((await import('./storage-layout-guard.mjs')).FACETS_FILE, 'utf8'));

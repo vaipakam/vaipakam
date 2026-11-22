@@ -14,7 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const UNITS = Object.values(JSON.parse(readFileSync(join(HERE, 'fixtures', 'entry-gates', 'ast.json'), 'utf8')).units);
 const shipped = ['GFacet', 'HostFacet'];
 const ctx = makeContext(UNITS, shipped);
-const { entries } = entryPoints(UNITS, shipped, ctx.byId);
+const { entries } = entryPoints(UNITS, shipped, ctx.byId, { special: true });
 const entry = (name) => entries.find((e) => e.contract === 'GFacet' && e.name === name);
 const carried = (name, gates) => readEntry(entry(name).fn, ctx.contracts.get('GFacet'), ctx, new Set(gates));
 
@@ -65,6 +65,10 @@ test('reading: modifiers, calls before the first state change, and where it stop
   const pure = carried('pureBuiltinsFirst');
   assert.equal(pure.calls.get(FLAG)?.conditional, false, 'abi.encode, keccak256, new memory arrays, bytes.concat and conversions are not boundaries');
   assert.equal(pure.stoppedAt, 'a storage write');
+  assert.equal(carried('earlyReturnThenPostamble').calls.get(FLAG)?.conditional, true, 'an entry\'s early return still runs a modifier that calls out after its placeholder');
+  assert.equal(carried('earlyReturnLockOnly').calls.get(FLAG)?.conditional, false, 'an early return that reaches only the lock release weakens nothing');
+  assert.ok(entry('receive'), 'receive is an entry');
+  assert.equal(carried('receive').stoppedAt, 'a storage write');
   const getter = carried('readsGetterFirst');
   assert.equal(getter.calls.get(FLAG)?.conditional, false, 'a public state variable getter on another contract is an external view');
   assert.ok(getter.calls.has('Child.made'));
@@ -72,7 +76,7 @@ test('reading: modifiers, calls before the first state change, and where it stop
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'createsFirst', 'deepWriteFirst', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaIndexedPointer', 'viaMaybeHelper', 'viaMemberPointer', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'createsFirst', 'deepWriteFirst', 'earlyReturnThenPostamble', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'receive', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaIndexedPointer', 'viaMaybeHelper', 'viaMemberPointer', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);
@@ -96,7 +100,7 @@ test('an exemption passes an entry with a reason, and is refused without one, wh
 
 test('modifier checks and the applies-to vocabulary', () => {
   const guard = rule({ id: 'reentry-guard', statement: 'Every open GFacet entry holds the re-entry guard.', check: { anyOf: [{ modifier: 'nonReentrant' }] } });
-  assert.deepEqual(flagged({ rules: [guard] }), ['modifierCallsOut', 'noGuard']);
+  assert.deepEqual(flagged({ rules: [guard] }), ['modifierCallsOut', 'noGuard', 'receive'], 'receive is an entry like any other');
   const gated = rule({ id: 'diamond-only', statement: 'Every caller-gated GFacet entry is the Diamond-only kind.', appliesTo: { contracts: ['GFacet'], caller: 'gated' }, check: { anyOf: [{ modifier: 'onlySelf' }] } });
   assert.deepEqual(flagged({ rules: [gated] }), []);
   const reached = () => new Set(['LibGate.s']);
