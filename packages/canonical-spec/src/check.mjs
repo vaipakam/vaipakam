@@ -5,8 +5,9 @@
  * every finding as {file, line, rule, message}. A finding is a refusal: the
  * command exits non-zero on any. The two modes differ twice. In §4 item 10,
  * `draft` lets a record entry marked new name what raised it in place of a
- * source; `folder` does not. And `draft` accepts a mistake marked
- * `**Waits for:** <section>` while nothing answers it; `folder` refuses it.
+ * source; `folder` does not. A mistake marked `**Waits for:** <section>` is
+ * accepted while nothing answers it, in both modes, until its domain is
+ * marked complete.
  *
  * What a machine cannot judge (two statements in different words that
  * contradict each other) is left to the conflict read; `neighbours()` prints
@@ -351,7 +352,9 @@ export function checkSpec(parsed, opts = {}) {
     // can never drop out of sight; the committed folder holds none.
     const waits = (mk.fields['Waits for'] ?? '').trim();
     if ('Waits for' in mk.fields && !waits) add(mk.file, mk.line, 'mistake', `${mk.id}: **Waits for:** names no section`);
-    if (waits && mode !== 'draft') add(mk.file, mk.line, 'mistake', `${mk.id} still waits for ${waits}; the committed folder holds no waiting mistake`);
+    // In the folder a waiting mistake is accepted only while its domain is not
+    // marked complete in the README: a domain cannot be complete with one.
+    if (waits && mode !== 'draft' && complete.has(mk.code)) add(mk.file, mk.line, 'mistake', `${mk.id} still waits for ${waits}, but ${mk.code} is marked complete; a complete domain holds no waiting mistake`);
     else if (waits && a.length) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${a.join(', ')} but still marked as waiting for ${waits}: remove the mark`);
     if (waits && !a.length) continue;
     if (!a.length) add(mk.file, mk.line, 'mistake', `${mk.id} (${mk.title}) has no answering statement`);

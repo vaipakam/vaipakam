@@ -226,12 +226,13 @@ test('test 17: a mistake with no answer, with two, or with a warn-only answer wi
   assert.ok(!has(run([['vlt.md', reasoned], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-014']])]]), 'mistake', /VLT-014/));
 });
 
-test('a mistake waiting for a section: counted, accepted in draft mode while unanswered, refused in the folder and once answered', () => {
+test('a mistake waiting for a section: accepted while unanswered and its domain is not complete, refused once answered or once the domain is complete', () => {
   const mistakes = '### VLT-M30 · Locking by mistake\n\n**Who:** the owner.\n**Waits for:** vault section 5\n\n### VLT-M31 · Empty mark\n\n**Waits for:**\n';
   const draft = run([['mistakes.md', mistakes]], { mode: 'draft' });
   assert.ok(!has(draft, 'mistake', /VLT-M30/), JSON.stringify(draft));
   assert.ok(has(draft, 'mistake', /VLT-M31: \*\*Waits for:\*\* names no section/));
-  assert.ok(has(run([['mistakes.md', mistakes]]), 'mistake', /VLT-M30 still waits for vault section 5; the committed folder holds no waiting mistake/));
+  assert.ok(!has(run([['mistakes.md', mistakes]]), 'mistake', /VLT-M30/), 'the folder takes it while VLT is not complete');
+  assert.ok(has(run([['mistakes.md', mistakes]], { completeDomains: new Set(['VLT']) }), 'mistake', /VLT-M30 still waits for vault section 5, but VLT is marked complete/));
   const a = STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M30, undo.\n');
   const answered = run([['vlt.md', a], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]], { mode: 'draft' });
   assert.ok(has(answered, 'mistake', /VLT-M30 is answered by VLT-012 but still marked as waiting for vault section 5/));

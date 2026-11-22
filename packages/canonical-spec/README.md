@@ -80,9 +80,10 @@ part says how it answers it: refuse, bound, undo or warn only.
 A draft mistake whose answer belongs to a section not drafted yet carries
 `**Waits for:** <section>` (for example `**Waits for:** vault section 5`). It
 stays in the files the check reads and is counted in the summary as waiting,
-so it cannot drop out of sight. Draft mode accepts it while nothing answers
-it, and refuses the mark once a statement does. Folder mode refuses any
-waiting mistake, so the committed folder holds none.
+so it cannot drop out of sight. It is accepted while nothing answers it, and
+the mark is refused once a statement does. In folder mode a domain the README
+marks `complete` may hold no waiting mistake, so the mistake list lands in
+the folder with its domain and the domain cannot close with one waiting.
 
 ### Lifecycle model
 
