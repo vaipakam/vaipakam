@@ -329,6 +329,10 @@ test('folder mode: every entry names a document source or the owner\'s approval;
   assert.ok(has(run(raisedOnly, { mode: 'folder' }), 'record', /a folder entry names a document source/));
   const approved = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'C', 'Owner approval 2026-11-22, question 4']])]];
   assert.deepEqual(rules(run(approved, { mode: 'folder' })), []);
+  for (const src of ['PR, "Reentrancy Guards". Mistake VLT-M08', 'RC section 2, and VLT-M04', 'D2 "The decision"', 'Same paragraph. Mistake VLT-M16']) {
+    const doc = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'K', src]])]];
+    assert.deepEqual(rules(run(doc, { mode: 'folder' })), [], src);
+  }
 });
 
 test('a fenced code region is an example: no heading or table in it is read', () => {

@@ -20,8 +20,9 @@ finding prints as `file:line: [rule] message`.
 **Draft mode vs folder mode.** In draft mode a new record entry may name what
 raised it and carry no approval. Folder mode needs the owner's approval hash
 on every entry, and every entry's source is a document (a code and a quoted
-section) or the owner's approval by date; what raised a statement is a draft
-note, not a source. A domain the README marks `complete` may owe nothing to
+section, or "Same …" for the row above's document) or the owner's approval by
+date; an entry whose only source is what raised the statement (a threat or
+mistake id, a model row, the conflict read) is a draft note, not a source. A domain the README marks `complete` may owe nothing to
 another domain.
 
 The parser **fails closed.** It reports any line under a statement or model
