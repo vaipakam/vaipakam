@@ -180,8 +180,10 @@ Each response's `about.excludes` lists this for the route. In short:
   begins (`historyBegins`), and leaves out the temporary loan a lender's
   sale creates and anything outside this platform. Loans opened with one
   address on both sides, and loans whose opening parties are unknown, are
-  counted under `leftOut` rather than in any class. A payment by another
-  address counts for the holder. The fees the address paid are not stated
+  counted under `leftOut` rather than in any class, and so are loans whose
+  holder at a needed moment cannot be told apart because two changes of the
+  borrower position share one block (`leftOut.holderUnresolved`). A payment
+  by another address counts for the holder. The fees the address paid are not stated
   yet (`feesPaid.stated` is `false`, with the reason), never shown as a
   partial sum.
 - **The rental reads** leave out cleared rentals and rentals past their

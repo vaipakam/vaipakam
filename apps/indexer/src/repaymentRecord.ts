@@ -20,13 +20,20 @@
  *    the address that held the borrower position at the event's block time:
  *    the borrower participant with the latest acquisition at or before it.
  *    A loan taken over and then repaid counts for the one who closed it,
- *    under "took over later".
+ *    under "took over later". The index records an acquisition by its block
+ *    time only, so two acquisitions in one block cannot be ordered: when the
+ *    latest acquisition time is shared by more than one address, the holder
+ *    is not guessed. A loan this address may have held at such a moment is
+ *    counted under `leftOut.holderUnresolved`, never in a class, and a
+ *    period or payment at such a moment is not counted for anyone.
  *  - HOW A LOAN CLOSED. The closing repayment route wins when there is one
  *    (the last of: a full `LoanRepaid`, `LoanPreclosedDirect`,
  *    `OffsetCompleted`, `LoanRefinanced` on the old loan, `SwapToRepayExecuted`,
  *    `SwapToRepayIntentFilled`, `PrepayCollateralSaleSettled`), so a loan
  *    cured out of the fallback and then repaid is repaid. Otherwise the
- *    FIRST event that began the forced close decides: an HF liquidation
+ *    FIRST event that began the forced close decides, counted from after the
+ *    last cure out of the fallback (`LoanCuredFromFallback`), so a cured
+ *    episode never decides a later close: an HF liquidation
  *    (`HFLiquidationTriggered`, `LiquidationDiscounted`), a default
  *    (`LoanDefaulted`, `LoanFallbackPending`), or a `LiquidationFallback`
  *    with no default event in its transaction (the HF route's fallback). A
@@ -39,11 +46,20 @@
  *    means after the due date; otherwise a repayment no later than the due
  *    date the chain stated at the loan's start (`LoanInitiatedDetails`) is
  *    on time, and any other is unclassified (a pause or an extension may
- *    have moved the due date). A preclose and an offset close before the
- *    due date by the contract's own rule, so they are on time.
+ *    have moved the due date). A preclose may land in the grace after the
+ *    due date, so it is read the same way, its late fee taken from the
+ *    `LoanSettlementBreakdown` in its own transaction; an offset states no
+ *    late fee, so it is on time only when no later than the due date stated
+ *    at the start, and unclassified otherwise.
  *  - PERIODS. `PeriodicInterestSettled` is a period closed with no sale of
- *    collateral; `PeriodicInterestAutoLiquidated` is one collected by a sale
- *    after the grace.
+ *    collateral, unless a collateral sale paid it: a `SwapToRepayPartialExecuted`
+ *    or `LoanPartiallyLiquidated` in the same transaction makes it a period
+ *    paid by a sale (`paidBySale`). `PeriodicInterestAutoLiquidated` is one
+ *    collected by a sale after the grace.
+ *  - INTEREST EVENTS ARE FILED WITHOUT A LOAN. `LoanInterestPaid` and
+ *    `LoanInterestUndelivered` are companion statements, stored with no
+ *    `loan_id` (`activityRefsPolicy.json`); the read takes their loan from
+ *    the payload's `loanId`.
  *  - INTEREST PAID. Per token, the sum of `LoanInterestPaid` less
  *    `LoanInterestUndelivered`, in the token's own units.
  *  - RENTALS. A loan whose lent asset is an NFT is a rental: completed when
@@ -90,6 +106,7 @@ export const RECORD_EXCLUDES = Object.freeze([
   'loans whose lender and borrower were the same address when they opened (counted as leftOut.oneAddress; two addresses of one person cannot be seen)',
   'loans whose opening parties the index cannot establish (counted as leftOut.openingPartiesUnknown; never assumed to be two parties)',
   'who paid: a payment by another address counts for the holder',
+  'the holder at a moment two acquisitions of the borrower position share one block time (the loan is counted as leftOut.holderUnresolved; a period or payment at such a moment counts for no one)',
   'anything outside this platform',
 ]);
 
@@ -114,6 +131,10 @@ const FORCED_KINDS = [
 ] as const;
 const OTHER_KINDS = [
   'LoanStatusChanged',
+  'LoanCuredFromFallback',
+  'LoanSettlementBreakdown',
+  'SwapToRepayPartialExecuted',
+  'LoanPartiallyLiquidated',
   'LoanInitiatedDetails',
   'LoanInterestPaid',
   'LoanInterestUndelivered',
@@ -186,7 +207,7 @@ export interface RepaymentRecordFigures {
     takenOverLater: number;
   };
   rentals: { closed: number; completed: number; endedByDefault: number; unclassified: number; openNow: number };
-  interestPeriods: { closedWithoutSale: number; collectedBySale: number };
+  interestPeriods: { closedWithoutSale: number; paidBySale: number; collectedBySale: number };
   interestPaid: { asset: string; total: string }[];
   /** First time this address held a borrower position here; null if never. */
   firstLoanAt: number | null;
@@ -195,10 +216,18 @@ export interface RepaymentRecordFigures {
    * (#3879), each counted once whatever its state. None of their events
    * reach any figure above.
    */
-  leftOut: { oneAddress: number; openingPartiesUnknown: number };
+  leftOut: { oneAddress: number; openingPartiesUnknown: number; holderUnresolved: number };
 }
 
 const OPEN_STATUSES = new Set(['active', 'fallback_pending']);
+
+/** The events counted for the holder at their own time. */
+const ATTRIBUTED_KINDS = new Set([
+  'PeriodicInterestSettled',
+  'PeriodicInterestAutoLiquidated',
+  'LoanInterestPaid',
+  'LoanInterestUndelivered',
+]);
 
 const num = (v: unknown): number | null => {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -210,14 +239,47 @@ const big = (v: unknown): bigint | null =>
 
 const byPosition = (a: RecordEvent, b: RecordEvent) => a.block - b.block || a.logIndex - b.logIndex;
 
-/** The borrower holder of `loanId` at time `at`: the latest acquisition at or before it. */
-export function holderAt(acqs: Acquisition[], loanId: number, at: number): string | null {
-  let best: Acquisition | null = null;
+/**
+ * The borrower holder of `loanId` at time `at`: the latest acquisition at or
+ * before it. `tied` names every wallet that shares that latest time when more
+ * than one does: acquisitions are recorded by block time only, so two in one
+ * block cannot be ordered and the holder is not guessed.
+ */
+export type Holder = { wallet: string } | { tied: string[] } | null;
+export function holderAt(acqs: Acquisition[], loanId: number, at: number): Holder {
+  let bestAt = -Infinity;
+  let wallets = new Set<string>();
   for (const a of acqs) {
     if (a.loanId !== loanId || a.fromAt > at) continue;
-    if (!best || a.fromAt > best.fromAt) best = a;
+    if (a.fromAt > bestAt) {
+      bestAt = a.fromAt;
+      wallets = new Set([a.wallet]);
+    } else if (a.fromAt === bestAt) wallets.add(a.wallet);
   }
-  return best?.wallet ?? null;
+  if (wallets.size === 0) return null;
+  return wallets.size === 1 ? { wallet: [...wallets][0] } : { tied: [...wallets].sort() };
+}
+
+/** The opening holder: the earliest acquisition, with the same tie rule as {@link holderAt}. */
+function openerOf(acqs: Acquisition[], loanId: number): Holder {
+  let firstAt = Infinity;
+  let wallets = new Set<string>();
+  for (const a of acqs) {
+    if (a.loanId !== loanId) continue;
+    if (a.fromAt < firstAt) {
+      firstAt = a.fromAt;
+      wallets = new Set([a.wallet]);
+    } else if (a.fromAt === firstAt) wallets.add(a.wallet);
+  }
+  if (wallets.size === 0) return null;
+  return wallets.size === 1 ? { wallet: [...wallets][0] } : { tied: [...wallets].sort() };
+}
+
+/** Is `me` the holder (`yes`), possibly the holder at a tie (`tied`), or not (`no`)? */
+function holdsAs(h: Holder, me: string): 'yes' | 'tied' | 'no' {
+  if (!h) return 'no';
+  if ('wallet' in h) return h.wallet === me ? 'yes' : 'no';
+  return h.tied.includes(me) ? 'tied' : 'no';
 }
 
 /** How one loan closed, and when (the last closing event's block time). */
@@ -246,15 +308,17 @@ export function classifyClose(
       case 'SwapToRepayIntentFilled':
       case 'PrepayCollateralSaleSettled':
         return { cls: 'repaidBySale', at };
-      case 'LoanPreclosedDirect':
-      case 'OffsetCompleted':
-        return { cls: 'repaidOnTime', at };
       default:
+        // A full `LoanRepaid`, a preclose (which may land in the grace) or
+        // an offset: each read from time (design §4.4).
         return { cls: repaidTiming(repay, sorted), at };
     }
   }
 
-  const forced = sorted.find((e) => (FORCED_KINDS as readonly string[]).includes(e.kind));
+  // A cure out of the fallback ends that episode: only a forced event after
+  // the last cure can decide the close.
+  const lastCure = sorted.reduce((i, e, k) => (e.kind === 'LoanCuredFromFallback' ? k : i), -1);
+  const forced = sorted.slice(lastCure + 1).find((e) => (FORCED_KINDS as readonly string[]).includes(e.kind));
   if (forced) {
     if (forced.kind === 'HFLiquidationTriggered' || forced.kind === 'LiquidationDiscounted') {
       return { cls: 'liquidated', at };
@@ -273,12 +337,22 @@ export function classifyClose(
   return { cls: 'unclassified', at };
 }
 
-/** On time or after the due date, for a full `LoanRepaid` (design §4.4). */
+/**
+ * On time or after the due date, for a full `LoanRepaid`, a preclose or an
+ * offset (design §4.4). The late fee is the one the closing event states
+ * (`LoanRepaid.lateFeePaid`) or, for a preclose, the one the
+ * `LoanSettlementBreakdown` in its own transaction states. An offset states
+ * none, so only the due date at the start can place it.
+ */
 function repaidTiming(repay: RecordEvent, events: RecordEvent[]): CloseClass {
   if (repay.at === null) return 'unclassified';
   const lateFeeFrom = num(repay.args.lateFeeFrom);
   if (lateFeeFrom !== null) return repay.at <= lateFeeFrom ? 'repaidOnTime' : 'repaidAfterDue';
-  const lateFee = big(repay.args.lateFeePaid);
+  const breakdown =
+    repay.kind === 'LoanPreclosedDirect'
+      ? events.find((e) => e.kind === 'LoanSettlementBreakdown' && e.tx === repay.tx)
+      : undefined;
+  const lateFee = big(repay.kind === 'LoanRepaid' ? repay.args.lateFeePaid : breakdown?.args.lateFee);
   if (lateFee !== null && lateFee > 0n) return 'repaidAfterDue';
   const details = events.find((e) => e.kind === 'LoanInitiatedDetails');
   const due = num((details?.args.details as Record<string, unknown> | undefined)?.dueTimestamp);
@@ -309,10 +383,10 @@ export function deriveRecord(
       takenOverLater: 0,
     },
     rentals: { closed: 0, completed: 0, endedByDefault: 0, unclassified: 0, openNow: 0 },
-    interestPeriods: { closedWithoutSale: 0, collectedBySale: 0 },
+    interestPeriods: { closedWithoutSale: 0, paidBySale: 0, collectedBySale: 0 },
     interestPaid: [],
     firstLoanAt: null,
-    leftOut: { oneAddress: 0, openingPartiesUnknown: 0 },
+    leftOut: { oneAddress: 0, openingPartiesUnknown: 0, holderUnresolved: 0 },
   };
   const eventsByLoan = new Map<number, RecordEvent[]>();
   for (const e of events) {
@@ -331,13 +405,16 @@ export function deriveRecord(
   for (const a of mine) {
     if (out.firstLoanAt === null || a.fromAt < out.firstLoanAt) out.firstLoanAt = a.fromAt;
   }
-  const heldAt = (loanId: number, at: number | null) => at !== null && holderAt(acqs, loanId, at) === me;
+  const heldAt = (loanId: number, at: number | null): 'yes' | 'tied' | 'no' =>
+    at === null ? 'no' : holdsAs(holderAt(acqs, loanId, at), me);
 
   const interest = new Map<string, bigint>();
   for (const loan of loans) {
     if (!isCounted(loan)) continue;
     const evs = eventsByLoan.get(loan.loanId) ?? [];
     const rental = loan.assetType !== 0;
+    // Set when any attribution this loan needs is a tie this address is in.
+    let unresolved = false;
 
     if (OPEN_STATUSES.has(loan.status)) {
       if (loan.currentHolder === me) {
@@ -350,8 +427,13 @@ export function deriveRecord(
       // holds no closing time (a matched internal liquidation names only
       // its first leg), it is placed by the current holder of the borrower
       // position, which a closed position keeps unless it is sent on.
-      const counts = at !== null ? heldAt(loan.loanId, at) : loan.currentHolder === me;
-      if (counts) {
+      const closer = at !== null ? heldAt(loan.loanId, at) : loan.currentHolder === me ? 'yes' : 'no';
+      const opener = holdsAs(openerOf(acqs, loan.loanId), me);
+      // "Opened by this address" or "taken over later" needs the opener; a
+      // tie there leaves the loan unplaced like a tie at the close.
+      // (A tie this address is not in still says it did not open the loan.)
+      if (closer === 'tied' || (closer === 'yes' && !rental && opener === 'tied')) unresolved = true;
+      else if (closer === 'yes') {
         if (rental) {
           out.rentals.closed++;
           if (cls === 'liquidated' || cls === 'defaulted') out.rentals.endedByDefault++;
@@ -360,19 +442,25 @@ export function deriveRecord(
         } else {
           out.loans.closed++;
           out.loans[cls]++;
-          const first = acqs
-            .filter((a) => a.loanId === loan.loanId)
-            .reduce<Acquisition | null>((m, a) => (!m || a.fromAt < m.fromAt ? a : m), null);
-          if (first?.wallet === me) out.loans.openedByThisAddress++;
+          if (opener === 'yes') out.loans.openedByThisAddress++;
           else out.loans.takenOverLater++;
         }
       }
     }
 
+    // Transactions in which a collateral sale paid interest mid-loan.
+    const saleTx = new Set(
+      evs.filter((e) => e.kind === 'SwapToRepayPartialExecuted' || e.kind === 'LoanPartiallyLiquidated').map((e) => e.tx),
+    );
     for (const e of evs) {
-      if (!heldAt(loan.loanId, e.at)) continue;
-      if (e.kind === 'PeriodicInterestSettled') out.interestPeriods.closedWithoutSale++;
-      else if (e.kind === 'PeriodicInterestAutoLiquidated') out.interestPeriods.collectedBySale++;
+      if (!ATTRIBUTED_KINDS.has(e.kind)) continue;
+      const held = heldAt(loan.loanId, e.at);
+      if (held === 'tied') unresolved = true;
+      if (held !== 'yes') continue;
+      if (e.kind === 'PeriodicInterestSettled') {
+        if (saleTx.has(e.tx)) out.interestPeriods.paidBySale++;
+        else out.interestPeriods.closedWithoutSale++;
+      } else if (e.kind === 'PeriodicInterestAutoLiquidated') out.interestPeriods.collectedBySale++;
       else if (e.kind === 'LoanInterestPaid' || e.kind === 'LoanInterestUndelivered') {
         const asset = typeof e.args.asset === 'string' ? e.args.asset.toLowerCase() : null;
         const gross = big(e.args.gross);
@@ -381,6 +469,7 @@ export function deriveRecord(
         interest.set(asset, (interest.get(asset) ?? 0n) + sign * gross);
       }
     }
+    if (unresolved) out.leftOut.holderUnresolved++;
   }
   out.interestPaid = [...interest.entries()]
     .filter(([, total]) => total !== 0n)
@@ -452,12 +541,16 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
                              WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
       ).bind(chainId, chainId, address),
       env.DB.prepare(
-        `SELECT loan_id, kind, block_number, log_index, tx_hash, block_at, args_json
-           FROM activity_events
-          WHERE chain_id = ?
-            AND kind IN (SELECT value FROM json_each(?))
-            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
-                             WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
+        // The companion interest statements are filed with no loan_id, so
+        // the loan is taken from the payload where the column is empty.
+        `SELECT ref_loan_id AS loan_id, kind, block_number, log_index, tx_hash, block_at, args_json
+           FROM (SELECT COALESCE(loan_id, CAST(json_extract(args_json, '$.loanId') AS INTEGER)) AS ref_loan_id,
+                        kind, block_number, log_index, tx_hash, block_at, args_json
+                   FROM activity_events
+                  WHERE chain_id = ?
+                    AND kind IN (SELECT value FROM json_each(?)))
+          WHERE ref_loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
+                                 WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
       ).bind(chainId, kinds, chainId, address),
     ]);
     const loans: RecordLoan[] = (
