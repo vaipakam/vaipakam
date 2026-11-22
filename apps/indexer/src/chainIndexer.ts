@@ -63,6 +63,7 @@ import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { recordLoanLifecycle } from './loanLifecycleGuard';
+import { recordRentalRights } from './rentalRights';
 import {
   quarantineStatements,
   discloseQuarantineReleases,
@@ -2814,6 +2815,9 @@ async function runChainPass(
     // corrects the `loans` projection above, because healing is exactly what
     // would hide the drift it reports. See loanLifecycleGuard.ts.
     await recordLoanLifecycle(env.DB, chainId, logs, blockTimestamps);
+    // #3882 — the rental rights table, folded from VaultRentalUpdated alone.
+    // Its own table only; a later update replaces a row, an older one never.
+    await recordRentalRights(env.DB, chainId, logs, Math.floor(Date.now() / 1000));
     // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
     // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
     // events. Runs after the offer/loan passes; it touches only its own table.

@@ -39,6 +39,7 @@ const USDC = '0x' + 'aa'.repeat(20);
 const WETH = '0x' + 'bb'.repeat(20);
 const A = '0x' + '11'.repeat(20);
 const B = '0x' + '22'.repeat(20);
+const NFT = '0x' + 'cc'.repeat(20);
 const PAIR = `lendingAsset=${USDC}&collateralAsset=${WETH}&durationDays=30`;
 
 /** A sample request for each route, filled enough that every list has rows. */
@@ -53,6 +54,8 @@ const SAMPLE: Record<string, string> = {
   '/loans/rate-candles': `/loans/rate-candles?${PAIR}&interval=1d&range=30d`,
   '/loans/{id}': '/loans/1',
   '/repayment-record/{address}': `/repayment-record/${B}`,
+  '/rentals/by-collection': `/rentals/by-collection?collection=${NFT}`,
+  '/rentals/may-use': `/rentals/may-use?collection=${NFT}&user=${B}`,
 };
 
 function insert(db: { prepare(sql: string): { run(...a: unknown[]): unknown } }, table: string, row: Record<string, unknown>) {
@@ -131,6 +134,20 @@ function seeded() {
     args_json: JSON.stringify({ loanId: '1', asset: USDC, gross: '5' }),
     block_at: NOW - 1800,
   });
+  // #3882 — one active rental of NFT to B, so both rental reads have rows.
+  insert(h.db, 'rental_rights', {
+    chain_id: CHAIN,
+    loan_id: 3,
+    collection: NFT,
+    token_id: '7',
+    owner: A,
+    user: B,
+    expires: NOW + 86_400,
+    quantity: '1',
+    block_number: 20,
+    log_index: 1,
+    updated_at: NOW - 1800,
+  });
   const sql: string[] = [];
   const d1 = h.d1 as { prepare(s: string): unknown };
   const prepare = d1.prepare.bind(d1);
@@ -176,13 +193,17 @@ describe('(a) each route takes only the parameters it lists', () => {
     parseMarketFilter: ['lendingAsset', 'collateralAsset', 'durationDays'],
   };
   const handlerParams = (name: string): string[] => {
-    for (const file of ['offerRoutes.ts', 'loanRoutes.ts', 'repaymentRecord.ts']) {
+    for (const file of ['offerRoutes.ts', 'loanRoutes.ts', 'repaymentRecord.ts', 'rentalRoutes.ts']) {
       const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
       const starts = [...src.matchAll(/^export async function (\w+)\(/gm)];
       const i = starts.findIndex((m) => m[1] === name);
       if (i < 0) continue;
       const body = src.slice(starts[i].index, starts[i + 1]?.index ?? src.length);
-      const read = [...body.matchAll(/searchParams\.(?:get|getAll|has)\(\s*'(\w+)'/g)].map((m) => m[1]);
+      const read = [
+        ...body.matchAll(/searchParams\.(?:get|getAll|has)\(\s*'(\w+)'/g),
+        // rentalRoutes.ts reads each parameter through its one-value helper.
+        ...body.matchAll(/\bone\(\s*url,\s*'(\w+)'/g),
+      ].map((m) => m[1]);
       for (const [fn, ps] of Object.entries(SHARED)) if (body.includes(`${fn}(`)) read.push(...ps);
       return [...new Set(read)].filter((p) => p !== 'chainId').sort();
     }
@@ -220,6 +241,8 @@ describe('(a) each route takes only the parameters it lists', () => {
       '/loans/rate-candles': ['lendingAsset', 'collateralAsset', 'durationDays', 'interval', 'range'],
       '/loans/{id}': [],
       '/repayment-record/{address}': [],
+      '/rentals/by-collection': ['collection', 'tokenId', 'cursor'],
+      '/rentals/may-use': ['collection', 'user', 'tokenId'],
     });
   });
 
@@ -287,6 +310,9 @@ describe('(c) the tables each route reads', () => {
   // The routes a design names public that take an address. Adding one
   // here needs that design, in review.
   const ADDRESS_ROUTES = ['/repayment-record/{address}'];
+  // The routes a design names public that take ONE address as a parameter
+  // (ProjectKitDesign.md §12): the parameter, by route.
+  const ADDRESS_PARAMS: Record<string, string> = { '/rentals/may-use': 'user' };
   // One wallet's own-page reads: chain data, but each serves one wallet's
   // own page, so the feed never carries them.
   const OWN_PAGE = [
@@ -336,6 +362,10 @@ describe('(c) the tables each route reads', () => {
         'loan_participants',
         'loans',
       ],
+      // #3882 — the event-built rental table and nothing else behind both
+      // rental reads (the cursor is the envelope's own read).
+      '/rentals/by-collection': ['indexer_cursor', 'rental_rights'],
+      '/rentals/may-use': ['indexer_cursor', 'rental_rights'],
     });
   });
 
@@ -359,8 +389,12 @@ describe('(c) the tables each route reads', () => {
     // records keyed by address.
     for (const r of FEED_ROUTES) {
       for (const p of r.params) {
-        expect(/wallet|address|borrower|lender|holder|creator|owner|rank|sort|order|search|min|max/i.test(p), `${r.path} takes ${p}`).toBe(false);
+        if (ADDRESS_PARAMS[r.path] === p) continue;
+        expect(/wallet|address|user|renter|borrower|lender|holder|creator|owner|rank|sort|order|search|min|max/i.test(p), `${r.path} takes ${p}`).toBe(false);
       }
+    }
+    for (const [path, p] of Object.entries(ADDRESS_PARAMS)) {
+      expect(FEED_ROUTES.find((r) => r.path === path)?.params).toContain(p);
     }
   });
 });
@@ -451,5 +485,42 @@ describe('the repayment record on the feed', () => {
     const res = await handlePublicFeed(new Request(`https://x${withChain('/repayment-record/not-an-address')}`), env);
     expect(res.status).toBe(400);
     expect(res.headers.get('X-Feed-Version')).toBe('v1');
+  });
+});
+
+describe('the rental reads on the feed (#3882)', () => {
+  it('answers each in the envelope with the block and the event-built rows', async () => {
+    const { env } = seeded();
+    for (const path of ['/rentals/by-collection', '/rentals/may-use']) {
+      const res = await handlePublicFeed(new Request(`https://x${withChain(SAMPLE[path])}`), env);
+      expect(res.status, path).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.asOf.block).toBe(500);
+      expect(body.data.rentals).toEqual([
+        { rentalId: '3', tokenId: '7', user: B, expires: NOW + 86_400, quantity: '1', owner: A },
+      ]);
+    }
+  });
+
+  it('refuses may-use without a collection or a user, and a list or a wildcard in either', async () => {
+    const { env } = seeded();
+    for (const q of [
+      `/rentals/may-use?user=${B}`,
+      `/rentals/may-use?collection=${NFT}`,
+      `/rentals/may-use?collection=${NFT}&user=${B}&user=${A}`,
+      `/rentals/may-use?collection=${NFT}&user=${B},${A}`,
+      `/rentals/may-use?collection=${NFT}&user=*`,
+      `/rentals/may-use?collection=*&user=${B}`,
+      `/rentals/may-use?collection=${NFT}&collection=${USDC}&user=${B}`,
+      `/rentals/by-collection?collection=${NFT},${USDC}`,
+      `/rentals/by-collection?collection=*`,
+      `/rentals/by-collection`,
+    ]) {
+      const res = await handlePublicFeed(new Request(`https://x${withChain(q)}`), env);
+      expect(res.status, q).toBe(400);
+    }
+    // A parameter neither route lists is refused by the feed itself.
+    const res = await handlePublicFeed(new Request(`https://x${withChain(`/rentals/may-use?collection=${NFT}&user=${B}&users=${A}`)}`), env);
+    expect(((await res.json()) as any).error).toBe('unknown-parameter');
   });
 });
