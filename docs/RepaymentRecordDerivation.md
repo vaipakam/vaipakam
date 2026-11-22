@@ -35,10 +35,11 @@ A loan, an interest period or an interest payment counts for the address
 that held the borrower position at the event's block time. That address is
 the latest holder whose acquisition came at or before that time.
 
-The index records each acquisition by its block time only, so two
-acquisitions in one block cannot be put in order. When the latest
-acquisition time is shared by more than one address, the holder is not
-guessed. A loan the address may have held at such a moment is counted under
+The index records each acquisition by its block time only, so nothing in
+one block can be put in order. When the latest acquisition time is shared by
+more than one address, or the latest acquisition falls in the event's own
+block while an earlier holder exists (the event may have come before the
+move), the holder is not guessed. A loan the address may have held at such a moment is counted under
 `leftOut.holderUnresolved` and in no class, and an interest period or
 payment at such a moment counts for no one.
 
@@ -66,11 +67,11 @@ A payment made by another address counts for the holder.
 | `interestPeriods.paidBySale` | `PeriodicInterestSettled` with a `SwapToRepayPartialExecuted` or `LoanPartiallyLiquidated` in the same transaction: the interest that closed the period came from selling collateral |
 | `interestPeriods.collectedBySale` | `PeriodicInterestAutoLiquidated` |
 | `interestPaid` | per token, the sum of `LoanInterestPaid` less `LoanInterestUndelivered`, in the token's own units. These two are stored without a loan reference (the payment event beside them carries it), so the loan is read from their own `loanId` |
-| `rentals.*` | the same rules, for loans whose lent asset is an NFT. A rental is completed when it closed by a repayment route, and ended by default when it closed by a default or a liquidation |
+| `rentals.*` | the same rules, for loans whose lent asset is an NFT. A rental is completed when it closed by a repayment route, and ended by default when it closed by a default or a liquidation. A daily rental paid in full closes with no `LoanRepaid`: its last deduction's transaction carries `AutoDailyDeducted` beside the status edge to Repaid, and that is its repayment route and its closing time |
 | `firstLoanAt` | the first time the address held a borrower position |
 | `leftOut.oneAddress` | loans this address held as borrower whose opening event named the same address as lender and borrower. They reach no other figure |
 | `leftOut.openingPartiesUnknown` | loans this address held as borrower whose opening parties the index cannot establish. They reach no other figure and are never assumed to have two parties |
-| `leftOut.holderUnresolved` | loans where a figure needed the holder at a moment two acquisitions of the borrower position shared one block time, and this address was one of them (see "Who a figure counts for") |
+| `leftOut.holderUnresolved` | loans where a figure needed the holder at a moment the index cannot order against a change of holder in the same block, and this address could have been the holder (see "Who a figure counts for") |
 | `feesPaid` | not stated yet. The events do not state each loan's initiation fee or the platform's share of each interest payment, so this figure is left out rather than guessed |
 
 When a loan closes by a repayment route, that route decides its class, so a

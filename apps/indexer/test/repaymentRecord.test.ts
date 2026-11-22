@@ -264,6 +264,42 @@ describe('Codex #3906 round 1', () => {
   });
 });
 
+describe('Codex #3906 round 2', () => {
+  it('counts a daily rental paid in full as completed, from its last deduction', async () => {
+    const { loan, event, read } = db();
+    // The position is burned after the claim, so the current holder is gone:
+    // the closing time from the deduction places it instead.
+    loan(1, { assetType: 1, holders: [[ME, T0]] });
+    event(1, 'AutoDailyDeducted', T0 + 29 * DAY, { dayFeeDeducted: '5' }, '0xd29');
+    event(1, 'AutoDailyDeducted', T0 + 30 * DAY, { dayFeeDeducted: '5' }, '0xd30');
+    event(1, 'LoanStatusChanged', T0 + 30 * DAY, { from: 0, to: 1 }, '0xd30');
+    const r = await read();
+    expect(r.rentals).toMatchObject({ closed: 1, completed: 1, unclassified: 0 });
+  });
+
+  it('does not credit a payment to the address that took the position in the same block', async () => {
+    const { loan, event, read } = db();
+    loan(1, { status: 'active', holders: [[ME, T0], [OTHER, T0 + 10 * DAY]] });
+    event(1, 'LoanInterestPaid', T0 + 10 * DAY, { asset: USDC, gross: '7' });
+    event(1, 'LoanInterestPaid', T0 + 12 * DAY, { asset: USDC, gross: '3' });
+    const theirs = await read(OTHER);
+    expect(theirs.interestPaid).toEqual([{ asset: USDC, total: '3' }]);
+    expect(theirs.leftOut.holderUnresolved).toBe(1);
+    const mine = await read();
+    expect(mine.interestPaid).toEqual([]);
+    expect(mine.leftOut.holderUnresolved).toBe(1);
+  });
+
+  it('reads each address\'s events through the per-loan and payload indexes', async () => {
+    const { h } = db();
+    const src = readFileSync(new URL('../src/repaymentRecord.ts', import.meta.url), 'utf8');
+    for (const name of ['idx_activity_chain_loan', 'idx_activity_payload_loan', 'idx_loan_participants_wallet']) {
+      expect(src).toContain(`INDEXED BY ${name}`);
+      expect(h.db.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = ?`).get(name)).toBeTruthy();
+    }
+  });
+});
+
 describe('who a loan counts for', () => {
   it('counts a taken-over loan for the address that closed it, as taken over', async () => {
     const { loan, event, read } = db();

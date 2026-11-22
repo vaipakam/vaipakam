@@ -21,15 +21,18 @@
  *    the borrower participant with the latest acquisition at or before it.
  *    A loan taken over and then repaid counts for the one who closed it,
  *    under "took over later". The index records an acquisition by its block
- *    time only, so two acquisitions in one block cannot be ordered: when the
- *    latest acquisition time is shared by more than one address, the holder
- *    is not guessed. A loan this address may have held at such a moment is
+ *    time only, so nothing in one block can be ordered: when the latest
+ *    acquisition time is shared by more than one address, or the latest
+ *    acquisition shares the event's own block time while an earlier holder
+ *    exists, the holder is not guessed. A loan this address may have held at such a moment is
  *    counted under `leftOut.holderUnresolved`, never in a class, and a
  *    period or payment at such a moment is not counted for anyone.
  *  - HOW A LOAN CLOSED. The closing repayment route wins when there is one
  *    (the last of: a full `LoanRepaid`, `LoanPreclosedDirect`,
  *    `OffsetCompleted`, `LoanRefinanced` on the old loan, `SwapToRepayExecuted`,
- *    `SwapToRepayIntentFilled`, `PrepayCollateralSaleSettled`), so a loan
+ *    `SwapToRepayIntentFilled`, `PrepayCollateralSaleSettled`, and a daily
+ *    rental's last deduction: its status edge to Repaid beside
+ *    `AutoDailyDeducted` in one transaction), so a loan
  *    cured out of the fallback and then repaid is repaid. Otherwise the
  *    FIRST event that began the forced close decides, counted from after the
  *    last cure out of the fallback (`LoanCuredFromFallback`), so a cured
@@ -106,7 +109,7 @@ export const RECORD_EXCLUDES = Object.freeze([
   'loans whose lender and borrower were the same address when they opened (counted as leftOut.oneAddress; two addresses of one person cannot be seen)',
   'loans whose opening parties the index cannot establish (counted as leftOut.openingPartiesUnknown; never assumed to be two parties)',
   'who paid: a payment by another address counts for the holder',
-  'the holder at a moment two acquisitions of the borrower position share one block time (the loan is counted as leftOut.holderUnresolved; a period or payment at such a moment counts for no one)',
+  'the holder at a moment the borrower position changed hands in the same block, which the index cannot order (the loan is counted as leftOut.holderUnresolved; a period or payment at such a moment counts for no one)',
   'anything outside this platform',
 ]);
 
@@ -131,6 +134,7 @@ const FORCED_KINDS = [
 ] as const;
 const OTHER_KINDS = [
   'LoanStatusChanged',
+  'AutoDailyDeducted',
   'LoanCuredFromFallback',
   'LoanSettlementBreakdown',
   'SwapToRepayPartialExecuted',
@@ -241,22 +245,32 @@ const byPosition = (a: RecordEvent, b: RecordEvent) => a.block - b.block || a.lo
 
 /**
  * The borrower holder of `loanId` at time `at`: the latest acquisition at or
- * before it. `tied` names every wallet that shares that latest time when more
- * than one does: acquisitions are recorded by block time only, so two in one
- * block cannot be ordered and the holder is not guessed.
+ * before it. Acquisitions are recorded by block time only, so nothing in one
+ * block can be ordered, and the holder is not guessed: `tied` names every
+ * wallet it could be. That is the case when more than one wallet shares the
+ * latest acquisition time, and when the latest acquisition shares the
+ * event's own time while an earlier holder exists (the event may have come
+ * before the move, in the same block).
  */
 export type Holder = { wallet: string } | { tied: string[] } | null;
 export function holderAt(acqs: Acquisition[], loanId: number, at: number): Holder {
-  let bestAt = -Infinity;
-  let wallets = new Set<string>();
-  for (const a of acqs) {
-    if (a.loanId !== loanId || a.fromAt > at) continue;
-    if (a.fromAt > bestAt) {
-      bestAt = a.fromAt;
-      wallets = new Set([a.wallet]);
-    } else if (a.fromAt === bestAt) wallets.add(a.wallet);
-  }
+  const latestAtOrBefore = (limit: number, inclusive: boolean) => {
+    let bestAt = -Infinity;
+    let wallets = new Set<string>();
+    for (const a of acqs) {
+      if (a.loanId !== loanId || (inclusive ? a.fromAt > limit : a.fromAt >= limit)) continue;
+      if (a.fromAt > bestAt) {
+        bestAt = a.fromAt;
+        wallets = new Set([a.wallet]);
+      } else if (a.fromAt === bestAt) wallets.add(a.wallet);
+    }
+    return { bestAt, wallets };
+  };
+  const { bestAt, wallets } = latestAtOrBefore(at, true);
   if (wallets.size === 0) return null;
+  // A move in the event's own block may have come after the event: the
+  // holder just before that block is a candidate too.
+  if (bestAt === at) for (const w of latestAtOrBefore(at, false).wallets) wallets.add(w);
   return wallets.size === 1 ? { wallet: [...wallets][0] } : { tied: [...wallets].sort() };
 }
 
@@ -288,9 +302,16 @@ export function classifyClose(
   events: RecordEvent[],
 ): { cls: CloseClass; at: number | null } {
   const sorted = [...events].sort(byPosition);
+  // A daily rental paid in full closes with no `LoanRepaid`: the last
+  // deduction's transaction carries the status edge to Repaid (1) beside its
+  // `AutoDailyDeducted`.
+  const dailyTx = new Set(sorted.filter((e) => e.kind === 'AutoDailyDeducted').map((e) => e.tx));
+  const dailyCompletion = (e: RecordEvent) =>
+    e.kind === 'LoanStatusChanged' && num(e.args.to) === 1 && dailyTx.has(e.tx);
   const isClosingRepay = (e: RecordEvent) =>
-    (REPAY_ROUTE_KINDS as readonly string[]).includes(e.kind) &&
-    (e.kind !== 'LoanRepaid' || CLOSING_REPAID_STATUSES.has(num(e.args.newStatus) ?? -1));
+    dailyCompletion(e) ||
+    ((REPAY_ROUTE_KINDS as readonly string[]).includes(e.kind) &&
+      (e.kind !== 'LoanRepaid' || CLOSING_REPAID_STATUSES.has(num(e.args.newStatus) ?? -1)));
   // A fully matched internal liquidation states its close only as a
   // status edge to InternalMatched (5).
   const matchedEdge = (e: RecordEvent) => e.kind === 'LoanStatusChanged' && num(e.args.to) === 5;
@@ -520,7 +541,7 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
   try {
     // The cursor is read first in the same batch, so asOf describes the
     // state the figures were read from.
-    const [cursor, deployment, loanRows, acqRows, eventRows] = await env.DB.batch([
+    const [cursor, deployment, loanRows, acqRows, scopedRows, payloadRows] = await env.DB.batch([
       env.DB.prepare(`SELECT last_block, updated_at FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
         chainId,
         CURSOR_KIND,
@@ -531,27 +552,39 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
                 init_lender, init_borrower
            FROM loans
           WHERE chain_id = ?
-            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
+            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants INDEXED BY idx_loan_participants_wallet
                              WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
       ).bind(chainId, chainId, address),
       env.DB.prepare(
         `SELECT loan_id, wallet, from_at FROM loan_participants
           WHERE chain_id = ? AND role = 'borrower'
-            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
+            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants INDEXED BY idx_loan_participants_wallet
                              WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
       ).bind(chainId, chainId, address),
       env.DB.prepare(
-        // The companion interest statements are filed with no loan_id, so
-        // the loan is taken from the payload where the column is empty.
-        `SELECT ref_loan_id AS loan_id, kind, block_number, log_index, tx_hash, block_at, args_json
-           FROM (SELECT COALESCE(loan_id, CAST(json_extract(args_json, '$.loanId') AS INTEGER)) AS ref_loan_id,
-                        kind, block_number, log_index, tx_hash, block_at, args_json
-                   FROM activity_events
-                  WHERE chain_id = ?
-                    AND kind IN (SELECT value FROM json_each(?)))
-          WHERE ref_loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
-                                 WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
-      ).bind(chainId, kinds, chainId, address),
+        // Events filed under their loan, read through the per-loan index
+        // (named, so the read stays bounded by this address's loans and never
+        // falls back to a chain-wide scan by kind).
+        `SELECT loan_id, kind, block_number, log_index, tx_hash, block_at, args_json
+           FROM activity_events INDEXED BY idx_activity_chain_loan
+          WHERE chain_id = ?
+            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants INDEXED BY idx_loan_participants_wallet
+                             WHERE chain_id = ? AND wallet = ? AND role = 'borrower')
+            AND kind IN (SELECT value FROM json_each(?))`,
+      ).bind(chainId, chainId, address, kinds),
+      env.DB.prepare(
+        // The companion statements filed with no loan_id: their loan is the
+        // payload's, read through the expression index migration 0121 adds
+        // (the expression here must stay byte-identical to it).
+        `SELECT CAST(json_extract(args_json, '$.loanId') AS INTEGER) AS loan_id,
+                kind, block_number, log_index, tx_hash, block_at, args_json
+           FROM activity_events INDEXED BY idx_activity_payload_loan
+          WHERE chain_id = ? AND loan_id IS NULL AND json_valid(args_json)
+            AND CAST(json_extract(args_json, '$.loanId') AS INTEGER) IN
+                (SELECT DISTINCT loan_id FROM loan_participants INDEXED BY idx_loan_participants_wallet
+                  WHERE chain_id = ? AND wallet = ? AND role = 'borrower')
+            AND kind IN (SELECT value FROM json_each(?))`,
+      ).bind(chainId, chainId, address, kinds),
     ]);
     const loans: RecordLoan[] = (
       (loanRows.results ?? []) as {
@@ -575,7 +608,7 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
       (acqRows.results ?? []) as { loan_id: number; wallet: string; from_at: number }[]
     ).map((r) => ({ loanId: r.loan_id, wallet: r.wallet.toLowerCase(), fromAt: r.from_at }));
     const events: RecordEvent[] = [];
-    for (const r of (eventRows.results ?? []) as {
+    for (const r of [...(scopedRows.results ?? []), ...(payloadRows.results ?? [])] as {
       loan_id: number;
       kind: string;
       block_number: number;
