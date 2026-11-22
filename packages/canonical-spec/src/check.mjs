@@ -3,9 +3,10 @@
  *
  * `checkSpec(files, opts)` takes parsed files (from parse.mjs) and returns
  * every finding as {file, line, rule, message}. A finding is a refusal: the
- * command exits non-zero on any. The two modes differ only in §4 item 10:
+ * command exits non-zero on any. The two modes differ twice. In §4 item 10,
  * `draft` lets a record entry marked new name what raised it in place of a
- * source; `folder` does not.
+ * source; `folder` does not. And `draft` accepts a mistake marked
+ * `**Waits for:** <section>` while nothing answers it; `folder` refuses it.
  *
  * What a machine cannot judge (two statements in different words that
  * contradict each other) is left to the conflict read; `neighbours()` prints
@@ -306,6 +307,14 @@ export function checkSpec(parsed, opts = {}) {
   const mistakeIds = new Set(mistakes.map((x) => x.id));
   for (const mk of mistakes) {
     const a = answers.get(mk.id) ?? [];
+    // `**Waits for:** <section>`: a draft mistake whose answer belongs to a
+    // section not yet drafted. It stays in the read set and is counted, so it
+    // can never drop out of sight; the committed folder holds none.
+    const waits = (mk.fields['Waits for'] ?? '').trim();
+    if ('Waits for' in mk.fields && !waits) add(mk.file, mk.line, 'mistake', `${mk.id}: **Waits for:** names no section`);
+    if (waits && mode !== 'draft') add(mk.file, mk.line, 'mistake', `${mk.id} still waits for ${waits}; the committed folder holds no waiting mistake`);
+    else if (waits && a.length) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${a.join(', ')} but still marked as waiting for ${waits}: remove the mark`);
+    if (waits && !a.length) continue;
     if (!a.length) add(mk.file, mk.line, 'mistake', `${mk.id} (${mk.title}) has no answering statement`);
     else if (a.length > 1) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${a.length} statements (${a.join(', ')}); a mistake has exactly one answer`);
   }

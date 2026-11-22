@@ -81,7 +81,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   for (const f of findings) console.error(`${f.file}:${f.line}: [${f.rule}] ${f.message}`);
   const held = statements.filter((s) => s.held).length;
-  const summary = `${statements.length} statements (${held} held), ${parsed.flatMap((p) => p.models).length} models, ${parsed.flatMap((p) => p.mistakes).length} mistakes, ${opt.mode} mode`;
+  const summary = `${statements.length} statements (${held} held), ${parsed.flatMap((p) => p.models).length} models, ${parsed.flatMap((p) => p.mistakes).length} mistakes (${parsed.flatMap((p) => p.mistakes).filter((m) => (m.fields['Waits for'] ?? '').trim()).length} waiting for a section), ${opt.mode} mode`;
   if (findings.length) {
     console.error(`canonical-spec check: REFUSED, ${findings.length} finding(s) over ${summary}`);
     return 1;

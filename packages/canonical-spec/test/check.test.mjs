@@ -171,6 +171,17 @@ test('test 17: a mistake with no answer, with two, or with a warn-only answer wi
   assert.ok(!has(run([['vlt.md', reasoned], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-014']])]]), 'mistake', /VLT-014/));
 });
 
+test('a mistake waiting for a section: counted, accepted in draft mode while unanswered, refused in the folder and once answered', () => {
+  const mistakes = '### VLT-M30 · Locking by mistake\n\n**Who:** the owner.\n**Waits for:** vault section 5\n\n### VLT-M31 · Empty mark\n\n**Waits for:**\n';
+  const draft = run([['mistakes.md', mistakes]], { mode: 'draft' });
+  assert.ok(!has(draft, 'mistake', /VLT-M30/), JSON.stringify(draft));
+  assert.ok(has(draft, 'mistake', /VLT-M31: \*\*Waits for:\*\* names no section/));
+  assert.ok(has(run([['mistakes.md', mistakes]]), 'mistake', /VLT-M30 still waits for vault section 5; the committed folder holds no waiting mistake/));
+  const a = STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M30, undo.\n');
+  const answered = run([['vlt.md', a], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]], { mode: 'draft' });
+  assert.ok(has(answered, 'mistake', /VLT-M30 is answered by VLT-012 but still marked as waiting for vault section 5/));
+});
+
 test('a mistake answer "VLT-M15, M18 and M21, refuse" answers all three', () => {
   const mistakes = '### VLT-M15 · a\n\n### VLT-M18 · b\n\n### VLT-M21 · c\n';
   const a = STMT('VLT-012', 'refusal', '- **Refused as:** more.\n- **For the mistake:** VLT-M15, M18 and M21, refuse.\n');

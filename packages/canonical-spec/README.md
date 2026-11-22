@@ -77,6 +77,13 @@ The withdrawal is refused, and nothing moves.   ← the body, at most 8 lines
 **For the mistake**, and no mistake may be answered by more than one. The
 part says how it answers it: refuse, bound, undo or warn only.
 
+A draft mistake whose answer belongs to a section not drafted yet carries
+`**Waits for:** <section>` (for example `**Waits for:** vault section 5`). It
+stays in the files the check reads and is counted in the summary as waiting,
+so it cannot drop out of sight. Draft mode accepts it while nothing answers
+it, and refuses the mark once a statement does. Folder mode refuses any
+waiting mistake, so the committed folder holds none.
+
 ### Lifecycle model
 
 ```markdown
