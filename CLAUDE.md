@@ -2626,9 +2626,12 @@ live in `docs/procedures/`.
   `documentation` / `chore` / `refactor` / `infra` / `perf`. Add
   `security` / `audit` / `testnet-rehearsal` / `mainnet-rollout` as
   cross-cutting overlays.
-- Mirror label intent into the Project's custom fields (`Module`,
-  `Priority`, `Size`, `Estimate`, `Iteration`) — labels are the
-  cheap signal, fields drive the views.
+- The `thread:*`, `priority:p1`..`p5` and `stage:*` labels are the
+  source of truth for the board's `Thread`, `Priority` and `Stage`
+  fields: `.github/workflows/board-label-sync.yml` mirrors them hourly
+  and on every label change, so set the label, never the field. The
+  other fields (`Module`, `Size`, `Estimate`, `Iteration`) are still
+  set by hand.
 - Issue Templates ([`.github/ISSUE_TEMPLATE/bug.yml`](.github/ISSUE_TEMPLATE/bug.yml)
   + [`.github/ISSUE_TEMPLATE/feature_request.yml`](.github/ISSUE_TEMPLATE/feature_request.yml))
   auto-apply the primary label and auto-assign `Raja4Shekar`. Blank
