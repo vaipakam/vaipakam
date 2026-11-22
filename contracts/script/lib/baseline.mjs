@@ -230,6 +230,26 @@ export function collectGas(dir) {
 }
 
 /**
+ * The gas section against the suite's own list of actions (the budgets file,
+ * `contracts/gas-suite/budgets.json`, which the budget check holds equal to
+ * the suite): every action measured once, none missing and none extra. A
+ * sharded regression writes each shard's figures on its own machine, so a
+ * missing action is named here rather than recorded as absent.
+ */
+export const GAS_BUDGETS_FILE = 'contracts/gas-suite/budgets.json';
+export function gasCompleteness(gas, budgets) {
+  const want = Object.keys(budgets?.actions ?? {});
+  const have = Object.keys(gas ?? {});
+  const out = [];
+  if (!want.length) out.push(`gas: ${GAS_BUDGETS_FILE} lists no actions`);
+  const missing = want.filter((a) => !have.includes(a)).sort(byBytes);
+  const extra = have.filter((a) => !want.includes(a)).sort(byBytes);
+  if (missing.length) out.push(`gas: no figures for ${missing.join(', ')}; collect every shard's out-gas-suite/ into one folder`);
+  if (extra.length) out.push(`gas: figures for ${extra.join(', ')}, which ${GAS_BUDGETS_FILE} does not list`);
+  return out;
+}
+
+/**
  * The full regression's manifests (`run-regression.sh --manifest`), kept as
  * written so `--verify-shards` can be run on them again, plus what they add up
  * to. A manifest line `tests <glob> <run> <passed>` carries a chunk's counts.

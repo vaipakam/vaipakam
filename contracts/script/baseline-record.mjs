@@ -36,6 +36,8 @@ import {
   collectContracts,
   collectGas,
   collectRegression,
+  GAS_BUDGETS_FILE,
+  gasCompleteness,
   recordHash,
   recordPath,
   SOURCE_DIGEST_RULE,
@@ -92,8 +94,10 @@ export function main(argv = process.argv.slice(2)) {
     console.error(`baseline-record: the working tree has uncommitted changes; a record is made from a clean commit:\n${dirty}`);
     return 1;
   }
-  if (!existsSync(opt.gas) || !Object.keys(collectGas(opt.gas)).length) {
-    console.error(`baseline-record: no gas figures in ${opt.gas}; the full regression writes them (test/gas, #3915)`);
+  const gasGaps = gasCompleteness(existsSync(opt.gas) ? collectGas(opt.gas) : {}, JSON.parse(readFileSync(join(REPO, GAS_BUDGETS_FILE), 'utf8')));
+  if (gasGaps.length) {
+    for (const g of gasGaps) console.error(`baseline-record: ${g}`);
+    console.error(`baseline-record: the record carries a figure for every action of the gas suite (${opt.gas}; the full regression writes them, #3915)`);
     return 1;
   }
   try {

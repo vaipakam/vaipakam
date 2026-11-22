@@ -10,7 +10,8 @@
  *   - the tagged commit changes anything but the record, its parent is not the
  *     commit the record was built from, or its source digest (§3.2's rule,
  *     baseline records left out) differs from the record's;
- *   - the vendored libraries or the storage layout's recorded file differ;
+ *   - the vendored libraries or the storage layout's recorded file differ, or
+ *     the record lacks a gas figure for an action the suite lists;
  *   - the build tool is not the recorded version (named);
  *   - a rebuild of the tagged commit gives another compiler or settings
  *     (named), or any deployable's runtime code hash, size or interface hash
@@ -40,6 +41,8 @@ import {
   checkTagFacts,
   collectContracts,
   compareBuild,
+  GAS_BUDGETS_FILE,
+  gasCompleteness,
   recordPath,
   sha256,
   sourceDigest,
@@ -140,6 +143,8 @@ export function checkBaseline({ repo, tag, outDir, build = (c) => buildAt(repo, 
   if (layout == null || sha256(layout) !== record.storageLayout?.sha256) {
     refusals.push(`storage layout: the tagged commit's recorded file does not hash to the record's ${record.storageLayout?.sha256}`);
   }
+  const budgets = tryGit(repo, ['show', `${facts.commit}:${GAS_BUDGETS_FILE}`]);
+  refusals.push(...gasCompleteness(record.gas, budgets == null ? {} : JSON.parse(budgets)));
   if (!outDir) {
     const forge = forgeVersion();
     if (forge !== record.versions?.forge) {

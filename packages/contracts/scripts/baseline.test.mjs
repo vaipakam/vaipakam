@@ -16,6 +16,7 @@ import {
   compareBuild,
   contractEntry,
   deployables,
+  gasCompleteness,
   interfaceHash,
   readArtifacts,
   recordHash,
@@ -166,6 +167,8 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message } = {}
   git(repo, 'init', '-q', '-b', 'main');
   mkdirSync(join(repo, 'contracts/storage-layout'), { recursive: true });
   mkdirSync(join(repo, 'contracts/lib/dep'), { recursive: true });
+  mkdirSync(join(repo, 'contracts/gas-suite'), { recursive: true });
+  writeFileSync(join(repo, 'contracts/gas-suite/budgets.json'), JSON.stringify({ actions: { repay: { gas: 1 } } }));
   writeFileSync(join(repo, 'contracts/storage-layout/layout.golden.json'), '{"layout":1}\n');
   writeFileSync(join(repo, 'contracts/lib/dep/x.sol'), '// dep\n');
   git(repo, 'add', '-A');
@@ -179,6 +182,7 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message } = {}
     tag,
     source,
     contracts: built.contracts,
+    gas: { repay: { gas: 1 } },
     storageLayout: { file: 'contracts/storage-layout/layout.golden.json', sha256: execFileSync('sha256sum', [join(repo, 'contracts/storage-layout/layout.golden.json')], { encoding: 'utf8' }).split(' ')[0] },
     versions: { build: built.build, forge: 'forge 1.8.6', libraries: { dep: { type: 'vendored', hash: meta.split(' ')[2] } } },
   };
@@ -263,4 +267,11 @@ test('a record from another source tree is refused', () => {
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test('the gas section must hold every action the suite lists, and only those', () => {
+  const budgets = { actions: { repay: {}, borrow: {} } };
+  assert.deepEqual(gasCompleteness({ repay: {}, borrow: {} }, budgets), []);
+  assert.match(gasCompleteness({ repay: {} }, budgets).join(), /no figures for borrow; collect every shard's out-gas-suite/);
+  assert.match(gasCompleteness({ repay: {}, borrow: {}, x: {} }, budgets).join(), /figures for x, which contracts\/gas-suite\/budgets\.json does not list/);
 });
