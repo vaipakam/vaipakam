@@ -10,8 +10,8 @@
  */
 import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
 import type { LocaleReader } from './alertChannelChange';
-import type { ChainDeployment, IssueResult, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
-import { lockUnanswered, phraseCopy } from './i18n';
+import type { ChainDeployment, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
+import { lockUnanswered } from './i18n';
 import { newLinkCode, type TelegramOutcome } from './telegram';
 import { shortWallet } from './alertChannelChange';
 
@@ -25,7 +25,7 @@ export const LINK_CODE_TTL_SEC = 600;
 
 /** The state methods these steps use. */
 export interface LinkStatePort {
-  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number, issuedAt: number): Promise<IssueResult>;
+  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number): Promise<boolean>;
   consumeLinkCode(code: string, now: number): Promise<{ wallet: string; chainId: number } | null>;
   chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
   recordLockRequests(
@@ -44,8 +44,6 @@ export interface KeeperStatePort {
   markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): Promise<{ chatId: string | null } | undefined>;
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): Promise<UnansweredLock[]>;
   chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
-  /** #3346 — the phrase each (recipient wallet, chat) message leads with. */
-  phraseMarksOf(items: { wallet: string; chatId: string; chainId: number }[]): Promise<(string | null)[]>;
 }
 
 /** A recorded LOCK no keeper has answered within this long gets one warning
@@ -55,11 +53,6 @@ export const LOCK_UNANSWERED_SEC = 60 * 60;
 export const LOCK_UNANSWERED_BATCH = 20;
 
 export type { PendingChange };
-
-/** What a link request got (#3836): a code, or `superseded` when a
- *  later-signed link or unlink request for the wallet and chain was already
- *  applied, in which case no code exists. */
-export type LinkCodeOutcome = { kind: 'issued'; code: string } | { kind: 'superseded' };
 
 /** Issue a handshake code for (`wallet`, `chainId`), good for ten minutes.
  *  The code is the 120-bit `newLinkCode()` (#2753), so a collision is not a
@@ -78,14 +71,11 @@ export async function issueTelegramLinkCode(
   wallet: string,
   chainId: number,
   now: number,
-  issuedAt: number,
-): Promise<LinkCodeOutcome> {
+): Promise<string> {
   await ensureRow(wallet, chainId);
   for (let attempt = 0; attempt < 2; attempt++) {
     const code = newLinkCode();
-    const result = await state.issueLinkCode(code, wallet, chainId, now + LINK_CODE_TTL_SEC, issuedAt);
-    if (result === 'issued') return { kind: 'issued', code };
-    if (result === 'superseded') return { kind: 'superseded' };
+    if (await state.issueLinkCode(code, wallet, chainId, now + LINK_CODE_TTL_SEC)) return code;
   }
   throw new Error('link code collision twice');
 }
@@ -156,7 +146,7 @@ export async function recordLockRequests(
  * a retried tick never warns twice. Returns the warnings accepted.
  */
 export async function warnUnansweredLocks(
-  state: Pick<KeeperStatePort, 'takeUnansweredLocks' | 'phraseMarksOf'>,
+  state: Pick<KeeperStatePort, 'takeUnansweredLocks'>,
   locales: LocaleReader,
   send: ((chatId: string, text: string) => Promise<TelegramOutcome>) | null,
   nowSec: number,
@@ -167,12 +157,10 @@ export async function warnUnansweredLocks(
   const due = await state.takeUnansweredLocks(nowSec - LOCK_UNANSWERED_SEC, nowSec, LOCK_UNANSWERED_BATCH);
   if (due.length === 0) return 0;
   const loc = await locales(due);
-  const marks = await state.phraseMarksOf(due.map((u) => ({ wallet: u.wallet, chatId: u.chatId, chainId: u.chainId })));
   let sent = 0;
   for (let i = 0; i < due.length; i++) {
     const u = due[i]!;
-    const locale = loc[i] ?? 'en';
-    const outcome = await send(u.chatId, phraseCopy.mark(locale, [marks[i] ?? null], lockUnanswered(locale, shortWallet(u.wallet), u.chainId)));
+    const outcome = await send(u.chatId, lockUnanswered(loc[i] ?? 'en', shortWallet(u.wallet), u.chainId));
     if (outcome === 'accepted') sent++;
   }
   return sent;

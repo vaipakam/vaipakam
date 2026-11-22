@@ -12,7 +12,6 @@ const OTHER: Hex = '0x4444444444444444444444444444444444444444';
 
 const sent: { to: Hex }[] = [];
 vi.mock('wagmi/actions', () => ({
-  getAccount: () => ({ status: 'connected', address: WALLET, chainId: 1 }),
   writeContract: vi.fn(async (_c: unknown, req: { args: [Hex, bigint] }) => {
     sent.push({ to: req.args[0] });
     return '0xabc';

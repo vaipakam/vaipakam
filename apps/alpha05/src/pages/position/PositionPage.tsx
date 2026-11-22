@@ -1,12 +1,4 @@
-import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useSwitchChain } from 'wagmi';
-import { LOAN_LINK_CHAIN_PARAM, linkChainId } from '../../shared/loans/loanLink';
-import { LoanLinkCard } from './LoanLinkCard';
-import { WatchLoanCard } from './WatchLoanCard';
-import { GiveLoanCard, giveKey } from '../../shared/give/GiveLoan';
-import { useStoredValue } from '../../shared/tx/txStore';
-import { refusalFromError } from '../../shared/eligibility/refusal';
+import { Link, useParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
@@ -31,7 +23,6 @@ import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
 import { InterestSchedule } from './InterestSchedule';
 import { LenderDiscount } from './LenderDiscount';
-import { TokenApprovalCard, useApprovalFlowHeld } from '../../shared/positions/TokenApprovalCard';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -63,13 +54,6 @@ export function PositionPage() {
   const { text, format } = useCopy();
   const params = useParams();
   const loanId = parseLoanId(params.id);
-  // #3769: a shared link names its network; a wallet on another network is
-  // told so, never shown the different loan that carries the same number.
-  const [search] = useSearchParams();
-  const linkedId = linkChainId(search.get(LOAN_LINK_CHAIN_PARAM));
-  const linked = linkedId === undefined || linkedId === null ? null : getSupportedChain(linkedId);
-  const { switchChainAsync, isPending: switching } = useSwitchChain();
-  const [switchError, setSwitchError] = useState<string | null>(null);
   const own = useOwnStateClient();
   // Connection and network are read on their own, as Home and Positions do:
   // a wallet on a network this app does not serve is told to switch, not to
@@ -91,22 +75,6 @@ export function PositionPage() {
         <p className="tier-a">{text('position.badId')}</p>
       ) : !connected ? (
         <p className="tier-b">{text('position.connectPrompt')}</p>
-      ) : linkedId === null || (linkedId !== undefined && linked === null) ? (
-        <p className="tier-a" data-testid="position-link-bad-chain">
-          {text('position.linkBadChain')}
-        </p>
-      ) : linked !== null && chain?.chainId !== linked.chainId ? (
-        <div data-testid="position-link-other-chain">
-          <p className="tier-a">{format('position.linkOtherChain', { id: loanId.toString(), linked: linked.name, chain: chain?.name ?? String(chainId ?? '') })}</p>
-          <button type="button" className="btn btn-primary" disabled={switching} onClick={() => {
-              setSwitchError(null);
-              switchChainAsync({ chainId: linked.chainId }).catch((e: unknown) => setSwitchError(refusalFromError(e).reason));
-            }}
-          >
-            {format('position.linkSwitch', { linked: linked.name })}
-          </button>
-          {switchError !== null && <p className="tier-a">{switchError}</p>}
-        </div>
       ) : !chain ? (
         <p className="tier-b">{text('position.unsupportedChain')}</p>
       ) : !own ? (
@@ -149,17 +117,6 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // neither reads the lender's (no "you must repay").
   const borrowerSide = role?.borrower === true && role.lender !== true;
   const cashHeld = useCashFlowHeld(loanId);
-  // A gift already under way stays on the page through its outcome, even
-  // once the refreshed holders show the receiver as lender: its finish card
-  // is the only place that outcome is shown, and it closes on the reader's
-  // own act (which clears this record).
-  const [giving] = useStoredValue<Hex>(`${giveKey(loanId)}:receiver`);
-  // The same for an approval removal: once it lands the approval reads as
-  // gone, which must not take its finish card away.
-  const approvalHeld = {
-    lender: useApprovalFlowHeld(chain.chainId, l.lenderTokenId),
-    borrower: useApprovalFlowHeld(chain.chainId, l.borrowerTokenId),
-  };
   const canCashOut = erc20 && role?.lender === true && l.status === LOAN_STATUS_ACTIVE;
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
@@ -186,14 +143,6 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       <StatusLine status={l.status} />
       <RoleLine role={role} />
       {holder && <FrozenNotice state={frozen} />}
-      {(['lender', 'borrower'] as const).map((side) => {
-        const current = v.approved[side];
-        // Said to the side's holder, the one wallet that can remove it; a
-        // removal already under way stays through its outcome (approvalHeld).
-        const mine = v.holders[side]?.toLowerCase() === account.toLowerCase();
-        const to = approvalHeld[side] ?? (current !== null && current !== 'none' && mine ? current : null);
-        return to !== null ? <TokenApprovalCard key={side} side={side} tokenId={side === 'lender' ? l.lenderTokenId : l.borrowerTokenId} to={to} chain={chain} own={own} /> : null;
-      })}
       {obligations && (
         <div className="position-now">
           <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} defaultable={v.defaultable} />
@@ -230,9 +179,6 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       )}
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
-      {erc20 && live && role?.borrower === true && <LoanLinkCard loanId={loanId} chainId={chain.chainId} />}
-      {erc20 && ((l.status === LOAN_STATUS_ACTIVE && role?.lender === true) || giving !== null) && <GiveLoanCard loanId={loanId} chain={chain} own={own} meta={meta} />}
-      {l.status === LOAN_STATUS_ACTIVE && v.holders.lender !== null && v.holders.borrower !== null && !holder && <WatchLoanCard loanId={loanId} chainId={chain.chainId} wallet={account} />}
       <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} frozen={frozen} />
       {held !== null && (
         <div data-testid="position-held-for-lender">
@@ -341,7 +287,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
 
       {/* LN-18 — the holding discount on the protocol's share of this loan's
           interest, for the wallet holding the lender side of a running loan. */}
-      {live && erc20 && role?.lender === true && <LenderDiscount loanId={loanId} chain={chain} lender={account} />}
+      {live && erc20 && role?.lender === true && <LenderDiscount loanId={loanId} diamond={chain.diamondAddress as Hex} lender={account} />}
 
       {live && erc20 && (
         <Facts title={text('position.healthTitle')} id="position-health" lead={<WhyLink summaryKey="position.healthSummary" detailKey="position.healthWhy" />}>

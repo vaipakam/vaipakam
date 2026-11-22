@@ -31,7 +31,6 @@
  * un-overridden connection. Without it, a pattern built from a Diamond address
  * passed every test here and failed every run on D1.
  */
-import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 /** D1's cap on a LIKE or GLOB pattern, in bytes. */
@@ -65,28 +64,10 @@ export interface SqliteD1 {
   d1: unknown;
 }
 
-/** An in-memory database built from `ddl` — what a unit test stands up. */
 export function createSqliteD1(ddl: string[]): SqliteD1 {
   const db = new DatabaseSync(':memory:');
-  for (const sql of ddl) db.exec(sql);
-  return adaptSqlite(db);
-}
-
-/**
- * An EXISTING database file opened through the same adapter (#3894): the
- * deploy rehearsal opens the local D1 wrangler built under its scratch root
- * (`wrangler d1 migrations apply --local --persist-to`, whose storage is a
- * plain SQLite file) so the indexer and keeper write the database the
- * indexer's own deploy path produced, not one rebuilt here. Nothing is
- * created: a missing file is refused rather than started empty.
- */
-export function openSqliteD1(path: string): SqliteD1 {
-  if (!existsSync(path)) throw new Error(`sqliteD1: no database file at ${path}`);
-  return adaptSqlite(new DatabaseSync(path, { open: true }));
-}
-
-function adaptSqlite(db: DatabaseSync): SqliteD1 {
   enforceD1PatternCap(db);
+  for (const sql of ddl) db.exec(sql);
   const makeStatement = (sql: string, args: SqlValue[]) => ({
     first: async () => db.prepare(sql).get(...args) ?? null,
     all: async () => ({ results: db.prepare(sql).all(...args) }),

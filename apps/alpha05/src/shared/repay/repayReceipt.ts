@@ -60,14 +60,7 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
     text(loan.useFullTermInterest ? 'repay.loseFull' : 'repay.loseGrows'),
     ...lateConfirmationLines({ capped: r.capped, time: by, totalNow: r.payoff.now, totalBy: r.payoff.atBy }, copy),
     ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
-    // #3769: a payer who does not hold the borrower position is told who
-    // gets the collateral back, by address, as read for this review (a
-    // change before signing stops the flow: see `changedBetween`).
-    ...(borrower
-      ? []
-      : r.borrowerHolder !== null
-        ? [format('repay.loseThirdPartyHolder', { holder: r.borrowerHolder, id: loan.borrowerTokenId.toString() })]
-        : [format('repay.loseThirdParty', { id: loan.borrowerTokenId.toString() })]),
+    ...(borrower ? [] : [format('repay.loseThirdParty', { id: loan.borrowerTokenId.toString() })]),
     ...(loan.status === STATUS_FALLBACK_PENDING ? [text('repay.cure')] : []),
     ...(r.refinance === null ? [text('repay.refinanceUnread')] : r.refinance.live ? [format('repay.refinanceStays', { id: r.refinance.offerId.toString() })] : []),
     ...(r.balance >= r.payoff.now && r.balance < r.payoff.atBy ? [figured((x) => format('repay.loseBalance', { amount: tokenAmount(r.balance, asset, meta, format, x) }))] : []),

@@ -9,7 +9,6 @@ import type { Receipt, ReceiptRow } from '../receipt/types';
 import { assetName, type TokenMetaMap } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
 import { readValidUntil } from '../tx/deadline';
-import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import { sendWrite } from '../tx/send';
 import { askThrough } from '../tx/simulate';
 import { useStoredValue } from '../tx/txStore';
@@ -53,9 +52,8 @@ export function InstantSlotCard({ intent, active, chain, own, meta }: InstantSlo
   const picked = choice ?? INSTANT_CHOICE_PRESELECTED;
   const identity = reviewIdentity(own);
 
-  const approvalWindow = useApprovalWindow('instantSlotConsent', chain);
   const ask = async (c: InstantChoice) => {
-    const deadline = await readValidUntil(own, 'instantSlotConsent', approvalWindow.choice);
+    const deadline = await readValidUntil(own);
     const call = instantSlotCall(i.lendingAsset, i.collateralAsset, i.slot, c, deadline);
     return { call, asked: await askThrough(own, (cl) => cl.simulateContract({ address: diamond, ...call, account })) };
   };
@@ -165,7 +163,6 @@ export function InstantSlotCard({ intent, active, chain, own, meta }: InstantSlo
           </label>
         </fieldset>
         {none && <p className="tier-b">{text('autoLend.instantCardNone')}</p>}
-        <ApprovalWindowChoice step="instantSlotConsent" chain={chain} state={approvalWindow} />
       </div>
     ),
   };

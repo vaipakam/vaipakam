@@ -63,12 +63,6 @@ export interface OwnFigure {
   loans: number | null;
   lenders: number | null;
   borrowers: number | null;
-  /** Loans in this point's look-back, past the minimum age, left out
-   *  because the ledger has not confirmed their agreed terms. Zero is a
-   *  count; null when the point was never computed, or when the index did
-   *  not state it. Shown beside the figure, so a gap never reads as a quiet
-   *  market. */
-  unconfirmedLeftOut: number | null;
 }
 
 export interface OwnTerm extends OwnFigure {
@@ -84,9 +78,7 @@ export interface CurveRule {
   provisional: boolean;
   excludes: string[];
   interestSources: string[];
-  /** Settlements whose interest the rule cannot separate, so it is not
-   *  counted (the index's words). */
-  interestNotCounted: string[];
+  interestNotYetCounted: string[];
   points: { days: number; termRange: TermRange | null; lookbackDays: number | null }[];
 }
 
@@ -197,7 +189,6 @@ function ownFigure(o: Obj, what: string): OwnFigure {
     loans: numOrNull(o.loans, `${what} loans`),
     lenders: numOrNull(o.lenders, `${what} lenders`),
     borrowers: numOrNull(o.borrowers, `${what} borrowers`),
-    unconfirmedLeftOut: numOrNull(o.unconfirmedLeftOut, `${what} unconfirmed left out`),
   };
   // A shown point must carry its median: one without would read as a
   // figure the index did not give.
@@ -227,7 +218,7 @@ function ownTerm(v: unknown, i: number): OwnTerm {
   };
 }
 
-const RULE_LISTS = new Set(['provisional', 'excludes', 'interestSources', 'interestNotCounted', 'points']);
+const RULE_LISTS = new Set(['provisional', 'excludes', 'interestSources', 'interestNotYetCounted', 'points']);
 
 /** The rule's statement: its scalar settings in the index's order, and the
  *  lists it names. A nested setting this app does not know is refused
@@ -246,7 +237,7 @@ export function parseRule(v: unknown): CurveRule {
     provisional: o.provisional === true,
     excludes: strings(o.excludes, 'own-loans rule excludes'),
     interestSources: strings(o.interestSources, 'own-loans rule interest sources'),
-    interestNotCounted: strings(o.interestNotCounted, 'own-loans rule interest not counted'),
+    interestNotYetCounted: strings(o.interestNotYetCounted, 'own-loans rule interest not yet counted'),
     points: (o.points === undefined ? [] : arr(o.points, 'own-loans rule points')).map((p, i) => {
       const q = obj(p, `own-loans rule point ${i}`);
       return {

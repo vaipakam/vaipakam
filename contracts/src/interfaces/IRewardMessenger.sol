@@ -122,8 +122,12 @@ interface ICompQuoteIngress {
 
 /// @notice #1434 P2-w1 — mirror-side Diamond ingress for an inbound V3
 ///         broadcast (`RewardReporterFacet.onRewardBroadcastV3Received`).
+///         `sourceChainId` is the CCIP source chain the messenger
+///         authenticated; the ingress refuses any chain other than the Base
+///         the mirror answers to (#903).
 interface IRewardReporterIngressV3 {
     function onRewardBroadcastV3Received(
+        uint256 sourceChainId,
         RewardBroadcastV3 calldata b
     ) external;
 }

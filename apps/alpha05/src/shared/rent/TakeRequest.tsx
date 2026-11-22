@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { signTypedDataFor } from '../tx/walletGuard';
+import { signTypedData } from 'wagmi/actions';
 import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -12,7 +12,7 @@ import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { WhyLink } from '../help/WhyLink';
 import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
 import { quantityMoved, tokenMoved } from '../nft/nft';
-import { ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
+import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
 import { openedLoan } from '../offers/acceptOutcome';
 import { offerAmount } from '../offers/offerLine';
 import { readVault } from '../offers/reads';
@@ -30,8 +30,6 @@ import { askAfter } from '../tx/simulate';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
-import { stepWindow } from '../tx/deadline';
-import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { formatUtc, shortAddress } from '../ui/format';
 import { Notice } from '../ui/Notice';
@@ -109,8 +107,6 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
       tokenId,
     );
 
-  // #3770: a contract wallet chooses how long its owners have to approve.
-  const approvalWindow = useApprovalWindow('takeRentalRequest', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -144,12 +140,12 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
         linkedLoanId: r.linkedLoanId,
         riskTermsHash: r.riskTermsHash,
         nonce: freshNonce(),
-        deadline: block.value.timestamp + BigInt(stepWindow('takeRentalRequest', approvalWindow.choice)),
+        deadline: block.value.timestamp + BigInt(ACCEPT_DEADLINE_SECONDS),
         illiquidLending: r.nftClass === 'illiquid',
         illiquidCollateral: false,
       });
       say(text('accept.stepSign'));
-      const signature = await signTypedDataFor(config, chain.chainId, {
+      const signature = await signTypedData(config, {
         account,
         domain: { name: ACCEPT_TERMS_DOMAIN_NAME, version: ACCEPT_TERMS_DOMAIN_VERSION, chainId: chain.chainId, verifyingContract: diamond },
         types: ACCEPT_TERMS_TYPES,
@@ -365,7 +361,6 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
               <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'offer', offerId }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
             <WhyLink summaryKey="accept.signSummary" detailKey="rentTake.signWhy" />
-            <ApprovalWindowChoice step="takeRentalRequest" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>

@@ -314,12 +314,18 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
 
         // #2440 — the treasury accrues what reached it; the host splits it at
         // the floor, so an undelivered integrator share is the reserve's.
-        LibFacet.vaultFeeToTreasury(
-            c.lender,
-            c.lendingAsset,
-            c.fee - matcherCut - (delivered ? integratorCut : 0) - _settleReferral(c, loanId, share),
-            LibFeeFloor.initiation(c.principal)
+        //
+        // #3360 — what the host measured as received IS the fee the platform
+        // kept from this loan (treasury and reserve parts alike; every share
+        // paid away is already out of it). Recorded on the loan's fee record
+        // for the reward-cap stamp later in this accept, never recomputed.
+        // It is clamped to the amount handed to the host, so a host reporting
+        // more than it was given can never raise the cap.
+        uint256 treasuryLeg = c.fee - matcherCut - (delivered ? integratorCut : 0) - _settleReferral(c, loanId, share);
+        uint256 kept = LibFacet.vaultFeeToTreasury(
+            c.lender, c.lendingAsset, treasuryLeg, LibFeeFloor.initiation(c.principal)
         );
+        s.feeEntitlementByLoanId[loanId].keptFeeOpen = kept < treasuryLeg ? kept : treasuryLeg;
         if (matcherCut > 0) {
             LibVaultOutflow.toIncentive(
                 c.lender, c.lendingAsset, matcherCut, c.matcher, c.offerId, OutflowReason.INCENTIVE

@@ -52,7 +52,7 @@ It is a convenience, not a promise. Section 8 says what it cannot do.
 
 ### 4.1 Settings
 
-**Amended 2026-11-19 (#3808) and 2026-11-20.** The settings are held once for the loan's borrowing and cover every loan of it (`BorrowingDesign.md` sections 5 and 6). Where this section says "per loan" or "the loan's instruction", read the borrowing's. The executors still name one loan, as written below: a run spends only that loan's collateral through a route its caller brings, so nothing is gained by walking the borrowing, and lowest health factor first is the keeper's order. The reserve a top-up draws on is the borrowing's, so the skip "a top-up should act first" asks the top-up step's own sizing read what its walk would add to this loan now. One sale for several loans waits for the review in section 9 of that design.
+**Amended 2026-11-19 (#3808).** The settings are held once for the loan's borrowing and cover every loan of it, and the executor takes a borrowing and sells loan by loan, lowest health factor first (`BorrowingDesign.md` sections 5 and 6). Where this section says "per loan" or "the loan's instruction", read the borrowing's. One sale for several loans waits for the review in section 9 of that design.
 
 Written by the current borrower-position holder, or that holder's account manager, through the existing instruction setter, and cleared by the same wallet at any time:
 

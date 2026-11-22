@@ -25,7 +25,6 @@
  *    possible copy; any other is used at the reader's own risk.
  */
 import type { Abi, PublicClient } from 'viem';
-import { cleanTokenLabel } from '@vaipakam/lib/tokenLabel';
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { IndexerUnavailable } from '../reads/world/indexerClient';
 import { ORACLE } from './reads';
@@ -102,9 +101,7 @@ function sourceRank(v: unknown): SourceRank {
   ) {
     shape('A ranked token carried no readable rank, name or symbol.');
   }
-  // The list's labels are copied from third-party sources: cleaned by the
-  // same rule as a token's own, so a comparison and a sentence see one form.
-  return { rank: r.rank as number, name: cleanTokenLabel(r.name, 'name'), symbol: cleanTokenLabel(r.symbol, 'symbol') };
+  return { rank: r.rank as number, name: r.name as string, symbol: r.symbol as string };
 }
 
 /** One network's rankings. Throws the index's own failure, or a shape

@@ -122,16 +122,11 @@ Every place that multiplies principal, rate and time today calls it. A fixed loa
 
 A lender therefore holds a floating loan to its end date in part 2, short of transferring the position token, and the lender's review says so in one plain sentence. That limit ends with part B.
 
-**Floating loans have a switch of their own (added 2026-11-20).** It starts off on every network, as the instant market's master switch does. The pause wallet may switch it off, and switching it on waits the timelock. While it is off, every step that opens a floating term or brings a new lender's money into one is refused by name: a direct accept, a match, a signed offer's fill and a refinance into a floating loan now, and a slot fill, a takeover, a renewal and a continuation at a floating rate when those routes open. The switch is read in the one shared origination step and in each of those later steps, and nowhere else. It never touches an open floating loan: accrual, repayment, interest payments, the standing instructions, liquidation, the default, the fallback, every claim and a refinance out of a floating loan into a fixed one all stay open. Posting is not refused, because an offer is not a loan and an offer posted while the switch was on has to survive a switch-off in any case. The previews report the refusal by name, and the app does not offer a floating term while the switch is off and says why. A view states the switch and an event states each change.
-
-The rate reference may be installed before floating loans are switched on, because fixed-rate limits read it too (`MarketLinkedRateLimitsDesign.md`). Without this switch the only fast stop for floating loans would be to mute a source, and that holds the rate under every open loan. On the launch list (#3824) this gives two rows, each with its own state: the rate reference and floating-rate loans. What is proposed to the owner there, and not yet decided, is the rate reference not installed on a mainnet at launch, proved absent by the registry's empty pointer, and floating-rate loans off.
-
 ## 9. Health, previews and views
 
 - **Every on-chain check reads what is owed now**, which is exact: the health factor, liquidation, partial withdrawal, every close-out. Nothing on-chain admits or refuses a loan on a projected rate. Origination tests are on principal, as today.
 - **Views** return, for a loan and for a floating offer's terms: the rate now, the highest possible rate and the least, the reference, the margin, the levels as all-in rates, the series, and whether the reference is holding or stale. The rate-rise illustration of #3637 is computed in the app from these; a figure the app cannot substantiate is shown as unknown.
-- **Figures that read "the loan's rate" as one number** (the platform's average rate, the rewards basis) read the one library. Floating loans stay out of the fixed-rate average and are counted beside it with their margins. The builder lists each such reader with what it means for a floating loan. The rewards basis is settled in the next point.
-- **The reward weight of a floating loan (settled 2026-11-20).** A loan's reward weight per day is its principal value times its rate, taken once when the loan registers and taken again only where a loan registers again. A floating loan's weight is set the same way, from its rate at that moment: the reference in force, clamped to the loan's levels, plus the margin, read through the one library and never by a second calculation. No new refresh point is added. The weight is not read again on a part repayment, an interest payment or a transfer of the lender token, because a party would then refresh it only when the reference is high. The routes on which a fixed loan registers again are refused for floating loans in part 2 (section 8), so the weight is set once, at opening, and when one of those routes opens for floating loans its design states its own re-read. The origination event or the loan view gives the rate the weight was set from, and the app says the weight was set at opening and does not follow the rate. A loan that registers at a rate of zero has no weight until it registers again, and the app says so. The per-loan cap on rewards bounds what any loan takes, whatever its weight.
+- **Figures that read "the loan's rate" as one number** (the platform's average rate, the rewards basis) read the one library. Floating loans stay out of the fixed-rate average and are counted beside it with their margins. The builder lists each such reader with what it means for a floating loan and reports the rewards basis before choosing (open items).
 - **Events:** the origination event states the kind, margin, levels, rate reference and series. Interest events state amounts, as today. The indexer derives a loan's rate history from the series' update events.
 
 ## 10. Contract changes
@@ -148,8 +143,6 @@ The rate reference may be installed before floating loans are switched on, becau
 | The period library's one shortfall | The floating reading of section 7. |
 | The status writer | The close call, once. |
 | Routes of section 8's third list | Refuse a floating loan or offer by name. |
-| The floating switch | One setting, read by the one shared origination step and by each later step that opens a floating term or brings a new lender into one. Pause wallet off, timelock on. A view and an event (section 8). |
-| Reward registration | The weight read from the one library at registration; the rate it was set from in the origination event or the loan view (section 9). |
 | Views and events | Section 9. |
 
 Built on the #3779 change, which gives the one segment-start writer and the one period shortfall. Reaches a chain by fresh deploy. Storage golden file rewritten; facet sizes checked by the deploy-sanity suite, split along a seam where one does not fit.
@@ -170,8 +163,6 @@ Built on the #3779 change, which gives the one segment-start writer and the one 
 12. A future-moment figure is never below what is later owed at that moment.
 13. The read check refuses a read of a loan's stored rate outside the library.
 14. A stale reference refuses new floating loans and leaves open ones accruing at the held figure.
-15. The switch: off refuses each opening step by name and each preview reports it; with it off an open floating loan accrues, is repaid, liquidated, defaulted and claimed, and a refinance from floating into fixed runs; a standing floating offer survives a switch-off and fills after the switch is on again; only the timelock switches it on.
-16. Reward weight: set at opening from the rate of that moment; unchanged after the reference moves, after a part repayment and after a transfer of the lender token; none for a loan registered at a rate of zero.
 
 ## 12. Alternatives considered
 
@@ -184,9 +175,6 @@ Built on the #3779 change, which gives the one segment-start writer and the one 
 7. **Judge a floating period at its boundary from stored checkpoints.** Exact at the boundary, at the cost of checkpointing every level total. Rejected: more state in a contract near its size limit, to move a threshold by a few days of interest that is owed either way.
 8. **Open every route in part 2.** Rejected: the sale and re-pricing routes need rules of their own for a rate that moves, and the reader change is already the larger part of this build.
 9. **Leave the readers as they are and special-case floating in each.** Rejected: twenty copies of one rule, the fault the writer check was made for.
-10. **No switch for floating loans,** relying on the rate reference not being installed. Rejected: the reference may be installed first for fixed-rate limits, and the only fast stop left would be muting a source, which holds the rate under every open loan.
-11. **One switch for every later feature that reads the reference.** Rejected: it could not stop floating loans without stopping the fixed-rate limits beside them.
-12. **A different rewards basis for a floating loan.** Rejected, each for its own reason. The least possible rate: a loan with no floor and no margin would have no weight. A daily re-read: daily work per loan, and a weight that depends on a keeper. A running reward figure per series and level pair: exact, but a second reward index carried through claims, caps, splits and the cross-network day close. An averaged reference: a rate the loan never accrued at.
 
 ## 13. Recommendation
 
@@ -199,10 +187,3 @@ Build floating loans with explicit offer and loan fields, one clamped sum per lo
 - The measured size of the rate reference with the levels, and the seam if it does not fit (read side out, never the levels).
 - Any reader of a loan's rate, or any route that prices future interest, that this note does not list.
 - For the owner: the uncapped wording of section 6, the ceiling of each series, and that a floating position has no sale route until part B.
-
-**Settled with the builder on 2026-11-20.**
-
-- **The rewards basis:** the rate at registration, with the conditions of section 9.
-- **The size and the seam:** the rate reference's read side moved to a contract of its own and the levels stayed where they were, as this note asked. The rate reference measured 22,149 bytes after the move.
-- **The switch** of section 8 is built in the floating core's first change.
-- The builder's other reports under this section were accepted the same day, with no change to this note.

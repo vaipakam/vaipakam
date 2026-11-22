@@ -41,12 +41,7 @@ import http from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Page } from '@playwright/test';
 import { verifyMessage } from 'viem';
-import {
-  buildAlertSettingsMessage,
-  isRequestKey,
-  requestKeyHash,
-  type AlertSettingsChange,
-} from '@vaipakam/lib/alertsMessage';
+import { buildAlertSettingsMessage, type AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { ANVIL_URL } from '../lib/anvil';
 import { CHAIN_ID, DIAMOND, DIAMOND_ABI_VIEM, pub } from '../lib/chain';
@@ -78,8 +73,6 @@ const usedSignatures = new Set<string>();
  *  and the signature must be the body's wallet's over exactly that. */
 async function signedSave(b: Record<string, unknown>): Promise<'ok' | 'unsigned' | 'repeat'> {
   if (typeof b.signature !== 'string' || typeof b.issuedAt !== 'number') return 'unsigned';
-  // #3836 — the body carries the request key whose hash the signed text names.
-  if (!isRequestKey(b.requestKey)) return 'unsigned';
   const change: AlertSettingsChange = {
     ...(typeof b.warn_hf === 'number'
       ? {
@@ -97,13 +90,7 @@ async function signedSave(b: Record<string, unknown>): Promise<'ok' | 'unsigned'
   };
   const valid = await verifyMessage({
     address: b.wallet as `0x${string}`,
-    message: buildAlertSettingsMessage(
-      b.wallet as string,
-      b.chain_id as number,
-      change,
-      b.issuedAt,
-      requestKeyHash(b.requestKey),
-    ),
+    message: buildAlertSettingsMessage(b.wallet as string, b.chain_id as number, change, b.issuedAt),
     signature: b.signature as `0x${string}`,
   }).catch(() => false);
   if (!valid) return 'unsigned';

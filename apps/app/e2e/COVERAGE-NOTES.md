@@ -738,8 +738,6 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Protected vault port (depository vault).** The contract no longer pays recovered tokens to the wallet. `recoverStuckERC20` became `adoptUntracked`, which credits the declared amount to the vault's tracked balance; the tokens then leave by an ordinary withdrawal, so a protected account's payout delay applies to them like any other balance. The page signs the new `AdoptionAcknowledgment` typed data (domain "Vault Adoption", with the asset kind and token id) and reads `getTrackedHolding` before and after. `tests/27-recover.spec.ts` now asserts the tracked balance rose rather than the wallet balance, and looks for the "Sign & add to vault" button and the "Tokens added to your vault" result. The sanctions branch reads `VaultBannedFromAdoption`. The declaration text changed, so every locale's reading aid was retranslated against the new hash.
 
-**Token label rule.** The symbol the token reports is cleaned by the shared `@vaipakam/lib/tokenLabel` rule (controls and format characters removed, one line, 20 code points), the same rule the statements and feed exports use. Its hostile-name cases are unit tests in `packages/lib/src/tokenLabel.test.ts`; no spec drives a hostile token through this page.
-
 <a id="cov-recovery-declaration-reading-aid-1563-the-eip"></a>
 
 ## Recovery declaration reading aid (#1563) — the EIP-712 declaration the user signs on `/recover` is contract-fixed English (its keccak256 must equal the vault facet's `RECOVERY_ACK_TEXT_HASH`), so the signed bytes cannot be translated.
@@ -1752,18 +1750,6 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Live-only reason.** The live Telegram round trip (sending the code to the bot) still needs the deployed agent with its webhook re-registered
 
-<a id="cov-alert-requests-name-a-browser-key"></a>
-
-## Alert requests name a key only this browser holds, and a multi-signature wallet's request can be finished later (#3836)
-
-**Journey.** Every signed alert request (link and unlink Telegram, save settings, send a test alert) draws a fresh random key in this browser; the text the wallet signs carries its keccak-256 hash and the request body carries the key, so the alert service accepts the request only from the browser that drew it. The request (text, body, key) is kept in this browser's storage from before the wallet is asked until the service answers, so a wallet whose owners take days to approve can be finished after the page closes: the card shows "A request is waiting for your wallet" with the action, when it started and when it expires, and offers Finish (asks the wallet for the same approval again and sends it) or Discard. The card also states, always, that only this browser can finish a request and that a multi-signature wallet has up to 7 days. A request newer than the one sent being already applied is named in plain words (409 `request-superseded`), as is a check the service could not run (503 `verification-unavailable`, the only answer that keeps the request for another try). A Safe opened as a Safe App answers with a proposal (an empty signature): the card says it is waiting for the other owners, keeps the request, and sends it only once the Safe's own on-chain answer or its service's combined signature completes it; a wallet or network change during that wait sends nothing and keeps the request. A request that finishes drops only itself, never a newer one another tab started. A request that answers after the person switched wallet or network writes nothing to the card on screen (no settings, link code, notice or kept-request line of the other wallet); what it learned shows again when the person returns to the wallet and network that signed it.
-
-**Tier.** unit + CI-Anvil
-
-**Where.** unit: `src/data/alertRequest.test.ts` (kept while the wallet is asked; key sent with the body; dropped on any answer but `verification-unavailable`, on an owner's rejection and past 7 days; kept when the wallet gave up waiting; a finished or rejected request leaves a newer one in place); `src/lib/shownScope.test.ts` (a late answer reaches the card only while it shows the wallet and network that asked); `packages/lib/src/accountSignature.test.ts` (a proposal is recognised, the on-chain and service reads, the wait through unread rounds and its stop when the wallet moves); `src/data/alerts.test.ts` (the save signs over the key's hash and sends the key). CI-Anvil: `tests/38-push-alerts.spec.ts` (the agent stub refuses a save without a well-shaped key, so every save there proves the key travels).
-
-**Live-only reason.** A real multi-signature approval and the finish-after-reload path need the deployed agent and a Safe on Base Sepolia; a live drive is owed on the next touch of the alerts surface.
-
 <a id="cov-paid-push-billing-consent-2723-the-alerts"></a>
 
 ## Paid Push billing consent (#2723) — the Alerts card states, per network, the paid-Push fee read from the chain (VPFI per loan side, paid from the vault's free VPFI to the protocol, at most once per loan, Telegram free), the wallet's stored cap and the contract's answer on whether it covers the fee; whether the fee is billed is the alert …
@@ -2021,21 +2007,4 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 **Tier.** Unit: `src/contracts/useTosNotice.test.ts` covers the decision (nothing on a failed read or no terms, small, material for a new version and for a raise of the minimum, quiet after an early accept) and the final-week rule.
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
-
-<a id="cov-alert-phrase-3346"></a>
-
-## Alert phrase (#3346)
-
-The phrase section of the Alerts card talks to three agent routes: set and remove (both signed alert requests with their own texts) and a status read that never returns the phrase. Unit tests cover what the app signs and sends: the signed text names the fingerprint and not the phrase, the phrase rides the request body only, and the copy kept in this browser for a multi-signature approval holds the key but never the phrase, so finishing it requires the phrase again and is checked against the signed fingerprint. The status read is per network, and the card confirms the scope the agent reports: every network for a key's signature, this network only for a contract wallet's approval, with a switch offered to each other network where this browser has Telegram linked (the section is keyed per network and wallet, so the phrase is typed again after a switch).
-
-The rest is the agent's: the phrase rule, the order of phrase requests, the per-chat "last told" record, the notices and the marks on every message are covered by the agent's tests. Live-only because the observable result is a Telegram message from the deployed bot; there is no CI stub for Telegram. No CI-Anvil spec yet: the section reads no chain state, and the agent stub in `tests/38-push-alerts.spec.ts` would need the three routes added, which is a follow-up on the next touch.
-
-## No platform token, no discount (owner decision 2026-11-20)
-<a id="cov-no-platform-token-no-discount"></a>
-
-**Journey.** The platform token arrives with the rewards phase, installed on every network together, so no network has it at launch and the fee path gives no hold discount to anyone. When the Diamond reports no token (`getVPFIToken` is the zero address), `/vpfi` shows one banner saying so and that every fee is charged at its full rate. It no longer shows the discount explainer, the tier table or a button to switch to another network, since no other network has a discount to offer either. A failed read still shows the couldn't-check state. The protocol console keeps the configured tier settings (they are real settings) and adds a line under them saying none applies while the token is not installed. The Help answer, the More menu line and the page's search description now say discounts start with the rewards phase.
-
-**Tier.** Live (gap row). The change is copy plus a branch on the snapshot's existing `registered` field; the fork tier deploys a token, so a spec would need a token-less Diamond.
-
-**Gap.** Add a fork drive with no token registered when the VPFI surface next gets a spec: assert the banner, and that no tier row or explainer renders.
 

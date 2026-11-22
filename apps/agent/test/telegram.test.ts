@@ -20,30 +20,24 @@ describe('extractLinkCode', () => {
   const CODE = 'K7MQ2XRTH4NPWZ9DBC3FJ8LV';
 
   it('accepts a bare code (copy-the-code flow)', () => {
-    expect(extractLinkCode(update(CODE))).toEqual({ chatId: '42', code: CODE, isPrivate: false });
+    expect(extractLinkCode(update(CODE))).toEqual({ chatId: '42', code: CODE });
   });
 
   it('accepts the /start deep-link payload (#1056 round 6)', () => {
     // https://t.me/<bot>?start=<code> delivers "/start <code>" when
     // the user presses Start — the advertised one-tap flow.
-    expect(extractLinkCode(update(`/start ${CODE}`))).toEqual({ chatId: '42', code: CODE, isPrivate: false });
+    expect(extractLinkCode(update(`/start ${CODE}`))).toEqual({ chatId: '42', code: CODE });
   });
 
   it('accepts the bot-mention /start variant', () => {
     expect(extractLinkCode(update(`/start@VaipakamBot ${CODE}`))).toEqual({
       chatId: '42',
       code: CODE,
-      isPrivate: false,
     });
   });
 
-  it('reports a private chat (#3346), and anything else as not private', () => {
-    expect(extractLinkCode({ message: { chat: { id: 42, type: 'private' }, text: CODE } })?.isPrivate).toBe(true);
-    expect(extractLinkCode({ message: { chat: { id: 42, type: 'group' }, text: CODE } })?.isPrivate).toBe(false);
-  });
-
   it('reads a typed code case-blind and returns it as issued', () => {
-    expect(extractLinkCode(update(CODE.toLowerCase()))).toEqual({ chatId: '42', code: CODE, isPrivate: false });
+    expect(extractLinkCode(update(CODE.toLowerCase()))).toEqual({ chatId: '42', code: CODE });
   });
 
   it('ignores regular chat and malformed payloads', () => {

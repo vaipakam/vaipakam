@@ -41,7 +41,7 @@ const values = {
   autoPauseAvailableAt: '0',
   autoPauseDurationSeconds: '1800',
   partialLiqDustFloorNumeraire: '0',
-  treasury: '0x1111111111111111111111111111111111111111',
+  priceGuardDelaySeconds: '0',
 };
 
 describe('ConsoleView', () => {

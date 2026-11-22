@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import type { LegOutcome } from '../tx/outcome';
-import { waitForSentReceipt } from '../tx/accountWallet';
+import { waitForTransactionReceipt } from 'wagmi/actions';
 import { VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import type { Abi } from 'viem';
 import { sendWrite } from '../tx/send';
@@ -46,7 +45,7 @@ interface SafetyActionProps {
   onClose: () => void;
 }
 
-const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'safety.stepUnlock', finalize: 'safety.stepFinalize', recovery: 'recovery.step', recoveryCancel: 'recovery.cancelStep', lockNfts: 'safety.stepLockNfts' } as const;
+const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'safety.stepUnlock', finalize: 'safety.stepFinalize', recovery: 'recovery.step', recoveryCancel: 'recovery.cancelStep' } as const;
 
 /**
  * ACC-37 / ACC-43 — one safety action on the wallet's own account: turn
@@ -57,13 +56,6 @@ const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'sa
  * the protocol recorded, from the transaction's own logs. Nothing leaves
  * the wallet and no approval is asked.
  */
-/** The step that could not be sent, unless the outcome already names it: a
- *  switch-on whose token lock was declined says "not locked" once (#3721). */
-function stoppedLeg(r: SafetyReview, legs: readonly LegOutcome[], stopped: LegOutcome, nftsLabel: string): LegOutcome[] {
-  const lockStopped = r.action === 'enable' && r.draft?.protectNfts === true && legs.some((l) => l.status === 'not-done' && l.label === nftsLabel);
-  return lockStopped ? [] : [stopped];
-}
-
 export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionProps) {
   const copy = useCopy();
   const { text, format } = copy;
@@ -120,7 +112,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
           return sendWrite(config, { ...call, chainId: chain.chainId, account } as never);
         },
         async (hash) => {
-          const landed = await waitForSentReceipt(config, hash, chain.chainId);
+          const landed = await waitForTransactionReceipt(config, { hash, chainId: chain.chainId });
           return { ok: landed.status === 'success', logs: landed.logs };
         },
         what,
@@ -134,7 +126,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
       if (!review) return [];
       const sent = sentRef.current;
       const legs = measureSafety(review, safetyLogs(sent?.landed ?? [], receipt), diamond, copy);
-      return sent?.stopped ? [...legs, ...stoppedLeg(review, legs, sent.stopped, text('safety.legNftsLocked'))] : legs;
+      return sent?.stopped ? [...legs, sent.stopped] : legs;
     },
     // A followed step that reverted changed nothing, but the steps before it
     // did (Codex #3489 r19): the tracker reads them on that ending too.

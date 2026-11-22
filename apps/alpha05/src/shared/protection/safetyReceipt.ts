@@ -92,10 +92,6 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
       text('safety.lockPause'),
     );
     if (f.openRows === null) unread.push(text('safety.rowsUnread'));
-  } else if (r.action === 'lockNfts') {
-    rows.push({ label: text('safety.rowNfts'), value: { kind: 'text', text: text('safety.nftsOn') }, binding: true });
-    rows.push({ label: text('safety.rowUnlockWaits'), value: m === null ? unknown : { kind: 'text', text: formatSpan(m.delaySeconds) }, binding: false });
-    consequences.push(text('safety.enableNftsOn'), text('safety.lockNftsNoMoney'));
   } else if (r.action === 'unlock') {
     rows.push({
       label: text('safety.rowTakesEffect'),
@@ -123,7 +119,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   }
   consequences.push(...unread, text('vaultWithdraw.noApproval'));
   const title = text(
-    r.action === 'recovery' ? 'recovery.title' : r.action === 'recoveryCancel' ? 'recovery.cancelTitle' : r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : r.action === 'lockNfts' ? 'safety.titleLockNfts' : 'safety.titleFinalize',
+    r.action === 'recovery' ? 'recovery.title' : r.action === 'recoveryCancel' ? 'recovery.cancelTitle' : r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : 'safety.titleFinalize',
   );
   // #3379 B2: an action can be several transactions (the vault's write, then
   // the Diamond applying it), each its own wallet prompt.

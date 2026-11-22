@@ -74,7 +74,6 @@ import { getSupportedChain } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
-import { cleanTokenLabel } from '@vaipakam/lib/tokenLabel';
 import {
   assertWalletNotSanctionedLive,
   useSanctionsCheck,
@@ -747,12 +746,30 @@ function isOptionalMetadataUnavailable(err: unknown): boolean {
   return isContractAnswered(err);
 }
 
-// The token's self-reported symbol() is attacker-controlled Unicode rendered
-// next to addresses on the review card (Codex #1547 r3): a bidi control can
-// visually reorder the address beside it. It is cleaned at lookup time, the
-// source of every render, by the one shared rule (`@vaipakam/lib/tokenLabel`:
-// controls and format characters removed, one line, length capped).
-// Rendering additionally bidi-isolates the spans (defense in depth).
+/** Display cap for an attacker-controlled token symbol. */
+const MAX_SYMBOL_LENGTH = 20;
+
+/**
+ * Sanitize the token's self-reported symbol() (Codex #1547 r3): it is
+ * attacker-controlled Unicode rendered directly NEXT TO addresses on
+ * the review card. A symbol carrying bidi override/embedding/isolate
+ * controls (U+202A–U+202E, U+2066–U+2069) or the LRM/RLM marks
+ * (U+200E/U+200F) can visually REORDER the adjacent address text, so a
+ * lookalike address reads as the real one at review time. Strip those
+ * plus C0/DEL controls at lookup time — the source of every render —
+ * and cap the length so a paragraph-sized "symbol" can't push the
+ * address off-screen. Rendering additionally bidi-isolates the spans
+ * (defense in depth).
+ */
+function sanitizeTokenSymbol(raw: string): string {
+  return raw
+    .replace(
+      // Stripping control and bidi-override characters is the point here.
+      /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+      '',
+    )
+    .slice(0, MAX_SYMBOL_LENGTH);
+}
 
 /** One atomic lookup result, carrying the token address it describes
  *  (Codex #1547 r1): the previous four-state shape (symbol / decimals /
@@ -769,7 +786,7 @@ interface TokenLookup {
   kind: AssetKind;
   tokenId: bigint;
   /** How cards name the asset: the ERC-20 symbol, or the collection's
-   *  symbol with the token id (cleaned by cleanTokenLabel). */
+   *  symbol with the token id (sanitized, see sanitizeTokenSymbol). */
   symbol: string;
   decimals: number;
   /** decimals() unavailable → amounts are raw base units (integers).
@@ -1925,7 +1942,7 @@ export function Recover() {
         // shortened address, same as a missing symbol(). An NFT's label
         // carries its token id (#3096).
         const sanitizedSymbol =
-          symRes === null ? '' : cleanTokenLabel(symRes, 'symbol');
+          symRes === null ? '' : sanitizeTokenSymbol(symRes as string);
         const symbol = assetLabel(
           kind,
           sanitizedSymbol === '' ? shortAddress(token) : sanitizedSymbol,

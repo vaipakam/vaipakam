@@ -20,7 +20,6 @@ import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import type { LegOutcome } from '../tx/outcome';
 import { askAfter } from '../tx/simulate';
 import { readValidUntil } from '../tx/deadline';
-import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -152,8 +151,6 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
   /** The flow's numbered prompts, kept across the tracker's release step. */
   const counter = useRef<{ n: number; total: number }>({ n: 0, total: 0 });
 
-  // #3770: a contract wallet chooses how long its owners have to approve.
-  const approvalWindow = useApprovalWindow('postOffer', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -236,7 +233,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       //    With a guard, the post is the batch that arms it (guardPost).
       //    The deadline (#3412) is read from the chain's clock now, so the
       //    dry run and the write carry the same one.
-      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps, await readValidUntil(own, 'postOffer', approvalWindow.choice));
+      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps, await readValidUntil(own));
       const dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format(k.dryRunRefused, { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
@@ -467,7 +464,6 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
                 {b}
               </Notice>
             ))}
-            <TransferLine review={review} />
             {riskNeed !== null && riskPair !== null && (
               <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'pair', pair: riskPair }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
@@ -481,7 +477,6 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
             )}
             <WhyLink summaryKey={k.feeSummary} detailKey={k.feeWhy} />
             <WhyLink summaryKey={k.postSummary} detailKey={k.postWhy} />
-            <ApprovalWindowChoice step="postOffer" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>
@@ -564,27 +559,4 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       )}
     </div>
   );
-}
-
-/** #3433: what the test move of a pledged NFT found, when it found no
- *  refusal (a refusal is a blocker above). */
-function TransferLine({ review }: { review: PostReview }) {
-  const { format } = useCopy();
-  const t = review.transfer;
-  const h = review.holding;
-  if (h.kind === 'erc20') return null;
-  const id = String(h.tokenId);
-  if (t.kind === 'moves')
-    return (
-      <p className="tier-b" data-testid="nft-transfer-probe" data-probe="moves">
-        {format(t.by === 'protocol' ? 'request.transferMoves' : 'request.transferMovesHolder', { id, block: String(t.blockNumber) })}
-      </p>
-    );
-  if (t.kind === 'unread')
-    return (
-      <p className="tier-a" data-testid="nft-transfer-probe" data-probe="unread">
-        {format('request.transferUnread', { id, reason: t.reason })}
-      </p>
-    );
-  return null;
 }

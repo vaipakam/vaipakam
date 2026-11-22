@@ -108,10 +108,7 @@ contract PositionMoveTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false,
-                lifecycleFlex: 0,
-                linkKind: 0,
-                linkMarginBps: 0,
-                rateFarFromAverageAcknowledged: false
+                lifecycleFlex: 0
             }),
             type(uint64).max
         );

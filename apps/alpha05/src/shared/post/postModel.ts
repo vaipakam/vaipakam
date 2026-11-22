@@ -92,10 +92,6 @@ export interface PostInput {
   /** OFF-10 (Advanced): the collateral locked for the smallest loan, as
    *  typed; blank means the same as `collateral` (no collateral range). */
   collateralFloor: string;
-  /** #2525 (Advanced, a range): the rate's other end, as typed; blank is
-   *  one rate. A lender's is the highest a match may settle at; a
-   *  borrower's is the lowest. */
-  rateOther: string;
   /** OFF-11 (Advanced): how matches may fill the request. */
   fillMode: FillMode;
   /** OFF-14 (Advanced): the periodic-interest schedule, by the protocol's
@@ -136,7 +132,6 @@ export const DEFAULT_INPUT: PostInput = {
   amountMax: '',
   minPart: '',
   collateralFloor: '',
-  rateOther: '',
   fillMode: 'partial',
   cadence: 0,
   tariff: false,
@@ -301,12 +296,7 @@ export interface ParsedPost {
   /** #3358: the price-move guard armed with the post, in bps of the
    *  collateral-to-principal rate; null for none. */
   guardBps: number | null;
-  /** The rate a direct take is made at: the least a lender takes, the most
-   *  a borrower pays. */
   rateBps: bigint;
-  /** #2525: the rate's other end for a match (a lender's highest, a
-   *  borrower's lowest); null or absent for one rate. */
-  rateOtherBps?: bigint | null;
   durationDays: number;
   expiry: ExpiryChoice;
   fullTerm: boolean;
@@ -367,27 +357,21 @@ export type LifecycleTerms = ReturnType<typeof lifecycleTerms>;
 /**
  * The protocol call for this request or offer (`createOffer`'s
  * parameters). The range fields carry the range (equal ends for a single
- * value); the rate's two ends are the one rate, the most a borrower pays
- * or the least a lender takes, unless a range names the other end for a
- * match (#2525). A lender's offer states the one collateral
+ * value); the rate's two ends are the one rate: the most a borrower pays,
+ * or the least a lender takes. A lender's offer states the one collateral
  * every borrower must lock, so both collateral fields carry it (the
  * protocol requires that of a lender's offer). Every option this page does
  * not offer is sent at its stated default (no listing rights, no refinance
  * target), and the review states each.
  */
-/** `integrator` is the one a kit link named and the reader kept (#3773):
- *  paid a share only on a borrower's request, attribution only on a
- *  lender's offer. The app names none of its own. */
-export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side: PostSide, integrator: Hex = ZERO) {
+export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side: PostSide) {
   const leg = pair.leg;
   const nft = leg.kind !== 'erc20';
   return {
     offerType: OFFER_TYPE[side],
     lendingAsset: pair.lending,
     amount: p.amount,
-    // A direct take is made at `rateBps` (the protocol takes a lender's
-    // floor and a borrower's ceiling); a match settles inside both ranges.
-    interestRateBps: side === 'borrower' ? (p.rateOtherBps ?? p.rateBps) : p.rateBps,
+    interestRateBps: p.rateBps,
     collateralAsset: pair.collateral,
     // An NFT leg carries no amount: the token is named by its id, and an
     // ERC-1155 leg carries its quantity. A lender's requirement is one
@@ -403,16 +387,17 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     collateralTokenId: leg.kind === 'erc20' ? 0n : leg.tokenId,
     collateralQuantity: leg.kind === 'erc721' ? 1n : leg.kind === 'erc1155' ? leg.quantity : 0n,
     amountMax: p.amountMax,
-    interestRateBpsMax: side === 'lender' ? (p.rateOtherBps ?? p.rateBps) : p.rateBps,
+    interestRateBpsMax: p.rateBps,
     collateralAmountMax: nft ? 0n : p.collateral,
     expiresAt: expiry,
     fillMode: FILL_MODE_CODE[p.fillMode],
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     ...lifecycleTerms(p),
-    // #3621 — this app posts no lender "either" offers.
+    // #3621 — this app posts no lender "either" offers; #3682 — and names
+    // no integrator on its own offers.
     lifecycleFlex: 0,
-    integrator,
+    integrator: ZERO,
     linkKind: 0, // #3635 A — no market link
     linkMarginBps: 0,
     rateFarFromAverageAcknowledged: false, // #3713

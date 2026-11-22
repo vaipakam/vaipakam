@@ -18,7 +18,6 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { readValidUntil } from '../tx/deadline';
-import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import type { LegOutcome } from '../tx/outcome';
 import { sendWrite } from '../tx/send';
 import { askAfter } from '../tx/simulate';
@@ -88,7 +87,6 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
   const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
 
-  const approvalWindow = useApprovalWindow('autoLendSetup', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -133,7 +131,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
       let call: ReturnType<typeof setupCall>;
       let dry: Awaited<ReturnType<typeof askAfter>>;
       try {
-        const deadline = await readValidUntil(own, 'autoLendSetup', approvalWindow.choice);
+        const deadline = await readValidUntil(own);
         call = setupCall(r.draft, minFill, deadline, r.base, false, r.effective);
         dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       } catch (e) {
@@ -321,7 +319,6 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
               <RiskGate chain={chain} own={own} need={review.risk} source={{ kind: 'pair', pair: riskPair }} pairLabel={pairLabel} onOpen={() => setRiskOpen(review.risk)} />
             )}
             <WhyLink summaryKey="autoLend.choiceSummary" detailKey="autoLend.choiceWhy" />
-            <ApprovalWindowChoice step="autoLendSetup" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>

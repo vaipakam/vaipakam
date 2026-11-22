@@ -162,7 +162,7 @@ const copySource = {
     vpfi: {
       title: 'VPFI fee discounts — Vaipakam',
       description:
-        'Fee discounts for holding VPFI start with the rewards phase. Until the platform token is installed, every fee is charged at its full rate. Never required to lend, borrow, or rent.',
+        'Optional: hold VPFI in your vault to reduce protocol fees. Never required to lend, borrow, or rent.',
     },
     nftVerifier: {
       title: 'Position NFT verifier — Vaipakam',
@@ -819,85 +819,6 @@ const copySource = {
       'Your settings were not saved: the alert service could not check your signature just now. Please try again in a little while.',
     requestAlreadyUsed:
       'Your settings were not saved: that signature was already used. Save again to sign a new request.',
-    // #3836 — every alert request names a key only this browser holds, and a
-    // request a multi-signature wallet is still approving is kept here until
-    // it is finished.
-    requestUsedAgain:
-      'Nothing was changed: that signed request was already used. Start again to sign a new one.',
-    requestSuperseded:
-      'Nothing was changed: a request for this change signed later was already applied. Start again if you still want this one.',
-    requestCheckUnavailable:
-      'Nothing was changed yet: the alert service could not check the signature just now. Finish the request again in a little while.',
-    serviceUpgrading:
-      'Nothing was saved: the alert service is being upgraded. Please try again in a little while.',
-    multisigNote: tmpl(
-      'Each request names a key held only by this browser, so only this browser can finish it. A wallet that needs approval from several owners has up to {{days}} days; after that the request expires and you start again.',
-      ['days'],
-    ),
-    pendingTitle: 'A request is waiting for your wallet',
-    pendingBody: tmpl(
-      '{{action}}: started in this browser on {{started}}. Only this browser can finish it, until {{expires}}. Finishing asks your wallet for the same approval again, then sends it.',
-      ['action', 'started', 'expires'],
-    ),
-    pendingFinish: 'Finish it',
-    pendingDiscard: 'Discard it',
-    pendingKindLink: 'Link Telegram',
-    pendingKindUnlink: 'Unlink Telegram',
-    pendingKindTest: 'Send a test alert',
-    pendingKindSave: 'Save alert settings',
-    awaitingOwners:
-      'Waiting for the other owners of this wallet to approve the request. You can keep this page open, or close it and finish the request here later.',
-    walletMovedWhileAwaiting:
-      'Nothing was sent: the connected wallet or network changed while the approval was awaited. The request is kept; reconnect the same wallet on the same network to finish it.',
-    pendingKindSetPhrase: 'Set the alert phrase',
-    pendingKindClearPhrase: 'Remove the alert phrase',
-    // #3346 — the alert phrase: a phrase only the owner knows, which our
-    // Telegram messages to a private chat lead with. Telegram only.
-    phraseTitle: 'Alert phrase',
-    phraseBody:
-      'Choose a short phrase only you know. Our Telegram messages to your private chat lead with it, so a message that lacks it, or shows a different one, is not from us.',
-    phraseTelegramOnly: 'Your phrase appears on Telegram messages only. Push notifications never show it.',
-    phraseRules:
-      '3 to 32 characters: letters, numbers, spaces and simple punctuation. No links, and no "/", ":" or "@".',
-    phraseLabel: 'Your alert phrase',
-    phraseSetButton: 'Set phrase',
-    phraseChangeButton: 'Change phrase',
-    phraseClearButton: 'Remove phrase',
-    phraseStatusSet: tmpl('A phrase is set (since {{date}}).', ['date']),
-    phraseStatusNone: 'No phrase is set.',
-    phraseStatusUnknown: 'We could not check just now whether a phrase is set.',
-    phraseSignNote:
-      'Your wallet signs a free message naming a fingerprint of the phrase, never the phrase itself. It is not a transaction.',
-    phraseSaved:
-      'Saved for every network. Your private Telegram chat gets a message stating the phrase, and our messages there lead with it from then on.',
-    phraseCleared: 'Removed on every network. Your private Telegram chat is told, and our messages there no longer lead with a phrase.',
-    phraseGroupNote:
-      'A group chat is linked too. Groups are never shown your phrase, so messages there do not carry it.',
-    phraseLinkFirst: 'Nothing was changed: link a private Telegram chat first (for a contract wallet, on this network). The phrase is confirmed there.',
-    phraseTooShort: 'That phrase is too short: use at least 3 characters.',
-    phraseTooLong: 'That phrase is too long: use at most 32 characters.',
-    phraseBadCharacters:
-      'That phrase has a character we do not accept: use letters, numbers, spaces and simple punctuation, with no links.',
-    phraseNotNormalised: 'Remove the spaces at the start or end of the phrase, then try again.',
-    phraseInvalid: 'That phrase cannot be used. Check the rules under the field and try again.',
-    phraseMismatch:
-      'That is not the phrase this request was signed for. Type the same phrase, or discard the request and start again.',
-    phraseRetype: 'Type the phrase again to finish this request: this browser does not keep it.',
-    phraseScopeNote:
-      'Signed with your wallet’s own key, the phrase applies on every network. A contract wallet’s approval covers only the network it is given on, so such a wallet sets the phrase on each network separately.',
-    phraseStatusSetAll: tmpl('A phrase is set for every network (since {{date}}).', ['date']),
-    phraseStatusSetNetwork: tmpl('A phrase is set for {{network}} only (since {{date}}).', [
-      'network',
-      'date',
-    ]),
-    phraseSavedNetwork: tmpl(
-      'Saved for {{network}} only: a contract wallet’s approval covers the network it was given on. Your private Telegram chat linked on {{network}} gets a message stating the phrase, and our messages about {{network}} lead with it from then on.',
-      ['network'],
-    ),
-    phraseClearedNetwork: tmpl('Removed for {{network}} only. Your private Telegram chat linked there is told.', ['network']),
-    phraseOtherNetworks:
-      'Telegram is linked on other networks too. To use a phrase there, switch to each one and set it again: one approval each, and you type the phrase again, since nothing is kept.',
-    phraseSwitchTo: tmpl('Switch to {{network}}', ['network']),
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',
@@ -1277,7 +1198,7 @@ const copySource = {
       },
       vpfi: {
         q: 'Do I need VPFI?',
-        a: 'No. You never need VPFI to borrow, lend, or rent. The platform token arrives with the rewards phase. Until it is installed on a network, no fee discount applies there and every fee is charged at its full rate. Once it is installed, holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas.',
+        a: 'No. VPFI is optional — holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas, and you never need it to borrow, lend, or rent.',
       },
       modes: {
         q: 'What’s the difference between Basic and Advanced mode?',
@@ -6254,11 +6175,8 @@ const copySource = {
     // would read as this network's live tiers.
     tierTableUnknown:
       'The discount tiers can’t be read from this network right now, so none are shown here.',
-    // Owner decision 2026-11-20: the platform token arrives with the
-    // rewards phase, installed on every network together, so no network
-    // has it at launch and every fee is charged at its full rate.
-    notInstalled: tmpl(
-      `The platform token is not installed on {{chain}}. It arrives with the rewards phase, on every network together. Until then no fee discount applies to anyone, and every fee is charged at its full rate. Everything on Vaipakam works without it.`,
+    notOnThisChain: tmpl(
+      `VPFI deposits aren’t available on {{chain}} yet. Everything else on Vaipakam works without VPFI.`,
       ['chain'],
     ),
     tokenChanged:
@@ -7533,7 +7451,7 @@ const copySource = {
       claimsSub: 'Collect repayments, collateral, and rewards',
       offersSub: 'Browse every open offer on this network',
       vaultSub: 'Where your assets sit — totals, locked, and free',
-      vpfiSub: 'Optional fee discounts, which start with the rewards phase',
+      vpfiSub: 'Optional — reduce protocol fees by holding VPFI',
       activitySub: 'Everything your wallet has done on Vaipakam',
       riskAccessSub: 'Choose how risky the assets in your deals may be',
       helpSub: 'Plain-language answers and build info',
@@ -8275,13 +8193,6 @@ const copySource = {
        rather than calling the reference currency "not set". */
     numeraireDefault: tmpl('{{symbol}} (never changed, so the protocol’s default)', ['symbol']),
     tiersHeading: 'VPFI discount tiers',
-    // Shown when this network reports no platform token: the configured
-    // tiers exist as settings, but the fee path applies none of them.
-    tiersNotInstalled:
-      'The platform token is not installed on this network, so none of these tiers applies: every fee is charged at its full rate.',
-    // The token read failed: whether any tier applies is not known.
-    tiersInstallUnknown:
-      'We couldn’t check whether the platform token is installed on this network, so we can’t say whether any of these tiers applies.',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
     // `{{amount}}` arrives in VPFI TOKEN units — `exactAmountString`

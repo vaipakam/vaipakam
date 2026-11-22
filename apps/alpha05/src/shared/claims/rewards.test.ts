@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, parseAbi, type Log } from 'viem';
-import { claimRecord, deliveryOutcome, inFinalNotice, isEoaStyle, VENUE_VAULT, venueLine, moreRemains, onlyMovesOn, pendingFromRevert, readsPartOfEntries, revertOf, soonestFrom, vpfiArrivals, type ExpiryPage } from './rewards';
+import { claimRecord, claimVenue, defaultVenue, deliveryOutcome, inFinalNotice, isEoaStyle, venueArg, venueLine, moreRemains, onlyMovesOn, pendingFromRevert, readsPartOfEntries, revertOf, soonestFrom, vpfiArrivals, type ExpiryPage } from './rewards';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
 const ME = '0x00000000000000000000000000000000000000a1' as const;
@@ -192,12 +192,27 @@ describe('the claim venue (RW-26)', () => {
     expect(isEoaStyle('0x6080' + '00'.repeat(21))).toBe(false);
     expect(isEoaStyle('0x6080604052')).toBe(false);
   });
-  it('words the vault line by protected mode, and states an unread mode as unknown', () => {
-    expect(venueLine(false)).toBe('claim.to');
-    expect(venueLine(true)).toBe('claim.toProtected');
-    expect(venueLine(null)).toBe('claim.toUnread');
+  it('starts a person’s own account on its vault and a contract on its wallet; unread starts on the vault', () => {
+    expect(defaultVenue(true)).toBe('vault');
+    expect(defaultVenue(false)).toBe('wallet');
+    expect(defaultVenue(null)).toBe('vault');
   });
-  it('passes the protocol’s explicit Vault venue, never Default or the retired Wallet (#3807)', () => {
-    expect(VENUE_VAULT).toBe(2);
+  it('names the vault whenever protected mode is on or unread, since the protocol routes a protected account there whatever is passed', () => {
+    expect(claimVenue('wallet', true, false)).toBe('wallet');
+    expect(claimVenue(null, false, false)).toBe('wallet');
+    expect(claimVenue(null, true, false)).toBe('vault');
+    expect(claimVenue('wallet', true, true)).toBe('vault');
+    expect(claimVenue('wallet', false, null)).toBe('vault');
+    expect(claimVenue(null, false, true)).toBe('vault');
+  });
+  it('words the destination line by venue and mode', () => {
+    expect(venueLine('wallet', false)).toBe('claim.toWallet');
+    expect(venueLine('vault', false)).toBe('claim.to');
+    expect(venueLine('vault', null)).toBe('claim.to');
+    expect(venueLine('vault', true)).toBe('claim.toProtected');
+  });
+  it('passes the protocol’s explicit venue, never its Default', () => {
+    expect(venueArg('vault')).toBe(2);
+    expect(venueArg('wallet')).toBe(1);
   });
 });

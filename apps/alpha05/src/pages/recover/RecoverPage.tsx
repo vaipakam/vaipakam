@@ -20,8 +20,6 @@ import { FormField } from '../../shared/ui/FormField';
 import { Notice } from '../../shared/ui/Notice';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { EscapeNotice } from '../../shared/vault/EscapeNotice';
-import { UnrecognisedItems } from '../../shared/vault/UnrecognisedItems';
-import { arrivalKey } from '../../shared/vault/unrecognised';
 
 type Hex = `0x${string}`;
 
@@ -83,21 +81,7 @@ function RecoverBody({ chain, own }: { chain: SupportedChain; own: OwnStateClien
       <p className="tier-b">
         {text('recover.vaultLead')} <Link to="/vault">{text('recover.vaultLink')}</Link>
       </p>
-      <UnrecognisedItems
-        chain={chain}
-        account={own.account}
-        open
-        testId="recover-unrecognised"
-        action={(i) => (
-          <div className="form-actions">
-            <button type="button" className="btn" onClick={() => pick(i.asset, i.tokenId)} data-testid={`recover-pick-${arrivalKey(i)}`}>
-              {text('unrecognised.pick')}
-            </button>
-          </div>
-        )}
-      />
-      <p className="tier-b">{text('unrecognised.pickLead')}</p>
-      <LookupForm key={`${asset ?? ''}:${idParam ?? ''}`} initialAsset={asset} initialId={idParam} onPick={pick} />
+      <LookupForm initialAsset={asset} initialId={idParam} onPick={pick} />
       {asset !== null && standard.state === 'failed' && standard.data === null && (
         <p className="tier-a" data-testid="recover-standard-failed">
           {text('recover.standardUnread')}

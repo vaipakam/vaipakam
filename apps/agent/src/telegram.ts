@@ -132,17 +132,13 @@ const LINK_CODE_RE = new RegExp(
 export function extractLinkCode(update: TelegramUpdate): {
   chatId: string;
   code: string;
-  /** #3346 — whether the chat is a private one. Only a private chat is
-   *  shown the owner's alert phrase; a group's other members must never
-   *  read it. Anything Telegram does not say is private counts as a group. */
-  isPrivate: boolean;
 } | null {
   const chatId = update?.message?.chat?.id;
   const text = update?.message?.text?.trim() ?? '';
   if (!chatId) return null;
   const match = text.match(LINK_CODE_RE);
   if (!match) return null;
-  return { chatId: String(chatId), code: match[1]!.toUpperCase(), isPrivate: update.message?.chat?.type === 'private' };
+  return { chatId: String(chatId), code: match[1]!.toUpperCase() };
 }
 
 const LOCK_RE = /^\/?lock(?:@\w+)?$/i;

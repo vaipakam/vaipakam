@@ -29,14 +29,23 @@ const DISCOUNT = VPFIDiscountFacetABI as Abi;
 const VPFI_TOKEN = VPFITokenFacetABI as Abi;
 const VAULT_FACTORY = VaultFactoryFacetABI as Abi;
 
-/** The protocol's delivery venue argument for every reward claim: Vault.
- *  The payout rule (owner decision 2026-11-19, #3805) pays every reward into
- *  the claimant's vault as free balance, whoever the claimant is; the
- *  contracts refuse the Wallet venue, open a vault for a claimant who has
- *  none, and revert a credit that cannot complete, so the reward stays
- *  claimable. Only the owner's own Withdraw reaches a wallet. The preview,
- *  the re-check and the claim all pass this (#3807). */
+/** The protocol's delivery venue argument, chosen explicitly: Vault credits
+ *  the claimant's vault for every kind of account, and falls back to the
+ *  wallet only when the credit cannot complete (no vault yet, a vault
+ *  upgrade pending). The protocol's Default venue is not used: it resolves
+ *  by account shape and pays a contract wallet straight to the wallet, which
+ *  would make the receipt's destination depend on something the receipt
+ *  does not show. The preview, the re-check and the claim all pass this. */
 export const VENUE_VAULT = 2;
+/** The protocol's Wallet venue: a plain transfer to the claimant. */
+export const VENUE_WALLET = 1;
+
+/** RW-26 — where a reward claim delivers. Always passed explicitly, so the
+ *  receipt names the destination the call carries. */
+export type RewardVenue = 'vault' | 'wallet';
+
+/** The protocol's venue argument for a choice. */
+export const venueArg = (v: RewardVenue): number => (v === 'vault' ? VENUE_VAULT : VENUE_WALLET);
 
 /** `LibAccountShape.isEoaStyle` read from an account's code: no code, or
  *  exactly an EIP-7702 delegation designator (`0xef0100` and a 20-byte
@@ -46,11 +55,28 @@ export function isEoaStyle(code: string | undefined): boolean {
   return code.length === 2 + 23 * 2 && code.toLowerCase().startsWith('0xef0100');
 }
 
-/** The receipt's destination line under the account's protected mode:
- *  the vault in every case; what differs is whether a later Withdraw waits
- *  the protected delay, which is stated as unknown while the mode is unread. */
-export function venueLine(protectedOn: boolean | null): CopyKey {
-  return protectedOn === true ? 'claim.toProtected' : protectedOn === false ? 'claim.to' : 'claim.toUnread';
+/** RW-26 — the venue a claim starts on, by the protocol's own default
+ *  rule: a person's own account (EIP-7702 included) gets its vault, a
+ *  contract account its wallet. An account whose shape is not read yet
+ *  starts on the vault, which takes a claim for every kind of account and
+ *  falls back to the wallet when it cannot; the receipt names it either way. */
+export function defaultVenue(eoaStyle: boolean | null): RewardVenue {
+  return eoaStyle === false ? 'wallet' : 'vault';
+}
+
+/** RW-26 — the venue a claim names. Protected mode sends every reward
+ *  claim to the vault whatever venue is passed
+ *  (`RewardClaimFacet._toVault`), so the wallet is offered and named only
+ *  while the mode reads as off; on, or unread, the claim names the vault. */
+export function claimVenue(picked: RewardVenue | null, eoaStyle: boolean | null, protectedOn: boolean | null): RewardVenue {
+  if (protectedOn !== false) return 'vault';
+  return picked ?? defaultVenue(eoaStyle);
+}
+
+/** The receipt's destination line for a venue under the account's mode. */
+export function venueLine(venue: RewardVenue, protectedOn: boolean | null): CopyKey {
+  if (venue === 'wallet') return 'claim.toWallet';
+  return protectedOn === true ? 'claim.toProtected' : 'claim.to';
 }
 
 /** The days the protocol counts from when it ends the final notice. */

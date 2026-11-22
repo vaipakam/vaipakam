@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -669,7 +670,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         _configureMirror(CHAIN_ARB);
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _rep().onRewardBroadcastV3Received(_v3Packet(CHAIN_ARB));
+        _rep().onRewardBroadcastV3Received(CHAIN_BASE, _v3Packet(CHAIN_ARB));
     }
 
     /// Era binding (§2h constraint 20): once a day's clock names its Base
@@ -714,13 +715,72 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV3(b);
         vm.revertToState(snap);
 
-        _mut().setRewardRoleRaw(0, false, true); // Detached
+        _rep().setBaseChainId(0); // Detached: a real detach records the origin
         messenger.deliverBroadcastV3(b);
         assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "Detached: an in-flight packet still applies");
         vm.revertToState(snap);
 
         messenger.deliverBroadcastV3(b);
         assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "straddle: a mirror applies it");
+    }
+
+    /// #903 — the broadcast ingress binds the packet to the Base the mirror
+    /// answers to, by the same rule the tier path applies: a packet whose
+    /// authenticated CCIP source is any other chain (a second Diamond wrongly
+    /// flagged canonical and wired as a reward peer) is refused before it can
+    /// install the day's denominators, and the real Base packet still applies.
+    function testV3IngressRejectsNonBaseSource() public {
+        _configureMirror(CHAIN_ARB);
+        (uint32 tierSrc, uint32 daySrc) = _rep().getRewardBaseSourceChainId();
+        assertEq(tierSrc, CHAIN_BASE, "mirror tier traffic answers to Base");
+        assertEq(daySrc, CHAIN_BASE, "mirror day broadcast answers to Base");
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.WrongSourceChain.selector, uint256(CHAIN_OP), CHAIN_BASE
+            )
+        );
+        messenger.deliverBroadcastV3From(CHAIN_OP, b);
+        assertFalse(_rep().getBroadcastV2Applied(b.v2.dayId), "nothing applied from a non-Base source");
+        (,, bool set) = _rep().getKnownGlobalInterestNumeraire18(b.v2.dayId);
+        assertFalse(set, "denominators not installed");
+
+        messenger.deliverBroadcastV3From(CHAIN_BASE, b);
+        assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "the real Base packet applies");
+    }
+
+    /// #903 — a Detached former mirror still takes an in-flight packet, but
+    /// only from the Base it detached from; one detached with no recorded
+    /// origin answers to no chain and refuses every packet.
+    function testV3IngressDetachedAcceptsOnlyItsDetachOrigin() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        uint256 snap = vm.snapshotState();
+
+        _rep().setBaseChainId(0);
+        (uint32 tierSrc, uint32 daySrc) = _rep().getRewardBaseSourceChainId();
+        assertEq(tierSrc, 0, "Detached: no tier source");
+        assertEq(daySrc, CHAIN_BASE, "Detached: day broadcast from the detach origin");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.WrongSourceChain.selector, uint256(CHAIN_OP), CHAIN_BASE
+            )
+        );
+        messenger.deliverBroadcastV3From(CHAIN_OP, b);
+        messenger.deliverBroadcastV3From(CHAIN_BASE, b);
+        assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "origin packet applies");
+        vm.revertToState(snap);
+
+        _mut().setRewardRoleRaw(0, false, true); // Detached, no recorded origin
+        (tierSrc, daySrc) = _rep().getRewardBaseSourceChainId();
+        assertEq(tierSrc, 0, "no tier source");
+        assertEq(daySrc, 0, "no day source");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.WrongSourceChain.selector, uint256(CHAIN_BASE), uint32(0)
+            )
+        );
+        messenger.deliverBroadcastV3From(CHAIN_BASE, b);
     }
 
     /// Codex #1632 r1 P1 — the FIRST install is the era race the per-day

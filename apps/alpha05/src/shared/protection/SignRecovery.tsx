@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import type { Abi, PublicClient } from 'viem';
 import { useAccount, useConfig } from 'wagmi';
-import { signTypedDataFor } from '../tx/walletGuard';
+import { signTypedData } from 'wagmi/actions';
 import { VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { getSupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
@@ -100,7 +100,7 @@ export function SignRecovery({ request }: { request: RecoveryRequest | null }) {
       setRefused(null);
       try {
         const base = { chainId: request.chainId, vault: f.vault, account: request.account, diamond, nonce: f.nonce, expiry: BigInt(f.now + RECOVERY_PROOF_LIFETIME_SECONDS) };
-        const sig = await signTypedDataFor(config, request.chainId, { account: address, ...recoveryProofTypedData(base) });
+        const sig = await signTypedData(config, { account: address, ...recoveryProofTypedData(base) });
         setAnswer({ ...base, recovery: request.recovery, sig });
       } catch (e) {
         setRefused(format('prove.refused', { reason: refusalFromError(e).reason }));

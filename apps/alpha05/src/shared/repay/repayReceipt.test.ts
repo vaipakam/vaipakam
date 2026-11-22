@@ -88,20 +88,3 @@ describe('repayReceipt late confirmation', () => {
     expect(l).not.toContain('repay.loseSame');
   });
 });
-
-describe('repay receipt, a payer who does not hold the borrower position (#3769)', () => {
-  const C = '0x00000000000000000000000000000000000000cc' as const;
-  const fmt = { text: (k: string) => k, format: (k: string, v?: Record<string, string>) => `${k}|${v?.holder ?? ''}` } as never;
-  const third = (r: RepayReview) => repayReceipt(r, C, null, fmt).consequences.map(String);
-  it('names the current holder, by address, as the one the collateral returns to', () => {
-    expect(third(review)).toContain(`repay.loseThirdPartyHolder|${A}`);
-  });
-  it('falls back to the position number when the holder could not be read', () => {
-    const l = third({ ...review, borrowerHolder: null });
-    expect(l).toContain('repay.loseThirdParty|');
-    expect(l.some((x) => x.startsWith('repay.loseThirdPartyHolder'))).toBe(false);
-  });
-  it('says neither to the holder', () => {
-    expect(repayReceipt(review, A, null, fmt).consequences.map(String).some((x) => x.startsWith('repay.loseThirdParty'))).toBe(false);
-  });
-});

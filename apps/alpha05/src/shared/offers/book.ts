@@ -177,9 +177,6 @@ export interface BookFilter {
   side: BookSide;
   /** The connected wallet, when its own offers are hidden. */
   hide: Hex | null;
-  /** One token's rentals only (a kit "rent this token" link): the
-   *  collection and the token id the offer names. */
-  token?: { asset: Hex; tokenId: bigint } | null;
 }
 
 export function inBook(r: BookRow, f: BookFilter): boolean {
@@ -187,7 +184,6 @@ export function inBook(r: BookRow, f: BookFilter): boolean {
   if (f.side === 'lender' && r.offerType !== OFFER_TYPE_LENDER) return false;
   if (f.side === 'borrower' && r.offerType === OFFER_TYPE_LENDER) return false;
   if (f.hide !== null && r.creator.toLowerCase() === f.hide.toLowerCase()) return false;
-  if (f.token && (r.lendingAsset.toLowerCase() !== f.token.asset.toLowerCase() || r.tokenId !== f.token.tokenId)) return false;
   return true;
 }
 

@@ -63,25 +63,6 @@ export class OptOutStorageUnavailableError extends Error {
   }
 }
 
-/** #3836 — the settings save cannot be ordered: this deployment's schema
- *  predates the `settings_issued_at` column (migration 0116). The handler
- *  refuses the save (503) rather than apply it unordered. */
-export class SettingsOrderUnavailableError extends Error {
-  constructor(cause: unknown) {
-    super(`settings_issued_at column missing (migration 0116 pending): ${String(cause)}`);
-    this.name = 'SettingsOrderUnavailableError';
-  }
-}
-
-function isMissingOrderColumn(err: unknown): boolean {
-  return /(no such column|has no column named):?\s*settings_issued_at/i.test(String(err));
-}
-
-/** What a settings upsert did (#3836): `applied`, or `superseded` when
- *  the row already holds a save signed later than this one, in which
- *  case nothing was written. */
-export type ThresholdsUpsertOutcome = 'applied' | 'superseded';
-
 type ThresholdsUpsert = Omit<
   UserThresholds,
   | 'warn_hf'
@@ -105,9 +86,6 @@ type ThresholdsUpsert = Omit<
   locale?: string | null;
   /** #1033 — optional; absent keeps the historical opted-in state. */
   notify_maturity_approaching?: boolean;
-  /** #3836 — the time the wallet signed this save. The row keeps the
-   *  newest one applied, and an older save changes nothing. */
-  issued_at: number;
 };
 
 /** What a BANDLESS upsert's INSERT arm writes when no row exists —
@@ -141,15 +119,6 @@ function hasBands(
  * genuine insert needs them; on conflict those values are simply
  * never consulted for a bandless write.
  */
-/*
- * #3836 — every shape also carries the save's signed time, and the
- * conflict arm applies only when that time is not older than the one the
- * row holds: the order check and the write are one statement, so two
- * saves racing each other, or a slow approval landing after a newer save,
- * can never leave the older one in place. A first-ever save always
- * inserts; a row made by the link handshake holds no time yet and takes
- * any save.
- */
 function thresholdsUpsertSql(withFlag: boolean, withBands: boolean): string {
   const flagCol = withFlag ? ', notify_maturity_approaching' : '';
   const flagPlaceholder = withFlag ? ', ?' : '';
@@ -164,29 +133,12 @@ function thresholdsUpsertSql(withFlag: boolean, withBands: boolean): string {
          `
     : '';
   return `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale${flagCol}, settings_issued_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?${flagPlaceholder}, ?, ?, ?)
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale${flagCol}, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?${flagPlaceholder}, ?, ?)
        ON CONFLICT(wallet, chain_id) DO UPDATE SET
          ${bandArm}push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
          locale = COALESCE(excluded.locale, user_thresholds.locale),
-         ${flagArm}settings_issued_at = excluded.settings_issued_at,
-         updated_at = excluded.updated_at
-       WHERE excluded.settings_issued_at >= COALESCE(user_thresholds.settings_issued_at, 0)`;
-}
-
-/** Run one upsert shape and say whether it wrote (#3836): an older save
- *  matches the conflict arm's order condition false and changes no row. A
- *  schema without the order column is named, never written unordered. */
-async function runUpsert(stmt: D1PreparedStatement): Promise<ThresholdsUpsertOutcome> {
-  let changes: number;
-  try {
-    const res = await stmt.run();
-    changes = Number(res.meta?.changes ?? 0);
-  } catch (err) {
-    if (isMissingOrderColumn(err)) throw new SettingsOrderUnavailableError(err);
-    throw err;
-  }
-  return changes > 0 ? 'applied' : 'superseded';
+         ${flagArm}updated_at = excluded.updated_at`;
 }
 
 /** The pre-0027 column set. Used when the flag is absent (no change
@@ -196,32 +148,29 @@ async function upsertThresholdsLegacy(
   db: D1Database,
   t: ThresholdsUpsert,
   now: number,
-): Promise<ThresholdsUpsertOutcome> {
-  return runUpsert(
-    db
-      .prepare(thresholdsUpsertSql(false, hasBands(t)))
-      .bind(
-        t.wallet.toLowerCase(),
-        t.chain_id,
-        t.warn_hf ?? DEFAULT_BANDS.warn_hf,
-        t.alert_hf ?? DEFAULT_BANDS.alert_hf,
-        t.critical_hf ?? DEFAULT_BANDS.critical_hf,
-        t.push_channel ?? null,
-        t.locale ?? 'en',
-        t.issued_at,
-        now,
-        now,
-      ),
-  );
+): Promise<void> {
+  await db
+    .prepare(thresholdsUpsertSql(false, hasBands(t)))
+    .bind(
+      t.wallet.toLowerCase(),
+      t.chain_id,
+      t.warn_hf ?? DEFAULT_BANDS.warn_hf,
+      t.alert_hf ?? DEFAULT_BANDS.alert_hf,
+      t.critical_hf ?? DEFAULT_BANDS.critical_hf,
+      t.push_channel ?? null,
+      t.locale ?? 'en',
+      now,
+      now,
+    )
+    .run();
 }
 
 /** Upsert a user's thresholds. Called from the frontend settings page
- *  via the HTTP handler. Returns `superseded` (and writes nothing) when
- *  the row already holds a save signed later than this one (#3836). */
+ *  via the HTTP handler. */
 export async function upsertThresholds(
   db: D1Database,
   t: ThresholdsUpsert,
-): Promise<ThresholdsUpsertOutcome> {
+): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   // The pre-notify opt-out updates ONLY when the caller sent it —
   // absence must preserve a stored opt-out (an older client updating
@@ -230,29 +179,26 @@ export async function upsertThresholds(
   // the conflict arm sees post-default values, which can't express
   // "no change".
   if (t.notify_maturity_approaching === undefined) {
-    return upsertThresholdsLegacy(db, t, now);
+    await upsertThresholdsLegacy(db, t, now);
+    return;
   }
   try {
-    return await runUpsert(
-      db
-        .prepare(thresholdsUpsertSql(true, hasBands(t)))
-        .bind(
-          t.wallet.toLowerCase(),
-          t.chain_id,
-          t.warn_hf ?? DEFAULT_BANDS.warn_hf,
-          t.alert_hf ?? DEFAULT_BANDS.alert_hf,
-          t.critical_hf ?? DEFAULT_BANDS.critical_hf,
-          t.push_channel ?? null,
-          t.locale ?? 'en',
-          t.notify_maturity_approaching ? 1 : 0,
-          t.issued_at,
-          now,
-          now,
-        ),
-    );
+    await db
+      .prepare(thresholdsUpsertSql(true, hasBands(t)))
+      .bind(
+        t.wallet.toLowerCase(),
+        t.chain_id,
+        t.warn_hf ?? DEFAULT_BANDS.warn_hf,
+        t.alert_hf ?? DEFAULT_BANDS.alert_hf,
+        t.critical_hf ?? DEFAULT_BANDS.critical_hf,
+        t.push_channel ?? null,
+        t.locale ?? 'en',
+        t.notify_maturity_approaching ? 1 : 0,
+        now,
+        now,
+      )
+      .run();
   } catch (err) {
-    // A schema without the order column (#3836) is its own refusal.
-    if (err instanceof SettingsOrderUnavailableError) throw err;
     // Rollout window — migration 0027 not applied yet. Only the
     // missing-column condition gets special handling; anything else
     // (transient D1 failure, constraint error) propagates untouched.
@@ -264,7 +210,8 @@ export async function upsertThresholds(
     if (t.notify_maturity_approaching) {
       // Opted-in equals the column default — the legacy write loses
       // nothing.
-      return upsertThresholdsLegacy(db, t, now);
+      await upsertThresholdsLegacy(db, t, now);
+      return;
     }
     // An opt-out CANNOT be stored without the column; surface it
     // rather than pretending (a silently-dropped opt-out would be

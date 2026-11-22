@@ -12,7 +12,7 @@
  * protocol write are checked, on the desktop and the phone project.
  */
 import type { Hex } from 'viem';
-import { installPlatformToken, scenario } from '../lib/chain';
+import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -42,9 +42,6 @@ function expectMargined(tx: { gas: bigint; gasUsed: bigint; ok: boolean }): void
 
 test('a token write and a protocol write each mine with the margin over their estimate', async ({ launchWallet }) => {
   const sc = scenario();
-  // The protocol write below is the fee-discount toggle, which exists only
-  // where a platform token is installed.
-  await installPlatformToken(sc);
   await sc.diamondWrite('lender', 'setVPFIDiscountConsent', [false]);
   const account = accountFor('lender').address as Hex;
   const { page } = await launchWallet('lender');

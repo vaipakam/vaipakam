@@ -245,16 +245,6 @@
         "namespace_id": "2003",
         "simple": { "limit": 30, "period": 60 },
       },
-      // #3774 — per-IP cap on the public data feed (`GET /public/v1*`), the
-      // documented read subset for callers outside the platform. 120 a
-      // minute, stated in the feed's own catalogue. Fails closed like every
-      // limiter here. (2004 is taken by the rate-curve reads, #3751.)
-      {
-        "name": "PUBLIC_FEED_RATELIMIT",
-        "type": "ratelimit",
-        "namespace_id": "2005",
-        "simple": { "limit": 120, "period": 60 },
-      },
     ],
   },
 

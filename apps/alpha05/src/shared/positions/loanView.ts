@@ -29,7 +29,7 @@ import {
 import { sideClaimableStatus, type SideClaim } from '../claims/loanClaim';
 import { readSideClaim } from '../claims/loanClaimReview';
 import { isLiveStatus, LOAN_STATUS_ACTIVE, type Deadlines, type LoanSummary } from './model';
-import { positionRouteCallFor, readLiveHolderOrNull, readTokenApprovalOrNull } from './positionNft';
+import { positionRouteCallFor, readLiveHolderOrNull } from './positionNft';
 import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
@@ -136,10 +136,6 @@ export function defaultVerdict(g: { timing: boolean | null; paused: boolean | nu
 export interface LoanView {
   loan: LoanDetails;
   holders: Holders;
-  /** #3721 — each position token's single-token approval, read from the
-   *  token at the same block: the address it is approved for transfer to,
-   *  `'none'`, or `null` when unread (or the side has no live holder). */
-  approved: { lender: Hex | 'none' | null; borrower: Hex | 'none' | null };
   /** Live loans only; `null` when unread (or the loan has ended). */
   deadlines: Deadlines | null;
   /** The original due date before any pause credit; `null` when unread. */
@@ -345,13 +341,6 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     loan.status === LOAN_STATUS_ACTIVE ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
   ]);
 
-  // #3721 — a live token's approval, at the same block; a token with no live
-  // holder has nothing to approve.
-  const [lenderApproved, borrowerApproved] = await Promise.all([
-    lender === null ? null : readTokenApprovalOrNull(client, diamond, loan.lenderTokenId, block.number),
-    borrower === null ? null : readTokenApprovalOrNull(client, diamond, loan.borrowerTokenId, block.number),
-  ]);
-
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
   // or the switch unread, its deadlines are unknown rather than half-known.
   let deadlines: Deadlines | null = null;
@@ -369,7 +358,6 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const view: LoanView = {
     loan,
     holders: { lender, borrower },
-    approved: { lender: lenderApproved, borrower: borrowerApproved },
     deadlines,
     originalMaturity: dates ? dates[0] : null,
     defaultable: verdict.defaultable,

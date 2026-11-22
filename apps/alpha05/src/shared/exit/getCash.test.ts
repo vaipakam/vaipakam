@@ -3,7 +3,7 @@ import { encodeAbiParameters, encodeErrorResult, encodeEventTopics, type Abi, ty
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { StoredOffer } from '../offers/acceptTerms';
 import type { IntentSummary } from '../offers/intents';
-import { buyOfferCandidate, cashLogs, getCashKey, searchedAll, handoverCandidates, routeState, type CashLoan, type GetCash } from './getCash';
+import { buyOfferCandidate, cashLogs, getCashKey, searchedAll, handoverCandidates, netFromProbe, routeState, type CashLoan, type GetCash } from './getCash';
 
 type Hex = `0x${string}`;
 const USDC: Hex = '0x00000000000000000000000000000000000000a1';
@@ -106,6 +106,18 @@ describe('buyOfferCandidate', () => {
   });
 });
 
+describe('netFromProbe', () => {
+  it('reads the sale’s own net from its refusal of an unreachable floor', () => {
+    const raw = err('SaleNetBelowReviewed', [940n, (1n << 256n) - 1n]);
+    expect(netFromProbe({ cause: { raw } })).toBe(940n);
+    expect(netFromProbe({ cause: { data: { errorName: 'SaleNetBelowReviewed', args: [941n, 0n] } } })).toBe(941n);
+  });
+  it('answers nothing for any other refusal', () => {
+    expect(netFromProbe({ cause: { raw: err('EnforcedPause') } })).toBeNull();
+    expect(netFromProbe(new Error('network'))).toBeNull();
+  });
+});
+
 describe('cashLogs', () => {
   const log = (name: string, args: Record<string, unknown>): Log => {
     const item = (DIAMOND_ABI_VIEM as readonly { type: string; name?: string; inputs?: readonly { name: string; type: string; indexed?: boolean }[] }[]).find(
@@ -134,11 +146,11 @@ describe('getCashKey', () => {
       listing: { kind: 'open' },
       reach: 'not-instant',
       handover: { kind: 'out-of-reach', why: 'not-instant' },
-      sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 990n, shortfall: 10n, held: 0n },
+      sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 990n },
       principal: 1000n,
       readAt: 0,
     };
-    expect(getCashKey(base)).not.toBe(getCashKey({ ...base, sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 980n, shortfall: 20n, held: 0n } }));
+    expect(getCashKey(base)).not.toBe(getCashKey({ ...base, sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 980n } }));
     // A part repayment since the page loaded lowers what the handover pays.
     expect(getCashKey(base)).not.toBe(getCashKey({ ...base, principal: 900n }));
   });
@@ -147,7 +159,7 @@ describe('getCashKey', () => {
       direct: { kind: 'open' },
       listing: { kind: 'open' },
       reach: 'yes',
-      handover: { kind: 'none', complete: true, refusals: [] },
+      handover: { kind: 'none', complete: true },
       sale: { kind: 'none', complete: true },
       principal: 1000n,
       readAt: 0,
@@ -161,7 +173,7 @@ describe('searchedAll', () => {
     direct: { kind: 'open' },
     listing: { kind: 'open' },
     reach: 'yes',
-    handover: { kind: 'none', complete: h, refusals: [] },
+    handover: { kind: 'none', complete: h },
     sale: { kind: 'none', complete: s },
     principal: 1000n,
     readAt: 0,
@@ -172,6 +184,6 @@ describe('searchedAll', () => {
     expect(searchedAll(none(true, false))).toBe(false);
   });
   it('does not count a route that found something', () => {
-    expect(searchedAll({ ...none(true, false), sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 990n, shortfall: 10n, held: 0n } })).toBe(true);
+    expect(searchedAll({ ...none(true, false), sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 990n } })).toBe(true);
   });
 });

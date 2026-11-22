@@ -39,7 +39,6 @@ import type {
   CommitResult,
   LinkedRow as StoreLinkedRow,
   PendingChange as StorePendingChange,
-  RequestOrder,
 } from './telegramState/store';
 
 /** One (wallet, chain) with a chat linked, and the locale its notices use. */
@@ -146,14 +145,7 @@ export async function protectionByRow(
 export interface TelegramStatePort {
   linkedRows(wallet: string, chainId: number | null): Promise<StoreLinkedRow[]>;
   linksOfChat(chatId: string): Promise<{ wallet: string; chainId: number }[]>;
-  commit(
-    wallet: string,
-    chainId: number | null,
-    observed: StoreLinkedRow[],
-    ops: ChannelOp[],
-    now: number,
-    order?: RequestOrder,
-  ): Promise<CommitResult>;
+  commit(wallet: string, chainId: number | null, observed: StoreLinkedRow[], ops: ChannelOp[], now: number): Promise<CommitResult>;
   markNotified(ids: number[], now: number): Promise<void>;
   markNoticeAttempt(ids: number[], now: number): Promise<void>;
   unnotifiedChanges(retryBefore: number, limit: number): Promise<StorePendingChange[]>;
@@ -161,19 +153,6 @@ export interface TelegramStatePort {
   cancelPendingForChat(chatId: string, now: number): Promise<{ wallet: string; chainId: number; kind: 'unlink' | 'replace' }[]>;
   applyChange(id: number, now: number): Promise<{ change: StorePendingChange; applied: boolean } | null>;
   pruneClosed(now: number): Promise<void>;
-  // #3346 — the alert phrase (see `telegramState/store.ts`).
-  phraseMarksOf(items: { wallet: string; chatId: string; chainId: number }[]): Promise<(string | null)[]>;
-  chatNoticeSent(id: number, accepted: boolean, now: number): Promise<void>;
-  dueChatNotices(
-    retryBefore: number,
-    now: number,
-    limit: number,
-  ): Promise<{ id: number; chatId: string; wallet: string; chainId: number; kind: 'unlink' | 'replace' | 'added'; phrase: string | null }[]>;
-  duePhraseNotices(
-    retryBefore: number,
-    limit: number,
-  ): Promise<{ id: number; wallet: string; chatId: string; chainId: number; told: (string | null)[]; target: string | null; chainIds: number[] }[]>;
-  phraseNoticeSent(wallet: string, chatId: string, chainId: number, id: number, accepted: boolean, now: number): Promise<void>;
 }
 
 /** The locale of each (wallet, chain), in input order ('en' when none). */

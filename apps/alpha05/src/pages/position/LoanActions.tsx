@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -11,14 +10,13 @@ import { repayVerdict } from '../../shared/eligibility/repay';
 import { takeBackVerdict } from '../../shared/eligibility/takeBack';
 import { unknownVerdict } from '../../shared/eligibility/types';
 import { isLiveStatus } from '../../shared/positions/model';
-import { holdsASide, type LoanView, type Role } from '../../shared/positions/loanView';
+import type { LoanView, Role } from '../../shared/positions/loanView';
 import type { TokenMetaMap } from '../../shared/reads/tokens';
 import { PartialRepay, partialKey } from '../../shared/repay/PartialRepay';
 import { RepayLoan, repayKey } from '../../shared/repay/RepayLoan';
 import { CloseRental, closeRentalKey } from '../../shared/rent/CloseRental';
 import { holdsFlow, useStoredValue, useTxEntry } from '../../shared/tx/txStore';
 import { useNow } from '../../shared/ui/useNow';
-import { PayerNotice, payerMustConfirm, useLoanOpener } from './PayerNotice';
 
 interface LoanActionsProps {
   loanId: bigint;
@@ -84,18 +82,6 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   const [cOpen, setCOpen] = useStoredValue<boolean>(`${cKey}:open`);
   const nowMs = useNow();
   const live = isLiveStatus(v.loan.status);
-  // #3769: a reader who holds neither side of a running ERC-20 loan is a
-  // payer for someone else. Their confirmation is kept per holder, so a new
-  // holder read from the chain asks again.
-  const payer = live && v.loan.assetType === 0 && !holdsASide(v.holders, own.account);
-  const opener = useLoanOpener(chain, loanId, payer);
-  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
-  const payerHolder = v.holders.borrower;
-  const payerConfirmed = payerHolder !== null && confirmedFor === payerHolder.toLowerCase();
-  // A payer may open the repayment only once the page has named who it
-  // benefits and, where the position is not known to sit with its opener,
-  // the payer has confirmed that line.
-  const payerClear = !payer || (payerHolder !== null && (!payerMustConfirm(opener, payerHolder) || payerConfirmed));
   const inClose = cOpen === true || holdsFlow(cEntry.phase);
   const inRepay = !inClose && (open === true || holdsFlow(entry.phase));
   const inPartial = !inClose && !inRepay && (pOpen === true || holdsFlow(pEntry.phase));
@@ -216,15 +202,6 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   return (
     <section className="home-section position-actions" aria-labelledby="position-actions">
       <h2 id="position-actions">{text('position.actionsTitle')}</h2>
-      {payer && !inClose && (
-        <PayerNotice
-          holder={payerHolder}
-          opener={opener}
-          allowsPartialRepay={l.allowsPartialRepay}
-          confirmed={payerConfirmed}
-          onConfirm={(yes) => setConfirmedFor(yes && payerHolder !== null ? payerHolder.toLowerCase() : null)}
-        />
-      )}
       {inClose ? (
         <CloseRental loanId={loanId} chain={chain} own={own} meta={meta} onClose={() => setCOpen(null)} />
       ) : !erc20 ? (
@@ -244,7 +221,7 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
           </p>
         )
       ) : inRepay ? (
-        <RepayLoan loanId={loanId} chain={chain} own={own} meta={meta} onClose={() => setOpen(null)} namedHolder={payer ? (payerClear ? payerHolder : null) : undefined} />
+        <RepayLoan loanId={loanId} chain={chain} own={own} meta={meta} onClose={() => setOpen(null)} />
       ) : inPartial ? (
         <PartialRepay loanId={loanId} chain={chain} own={own} meta={meta} asset={l.principalAsset} principal={l.principal} onClose={() => setPOpen(null)} />
       ) : inAdd ? (
@@ -253,15 +230,10 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
         <TakeBack loanId={loanId} chain={chain} own={own} meta={meta} asset={l.collateralAsset} onClose={() => setTOpen(null)} />
       ) : (
         <>
-          {payer && !payerClear && payerHolder !== null && verdict.state === 'open' && (
-            <p className="tier-b" data-testid="payer-confirm-first">
-              {text('payer.confirmFirst')}
-            </p>
-          )}
           {((!lenderOnly && verdict.state === 'open') || (borrower && partial.state === 'open') || (borrower && add.state === 'open') || (borrower && take.state === 'open')) && (
             <div className="position-action-row">
               {!lenderOnly && verdict.state === 'open' && (
-                <button type="button" className="btn btn-primary" onClick={() => setOpen(true)} disabled={!payerClear} data-testid="repay-open">
+                <button type="button" className="btn btn-primary" onClick={() => setOpen(true)} data-testid="repay-open">
                   {text('repay.action')}
                 </button>
               )}

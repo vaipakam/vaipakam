@@ -82,7 +82,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
       ? 0
       : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, draft.payment, account, diamond, amount)) }, funds.allowance, total)).length;
   const covers = funds.allowance >= total && funds.balance >= total;
-  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params, await chainValidUntil(c, 'postRentalRequest')], account }));
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params, await chainValidUntil(c)], account }));
   return {
     identity,
     account,

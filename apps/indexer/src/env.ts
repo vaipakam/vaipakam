@@ -148,9 +148,6 @@ export interface WorkerEnv {
   // budget (`@vaipakam/lib/rateLimit`, fails closed).
   FRONTEND_ORIGIN?: string;
   WS_SUBSCRIBE_RATELIMIT?: RateLimitBinding;
-  // #3774 — per-IP budget on the public data feed (`/public/v1*`), fails
-  // closed (`@vaipakam/lib/rateLimit`).
-  PUBLIC_FEED_RATELIMIT?: RateLimitBinding;
 
   /** Cloudflare version-metadata binding — makes "what's actually
    *  deployed?" a one-curl question (surfaced on the stats routes).
@@ -295,8 +292,6 @@ export interface Env {
   // (`@vaipakam/lib/rateLimit`, #2756): a deployment without it refuses
   // every post, so `wrangler.jsonc` declares it.
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
-  // #3774 — per-IP budget on the public data feed. Fails closed.
-  PUBLIC_FEED_RATELIMIT?: RateLimitBinding;
 }
 
 /**
@@ -362,8 +357,6 @@ export async function resolveEnv(
     OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
-    // #3774 — the public data feed's per-IP budget.
-    PUBLIC_FEED_RATELIMIT: raw.PUBLIC_FEED_RATELIMIT,
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,
     RPC_ARB: secrets.RPC_ARB,
@@ -442,17 +435,6 @@ const CHAIN_RPC_BINDINGS = [
 ] as const satisfies readonly { id: number; name: string; binding: keyof Env }[];
 
 const CHAIN_META_IDS = CHAIN_RPC_BINDINGS.map((c) => c.id);
-
-/**
- * The RPC binding a chain is scanned through, from the table above, or null
- * for a chain this build does not know. The deploy rehearsal (#3894) binds
- * each fork under this name, for the indexer and the keeper alike, and then
- * checks that each Worker's own chain list resolves exactly that chain.
- */
-export function rpcBindingFor(chainId: number): { binding: (typeof CHAIN_RPC_BINDINGS)[number]['binding']; name: string } | null {
-  const c = CHAIN_RPC_BINDINGS.find((x) => x.id === chainId);
-  return c ? { binding: c.binding, name: c.name } : null;
-}
 
 /**
  * #2498 — the chains this deployment is CONFIGURED to scan: a deployment

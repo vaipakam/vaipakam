@@ -5,11 +5,8 @@
  * index writes one row per recipient when a loan starts, is repaid in part
  * or in full, defaults or is liquidated, nears its due date, enters or
  * leaves its grace period, or crosses a health band, and when a reward
- * entry nears or reaches its claim deadline. Since #3721 it also writes one
- * to a position token's owner when that token is approved for transfer to
- * an address, or every token of the owner is opened to an operator. A row
- * is a pointer, never a figure: the page each row opens reads the loan from
- * the chain.
+ * entry nears or reaches its claim deadline. A row is a pointer, never a
+ * figure: the page each row opens reads the loan from the chain.
  *
  * Every answer is checked against what was asked (the network and the
  * wallet); a row whose shape cannot be read is counted and the count stated,
@@ -40,8 +37,6 @@ export const INBOX_KINDS = [
   'hf_critical',
   'reward_final_notice',
   'reward_expired',
-  'position_approved',
-  'position_approved_all',
 ] as const;
 export type InboxKind = (typeof INBOX_KINDS)[number];
 
@@ -62,11 +57,6 @@ export interface InboxRow {
    *  had announced: `createdAt` is then when it found out, not when the
    *  outcome happened, and the row says so. */
   reconciled: boolean;
-  /** #3721 — what a position-token approval row names: the token (null for
-   *  an approval over every token) and the address it was opened to, shown
-   *  whole because a look-alike shortened address is exactly what the owner
-   *  checking it must not be shown. Null on every other kind. */
-  approval: { tokenId: string | null; to: Hex } | null;
 }
 
 export interface InboxPage {
@@ -106,26 +96,11 @@ export function parseInboxRow(raw: unknown): InboxRow | null {
   const data = typeof r.data === 'object' && r.data !== null ? (r.data as Record<string, unknown>) : null;
   const entry = data?.entryId;
   const entryId = typeof entry === 'string' && /^\d+$/.test(entry) ? entry : wholeNumber(entry) !== null ? String(entry) : null;
-  const approval = kind === 'position_approved' || kind === 'position_approved_all' ? approvalOf(kind, data) : null;
-  // A loan row names its loan, a reward row its entry and an approval row
-  // its address (and token); one that does not has nothing to say.
-  if (approval === undefined) return null;
-  if (kind !== null && !reward && approval === null && loanId === null) return null;
+  // A loan row names its loan and a reward row its entry; one that does not
+  // has nothing to point at.
+  if (kind !== null && !reward && loanId === null) return null;
   if (reward && entryId === null) return null;
-  return { id, kind, rawKind: r.kind, loanId, createdAt, entryId, reconciled: isReconciledNotification(typeof r.eventKind === 'string' ? r.eventKind : null), approval };
-}
-
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-
-/** An approval row's token and address, or undefined when its data does not
- *  carry what the row names. */
-function approvalOf(kind: 'position_approved' | 'position_approved_all', data: Record<string, unknown> | null): InboxRow['approval'] | undefined {
-  const to = kind === 'position_approved' ? data?.approved : data?.operator;
-  if (typeof to !== 'string' || !ADDRESS.test(to)) return undefined;
-  if (kind === 'position_approved_all') return { tokenId: null, to: to as Hex };
-  const tokenId = data?.tokenId;
-  if (typeof tokenId !== 'string' || !/^\d+$/.test(tokenId)) return undefined;
-  return { tokenId, to: to as Hex };
+  return { id, kind, rawKind: r.kind, loanId, createdAt, entryId, reconciled: isReconciledNotification(typeof r.eventKind === 'string' ? r.eventKind : null) };
 }
 
 /** One page of `account`'s inbox on `chainId`, newest first. Throws
@@ -190,12 +165,8 @@ export async function readInboxNewer(indexer: IndexerClient, chainId: number, ac
   return { count, capped: n.capped, newestId };
 }
 
-/** Where a row points: its loan's page, Claims for a reward entry, or the
- *  positions for a token approval. */
+/** Where a row points: its loan's page, or Claims for a reward entry. */
 export function inboxTarget(row: InboxRow): string | null {
   if (row.kind === 'reward_final_notice' || row.kind === 'reward_expired') return '/claims';
-  // An approval names a token, not a loan; each position shows its token's
-  // approval with the step that removes it.
-  if (row.approval !== null) return '/positions';
   return row.loanId === null ? null : `/positions/${row.loanId.toString()}`;
 }

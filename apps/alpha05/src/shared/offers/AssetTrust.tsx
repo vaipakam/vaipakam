@@ -6,7 +6,6 @@
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { erc20Abi } from 'viem';
-import { cleanTokenLabel } from '@vaipakam/lib/tokenLabel';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy, type CopyKey } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
@@ -18,7 +17,6 @@ import { useWorldRail } from '../reads/world/WorldRailContext';
 import { assetName, type TokenMetaMap } from '../reads/tokens';
 import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
-import { IssuerPowersLine } from './IssuerPowersLine';
 import {
   classifyAsset,
   listStatuses,
@@ -99,22 +97,15 @@ function AgeLines({ rankings }: { rankings: AssetRankings }) {
 /** The trust line for a chosen ERC-20 (an NFT collection has none yet). */
 export function AssetTrustLine({ asset, chain, meta, testToken }: { asset: Hex; chain: SupportedChain; meta: TokenMetaMap | null; testToken: boolean }) {
   const std = useAssetStandard(asset);
-  if (std.data === undefined) return null;
-  return (
-    <>
-      {std.data === 'erc20' && <TrustFor asset={asset} chain={chain} meta={meta} testToken={testToken} />}
-      <IssuerPowersLine chain={chain} asset={asset} collection={std.data !== 'erc20'} />
-    </>
-  );
+  if (std.data !== 'erc20') return null;
+  return <TrustFor asset={asset} chain={chain} meta={meta} testToken={testToken} />;
 }
 
 function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: SupportedChain; meta: TokenMetaMap | null; testToken: boolean }) {
   const { text, format } = useCopy();
   const { rankings, failed, error, reading } = useAssetRankings(chain);
   const priced = useChainRead(['priced', chain.diamondAddress, asset.toLowerCase()], (c) => readPriced(c, chain.diamondAddress, asset));
-  // The token's own name, cleaned by the shared rule before it is compared
-  // or shown (a deployer-written string; '' when nothing usable is left).
-  const tokenName = useChainRead(['tokenName', asset.toLowerCase()], (c) => c.readContract({ address: asset, abi: erc20Abi, functionName: 'name' }).then((n) => cleanTokenLabel(n, 'name')), {
+  const tokenName = useChainRead(['tokenName', asset.toLowerCase()], (c) => c.readContract({ address: asset, abi: erc20Abi, functionName: 'name' }), {
     immutable: true,
   });
   const name = assetName(asset, meta);
@@ -144,7 +135,7 @@ function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: Suppor
     testToken,
     priced: priced.state === 'ready' ? priced.data : null,
     symbol,
-    name: tokenName.state === 'ready' && tokenName.data ? tokenName.data : null,
+    name: tokenName.state === 'ready' ? (tokenName.data as string) : null,
   });
   switch (t.kind) {
     case 'test':

@@ -1,0 +1,13 @@
+### Every payout goes through a claim (#3629)
+
+No loan step pays a wallet any more. Before, several steps paid the current lender-position holder's wallet straight away while the loan stayed open: a partial repayment, a rental day's fee, a periodic-interest settlement or its forced sale, a partial liquidation's lender share and a swap-to-repay partial repayment. Some borrower steps did the same: what a forced or listed collateral sale raised above the debt, and what a swap-to-repay left over. A payment that skipped the vault also skipped the vault's outflow rules, so an account in protected mode lost its delay on exactly those payouts.
+
+Now every such payment lands in a vault and leaves only through a claim. A lender payment on an open loan pays any past seller's interest claim first, as before, and the rest is held for the lender position in the recorded lender's vault, reserved so the recorded lender cannot spend it. A sanctions-flagged holder is handled the same way and simply cannot claim until cleared. The current holder can take what is held at any time while the loan runs (`claimHeldForLender`), and whatever is still held is paid with the final lender claim. Borrower extras are held on the loan's borrower surplus record; on an open loan the borrower-position holder can take them early (`claimHeldForBorrower`), otherwise the borrower claim pays them. A lender who sells the position receives the net in their own vault, and the least net they agreed to is checked against what actually arrived there.
+
+For Auto-lend, payments held on an open intent loan can go back behind the intent the loan came from while the loan runs (`recommitHeldToIntent`), callable by the owner or a keeper the owner allowed to roll, under the roll's checks. The roll at full repayment now re-commits the final proceeds together with anything still held, instead of refusing a loan that had a held amount. A partial repayment on a pro-rata intent loan can therefore be lent again rather than leaving Auto-lend. The reference keeper's roll pass runs the re-commit step only when `HELD_RECOMMIT_ENABLED` is set; it ships unset.
+
+Several events changed shape: the periodic forced sale's settlement, the periodic auto-liquidation and the collateral sale's split no longer carry a "paid to the wallet or held" flag, because the extra is always held. New events record a held lender payment, a mid-loan lender claim and a re-commit. The keeper's roll candidates now include open loans with held payments, marked as such.
+
+This changes facet code and events only, not the storage layout, but it ships with the fresh deploy like the rest of the batch. Design: `docs/DesignsAndPlans/LenderPayoutsThroughClaimDesign.md`.
+
+Closes #3629

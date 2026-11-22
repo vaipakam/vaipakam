@@ -14,7 +14,6 @@ import { useWorldRail } from '../shared/reads/world/WorldRailContext';
 import { FreshnessStamp } from '../shared/ui/FreshnessStamp';
 import { ControlIcon, PlaceIcon } from '../shared/ui/Icon';
 import { OutstandingTx } from '../shared/tx/OutstandingTx';
-import { AccountQueue } from '../shared/tx/AccountQueue';
 import { NAV_ADVANCED, NAV_BASIC } from '../routes/pageMap';
 
 /** The desktop panel's collapsed choice is remembered per browser (a
@@ -263,7 +262,6 @@ export function Shell() {
         <TermsAtConnect />
         <OtherNetworksTerms />
         <OutstandingTx />
-        <AccountQueue />
         {holdPage ? <TermsHold /> : <Outlet />}
       </div>
       <footer className="foot">

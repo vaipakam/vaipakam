@@ -63,7 +63,6 @@ import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { recordLoanLifecycle } from './loanLifecycleGuard';
-import { RENTAL_SEED_PASS_COST, recordRentalRights, seedRentalRights } from './rentalRights';
 import {
   quarantineStatements,
   discloseQuarantineReleases,
@@ -143,7 +142,6 @@ import {
   reportSpend,
   spent,
   affords,
-  plus,
   holdBack,
   release,
   isRefusing,
@@ -2350,20 +2348,6 @@ async function runChainPass(
       : null;
   const scanFrom = lastBlock + 1n;
 
-  // #3882 — seed the rental table from the rental events already recorded
-  // below the cursor (rentalRights.ts), one bounded step a pass, and only
-  // when the step and the scan's tail both fit this invocation's budget.
-  // Blocks above the cursor are the scan's. Until the last step writes the
-  // mark the rental reads answer 503; a failed step is retried from the
-  // progress the last good one recorded (Codex #3908 r2).
-  try {
-    if (affords(budget, plus(RENTAL_SEED_PASS_COST, SCAN_TAIL_RESERVE))) {
-      await seedRentalRights(env.DB, chainId, Number(lastBlock), Math.floor(Date.now() / 1000));
-    }
-  } catch (err) {
-    console.warn(`[chainIndexer] chain ${chainId}: rental seed failed`, redactedError(err));
-  }
-
   // #2201 — no settled head: hold the scan (see above). Said every tick,
   // with the provider's own bounded reason, because a hold that repeats is a
   // chain that is not being indexed.
@@ -2830,9 +2814,6 @@ async function runChainPass(
     // corrects the `loans` projection above, because healing is exactly what
     // would hide the drift it reports. See loanLifecycleGuard.ts.
     await recordLoanLifecycle(env.DB, chainId, logs, blockTimestamps);
-    // #3882 — the rental rights table, folded from VaultRentalUpdated alone.
-    // Its own table only; a later update replaces a row, an older one never.
-    await recordRentalRights(env.DB, chainId, logs, Math.floor(Date.now() / 1000));
     // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
     // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
     // events. Runs after the offer/loan passes; it touches only its own table.
@@ -4340,10 +4321,9 @@ export async function runHealLanes(
     // them: the ledger heal above may have committed rows whose report rides
     // this function's return, and a query past the ceiling could end the
     // invocation before it. Skipped work just runs next tick.
-    if (affords(budget, { external: 0, d1Queries: 3 })) {
+    if (affords(budget, { external: 0, d1Queries: 2 })) {
       await reverifyInitPrincipal(env, chainId);
       await reverifyInitTerms(env, chainId);
-      await repairOpeningParties(env, chainId);
     }
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, redactedError(err));
@@ -5221,46 +5201,6 @@ async function canonicalSettlementBlock(
 }
 
 /**
- * #3879 — fill a loan's opening parties (`init_lender` / `init_borrower`,
- * migration 0118) from its own `LoanInitiated` record in the activity
- * ledger, wherever they are still unknown. Every insert path writes them, so
- * this finds rows only where something older wrote the loan: the previous
- * Worker, still serving between the migration and the new publish. It
- * writes once per row (`init_lender IS NULL`) and never changes a value
- * already there, so the parties stay the opening event's whatever a later
- * sale does. A row with no ledger record stays unknown, and an unknown loan
- * is not left out of rate figures. D1 only, no RPC.
- */
-export async function repairOpeningParties(env: Env, chainId: number): Promise<number> {
-  const res = await env.DB.prepare(
-    `UPDATE loans
-        SET init_lender = (
-              SELECT LOWER(json_extract(ae.args_json, '$.lender'))
-                FROM activity_events ae
-               WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
-                 AND ae.kind = 'LoanInitiated'
-               ORDER BY ae.block_number, ae.log_index LIMIT 1),
-            init_borrower = (
-              SELECT LOWER(json_extract(ae.args_json, '$.borrower'))
-                FROM activity_events ae
-               WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
-                 AND ae.kind = 'LoanInitiated'
-               ORDER BY ae.block_number, ae.log_index LIMIT 1)
-      WHERE chain_id = ?
-        AND init_lender IS NULL
-        AND EXISTS (
-          SELECT 1 FROM activity_events ae
-           WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
-             AND ae.kind = 'LoanInitiated'
-             AND json_extract(ae.args_json, '$.lender') IS NOT NULL
-        )`,
-  )
-    .bind(chainId)
-    .run();
-  return res.meta?.changes ?? 0;
-}
-
-/**
  * #2461 r4 — clear `init_principal_unbacked` on every row of `chainId` whose
  * `init_principal` the append-only `LoanInitiated` ledger now confirms.
  *
@@ -5748,9 +5688,8 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at, init_principal_unbacked, init_terms_unbacked,
-             init_lender, init_borrower)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+             start_block, start_at, updated_at, init_principal_unbacked, init_terms_unbacked)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
         )
           .bind(
             chainId,
@@ -5792,9 +5731,6 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
-            // #3879 — the opening event's two parties, written once (0118).
-            lender,
-            borrower,
           );
         // #1130 — seed participation from the current-owner projection at
         // init (lenderOwner/borrowerOwner already resolve a pre-accept
@@ -5886,9 +5822,8 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at, init_principal_unbacked,
-             init_lender, init_borrower)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+             start_block, start_at, updated_at, init_principal_unbacked)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0)`,
         )
           .bind(
             chainId,
@@ -5931,10 +5866,6 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
-            // #3879 — the opening EVENT's parties, not the read-back's: the
-            // read-back is unpinned, and a sale may already have moved a side.
-            lender,
-            borrower,
           );
         // #1130 — participation seed via the offer-projection resolution
         // above, written with the row by the pass that writes it, for the
@@ -5967,9 +5898,8 @@ export async function processLoanLogs(
            duration_days, token_id, collateral_token_id,
            lender_current_owner, borrower_current_owner,
            is_stub, init_principal,
-           start_block, start_at, updated_at, init_principal_unbacked,
-           init_lender, init_borrower)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0, ?, ?)`,
+           start_block, start_at, updated_at, init_principal_unbacked)
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0)`,
       )
         .bind(
           chainId,
@@ -5985,8 +5915,6 @@ export async function processLoanLogs(
           Number(log.blockNumber),
           blockAt,
           now,
-          lender,
-          borrower,
         );
       // #1130 — participation seed from the event parties (all the stub
       // path has). Same-tx mint Transfers can't attribute these (the stub

@@ -98,7 +98,9 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: type(uint128).max
+                loanSideRewardCapOpen: type(uint128).max,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
     }
@@ -450,7 +452,9 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: type(uint128).max
+                loanSideRewardCapOpen: type(uint128).max,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
         uint256 b = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 31);

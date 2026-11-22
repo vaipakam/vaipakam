@@ -1663,7 +1663,6 @@ DELETE FROM activity_participants_state; \
 DELETE FROM loan_participants; \
 DELETE FROM loan_lifecycle_state; \
 DELETE FROM loan_lifecycle_violation; \
-DELETE FROM rental_rights; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM position_side_moves; \

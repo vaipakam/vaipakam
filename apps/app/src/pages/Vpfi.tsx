@@ -20,11 +20,13 @@ import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount } from '../data/protectedAccount';
 import { formatExactSpan, shortAddress } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
+import { SUPPORTED_CHAINS } from '../chain/chains';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS, clearVpfiTokenCache } from '../data/vpfi';
@@ -62,6 +64,8 @@ export function Vpfi() {
     isConnected,
     onSupportedChain,
     walletChain,
+    switchToSupported,
+    switchPending,
   } = useActiveChain();
   const { setOpen } = useModal();
   const vpfi = useVpfi();
@@ -511,37 +515,57 @@ export function Vpfi() {
   }
 
   if (!snapshot?.registered) {
-    // Honesty rule: "not installed" only when the chain POSITIVELY said
-    // so; a failed read gets a couldn't-check state.
-    if (vpfi.isError) {
-      return (
-        <div className="stack">
-          <div>
-            <h1 className="page-title">{copy.vpfi.title}</h1>
-            <p className="page-lede">{copy.vpfi.optional}</p>
-          </div>
-          <div className="banner banner-info">
-            <Coins aria-hidden />
-            <div className="banner-body">{copy.vpfi.availabilityCheckFailed(readChain.name)}</div>
-          </div>
-        </div>
-      );
-    }
-    // The platform token arrives with the rewards phase, installed on
-    // every network together (owner decision 2026-11-20). Until then no
-    // network has it, the fee path gives no hold discount to any wallet,
-    // and every fee is charged at its full rate. The page says exactly
-    // that and shows no tier, no discount explainer and no switch to
-    // another network: no other network has a discount to offer either.
+    // Honesty rule: "not available on this chain" only when the chain
+    // POSITIVELY said so; a failed read gets a couldn't-check state.
+    const body = vpfi.isError
+      ? copy.vpfi.availabilityCheckFailed(readChain.name)
+      : copy.vpfi.notOnThisChain(readChain.name);
+    // UX2-005 — offer the remedy, not just the diagnosis: VPFI's home
+    // chain is statically known (the canonical-VPFI deployment), so a
+    // connected user gets the one-click switch instead of a dead end.
+    // Only on the positive not-registered verdict — a failed CHECK
+    // must not claim another chain is the answer.
+    //
+    // Discriminate on `vpfiTokenImpl`, the populated canonical-only
+    // signal (the UUPS impl behind the canonical VPFIToken; mirror
+    // chains carry `vpfiMirror` instead). The `isCanonicalVPFI` boolean
+    // is documented as the discriminator but the deployments export does
+    // not currently emit it — narrowing on it silently resolved to
+    // undefined and the switch button never rendered (Codex #1199).
+    // Falls back to the flag if a future export does emit it.
+    const canonicalChain = vpfi.isError
+      ? undefined
+      : SUPPORTED_CHAINS.find((c) => {
+          if (c.chainId === readChain.chainId) return false;
+          const dep = getDeployment(c.chainId);
+          return Boolean(dep?.isCanonicalVPFI || dep?.vpfiTokenImpl);
+        });
     return (
       <div className="stack">
         <div>
           <h1 className="page-title">{copy.vpfi.title}</h1>
+          <p className="page-lede">{copy.vpfi.optional}</p>
         </div>
         <div className="banner banner-info">
           <Coins aria-hidden />
-          <div className="banner-body">{copy.vpfi.notInstalled(readChain.name)}</div>
+          <div className="banner-body">
+            {body}
+            {isConnected && canonicalChain ? (
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ marginTop: 8 }}
+                  disabled={switchPending}
+                  onClick={() => switchToSupported(canonicalChain.chainId)}
+                >
+                  {copy.wallet.switchToChain(canonicalChain.name)}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
+        {education}
       </div>
     );
   }

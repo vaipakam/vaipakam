@@ -10,10 +10,6 @@
       "default": "./src/index.ts"
     },
     "./brand.css": "./src/brand/tokens.css",
-    "./accountSignature": {
-      "types": "./src/accountSignature.ts",
-      "default": "./src/accountSignature.ts"
-    },
     "./address": {
       "types": "./src/address.ts",
       "default": "./src/address.ts"
@@ -49,10 +45,6 @@
     "./loanClock": {
       "types": "./src/loanClock.ts",
       "default": "./src/loanClock.ts"
-    },
-    "./issuerPowers": {
-      "types": "./src/issuerPowers.ts",
-      "default": "./src/issuerPowers.ts"
     },
     "./signedOfferSet": {
       "types": "./src/signedOfferSet.ts",
@@ -114,14 +106,6 @@
       "types": "./src/alertsMessage.ts",
       "default": "./src/alertsMessage.ts"
     },
-    "./watchedLoans": {
-      "types": "./src/watchedLoans.ts",
-      "default": "./src/watchedLoans.ts"
-    },
-    "./goals": {
-      "types": "./src/goals.ts",
-      "default": "./src/goals.ts"
-    },
     "./notificationProvenance": {
       "types": "./src/notificationProvenance.ts",
       "default": "./src/notificationProvenance.ts"
@@ -153,10 +137,6 @@
     "./routeBuilder": {
       "types": "./src/routeBuilder.ts",
       "default": "./src/routeBuilder.ts"
-    },
-    "./tokenLabel": {
-      "types": "./src/tokenLabel.ts",
-      "default": "./src/tokenLabel.ts"
     },
     "./saleHold": {
       "types": "./src/saleHold.ts",

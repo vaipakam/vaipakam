@@ -16,10 +16,8 @@
  * into `loan_orphans` and deleted, so no surface (the loan pages, a wallet's
  * history and Activity filter, the bell) goes on presenting a position the
  * chain never had (#2636 r2). Its side tables are cleared too; they are
- * commitments to act, not records, and are not kept. Its rental row
- * (`rental_rights`, #3882) is archived and deleted like the related rows, so
- * the public rental reads stop naming a renter for it. Migration 0065 says
- * how an operator puts a move back.
+ * commitments to act, not records, and are not kept. Migration 0065 says how
+ * an operator puts a move back.
  *
  * ONE TRANSACTION, ONE COMPARE-AND-SET. The move is a single D1 batch. Its
  * first statement archives the loan row only if the row still equals, column
@@ -73,7 +71,7 @@ import { redactedError } from '@vaipakam/lib/errorDescription';
  *  move, the marker release after it), all of them D1 — no chain read — and
  *  every statement in them a D1 query. Callers check `orphanMoveAffordable`
  *  before starting a move, so it never runs into the ceiling half done. */
-export const ORPHAN_MOVE_COST: Cost = { external: 0, d1Queries: 5 + 10 + 1 };
+export const ORPHAN_MOVE_COST: Cost = { external: 0, d1Queries: 4 + 9 + 1 };
 
 /**
  * Whether a move may START: its whole cost, and still what the caller must
@@ -113,7 +111,7 @@ export async function withdrawOrphanLoan(
   // What is kept, read first because D1 cannot serialise a whole row inside
   // a statement without naming every column. One batch, so one snapshot;
   // related rows in rowid order, the order the check below compares in.
-  const [loanRes, activityRes, participantRes, notificationRes, rentalRes] = await db.batch([
+  const [loanRes, activityRes, participantRes, notificationRes] = await db.batch([
     db.prepare(`SELECT * FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ?`).bind(chainId, loanId, from),
     db
       .prepare(`SELECT rowid AS orphan_rowid, * FROM activity_events WHERE chain_id = ? AND loan_id = ? ORDER BY rowid`)
@@ -123,9 +121,6 @@ export async function withdrawOrphanLoan(
       .bind(chainId, loanId),
     db
       .prepare(`SELECT rowid AS orphan_rowid, * FROM notifications WHERE chain_id = ? AND loan_id = ? ORDER BY rowid`)
-      .bind(chainId, loanId),
-    db
-      .prepare(`SELECT rowid AS orphan_rowid, * FROM rental_rights WHERE chain_id = ? AND loan_id = ? ORDER BY rowid`)
       .bind(chainId, loanId),
   ]);
   const row = (loanRes?.results?.[0] ?? null) as Record<string, unknown> | null;
@@ -138,15 +133,8 @@ export async function withdrawOrphanLoan(
     activity_events: (activityRes?.results ?? []) as Array<{ orphan_rowid: number }>,
     loan_participants: (participantRes?.results ?? []) as Array<{ orphan_rowid: number }>,
     notifications: (notificationRes?.results ?? []) as Array<{ orphan_rowid: number }>,
-    rental_rights: (rentalRes?.results ?? []) as Array<{ orphan_rowid: number; block_number: number; log_index: number }>,
   };
   const rowids = (rows: Array<{ orphan_rowid: number }>) => JSON.stringify(rows.map((r) => r.orphan_rowid));
-  // The rental row is the one related row a later write can EDIT in place
-  // (a later update replaces it, keeping its rowid), and only ever with a
-  // later (block, log index); so rowid with those two identifies its content.
-  const rentalVersions = JSON.stringify(
-    related.rental_rights.map((r) => [r.orphan_rowid, r.block_number, r.log_index]),
-  );
   const moveId = crypto.randomUUID();
   // `IS`, not `=`, so a NULL column compares equal to a NULL it was read as.
   const sameRow = columns.map((c) => `"${c}" IS ?`).join(' AND ');
@@ -164,9 +152,7 @@ export async function withdrawOrphanLoan(
           AND (SELECT json_group_array(r) FROM (SELECT rowid AS r FROM loan_participants
                 WHERE chain_id = ? AND loan_id = ? ORDER BY rowid)) = json(?)
           AND (SELECT json_group_array(r) FROM (SELECT rowid AS r FROM notifications
-                WHERE chain_id = ? AND loan_id = ? ORDER BY rowid)) = json(?)
-          AND (SELECT json_group_array(json_array(r, b, l)) FROM (SELECT rowid AS r, block_number AS b,
-                log_index AS l FROM rental_rights WHERE chain_id = ? AND loan_id = ? ORDER BY rowid)) = json(?)`,
+                WHERE chain_id = ? AND loan_id = ? ORDER BY rowid)) = json(?)`,
     )
     .bind(
       moveId,
@@ -188,9 +174,6 @@ export async function withdrawOrphanLoan(
       chainId,
       loanId,
       rowids(related.notifications),
-      chainId,
-      loanId,
-      rentalVersions,
     );
   const results = await db.batch([
     archive,
@@ -203,15 +186,6 @@ export async function withdrawOrphanLoan(
     db
       .prepare(
         `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?
-            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
-      )
-      .bind(chainId, loanId, moveId),
-    // The rental row (#3882), archived above with the other related rows.
-    // Left behind, the public rental reads would go on naming a renter for a
-    // loan the chain never had (Codex #3908 r2).
-    db
-      .prepare(
-        `DELETE FROM rental_rights WHERE chain_id = ? AND loan_id = ?
             AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
       )
       .bind(chainId, loanId, moveId),
@@ -252,9 +226,7 @@ export async function withdrawOrphanLoan(
       )
       .bind(chainId, loanId, moveId),
   ]);
-  // The last statement is the `loans` delete: it changed a row only if the
-  // archive landed.
-  const moved = (results[results.length - 1]?.meta?.changes ?? 0) > 0;
+  const moved = (results[8]?.meta?.changes ?? 0) > 0;
   if (moved) {
     // After the move, in its own batch: the release is the one path every
     // per-loan marker delete takes (`quarantineReleaseStatement`), and it

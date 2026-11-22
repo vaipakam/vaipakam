@@ -55,9 +55,13 @@ contract MockRewardDiamond {
     RewardBroadcastV3 internal lastV3Stored;
     uint256 public v3Count;
 
-    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b)
-        external
-    {
+    uint256 public lastV3Source;
+
+    function onRewardBroadcastV3Received(
+        uint256 sourceChainId,
+        RewardBroadcastV3 calldata b
+    ) external {
+        lastV3Source = sourceChainId;
         lastV3Stored = b;
         ++v3Count;
     }
@@ -582,6 +586,8 @@ contract VaipakamRewardFlowTest is Test {
         router.deliver(0, SEL_BASE);
 
         assertEq(diamondMirror.v3Count(), 1, "mirror got the V3 broadcast");
+        // #903 — the messenger forwards the authenticated CCIP source.
+        assertEq(diamondMirror.lastV3Source(), BASE, "broadcast source chain");
         RewardBroadcastV3 memory got = diamondMirror.lastV3();
         assertEq(got.v2.dayId, 42);
         assertEq(got.v2.globalLenderNumeraire18, 9_000 ether);

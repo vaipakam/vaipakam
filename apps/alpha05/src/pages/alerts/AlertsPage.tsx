@@ -150,15 +150,6 @@ function AlertRow({ row: r, fresh, copy }: { row: InboxRow; fresh: boolean; copy
       <p>
         {fresh && <span className="alert-new">{text('inbox.newBadge')}</span>} {line}
       </p>
-      {r.approval !== null && (
-        <p className="tier-b" data-testid={`alert-${r.id}-approval`}>
-          <code>
-            {r.approval.tokenId === null
-              ? format('inbox.approvalAllRef', { address: r.approval.to })
-              : format('inbox.approvalRef', { token: r.approval.tokenId, address: r.approval.to })}
-          </code>
-        </p>
-      )}
       <p className="tier-b">
         {r.reconciled ? (
           <span data-testid={`alert-${r.id}-found`}>{format('inbox.found', { time: formatUtc(r.createdAt) })}</span>
@@ -168,9 +159,7 @@ function AlertRow({ row: r, fresh, copy }: { row: InboxRow; fresh: boolean; copy
         {to && (
           <>
             {' · '}
-            <Link to={to}>
-              {r.approval !== null ? text('inbox.openPositions') : r.loanId !== null && to.startsWith('/positions/') ? format('inbox.openLoan', { id }) : text('inbox.openClaims')}
-            </Link>
+            <Link to={to}>{r.loanId !== null && to.startsWith('/positions/') ? format('inbox.openLoan', { id }) : text('inbox.openClaims')}</Link>
           </>
         )}
       </p>

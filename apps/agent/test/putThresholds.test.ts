@@ -108,8 +108,8 @@ describe('what a settings save is signed over (#2754)', () => {
       }),
     );
     expect(
-      buildAlertSettingsMessage(WALLET, 84532, settingsChangeOf(parsePutThresholds(body)!), 1, '0x00'),
-    ).toBe(buildAlertSettingsMessage(WALLET, 84532, change, 1, '0x00'));
+      buildAlertSettingsMessage(WALLET, 84532, settingsChangeOf(parsePutThresholds(body)!), 1),
+    ).toBe(buildAlertSettingsMessage(WALLET, 84532, change, 1));
   });
 
   it('refuses a Push value other than the opt-in, and non-finite bands', () => {

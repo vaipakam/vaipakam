@@ -68,13 +68,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     ...(ranged
       ? [{ label: text('lendOffer.rowCollateralPart'), value: amount(pair.collateral, partCollateral(parsed.collateral, parsed.amount, parsed.amountMax)), binding: true }]
       : []),
-    textRow(
-      'accept.rowRate',
-      parsed.rateOtherBps != null && parsed.rateOtherBps !== parsed.rateBps
-        ? format('request.rateRange', { low: formatBps(parsed.rateBps), high: formatBps(parsed.rateOtherBps), rate: formatBps(parsed.rateBps) })
-        : format('accept.rate', { rate: formatBps(parsed.rateBps) }),
-      true,
-    ),
+    textRow('accept.rowRate', format('accept.rate', { rate: formatBps(parsed.rateBps) }), true),
     textRow('accept.rowDue', format('lendOffer.due', { days: String(parsed.durationDays) }), true),
     // Not bound by the offer or the loan: the grace period is read from the
     // live configuration when it is applied, so it is today's figure.

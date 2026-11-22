@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { hasPublicQueue } from '../../chain/publicQueue';
 import { WhyLink } from '../help/WhyLink';
 import { useTxStore } from '../tx/txStore';
-import { useCopy, type CopyKey } from '../copy/useCopy';
+import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
-import { useReceiptAddendum, withAddendum } from '../receipt/addendum';
-import type { SupersededReason } from '../tx/outcome';
 import type { TrackedTx } from '../tx/useTrackedTx';
 import { FinishCard } from './FinishCard';
 import { Icon } from './Icon';
@@ -97,21 +95,11 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-/** The line a superseded flow shows, per reason: a wallet's cancel or
- *  replacement names the transaction that mined instead; an account wallet's
- *  own ending names none, since nothing reached the network. */
-const SUPERSEDED_KEY: Record<SupersededReason, CopyKey> = {
-  cancelled: 'flow.cancelled',
-  replaced: 'flow.replaced',
-  'account-cancelled': 'flow.accountCancelled',
-  'account-failed': 'flow.accountFailed',
-};
-
 export function ActionFlow({
   tx,
   identity,
   reviewedFor,
-  receipt: flowReceipt,
+  receipt,
   recheck,
   describeAsset,
   explorer,
@@ -125,10 +113,6 @@ export function ActionFlow({
 }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
-  // A page's own statement for this context (#3769), shown and frozen with
-  // the flow's receipt.
-  const addendum = useReceiptAddendum();
-  const receipt = useMemo(() => withAddendum(flowReceipt, addendum), [flowReceipt, addendum]);
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
   /** The consent was cleared while the re-check ran (by the reader, or by a
@@ -323,14 +307,7 @@ export function ActionFlow({
           {senderNote}
           <p className="tier-b with-icon" role="status">
             <Icon meaning="pending" />
-            {phase.viaAccount ? (
-              // #3770 — a contract wallet's own id has no explorer page.
-              <span data-testid="flow-via-account">{format('flow.submittedAccount', { id: phase.hash })}</span>
-            ) : (
-              <>
-                {text('flow.submitted')} {txLink(phase.hash)}
-              </>
-            )}
+            {text('flow.submitted')} {txLink(phase.hash)}
           </p>
           {stepNote}
           {heldNotice}
@@ -369,7 +346,7 @@ export function ActionFlow({
         <div className="action-flow" data-phase="receipt-unknown">
           {senderNote}
           <Notice tone="warn" tier="A">
-            {format('flow.receiptUnknown', { reason: phase.message })} {phase.viaAccount ? format('flow.accountId', { id: phase.hash }) : txLink(phase.hash)}
+            {format('flow.receiptUnknown', { reason: phase.message })} {txLink(phase.hash)}
           </Notice>
           {heldNotice}
           <p className="actions">
@@ -387,7 +364,7 @@ export function ActionFlow({
         <div className="action-flow" data-phase="superseded">
           {senderNote}
           <Notice tone="warn" tier="A">
-            {text(SUPERSEDED_KEY[phase.reason])} {phase.minedHash !== null && txLink(phase.minedHash)}
+            {text(phase.reason === 'cancelled' ? 'flow.cancelled' : 'flow.replaced')} {txLink(phase.minedHash)}
           </Notice>
           {(phase.unwound ?? []).map((leg) => (
             <Notice key={leg.label} tone={leg.status === 'done' ? 'ok' : 'warn'} tier="A">

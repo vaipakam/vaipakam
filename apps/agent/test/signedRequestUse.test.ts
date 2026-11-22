@@ -9,9 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Env } from '../src/env';
 import type { ChainSigChecker } from '../src/walletSigVerify';
-import { requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import {
-  LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
   authoriseAlertRequest,
   buildTelegramLinkMessage,
@@ -110,18 +108,16 @@ describe('authoriseAlertRequest', () => {
   const CHAIN_ID = 84532;
   const DENY: ChainSigChecker = async () => false;
   const httpReq = new Request('https://agent.test/link/telegram', { method: 'POST' });
-  const KEY = `0x${'ab'.repeat(32)}` as const;
 
-  async function linkRequest(signer = ACCOUNT, issuedAt = NOW) {
+  async function linkRequest(signer = ACCOUNT) {
     const signature = await signer.signMessage({
-      message: buildTelegramLinkMessage(ACCOUNT.address, CHAIN_ID, issuedAt, requestKeyHash(KEY)),
+      message: buildTelegramLinkMessage(ACCOUNT.address, CHAIN_ID, NOW),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT.address,
       chain_id: CHAIN_ID,
-      issuedAt,
+      issuedAt: NOW,
       signature,
-      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     return parsed.req;
@@ -154,21 +150,5 @@ describe('authoriseAlertRequest', () => {
     const { d1 } = sqliteD1(false);
     const v = await authoriseAlertRequest(httpReq, { DB: d1 } as Env, await linkRequest(), 'link', NOW, DENY);
     expect(v).toMatchObject({ ok: false, status: 503 });
-  });
-
-  it("keeps a contract-approved request's row for its seven-day window (#3836)", async () => {
-    const { d1, rows } = sqliteD1();
-    const env = {
-      DB: d1,
-      RPC_BASE_SEPOLIA: 'http://rpc.test',
-      SIG_VERIFY_RATELIMIT: { limit: async () => ({ success: true }) },
-    } as unknown as Env;
-    const CONFIRM: ChainSigChecker = async () => true;
-    const issuedAt = NOW - 3 * 24 * 60 * 60;
-    // An owner's signature, not the wallet's: the chain approves it.
-    const req = await linkRequest(OTHER, issuedAt);
-    expect(await authoriseAlertRequest(httpReq, env, req, 'link', NOW, CONFIRM)).toEqual({ ok: true, via: 'chain' });
-    expect(rows()[0]!.expires_at).toBe(issuedAt + LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS + 60);
-    expect((await authoriseAlertRequest(httpReq, env, req, 'link', NOW + 60, CONFIRM)).ok).toBe(false);
   });
 });

@@ -27,7 +27,6 @@ function harness(over: Partial<KeeperRouteDeps> = {}, outcome: TelegramOutcome =
     markLockHandled: async (...a) => store.markLockHandled(...a),
     takeUnansweredLocks: async (...a) => store.takeUnansweredLocks(...a),
     chatsOf: async (...a) => store.chatsOf(...a),
-    phraseMarksOf: async (...a) => store.phraseMarksOf(...a),
   };
   const sent: { chat: string; text: string }[] = [];
   const deps: KeeperRouteDeps = {
@@ -193,25 +192,6 @@ describe('alerts route', () => {
     expect(sent.map((m) => m.chat)).toEqual(['42', '77']);
     expect(sent[0]!.text).toContain('https://app.example');
     expect(sent.some((m) => m.text.includes('evil'))).toBe(false);
-  });
-
-  it('leads with the phrase the recipient\'s chat was told (#3346)', async () => {
-    const { store, sent, call, link } = harness();
-    link(W, '42');
-    link(B, '77');
-    store.recordChatType('42', true, 0);
-    store.recordChatType('77', true, 0);
-    store.setPhrase(W, null, 'blue heron', 1, 1);
-    store.setPhrase(B, null, 'red kite', 1, 1);
-    for (const [wallet, chat] of [[W, '42'], [B, '77']] as const) {
-      const [n] = store.duePhraseNotices(NOW, 10).filter((x) => x.chatId === chat);
-      store.phraseNoticeSent(wallet, chat, n!.chainId, n!.id, true, 2);
-    }
-    await call('/keeper/alerts', { ...base, alerts: [alert(W), alert(W, { to: B })] });
-    expect(sent[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
-    // A manager's chat shows the manager's phrase.
-    expect(sent[1]!.chat).toBe('77');
-    expect(sent[1]!.text.startsWith('Your alert phrase: «red kite»')).toBe(true);
   });
 
   it('maps a send that was not accepted to the keeper outcome', async () => {

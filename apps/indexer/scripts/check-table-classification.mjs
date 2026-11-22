@@ -84,7 +84,7 @@ const SHARED_DATABASE = 'vaipakam-warm';
 //   'hybrid'           — archived nightly; §4 import through the
 //                        converter's RESTORE_PROJECTIONS, the projected
 //                        part re-derived by the §6 replay (#1481).
-export const CLASSIFICATION = {
+const CLASSIFICATION = {
   // born-off-chain (mirrors backup.ts ARCHIVE_TABLES_REQUIRED[_ONCE_MIGRATED])
   diag_errors: { class: 'born-off-chain', reason: 'frontend error captures' },
   diag_legal_holds: { class: 'born-off-chain', reason: 'operator legal-hold register' },
@@ -133,10 +133,6 @@ export const CLASSIFICATION = {
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   activity_participants: { class: 'replay-derived', reason: 'per-event participants, derived from activity_events (#3677)' },
   activity_participants_state: { class: 'replay-derived', reason: 'backfill watermark over activity_events (#3677)' },
-  rental_rights: {
-    class: 'replay-derived',
-    reason: 'one row per rental, read off VaultRentalUpdated alone (#3882); a clearing keeps the row',
-  },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',

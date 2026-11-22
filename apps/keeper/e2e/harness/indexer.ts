@@ -44,7 +44,7 @@ export function recordAppliedMigrations(shared: SqliteD1): void {
 }
 
 /** A fetch that reaches the scenario's node and nothing else. */
-export function nodeOnlyFetch(nodeUrl: string): typeof fetch {
+function nodeOnlyFetch(nodeUrl: string): typeof fetch {
   const allowed = new URL(nodeUrl).origin;
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
@@ -83,51 +83,36 @@ export function scenarioIndexer(sc: ScenarioChain, shared: SqliteD1): ScenarioIn
     fetchFn: nodeOnlyFetch(sc.url),
   } as unknown as IndexerEnv;
   const chain = { id: sc.chain.id, name: binding.name, rpc: sc.url, diamond: sc.diamond };
-  return { index: () => indexToHead(env, chain, sc) };
-}
-
-/** What {@link indexToHead} needs of the node: its head, and a way to move it. */
-export interface IndexedNode {
-  mineBlocks(n: number): Promise<void>;
-  blockNumber(): Promise<bigint | number>;
-}
-
-/**
- * Indexer passes until the cursor reaches the node's head — the loop a
- * scenario runs, and the deploy rehearsal's off-chain stage on a fork (#3894).
- * Returns the last pass's outcome.
- */
-export async function indexToHead(
-  env: IndexerEnv,
-  chain: { id: number; name: string; rpc: string; diamond: string },
-  node: IndexedNode,
-): Promise<string> {
-  // A first pass on an empty database adopts the Diamond (reporting an
-  // epoch reset); the passes after it scan until the cursor reaches the
-  // head, as the ingest Durable Object rearms while a pass falls short.
-  // A live chain has moved well past the settled depth by the time the
-  // indexer's next run comes round; this node has to be told to.
-  await node.mineBlocks(SETTLED_DEPTH + 8);
-  // How far one pass gets is the invocation's request allowance, not a
-  // block count (#2221): a pass finishes blocks in chain order and stops
-  // before the one it cannot afford, so on a node where every block
-  // carries a transaction it may finish only a few. What the indexer does
-  // promise is that every scanning pass finishes at least one block. So
-  // the loop is bounded by progress, not by a pass count: a pass that
-  // moves the cursor nowhere is the failure, and the epoch reset may
-  // happen once.
-  let last = '';
-  let reached = -1n;
-  let resets = 0;
-  for (;;) {
-    const r = await runChainIndexerForChain(env, chain);
-    last = r.skipped ?? `scanned ${r.scannedFrom}-${r.scannedTo}`;
-    if (r.skipped === 'epoch-reset' && resets++ === 0) continue;
-    if (r.skipped === 'caught-up') return last;
-    if (r.skipped) throw new Error(`keeper-e2e: the indexer pass declined: ${r.skipped}`);
-    if (BigInt(r.scannedTo) >= BigInt(await node.blockNumber())) return last;
-    if (BigInt(r.scannedTo) <= reached) break;
-    reached = BigInt(r.scannedTo);
-  }
-  throw new Error(`keeper-e2e: an indexer pass made no progress toward the head: ${last}`);
+  return {
+    async index() {
+      // A first pass on an empty database adopts the Diamond (reporting an
+      // epoch reset); the passes after it scan until the cursor reaches the
+      // head, as the ingest Durable Object rearms while a pass falls short.
+      // A live chain has moved well past the settled depth by the time the
+      // indexer's next run comes round; this node has to be told to.
+      await sc.mineBlocks(SETTLED_DEPTH + 8);
+      // How far one pass gets is the invocation's request allowance, not a
+      // block count (#2221): a pass finishes blocks in chain order and stops
+      // before the one it cannot afford, so on a node where every block
+      // carries a transaction it may finish only a few. What the indexer does
+      // promise is that every scanning pass finishes at least one block. So
+      // the loop is bounded by progress, not by a pass count: a pass that
+      // moves the cursor nowhere is the failure, and the epoch reset may
+      // happen once.
+      let last = '';
+      let reached = -1n;
+      let resets = 0;
+      for (;;) {
+        const r = await runChainIndexerForChain(env, chain);
+        last = r.skipped ?? `scanned ${r.scannedFrom}-${r.scannedTo}`;
+        if (r.skipped === 'epoch-reset' && resets++ === 0) continue;
+        if (r.skipped === 'caught-up') return last;
+        if (r.skipped) throw new Error(`keeper-e2e: the indexer pass declined: ${r.skipped}`);
+        if (r.scannedTo >= (await sc.blockNumber())) return last;
+        if (BigInt(r.scannedTo) <= reached) break;
+        reached = BigInt(r.scannedTo);
+      }
+      throw new Error(`keeper-e2e: an indexer pass made no progress toward the head: ${last}`);
+    },
+  };
 }

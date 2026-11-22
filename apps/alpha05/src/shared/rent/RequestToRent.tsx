@@ -23,7 +23,6 @@ import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
 import { askAfter } from '../tx/simulate';
 import { readValidUntil } from '../tx/deadline';
-import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -96,7 +95,6 @@ export function RequestToRent({ draft, chain, own, meta, terms, onEdit, onClose 
   const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
 
-  const approvalWindow = useApprovalWindow('postRentalRequest', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -137,7 +135,7 @@ export function RequestToRent({ draft, chain, own, meta, terms, onEdit, onClose 
       //    included.
       //    The deadline (#3412) is read from the chain's clock now, so the
       //    dry run and the write carry the same one.
-      const validUntil = await readValidUntil(own, 'postRentalRequest', approvalWindow.choice);
+      const validUntil = await readValidUntil(own);
       const dry = await askAfter(own, since, (c, blockNumber) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format('rentRequest.dryRunRefused', { reason: requestRefusal(dry.error, copy) }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
@@ -318,7 +316,6 @@ export function RequestToRent({ draft, chain, own, meta, terms, onEdit, onClose 
               <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'pair', pair: riskPair }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
             <WhyLink summaryKey="rentRequest.whySummary" detailKey="rentRequest.why" />
-            <ApprovalWindowChoice step="postRentalRequest" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>

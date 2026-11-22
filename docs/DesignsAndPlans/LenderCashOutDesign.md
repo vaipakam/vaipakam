@@ -147,8 +147,6 @@ The borrower of the loan sees no change and none of their routes is touched: rep
 
 An advance is outside the shortfall reserve, earns no usage reward on either side, and counts for no fee discount.
 
-**What the reserve records for the holder (added 2026-11-20).** The holder's own part of a shortfall stays eligible. The advance's record keeps, after it closes, what it was left unpaid (principal and interest together), and the reserve's one record for the loan subtracts that whole figure from the loan's unpaid principal, never below zero (`ShortfallReserveDesign.md` section 6). The record is written once, at the first of the reserve's two moments at which the advance is closed, and no step here raises it afterwards. A holder with nothing left to receive can still make the terminal claim, so the reserve always has a payee to name. No live step reduces a booked final amount after the advance has closed, so writing once is safe on every route.
-
 ### 6.7 The advance lender's side
 
 - The advance is a record on the loan, naming the slot. It is not a position token and cannot be transferred or sold in this version.
@@ -247,9 +245,5 @@ Settled with the builder on 2026-11-19:
 2. Nothing is split before the one retry. After a failed retry the split uses the rate stored on the fallback's snapshot, never a price read at the split. With no price the advance takes all, which is also the answer should the in-kind path of an illiquid asset ever be reached.
 3. The advance record names the slot owner's address, as a slot does. A payment that lands in a replaced or clawed-back account's vault is reached by that account's later-arrival sweep. A flagged slot owner's part is held aside and never stands in the borrower's way. On the holder's side the rule of 6.4 has no exception: there is no state in which interest runs on money that has arrived, or on a holder willing to pay. An arrival is booked for the advance wherever the lender side's money sits, and a holder's own repayment to a flagged slot owner is held aside for that owner.
 4. `cashOptions` and `sellNow` are on their own facet, which asks the exit verdict by self-call and copies none of its checks.
-
-Settled with the builder and the reserve's builder on 2026-11-20:
-
-5. The reserve reads one figure from the advance's record, what a closed advance was left unpaid, and whether an advance is open. This design needs no second figure for it.
 
 The step that pays a set-aside to the slot owner has a keeper pass of its own, shipped disarmed. The lock stops the same-lender renewal and the extension; continuing with another lender (`InstantMarketDesign.md` 6.1) stays open, because it pays the lender side whole through the one order.

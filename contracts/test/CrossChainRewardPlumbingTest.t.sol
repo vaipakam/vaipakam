@@ -914,7 +914,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
         RewardBroadcastV3 memory b;
-        _rep().onRewardBroadcastV3Received(b);
+        _rep().onRewardBroadcastV3Received(0, b);
     }
 
     function testBroadcastReceivedRevertsWhenMessengerUnset() public {
@@ -1702,7 +1702,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
         RewardBroadcastV3 memory b;
         b.v2 = _v2Packet(CHAIN_ARB);
-        _rep().onRewardBroadcastV3Received(b);
+        _rep().onRewardBroadcastV3Received(0, b);
     }
 
     /// Legacy-mode packets (pre-cutover days) carry the §4 threshold in the

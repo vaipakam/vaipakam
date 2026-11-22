@@ -1090,39 +1090,6 @@ contract VaipakamVaultImplementation is
         return (inForce, pending, pendingAt, l.recovered, l.recoveredAt);
     }
 
-    /// @notice #3756 — the recovery claim (`RecoveryClaimDesign.md` 4.6), in
-    ///         one read: the setting in force (allowed, wait), a pending
-    ///         switch-on or shortening still waiting (its wait and time; 0 =
-    ///         none), the open claim (who asked, when, the earliest run, the
-    ///         lapse; `requestedAt` 0 = none open) and the end of the pause on a
-    ///         new request.
-    function protectionRecoveryClaim()
-        external
-        view
-        returns (
-            bool allowed,
-            uint32 wait,
-            uint32 pendingWait,
-            uint64 pendingAt,
-            address claimBy,
-            uint64 requestedAt,
-            uint64 runnableAt,
-            uint64 lapsesAt,
-            uint64 pauseUntil
-        )
-    {
-        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
-        (allowed, wait) = LibVaultProtectionStorage.claimSetting(l);
-        (pendingWait, pendingAt) = LibVaultProtectionStorage.claimSettingPending(l);
-        requestedAt = LibVaultProtectionStorage.claimOpen(l);
-        if (requestedAt != 0) {
-            claimBy = l.claimBy;
-            runnableAt = l.claimRunnableAt;
-            lapsesAt = l.claimLapsesAt;
-        }
-        pauseUntil = l.claimPauseUntil;
-    }
-
     /// @notice `key`'s next signature nonce for `purpose`.
     function protectionNonce(address key, uint8 purpose) external view returns (uint256) {
         return LibVaultProtectionStorage.layout().nonces[key][purpose];

@@ -10,11 +10,13 @@ export const RULE = {
   walletShareCapBps: 2000,
   minLenders: 5,
   minBorrowers: 5,
-  loans: 'any-status',
+  loans: 'closed-by-repayment',
   weight: 'interest-paid',
   figure: 'weighted-quartiles',
   provisional: true,
   excludes: [
+    'open-loans',
+    'defaulted-or-liquidated-loans',
     'linked-rate-loans',
     'self-trade-pairs',
     'unconfirmed-terms',
@@ -22,8 +24,8 @@ export const RULE = {
     'nft-legs',
     'loans-younger-than-min-age',
   ],
-  interestSources: ['LoanInterestPaid', 'less LoanInterestUndelivered'],
-  interestNotCounted: ['fallback-recovery'],
+  interestSources: ['LoanSettlementBreakdown', 'InterestPaymentBooked'],
+  interestNotYetCounted: ['refinance-payoff', 'swap-to-repay', 'partial-repayment'],
   points: [
     { days: 7, termRange: [1, 14], lookbackDays: 90 },
     { days: 30, termRange: [15, 60], lookbackDays: 90 },
@@ -52,10 +54,10 @@ export function curveAnswer(chainId: number, asset: string, asOf: number) {
       rule: RULE,
       terms: TERMS.map(({ days, termRange, lookbackDays }) =>
         days === 30
-          ? { days, termRange, lookbackDays, state: 'shown', reason: null, p25Bps: 480, medianBps: 520, p75Bps: 575, loans: 14, lenders: 6, borrowers: 9, unconfirmedLeftOut: 2 }
+          ? { days, termRange, lookbackDays, state: 'shown', reason: null, p25Bps: 480, medianBps: 520, p75Bps: 575, loans: 14, lenders: 6, borrowers: 9 }
           : days === 365
-            ? { days, termRange, lookbackDays, state: 'withheld', reason: 'history-incomplete', p25Bps: null, medianBps: null, p75Bps: null, loans: 0, lenders: 0, borrowers: 0, unconfirmedLeftOut: 0 }
-            : { days, termRange, lookbackDays, state: 'withheld', reason: 'not-enough-loans', p25Bps: null, medianBps: null, p75Bps: null, loans: 2, lenders: 1, borrowers: 2, unconfirmedLeftOut: 0 },
+            ? { days, termRange, lookbackDays, state: 'withheld', reason: 'history-incomplete', p25Bps: null, medianBps: null, p75Bps: null, loans: 0, lenders: 0, borrowers: 0 }
+            : { days, termRange, lookbackDays, state: 'withheld', reason: 'not-enough-loans', p25Bps: null, medianBps: null, p75Bps: null, loans: 2, lenders: 1, borrowers: 2 },
       ),
     },
   };
@@ -77,8 +79,8 @@ export function historyAnswer(chainId: number, asset: string, days: number, toda
       reference: { state: 'not-published', valueBps: null, a24Bps: null, a90Bps: null, weightBps: null },
       ownLoans:
         i === 0
-          ? { state: 'withheld', reason: 'not-enough-loans', p25Bps: null, medianBps: null, p75Bps: null, loans: 3, lenders: 3, borrowers: 3, unconfirmedLeftOut: 1 }
-          : { state: 'shown', reason: null, p25Bps: 470 + i, medianBps: 510 + i, p75Bps: 560 + i, loans: 12, lenders: 6, borrowers: 8, unconfirmedLeftOut: 0 },
+          ? { state: 'withheld', reason: 'not-enough-loans', p25Bps: null, medianBps: null, p75Bps: null, loans: 3, lenders: 3, borrowers: 3 }
+          : { state: 'shown', reason: null, p25Bps: 470 + i, medianBps: 510 + i, p75Bps: 560 + i, loans: 12, lenders: 6, borrowers: 8 },
     })),
   };
 }

@@ -188,7 +188,6 @@ export function GetCash(props: GetCashProps) {
             <div data-testid="get-cash-sale" data-net={read.sale.net.toString()} data-offer={read.sale.offerId.toString()}>
               <p className="tier-a">{format('getCash.saleValue', { rate: formatBps(read.sale.rateBps), amount: amount(read.sale.net) })}</p>
               {read.sale.net < read.principal && <p className="tier-a">{format('getCash.saleCost', { cost: amount(read.principal - read.sale.net) })}</p>}
-              {read.sale.held > 0n && <p className="tier-a">{format('getCash.saleHeldMoves', { amount: amount(read.sale.held) })}</p>}
               <p className="tier-a">{text('getCash.interestStays')}</p>
               <button type="button" className="btn btn-primary" onClick={() => setRoute('sale')} data-testid="get-cash-sale-go">
                 {text('getCash.saleGo')}
@@ -196,15 +195,9 @@ export function GetCash(props: GetCashProps) {
             </div>
           )}
           {read !== null && read.direct.kind === 'open' && read.handover.kind !== 'ready' && read.sale.kind !== 'ready' && (
-            <div data-testid="get-cash-now-none" data-searched={searchedAll(read) ? 'all' : 'some'}>
-              <p className="tier-a">{text(searchedAll(read) ? 'getCash.nowNone' : 'getCash.nowNoneFound')}</p>
-              {read.handover.kind === 'none' &&
-                read.handover.refusals.map((r, n) => (
-                  <p key={n} className="tier-b">
-                    {format('getCash.handoverRefused', { reason: r.reason })}
-                  </p>
-                ))}
-            </div>
+            <p className="tier-a" data-testid="get-cash-now-none" data-searched={searchedAll(read) ? 'all' : 'some'}>
+              {text(searchedAll(read) ? 'getCash.nowNone' : 'getCash.nowNoneFound')}
+            </p>
           )}
         </li>
         <li data-testid="get-cash-list">
@@ -409,10 +402,11 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
       return { route: 'handover', owner: g.handover.owner, slot: g.handover.slot, receives: g.handover.receives };
     }
     if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text(searchedAll(g) ? 'getCash.nowNone' : 'getCash.nowNoneFound'), reopensAt: null, remedy: null });
-    // The sale is bound to the net and the held amount its preview showed.
-    return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: g.sale.held, principal: g.principal };
+    const held = v.heldForLender;
+    if (held === null) throw new StatedRefusal({ code: 'HeldUnread', reason: text('frozen.reservedUnread'), reopensAt: null, remedy: null });
+    return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: held, principal: g.principal };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, list, own, diamond, loanId]);
+  }, [route, list, own, diamond, loanId, v.heldForLender]);
 
   const callOf = (p: Plan, validUntil: bigint) =>
     p.route === 'handover'
@@ -428,7 +422,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
     sources: own.sources,
     send: async () => {
       if (!plan) throw new Error('nothing under review');
-      const validUntil = await readValidUntil(own, 'getCashPlan');
+      const validUntil = await readValidUntil(own);
       const call = callOf(plan, validUntil);
       const asked = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       if (asked.kind === 'reverted')
@@ -502,7 +496,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
       return { kind: 'changed', what: text('getCash.changed') };
     }
     // The reviewed figures are the ones sent, so they are the ones asked.
-    const asked = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...callOf(plan, await chainValidUntil(c, 'getCashPlan')), account }));
+    const asked = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...callOf(plan, await chainValidUntil(c)), account }));
     if (asked.kind === 'reverted') return { kind: 'refused', refusal: refusalFromError(asked.error) };
     if (asked.kind === 'unreadable') return { kind: 'unreadable', reason: asked.reason };
     return { kind: 'ok' };

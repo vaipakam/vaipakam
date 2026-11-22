@@ -11,9 +11,7 @@ export type TxPhase =
   | { kind: 'idle' }
   | { kind: 'review' }
   | { kind: 'signing' }
-  /** `viaAccount`: `hash` is a contract wallet's own transaction id (#3770),
-   *  which runs under a chain hash of its own once its owners approve. */
-  | { kind: 'submitted'; hash: `0x${string}`; at: number; viaAccount?: true }
+  | { kind: 'submitted'; hash: `0x${string}`; at: number }
   /** `hash` is the transaction that MINED; `submittedHash` the one this flow
    *  sent. They differ only when the wallet repriced it (sped it up: the same
    *  call at a higher fee), which still runs the intended action. */
@@ -24,17 +22,13 @@ export type TxPhase =
    *  run the intended action: `cancelled` (the nonce was spent on an empty
    *  self-transfer) or `replaced` (a different call took its place). The
    *  intended effects are not measured, because they cannot have happened
-   *  through this flow; both hashes are kept so the page can say so.
-   *  #3770: an account wallet's owners can also end its transaction before
-   *  it ever reaches the network (`account-cancelled`, `account-failed`);
-   *  nothing mined then, so `minedHash` and `blockNumber` are null, and the
-   *  flow's clean-up and earlier steps are read and shown the same way. */
+   *  through this flow; both hashes are kept so the page can say so. */
   | {
       kind: 'superseded';
       submittedHash: `0x${string}`;
-      minedHash: `0x${string}` | null;
+      minedHash: `0x${string}`;
       reason: SupersededReason;
-      blockNumber: bigint | null;
+      blockNumber: bigint;
       /** What the flow's clean-up put back or took back (or could not),
        *  one leg per step that had something standing; empty when there
        *  was nothing to undo. */
@@ -47,11 +41,11 @@ export type TxPhase =
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and
    *  shown, tracking can resume, and no new review starts from here. */
-  | { kind: 'receipt-unknown'; hash: `0x${string}`; at: number; message: string; viaAccount?: true }
+  | { kind: 'receipt-unknown'; hash: `0x${string}`; at: number; message: string }
   /** The wallet refused or failed before anything was submitted. */
   | { kind: 'failed'; message: string };
 
-export type SupersededReason = 'cancelled' | 'replaced' | 'account-cancelled' | 'account-failed';
+export type SupersededReason = 'cancelled' | 'replaced';
 
 export type LegOutcome =
   | { status: 'done'; label: string }

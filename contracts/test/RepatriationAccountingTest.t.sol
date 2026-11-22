@@ -5,6 +5,10 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
@@ -181,7 +185,7 @@ contract RepatriationAccountingTest is SetupTest {
         vm.prank(RECEIVER);
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667969))
         );
         assertEq(
             _mut().getRecycleBucketRaw(),
@@ -201,13 +205,62 @@ contract RepatriationAccountingTest is SetupTest {
         assertEq(_avail(CHAIN_ARB), 60 ether);
     }
 
+    /// @dev #2204 — the return is recorded as an ingress packet under its
+    ///      transport identity, carrying the arrival as its recycled share.
+    function test2204_Return_RecordedAsIngressPacket() public {
+        uint256 authId = _authorized(40 ether);
+        vpfi.mint(address(diamond), 39 ether);
+        bytes32 msgId = keccak256("repat-msg-1");
+        vm.prank(RECEIVER);
+        _repat().onRepatriationReturnReceived(
+            authId, address(diamond), CHAIN_ARB, address(vpfi), 40 ether, 39 ether, msgId
+        );
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_ARB), msgId));
+        LibVaipakam.IngressPacket memory p =
+            RewardRemittanceLensFacet(address(diamond)).getIngressPacket(h);
+        assertGt(p.arrivedAt, 0, "packet recorded");
+        assertEq(p.kind, LibRewardCustody.PACKET_KIND_REPATRIATION_RETURN);
+        assertEq(p.sourceChainId, CHAIN_ARB);
+        assertEq(p.actualReceived, 39 ether, "the observed amount, not the declared one");
+        assertEq(p.freshShare, 0);
+        assertEq(p.recycledShare, 39 ether);
+        assertEq(p.remitId, authId);
+        assertEq(p.unclassified, 0, "nothing parked unclassified");
+    }
+
+    /// @dev #2204 — a second landing under the same transport identity
+    ///      refuses whole, even for a different pending authorization.
+    function test2204_Return_ReplayedStampRefused() public {
+        uint256 a1 = _authorized(40 ether);
+        uint256 a2 = _repat().authorizeRepatriation(CHAIN_ARB, 10 ether);
+        vpfi.mint(address(diamond), 50 ether);
+        bytes32 msgId = keccak256("repat-msg-dup");
+        uint256 bucketBefore = _mut().getRecycleBucketRaw();
+        vm.prank(RECEIVER);
+        _repat().onRepatriationReturnReceived(
+            a1, address(diamond), CHAIN_ARB, address(vpfi), 40 ether, 40 ether, msgId
+        );
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_ARB), msgId));
+        vm.prank(RECEIVER);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IngressPacketReplayed.selector, h));
+        _repat().onRepatriationReturnReceived(
+            a2, address(diamond), CHAIN_ARB, address(vpfi), 10 ether, 10 ether, msgId
+        );
+        (uint8 status,,,,) = _repat().getRepatriationAuthorization(a2);
+        assertEq(status, 1, "the refused landing settled nothing");
+        assertEq(
+            _mut().getRecycleBucketRaw(), bucketBefore + 40 ether,
+            "the same message id twice credits once"
+        );
+    }
+
     function test_Return_ShortArrivalTracksShortfall() public {
         uint256 authId = _authorized(40 ether);
         vpfi.mint(address(diamond), 39 ether);
         vm.prank(RECEIVER);
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            40 ether, 39 ether
+            40 ether, 39 ether, bytes32(uint256(35667970))
         );
         (uint8 status, , , , uint256 shortfall) =
             _repat().getRepatriationAuthorization(authId);
@@ -227,7 +280,7 @@ contract RepatriationAccountingTest is SetupTest {
         );
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667971))
         );
         // Wrong era.
         vm.prank(RECEIVER);
@@ -239,7 +292,7 @@ contract RepatriationAccountingTest is SetupTest {
         );
         _repat().onRepatriationReturnReceived(
             authId, address(0xdead), CHAIN_ARB, address(vpfi),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667972))
         );
         // Wrong source chain.
         vm.prank(RECEIVER);
@@ -251,7 +304,7 @@ contract RepatriationAccountingTest is SetupTest {
             )
         );
         _repat().onRepatriationReturnReceived(
-            authId, address(diamond), 10, address(vpfi), 40 ether, 40 ether
+            authId, address(diamond), 10, address(vpfi), 40 ether, 40 ether, bytes32(uint256(35667973))
         );
         // Wrong token.
         vm.prank(RECEIVER);
@@ -260,7 +313,7 @@ contract RepatriationAccountingTest is SetupTest {
         );
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(0xbeef),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667974))
         );
         // Declared amount must EXACT-MATCH the authorization.
         vm.prank(RECEIVER);
@@ -269,7 +322,7 @@ contract RepatriationAccountingTest is SetupTest {
         );
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            39 ether, 39 ether
+            39 ether, 39 ether, bytes32(uint256(35667975))
         );
         // Zero actual.
         vm.prank(RECEIVER);
@@ -277,7 +330,7 @@ contract RepatriationAccountingTest is SetupTest {
             RepatriationFacet.RepatriationDeliveryInvalid.selector
         );
         _repat().onRepatriationReturnReceived(
-            authId, address(diamond), CHAIN_ARB, address(vpfi), 40 ether, 0
+            authId, address(diamond), CHAIN_ARB, address(vpfi), 40 ether, 0, bytes32(uint256(35667976))
         );
     }
 
@@ -287,7 +340,7 @@ contract RepatriationAccountingTest is SetupTest {
         vm.prank(RECEIVER);
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667977))
         );
         vm.prank(RECEIVER);
         vm.expectRevert(
@@ -299,7 +352,7 @@ contract RepatriationAccountingTest is SetupTest {
         );
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667978))
         );
     }
 
@@ -329,7 +382,7 @@ contract RepatriationAccountingTest is SetupTest {
         );
         _repat().onRepatriationReturnReceived(
             authId, address(diamond), CHAIN_ARB, address(vpfi),
-            40 ether, 40 ether
+            40 ether, 40 ether, bytes32(uint256(35667979))
         );
     }
 

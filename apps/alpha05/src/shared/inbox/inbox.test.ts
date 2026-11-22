@@ -25,30 +25,13 @@ function answer(notifications: unknown[], nextBefore: string | null = null, over
 
 describe('parseInboxRow', () => {
   it('reads a loan row and a reward row', () => {
-    expect(parseInboxRow(row())).toEqual({ id: 7, kind: 'loan_repaid', rawKind: 'loan_repaid', loanId: 3n, createdAt: 1_800_000_000, entryId: null, reconciled: false, approval: null });
+    expect(parseInboxRow(row())).toEqual({ id: 7, kind: 'loan_repaid', rawKind: 'loan_repaid', loanId: 3n, createdAt: 1_800_000_000, entryId: null, reconciled: false });
     expect(parseInboxRow(row({ kind: 'reward_expired', loanId: null, data: { entryId: 12 } }))?.entryId).toBe('12');
   });
 
   it('marks a row a check found, rather than an event announced', () => {
     expect(parseInboxRow(row({ kind: 'loan_ended', eventKind: NOTIF_EVENT_KIND_RECONCILED }))?.reconciled).toBe(true);
     expect(parseInboxRow(row({ eventKind: null }))?.reconciled).toBe(false);
-  });
-
-  it('reads a position-token approval row: the token and the whole address', () => {
-    const to = '0x00000000000000000000000000000000000000Bb';
-    const one = parseInboxRow(row({ kind: 'position_approved', loanId: null, data: { tokenId: '41', approved: to } }));
-    expect(one).toMatchObject({ kind: 'position_approved', loanId: null, approval: { tokenId: '41', to } });
-    expect(inboxTarget(one!)).toBe('/positions');
-    const all = parseInboxRow(row({ kind: 'position_approved_all', loanId: null, data: { operator: to } }));
-    expect(all?.approval).toEqual({ tokenId: null, to });
-  });
-
-  it.each([
-    ['no address', { kind: 'position_approved', loanId: null, data: { tokenId: '1' } }],
-    ['no token', { kind: 'position_approved', loanId: null, data: { approved: '0x00000000000000000000000000000000000000Bb' } }],
-    ['a short address', { kind: 'position_approved_all', loanId: null, data: { operator: '0xBb' } }],
-  ])('refuses an approval row with %s', (_why, over) => {
-    expect(parseInboxRow(row(over))).toBeNull();
   });
 
   it('keeps a kind it has no words for, naming it', () => {

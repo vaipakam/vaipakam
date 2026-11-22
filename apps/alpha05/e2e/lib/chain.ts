@@ -43,14 +43,3 @@ export async function txDeadline(sc: ScenarioChain): Promise<bigint> {
   const block = await sc.pub.getBlock({ blockTag: 'latest' });
   return txValidUntil(block.timestamp);
 }
-
-/**
- * The fee-discount setting exists only where a platform token is installed;
- * without one, every fee screen says no holding discount applies and offers
- * no toggle. The fixture installs none, so a test that drives the setting
- * installs a stand-in first: a mintable test token, unless one is given.
- */
-export async function installPlatformToken(sc: ScenarioChain, token?: Hex): Promise<void> {
-  const standIn = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!;
-  await sc.diamondWrite('admin', 'setVPFIToken', [token ?? standIn]);
-}

@@ -1676,6 +1676,17 @@
   },
   {
     "type": "error",
+    "name": "IngressPacketKindUnknown",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IngressPacketReplayed",
     "inputs": [
       {

@@ -24,12 +24,10 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
-import { AccountWithoutCode, accountExecution, accountTxReader, awaitAccountTx, requireAccountCode, sendsAccountTxIds } from './accountWallet';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
 import { summarize, type LegOutcome } from './outcome';
-import { liveIdentity, sendReviewed, WalletMoved } from './walletGuard';
 import { readRevertCause, revertSentence, type RevertReader } from './revertCause';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
@@ -131,46 +129,16 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   // From `submitted` or `receipt-unknown`: wait for the receipt, then
   // measure. A receipt that cannot be read keeps the hash in the phase.
   const track = useCallback(
-    async (hash: `0x${string}`, ctx: Submission, viaAccount: boolean) => {
+    async (hash: `0x${string}`, ctx: Submission) => {
       const client = getPublicClient(config, { chainId: ctx.chainId });
       if (!client) {
         apply({ type: 'receipt-unknown', hash, message: 'No chain client for this network; the transaction was sent and its receipt is not tracked here.' });
         return;
       }
-      // #3770 — a contract wallet's id: wait for its owners' approvals and
-      // follow the chain hash it runs under. The id stays in the phase.
-      let chainHash = hash;
-      if (viaAccount) {
-        const reader = await accountTxReader(config);
-        if (!reader) {
-          apply({ type: 'receipt-unknown', hash, message: text('flow.accountUnfollowed') });
-          return;
-        }
-        const end = await awaitAccountTx(
-          reader,
-          hash,
-          (s) =>
-            store.update(key, (e) => ({
-              ...e,
-              note: s.confirmed !== null && s.required !== null ? format('flow.awaitingApprovals', { confirmed: String(s.confirmed), required: String(s.required) }) : text('flow.awaitingApprovalsUnknown'),
-            })),
-          () => store.update(key, (e) => ({ ...e, note: text('flow.accountUnread') })),
-        );
-        store.update(key, (e) => ({ ...e, note: null }));
-        if (end.kind === 'ended') {
-          // It never ran, so nothing of it took effect: the flow's
-          // clean-up runs and is shown, with any earlier step that did.
-          const landed = await readLandedBefore(ctx);
-          const unwound = await cleanUpAfterNoEffect(ctx);
-          apply({ type: 'superseded', submittedHash: hash, minedHash: null, reason: end.reason === 'cancelled' ? 'account-cancelled' : 'account-failed', blockNumber: null, unwound, landed });
-          return;
-        }
-        chainHash = end.hash;
-      }
       let receipt: TransactionReceipt;
       let replacement: ReplacementReason | null = null;
       try {
-        receipt = await client.waitForTransactionReceipt({ hash: chainHash, onReplaced: (r) => void (replacement = r.reason) });
+        receipt = await client.waitForTransactionReceipt({ hash, onReplaced: (r) => void (replacement = r.reason) });
       } catch (e) {
         apply({ type: 'receipt-unknown', hash, message: `The receipt could not be read: ${(e as Error).message}` });
         return;
@@ -186,26 +154,17 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound, landed });
         return;
       }
-      // #3770 — a contract wallet's outer transaction can mine while the
-      // call it carries failed: the wallet's own execution log in it is the
-      // call's result. A logged failure changed nothing and takes the
-      // no-effect clean-up; no log for the call is stated as unknown.
-      const execution = viaAccount && receipt.status !== 'reverted' ? accountExecution(receipt.logs, ctx.account, hash) : null;
-      const innerFailed = execution === 'failed';
       const mined = apply({
         type: 'mined',
         submittedHash: hash,
         hash: receipt.transactionHash,
         repriced: reason === 'repriced',
         blockNumber: receipt.blockNumber,
-        reverted: receipt.status === 'reverted' || innerFailed,
+        reverted: receipt.status === 'reverted',
       });
       if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
-      if (innerFailed) {
-        legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: text('flow.accountCallFailed') }];
-        legs = [...(await readLandedBefore(ctx)), ...legs, ...(await cleanUpAfterNoEffect(ctx))];
-      } else if (receipt.status === 'reverted') {
+      if (receipt.status === 'reverted') {
         // Reverted: one leg saying it changed nothing, whatever the chain
         // now shows, plus what the flow's clean-up put back.
         // Why, where the chain lets it be read (#3482): the gas spent, or a
@@ -220,34 +179,24 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         } catch (e) {
           legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
         }
-        if (execution === 'unrecorded') legs = [{ status: 'unknown', label: text('flow.revertedLabel'), reason: text('flow.accountCallUnrecorded') }, ...legs];
         legs = [...legs, ...(await cleanUpAfterEffect(ctx))];
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
-    [apply, config, text, format, store, key],
+    [apply, config, text, format],
   );
 
   const run = useCallback(
     async (frozen: Frozen) => {
-      // A Safe returns its own id, not a chain hash (#3770). Which kind the
-      // send returns is taken from the wallet that sends it, read after the
-      // identity check and right before the prompt, never after the wait.
-      let viaAccount = false;
-      const hash = await sendReviewed({
-        frozen,
-        liveIdentity: () => liveIdentity(config),
-        apply,
-        save: (f) => store.update(key, (e) => ({ ...e, frozen: f, note: null })),
-        send: opts.send,
-        precheck: async () => {
-          await requireAccountCode(config, opts.chainId, opts.account);
-          viaAccount = sendsAccountTxIds(config);
-        },
-        failure: (e) =>
-          e instanceof WalletMoved ? text('flow.walletMoved') : e instanceof AccountWithoutCode ? text('flow.accountNoCode') : refusalFromError(e).reason,
-      });
-      if (hash === null) return;
+      apply({ type: 'sign' });
+      store.update(key, (e) => ({ ...e, frozen, note: null }));
+      let hash: `0x${string}`;
+      try {
+        hash = await opts.send();
+      } catch (e) {
+        apply({ type: 'failed', message: refusalFromError(e).reason });
+        return;
+      }
       const ctx: Submission = {
         chainId: opts.chainId,
         account: opts.account,
@@ -260,10 +209,10 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       };
       // The send's own steps are over; a clean-up after the hash names its own.
       store.update(key, (e) => ({ ...e, submission: ctx, note: null }));
-      apply({ type: 'submitted', hash, at: Date.now(), viaAccount });
-      await track(hash, ctx, viaAccount);
+      apply({ type: 'submitted', hash, at: Date.now() });
+      await track(hash, ctx);
     },
-    [apply, opts, store, key, track, config, text],
+    [apply, opts, store, key, track],
   );
 
   const resume = useCallback(async () => {
@@ -272,15 +221,9 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
     // second resume or a reset during it is refused by the transition rule.
     const ctx = current.submission;
     if (current.phase.kind !== 'receipt-unknown' || ctx === null) throw new IllegalTransition(current.phase.kind, 'resume');
-    // #1691 on resume (#3770): follow only for the wallet and network the
-    // step was reviewed and sent from; otherwise say so and show nothing new.
-    if (current.frozen !== null && liveIdentity(config) !== current.frozen.identity.toLowerCase()) {
-      store.update(key, (e) => ({ ...e, note: text('flow.resumeWalletMoved') }));
-      return;
-    }
     apply({ type: 'resume', hash: current.phase.hash });
-    await track(current.phase.hash, ctx, current.phase.viaAccount === true);
-  }, [apply, store, key, track, config, text]);
+    await track(current.phase.hash, ctx);
+  }, [apply, store, key, track]);
 
   return { key, phase: entry.phase, frozen: entry.frozen, note: entry.note, held: entry.submission?.held ?? null, review, run, resume, reset };
 }

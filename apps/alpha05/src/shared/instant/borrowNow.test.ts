@@ -12,12 +12,8 @@ import {
   MAX_SOURCES,
   offerCandidate,
   orderSources,
-  BEST_RATE,
-  estimateFills,
-  sourceChoice,
   parseBorrowNow,
   planFrom,
-  previewFrom,
   restOf,
   restRequestInput,
   slotCandidates,
@@ -74,7 +70,7 @@ const offer = (p: Partial<StoredOffer> = {}): StoredOffer =>
 
 const WANT = { termDays: 30, allowsPartialRepay: true };
 
-const terms: BorrowNowTerms = { lending: USDC, collateral: WETH, amount: 1000n, collateralOffered: 5n, termDays: 30, maxRateBps: 800n, allowsPartialRepay: true, order: BEST_RATE };
+const terms: BorrowNowTerms = { lending: USDC, collateral: WETH, amount: 1000n, collateralOffered: 5n, termDays: 30, maxRateBps: 800n, allowsPartialRepay: true };
 
 describe('slotCandidates', () => {
   it('keeps a slot that fits, with its room the lower of exposure room and capital', () => {
@@ -131,28 +127,6 @@ describe('orderSources', () => {
     expect(out.map((c) => c.source.slot)).toEqual([3, 2, 1]);
     expect(orderSources(Array.from({ length: 20 }, (_, i) => mk(500n, 1n, i)))).toHaveLength(MAX_SOURCES);
   });
-  it('for fewest lenders, takes the largest within the accepted difference first, then the rest cheapest first', () => {
-    const mk = (rate: bigint, room: bigint, slot: number): Candidate => ({ source: { kind: 0, owner: L1, slot, offerId: 0n }, rateBps: rate, room });
-    const cands = [mk(500n, 100n, 1), mk(520n, 100n, 2), mk(540n, 1000n, 3), mk(600n, 5000n, 4)];
-    expect(orderSources(cands, { kind: 'fewest-lenders', spreadBps: 50n }).map((c) => c.source.slot)).toEqual([3, 1, 2, 4]);
-    expect(orderSources(cands).map((c) => c.source.slot)).toEqual([1, 2, 3, 4]);
-  });
-});
-
-describe('estimateFills and sourceChoice', () => {
-  const mk = (rate: bigint, room: bigint, slot: number): Candidate => ({ source: { kind: 0, owner: L1, slot, offerId: 0n }, rateBps: rate, room });
-  const cands = [mk(500n, 100n, 1), mk(520n, 100n, 2), mk(540n, 1000n, 3)];
-  it('counts lenders and the rate across them, weighted by amount', () => {
-    expect(estimateFills(orderSources(cands), 300n)).toEqual({ lenders: 3, covered: 300n, lowBps: 500n, highBps: 540n, acrossBps: 520n });
-    expect(estimateFills(orderSources(cands, { kind: 'fewest-lenders', spreadBps: 50n }), 300n)).toEqual({ lenders: 1, covered: 300n, lowBps: 540n, highBps: 540n, acrossBps: 540n });
-    expect(estimateFills([], 300n)).toBeNull();
-  });
-  it('states the chosen order beside the other', () => {
-    const c = sourceChoice(cands, 300n, BEST_RATE, 50n);
-    expect(c.chosen?.lenders).toBe(3);
-    expect(c.other.order).toEqual({ kind: 'fewest-lenders', spreadBps: 50n });
-    expect(c.other.estimate?.lenders).toBe(1);
-  });
 });
 
 describe('the plan', () => {
@@ -195,15 +169,8 @@ describe('parseBorrowNow', () => {
     const r = parseBorrowNow({ ...DEFAULT_BORROW_NOW, amount: '100', collateral: '0.5', rate: '7.5' }, USDC, WETH, { lending: 6, collateral: 18 }, 365);
     expect(r).toEqual({
       ok: true,
-      terms: { lending: USDC, collateral: WETH, amount: 100_000_000n, collateralOffered: 5n * 10n ** 17n, termDays: 30, maxRateBps: 750n, allowsPartialRepay: true, order: BEST_RATE },
+      terms: { lending: USDC, collateral: WETH, amount: 100_000_000n, collateralOffered: 5n * 10n ** 17n, termDays: 30, maxRateBps: 750n, allowsPartialRepay: true },
     });
-  });
-  it('reads the spread only for fewest lenders', () => {
-    const base = { ...DEFAULT_BORROW_NOW, amount: '100', collateral: '0.5', rate: '7.5' };
-    const r = parseBorrowNow({ ...base, order: 'fewest-lenders', spread: '0.25' }, USDC, WETH, { lending: 6, collateral: 18 }, 365);
-    expect(r.ok && r.terms.order).toEqual({ kind: 'fewest-lenders', spreadBps: 25n });
-    expect(parseBorrowNow({ ...base, order: 'fewest-lenders', spread: '' }, USDC, WETH, { lending: 6, collateral: 18 }, 365)).toEqual({ ok: false, errors: { spread: 'empty' } });
-    expect(parseBorrowNow({ ...base, spread: 'x' }, USDC, WETH, { lending: 6, collateral: 18 }, 365).ok).toBe(true);
   });
   it('names each field it cannot read; the rate is never filled in', () => {
     const r = parseBorrowNow({ ...DEFAULT_BORROW_NOW, amount: '1.0000001', days: '999' }, USDC, WETH, { lending: 6, collateral: 18 }, 365);
@@ -251,20 +218,5 @@ describe('allowance override', () => {
     const slots = candidateSlots();
     expect(slots.slice(0, 2)).toEqual([1n, 2n]);
     expect(new Set(slots).size).toBe(slots.length);
-  });
-});
-
-describe('previewFrom (#3786)', () => {
-  const a = { kind: 1 as const, owner: L1, slot: 0, offerId: 7n };
-  const b = { kind: 0 as const, owner: L1, slot: 2, offerId: 0n };
-  it('reads fills and skips against the sources sent, with the vault and wallet split', () => {
-    const p = previewFrom([[{ sourceIndex: 1n, amount: 60n, rateBps: 500n, collateral: 90n }], [{ sourceIndex: 0n, reason: '0x1234' }], 60n, 40n, 20n], [a, b]);
-    expect(p.plan).toEqual({ fills: [{ source: b, amount: 60n, rateBps: 500n, collateral: 90n }], total: 60n, collateralLocked: 90n });
-    expect(p.skipped).toEqual([{ source: a, reason: '0x1234' }]);
-    expect([p.fromVault, p.fromWallet]).toEqual([40n, 20n]);
-  });
-  it('refuses a preview naming a source the borrow did not send', () => {
-    expect(() => previewFrom([[{ sourceIndex: 2n, amount: 1n, rateBps: 1n, collateral: 1n }], [], 1n, 0n, 0n], [a, b])).toThrow(/did not send/);
-    expect(() => previewFrom([[], [{ sourceIndex: 5n, reason: '0x' }], 0n, 0n, 0n], [a])).toThrow(/did not send/);
   });
 });

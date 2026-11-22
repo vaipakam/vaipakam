@@ -15,7 +15,6 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
-import { readLiveHolderOrNull } from '../positions/positionNft';
 import { askAfter } from '../tx/simulate';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -27,7 +26,7 @@ import { shortAddress } from '../ui/format';
 import { allowanceFigure } from './approvalCap';
 import { repaidStatus } from './repaidLog';
 import { repayReceipt } from './repayReceipt';
-import { changedBetween, payerHolderBlocker, promptCount, readRepayReview, reviewBlockers, type RepayReview } from './repayReview';
+import { changedBetween, promptCount, readRepayReview, reviewBlockers, type RepayReview } from './repayReview';
 
 type Hex = `0x${string}`;
 
@@ -49,10 +48,6 @@ interface RepayLoanProps {
   own: OwnStateClient;
   meta: TokenMetaMap | null;
   onClose: () => void;
-  /** #3769: for a payer who holds neither side, the borrower-position holder
-   *  the loan page named (and the payer confirmed where it had moved), or
-   *  `null` before that; `undefined` for anyone else. */
-  namedHolder?: Hex | null;
 }
 
 /**
@@ -66,7 +61,7 @@ interface RepayLoanProps {
  * outcome is measured from the transaction's own logs: the status its
  * repayment left the loan in, and what left the wallet.
  */
-export function RepayLoan({ loanId, chain, own, meta, onClose, namedHolder }: RepayLoanProps) {
+export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -129,19 +124,6 @@ export function RepayLoan({ loanId, chain, own, meta, onClose, namedHolder }: Re
         const after = await putBack(asset, prior, amount, since);
         throw new StatedRefusal({ code: 'RepayStopped', reason: `${reason} ${after.sentence}`, reopensAt: null, remedy: null });
       };
-
-      // #3769 — a payer who does not hold the borrower position pays only for
-      // the holder the page named. The approval can wait for hours (a
-      // multi-signature wallet), so the holder is read again here, at or
-      // after the approval's block and right before the repayment prompt; a
-      // holder that moved stops the payment and puts the approval back.
-      if (namedHolder !== undefined) {
-        const holder = await askAfter(own, since, (c, blockNumber) => readLiveHolderOrNull(c, diamond, r.loan.borrowerTokenId, blockNumber));
-        if (holder.kind === 'unreadable') return stop(format('flow.unreadable', { reason: holder.reason }));
-        if (holder.kind === 'reverted') return stop(format('flow.unreadable', { reason: refusalFromError(holder.error).reason }));
-        if (payerHolderBlocker({ ...r, borrowerHolder: holder.value }, account, namedHolder) !== null)
-          return stop(holder.value === null ? text('payer.holderChangedUnread') : format('payer.holderChanged', { holder: holder.value }));
-      }
 
       // The dry run: the protocol's own verdict on this repayment, now.
       const dry = await askAfter(own, since, (c, blockNumber) => c.simulateContract({ address: diamond, abi: REPAY_ABI, functionName: 'repayLoan', args: [loanId], account, blockNumber }));
@@ -261,16 +243,6 @@ export function RepayLoan({ loanId, chain, own, meta, onClose, namedHolder }: Re
   }, [loanId]);
 
   const shortText = (asset: Hex) => (short: bigint) => format('repay.short', { amount: tokenAmount(short, asset, meta, format) });
-  // Every blocker of a review: the protocol's and the wallet's, then the
-  // payer's own (#3769: the holder this page named is still the holder).
-  const allBlockers = (r: RepayReview): string[] => {
-    const base = reviewBlockers(r, shortText(r.loan.principalAsset));
-    const payer = payerHolderBlocker(r, account, namedHolder);
-    if (payer === null) return base;
-    const line =
-      payer === 'unconfirmed' ? text('payer.unconfirmed') : r.borrowerHolder === null ? text('payer.holderChangedUnread') : format('payer.holderChanged', { holder: r.borrowerHolder });
-    return [...base, line];
-  };
 
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
@@ -286,12 +258,12 @@ export function RepayLoan({ loanId, chain, own, meta, onClose, namedHolder }: Re
       return { kind: 'changed', what };
     }
     if (current()) setReview(next);
-    const blockers = allBlockers(next);
+    const blockers = reviewBlockers(next, shortText(next.loan.principalAsset));
     if (blockers.length > 0) return { kind: 'refused', refusal: { code: next.verdict.refusals[0]?.code ?? 'RepayBlocked', reason: blockers[0]!, reopensAt: null, remedy: null } };
     return { kind: 'ok' };
   };
 
-  const blockers = review ? allBlockers(review) : [];
+  const blockers = review ? reviewBlockers(review, shortText(review.loan.principalAsset)) : [];
   const gate = review
     ? {
         ready: blockers.length === 0,

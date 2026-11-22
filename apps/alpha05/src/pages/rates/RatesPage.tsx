@@ -464,27 +464,8 @@ function OwnRow({ t }: { t: OwnTerm }) {
         <p className="tier-b">{withheldWhy(t, text, format)}</p>
       )}
       {counts && <p className="tier-b">{format('rates.counts', { loans: String(t.loans), lenders: String(t.lenders ?? 0), borrowers: String(t.borrowers ?? 0) })}</p>}
-      <UnconfirmedLine f={t} />
       {t.lookbackDays !== null && <p className="tier-b">{format('rates.lookback', { days: String(t.lookbackDays) })}</p>}
     </li>
-  );
-}
-
-/** How many loans the point left out because their agreed terms are not
- *  confirmed yet, zero included, so a gap never reads as a quiet market. */
-export function unconfirmedText(f: OwnFigure, text: Text, format: Format): string | null {
-  if (f.unconfirmedLeftOut !== null) return format('rates.unconfirmedLeftOut', { n: String(f.unconfirmedLeftOut) });
-  return f.state === 'not-computed' ? null : text('rates.unconfirmedUnstated');
-}
-
-function UnconfirmedLine({ f }: { f: OwnFigure }) {
-  const { text, format } = useCopy();
-  const line = unconfirmedText(f, text, format);
-  if (line === null) return null;
-  return (
-    <p className="tier-b" data-testid="rates-unconfirmed" data-count={f.unconfirmedLeftOut ?? undefined}>
-      {line}
-    </p>
   );
 }
 
@@ -504,7 +485,6 @@ const RULE_LABEL: Record<string, CopyKey> = {
 /** The index's words for a setting's value, an exclusion or an interest source. */
 const RULE_WORD: Record<string, CopyKey> = {
   'closed-by-repayment': 'rates.wordClosedByRepayment',
-  'any-status': 'rates.wordAnyStatus',
   'interest-paid': 'rates.wordInterestPaid',
   'weighted-quartiles': 'rates.wordWeightedQuartiles',
   'open-loans': 'rates.wordOpenLoans',
@@ -517,12 +497,9 @@ const RULE_WORD: Record<string, CopyKey> = {
   'loans-younger-than-min-age': 'rates.wordYoung',
   LoanSettlementBreakdown: 'rates.wordSettlements',
   InterestPaymentBooked: 'rates.wordPeriodic',
-  LoanInterestPaid: 'rates.wordInterestStatements',
-  'less LoanInterestUndelivered': 'rates.wordLessUndelivered',
   'refinance-payoff': 'rates.wordRefinance',
   'swap-to-repay': 'rates.wordSwapToRepay',
   'partial-repayment': 'rates.wordPartial',
-  'fallback-recovery': 'rates.wordFallbackRecovery',
 };
 
 function word(w: string, text: Text): string {
@@ -559,8 +536,8 @@ function RuleStatement({ rule }: { rule: CurveRule }) {
       )}
       {rule.excludes.length > 0 && <RuleList title={text('rates.ruleExcludes')} items={rule.excludes.map((w) => word(w, text))} testId="rates-rule-excludes" />}
       {rule.interestSources.length > 0 && <RuleList title={text('rates.ruleInterestSources')} items={rule.interestSources.map((w) => word(w, text))} testId="rates-rule-sources" />}
-      {rule.interestNotCounted.length > 0 && (
-        <RuleList title={text('rates.ruleNotCounted')} items={rule.interestNotCounted.map((w) => word(w, text))} testId="rates-rule-not-counted" />
+      {rule.interestNotYetCounted.length > 0 && (
+        <RuleList title={text('rates.ruleNotYetCounted')} items={rule.interestNotYetCounted.map((w) => word(w, text))} testId="rates-rule-not-counted" />
       )}
       {rule.points.length > 0 && (
         <RuleList
@@ -662,7 +639,6 @@ function History({
                     <th scope="col">{text('rates.historyDay')}</th>
                     <th scope="col">{text('rates.historyReference')}</th>
                     <th scope="col">{text('rates.historyOwn')}</th>
-                    <th scope="col">{text('rates.historyUnconfirmed')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -673,7 +649,6 @@ function History({
                         {r.reference.valueBps !== null ? pct(r.reference.valueBps, none) : r.reference.state === REFERENCE_NOT_PUBLISHED ? text('rates.notPublishedShort') : none}
                       </td>
                       <td>{ownHeadline(r.ownLoans, text)}</td>
-                      <td>{r.ownLoans.unconfirmedLeftOut !== null ? String(r.ownLoans.unconfirmedLeftOut) : none}</td>
                     </tr>
                   ))}
                 </tbody>

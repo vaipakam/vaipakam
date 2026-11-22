@@ -237,7 +237,7 @@ contract OfferBookBoundsTest is SetupTest {
     function test_openOfferOnBookIsDiamondInternal() public {
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        _book().openOfferOnBook(1, LibOfferAdmission.Route.UserPosted, false);
+        _book().openOfferOnBook(1, LibOfferAdmission.Route.UserPosted);
     }
 
     /// @dev The creation events still come out, with their old signatures.

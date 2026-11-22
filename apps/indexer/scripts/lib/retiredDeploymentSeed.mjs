@@ -111,23 +111,16 @@ function entriesFromArgs(args) {
   throw new Error('usage: retiredDeploymentSeed.mjs <print|apply> (<file.json> | <chainId> <diamond> <deployBlock>)');
 }
 
-/** Where a wrangler D1 command acts: the remote database (the deploy), or a
- *  local one persisted under a rehearsal's scratch folder. */
-export const REMOTE_D1 = Object.freeze(['--remote']);
-export const localD1 = (persistTo) => Object.freeze(['--local', '--persist-to', persistTo]);
-
-/** Run one seed statement from apps/indexer (wrangler reads wrangler.jsonc
- *  there), against the remote D1 unless `target` names a local one. */
-export function applyRetiredDeployment(entry, { cwd = join(dirname(fileURLToPath(import.meta.url)), '..', '..'), target = REMOTE_D1 } = {}) {
+/** Run one seed statement against the remote D1 from apps/indexer (wrangler reads wrangler.jsonc there). */
+export function applyRetiredDeployment(entry, { cwd = join(dirname(fileURLToPath(import.meta.url)), '..', '..') } = {}) {
   const sql = seedRetiredDeploymentSql(entry);
-  const r = spawnSync('pnpm', ['exec', 'wrangler', 'd1', 'execute', D1_NAME, ...target, '--command', sql], {
+  const r = spawnSync('pnpm', ['exec', 'wrangler', 'd1', 'execute', D1_NAME, '--remote', '--command', sql], {
     cwd,
     encoding: 'utf8',
     shell: process.platform === 'win32',
   });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  // The remote answer reports "Executed …"; a local one "N command(s) executed successfully".
-  const ok = r.status === 0 && /Executed|rows (read|written)|commands? executed successfully/.test(out);
+  const ok = r.status === 0 && /Executed|rows (read|written)/.test(out);
   return { ok, sql, output: out };
 }
 

@@ -52,7 +52,7 @@ export function indexReason(e: unknown, text: CopyAccess['text']): string {
  * to what has been read so far, and the page says how many that is. A
  * failed read is a degraded-source warning, never an empty book.
  */
-export function OfferBook({ viewer, rentals = false, empty, token = null, onShowAll }: { viewer: Hex; rentals?: boolean; empty?: ReactNode; token?: { asset: Hex; tokenId: bigint } | null; onShowAll?: () => void }) {
+export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; rentals?: boolean; empty?: ReactNode }) {
   const copy = useCopy();
   const { text, format } = copy;
   const world = useWorldRail();
@@ -77,10 +77,10 @@ export function OfferBook({ viewer, rentals = false, empty, token = null, onShow
   const pages = book.data?.pages ?? [];
   const all = pages.flatMap((p) => p.rows);
   const unread = pages.reduce((n, p) => n + p.unread, 0);
-  const rows = all.filter((r) => inBook(r, { tab, side, hide: hideMine ? viewer : null, token }));
+  const rows = all.filter((r) => inBook(r, { tab, side, hide: hideMine ? viewer : null }));
   /** What this tab holds before the side and hide-mine filters: the book is
    *  empty only when this is, otherwise the filters hide what there is. */
-  const inTab = all.filter((r) => inBook(r, { tab, side: 'all', hide: null, token })).length;
+  const inTab = all.filter((r) => inBook(r, { tab, side: 'all', hide: null })).length;
   const meta = useTokenMeta(all.flatMap((r) => [r.lendingAsset, r.collateralAsset, r.prepayAsset])).data;
   const failed = world.indexer.origin === null || book.status === 'error';
   const reason = world.indexer.origin === null ? text('offerBook.noIndex') : indexReason(book.error, text);
@@ -106,16 +106,6 @@ export function OfferBook({ viewer, rentals = false, empty, token = null, onShow
           </button>
         ))}
       </div>
-      {token !== null && (
-        <div className="card" data-testid="offer-book-token" data-token={`${token.asset}:${token.tokenId}`}>
-          <p className="tier-a">{format('offerBook.tokenOnly', { token: `${shortAddress(token.asset)} #${token.tokenId.toString()}` })}</p>
-          {onShowAll && (
-            <button type="button" className="btn" onClick={onShowAll} data-testid="offer-book-token-all">
-              {text('offerBook.tokenShowAll')}
-            </button>
-          )}
-        </div>
-      )}
       <label className="choice">
         <input type="checkbox" checked={hideMine} onChange={(e) => setHideMine(e.target.checked)} data-testid="offer-book-hide-mine" />
         <span>{text('offerBook.hideMine')}</span>
@@ -134,11 +124,7 @@ export function OfferBook({ viewer, rentals = false, empty, token = null, onShow
           </p>
           {/* "Nothing listed" only from a complete, current read with every
               record understood; otherwise the failure or unread notice stands. */}
-          {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && inTab === 0 && (token !== null ? (
-            <p className="tier-b" data-testid="offer-book-token-none">
-              {format('offerBook.tokenNone', { chain: chain.name })}
-            </p>
-          ) : empty)}
+          {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && inTab === 0 && empty}
           {rows.length === 0 && inTab > 0 && (
             <p className="tier-b" data-testid="offer-book-filtered">
               {text('offerBook.filteredOut')}

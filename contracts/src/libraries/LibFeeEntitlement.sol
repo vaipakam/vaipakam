@@ -71,7 +71,7 @@ library LibFeeEntitlement {
         // 2026-11-16; `FeeLevelsDesign.md` §5). Do not switch it.
         uint256 baseLifTokenWei = (principal *
             LibVaipakam.cfgLoanInitiationFeeBps()) / LibVaipakam.BASIS_POINTS;
-        (uint256 baseLifNumeraire18, bool feedOk) = _lifToNumeraire18(
+        (uint256 baseLifNumeraire18, bool feedOk) = lifToNumeraire18(
             lendingAsset,
             baseLifTokenWei
         );
@@ -276,10 +276,10 @@ library LibFeeEntitlement {
     ///      {LibInteractionRewards} interest numeraire: `amount × price × 1e18 /
     ///      10^feedDec / 10^tokenDec`. `feedOk` is false on any oracle/decimals
     ///      failure so the caller can distinguish "unpriced" from "zero LIF".
-    function _lifToNumeraire18(
+    function lifToNumeraire18(
         address asset,
         uint256 amount
-    ) private view returns (uint256 value, bool feedOk) {
+    ) internal view returns (uint256 value, bool feedOk) {
         if (asset == address(0)) return (0, false);
 
         uint256 price;

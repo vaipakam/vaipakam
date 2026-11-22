@@ -501,7 +501,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
 /**
  * GET /offers/active?chainId=8453&limit=50&before=<offer_id>
  *     [&lendingAsset=0x..&collateralAsset=0x..&durationDays=30]
- *     [&excludeExpired=1&excludeSaleVehicles=1&excludeOffsetVehicles=1&excludeUnknownExpiry=1]
+ *     [&excludeExpired=1&excludeSaleVehicles=1&excludeOffsetVehicles=1]
  * Returns the page of active offers. Newest-first.
  *
  * Rate Desk (#1129) — the optional market params scope the page to one
@@ -533,12 +533,6 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   const excludeOffsetVehicles =
     url.searchParams.get('excludeOffsetVehicles') === '1';
-  // #3888 — a stub (`is_stub = 1`) is an offer whose expiry has not been
-  // read yet: its `expires_at` is the column default 0, which would read
-  // as "never expires". `/offers/stats` counts these as
-  // `activeUnknownExpiry`; a caller who asks for a book of offers known to
-  // be fillable leaves them out with this flag.
-  const excludeUnknownExpiry = url.searchParams.get('excludeUnknownExpiry') === '1';
   const notServed = chainNotServed(env, chainId);
   if (notServed) return notServed;
   try {
@@ -570,9 +564,6 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
     }
     if (excludeOffsetVehicles) {
       conds.push('is_offset_vehicle = 0');
-    }
-    if (excludeUnknownExpiry) {
-      conds.push('is_stub = 0');
     }
     const stmt = env.DB.prepare(
       `SELECT * FROM offers

@@ -3,10 +3,10 @@ import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { RewardClaim, pendingText } from './RewardClaim';
 import { RewardWait } from './RewardWait';
-import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readsPartOfEntries } from './rewards';
-import { usePlatformToken } from '../consent/holdDiscount';
+import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readsPartOfEntries, readVpfiToken } from './rewards';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
+import { useChainRead } from '../reads/chainRead';
 import { tokenAmount, useTokenMeta } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
 import { LifetimeClaimed } from '../rewards/LifetimeClaimed';
@@ -47,7 +47,8 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
   const held = useOwnRead(['rewardsHeld', diamond], (c) => readHeldRewards(c, diamond, account), { enabled });
   const expiry = useOwnRead(['rewardsExpiry', diamond], (c) => readSoonestExpiry(c, diamond, account), { enabled });
   const tier = useOwnRead(['rewardsTier', diamond], (c) => readEffectiveTier(c, diamond, account), { enabled });
-  const { read: vpfi, hold, token } = usePlatformToken(chain);
+  const vpfi = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { enabled });
+  const token = vpfi.data && vpfi.data !== '0x0000000000000000000000000000000000000000' ? vpfi.data : null;
   const meta = useTokenMeta(token ? [token] : []).data ?? null;
 
   if (!own || !chain) return null;
@@ -248,7 +249,7 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
       {heldReady && tokenGate}
       <RewardClaim kind="held" ready={heldReady} token={token} meta={meta} />
       <LifetimeClaimed chainId={chain.chainId} chainName={chain.name} account={account} amount={amount} />
-      <p className="tier-b">{hold === 'none' ? text('consent.noHoldDiscount') : tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
+      <p className="tier-b">{tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
       <OwnStamp reads={shown} />
       {!onRewards && (

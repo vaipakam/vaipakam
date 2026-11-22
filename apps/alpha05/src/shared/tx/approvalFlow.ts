@@ -12,7 +12,7 @@
  */
 import { erc20Abi } from 'viem';
 import type { Config } from 'wagmi';
-import { waitForSentReceipt } from './accountWallet';
+import { waitForTransactionReceipt } from 'wagmi/actions';
 import { sendWrite } from './send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
@@ -106,7 +106,7 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
           chainId,
           account,
         }),
-      wait: (hash) => waitForSentReceipt(config, hash, chainId).then((m) => m.blockNumber),
+      wait: (hash) => waitForTransactionReceipt(config, { hash, chainId }).then((m) => m.blockNumber),
       onStep,
     };
   }

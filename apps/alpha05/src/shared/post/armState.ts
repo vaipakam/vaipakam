@@ -33,7 +33,7 @@ export function armEnding(phase: TxPhase, readSet = false): ArmEnding {
     case 'measured':
       return phase.outcome.verdict === 'done' ? 'armed' : phase.outcome.verdict === 'not-done' ? 'not-set' : 'unknown';
     case 'superseded':
-      return phase.reason === 'replaced' ? 'unknown' : 'skipped';
+      return phase.reason === 'cancelled' ? 'skipped' : 'unknown';
     case 'signing':
     case 'submitted':
     case 'mined':

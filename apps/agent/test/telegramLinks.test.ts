@@ -44,7 +44,7 @@ describe('issueTelegramLinkCode', () => {
       issueLinkCode: async (...a: Parameters<TelegramStateStore['issueLinkCode']>) => store.issueLinkCode(...a),
     } as unknown as LinkStatePort;
     const order: string[] = [];
-    const issued1 = await issueTelegramLinkCode(
+    const code = await issueTelegramLinkCode(
       state,
       async (wallet, chainId) => {
         order.push(`row ${wallet} ${chainId}`);
@@ -52,18 +52,14 @@ describe('issueTelegramLinkCode', () => {
       w,
       CHAIN,
       NOW,
-      NOW,
     );
     expect(order).toEqual([`row ${w} ${CHAIN}`]);
-    if (issued1.kind !== 'issued') throw new Error('no code');
-    expect(store.consumeLinkCode(issued1.code, NOW)).toEqual({ wallet: w, chainId: CHAIN });
-    // #3836 — a request signed before the one just applied gets no code.
-    expect(await issueTelegramLinkCode(state, async () => {}, w, CHAIN, NOW, NOW - 1)).toEqual({ kind: 'superseded' });
+    expect(store.consumeLinkCode(code, NOW)).toEqual({ wallet: w, chainId: CHAIN });
 
     let issued = 0;
-    const counting = { issueLinkCode: async () => (issued++, 'issued') } as unknown as LinkStatePort;
+    const counting = { issueLinkCode: async () => (issued++, true) } as unknown as LinkStatePort;
     await expect(
-      issueTelegramLinkCode(counting, async () => Promise.reject(new Error('d1 down')), w, CHAIN, NOW, NOW),
+      issueTelegramLinkCode(counting, async () => Promise.reject(new Error('d1 down')), w, CHAIN, NOW),
     ).rejects.toThrow('d1 down');
     expect(issued).toBe(0);
   });
@@ -76,10 +72,7 @@ describe('warnUnansweredLocks', () => {
     store.keeperPoll(DEP, NOW, 1);
     store.recordLockRequests('42', 1, NOW, NOW - 300, { [CHAIN]: DIAMOND });
     store.recordLockRequests('42', 2, NOW + 60, NOW - 300, { [CHAIN]: DIAMOND });
-    const state = {
-      takeUnansweredLocks: async (...a: Parameters<TelegramStateStore['takeUnansweredLocks']>) => store.takeUnansweredLocks(...a),
-      phraseMarksOf: async (...a: Parameters<TelegramStateStore['phraseMarksOf']>) => store.phraseMarksOf(...a),
-    };
+    const state = { takeUnansweredLocks: async (...a: Parameters<TelegramStateStore['takeUnansweredLocks']>) => store.takeUnansweredLocks(...a) };
     const sent: { chat: string; text: string }[] = [];
     const send = (o: TelegramOutcome = 'accepted') => async (chat: string, text: string) => {
       sent.push({ chat, text });

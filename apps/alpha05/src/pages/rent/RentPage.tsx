@@ -1,8 +1,5 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { KitNotice, useKitUse } from '../../shared/kit/KitNotice';
-import { kitSeed } from '../../shared/kit/kit';
 import { getSupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -35,12 +32,6 @@ export function RentPage() {
 
   const terms = useTerms();
   const termsUnknown = served !== null && terms.state === 'failed';
-  // A kit "rent this token" link opens the book on that token's rentals
-  // (FeaturesOverExistingPartsDesign.md §7), until the reader shows all.
-  const kit = useKitUse('rent', connected ? chain : null, served?.own.account ?? null);
-  const [allTokens, setAllTokens] = useState(false);
-  const kitSeeded = kit.handoff ? kitSeed(kit.handoff.request, null) : null;
-  const token = !allTokens && kitSeeded?.action === 'rent' ? kitSeeded.token : null;
   const listing = useRentPostOpen('list');
   const requesting = useRentPostOpen('request');
 
@@ -48,7 +39,6 @@ export function RentPage() {
     <main className="page rent" aria-labelledby="rent-title">
       <h1 id="rent-title">{text('rentPage.title')}</h1>
       <p className="tier-b">{text('rentPage.lead')}</p>
-      <KitNotice action="rent" chain={connected ? chain : null} />
       {!connected && (
         <p className="tier-b" data-testid="rent-connect">
           {text('rentPage.connect')}
@@ -67,8 +57,6 @@ export function RentPage() {
         <OfferBook
           viewer={served.own.account}
           rentals
-          token={token}
-          onShowAll={() => setAllTokens(true)}
           empty={
             <div className="card" data-testid="rent-empty">
               <p className="tier-b">{format('rentPage.empty', { chain: served.chain.name })}</p>

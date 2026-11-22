@@ -154,18 +154,6 @@ describe('measureSafety', () => {
     expect(measureSafety(review('enable'), [posture(OTHER, true, false)], DIAMOND, copy)[0]?.status).toBe('not-done');
     expect(measureSafety(review('enable'), [posture(ME, true, false, OTHER)], DIAMOND, copy)[0]?.status).toBe('not-done');
   });
-  it('#3721: a switch-on that chose the token lock says whether the tokens were locked', () => {
-    const withNfts = review('enable', {}, { draft: { delaySeconds: 2 * DAY, protectNfts: true } });
-    const locked = eventLog('ProtectNftsSet', { account: ME }, { types: [{ type: 'bool' }], values: [true] });
-    expect(measureSafety(withNfts, [posture(ME, true, false), locked], DIAMOND, copy)).toEqual([
-      { status: 'done', label: 'safety.legEnabled:{"delay":"2 days"}' },
-      { status: 'done', label: 'safety.legNftsLocked' },
-    ]);
-    // The second prompt declined: protected mode is on, the tokens are not locked.
-    expect(measureSafety(withNfts, [posture(ME, true, false)], DIAMOND, copy)[1]).toEqual({ status: 'not-done', label: 'safety.legNftsLocked', reason: 'safety.nftsNotLocked' });
-    expect(measureSafety(review('lockNfts', { mode: ON }), [locked], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legNftsLocked' }]);
-    expect(safetySteps('lockNfts', ME, VAULT, null)).toMatchObject([{ to: 'diamond', functionName: 'lockPositionNfts', args: [ME] }]);
-  });
   it('reads a lock, an unlock request (from the vault) and the changes applied', () => {
     expect(measureSafety(review('lock', { mode: ON }), [posture(ME, true, true)], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legLocked' }]);
     const asked = eventLog('ProtectionSettingRequested', { action: 4 }, { types: [{ type: 'uint256' }, { type: 'uint64' }, { type: 'address' }], values: [0n, BigInt(NOW), ME] }, VAULT);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { downloadBody, WITHHELD_REQUEST_KEY, eraseAll, isAppKey, itemCount, readCookie, REPORT_KEY, takeInventory, type EraseSteps, type Sources, type StorageLike } from './dataRights';
+import { downloadBody, eraseAll, isAppKey, itemCount, readCookie, REPORT_KEY, takeInventory, type EraseSteps, type Sources, type StorageLike } from './dataRights';
 
 function store(entries: Record<string, string> = {}, opts: { sticky?: string[] } = {}): StorageLike & { map: Map<string, string> } {
   const map = new Map(Object.entries(entries));
@@ -61,15 +61,6 @@ describe('what this browser keeps', () => {
     expect(body.walletAddresses).toEqual([W]);
     expect(body.notIncluded.walletConnectionItems).toBe(1);
     expect(JSON.stringify(body)).not.toContain('secret-session-material');
-  });
-  it('withholds a pending alert request’s key from the download and says so (#3836)', async () => {
-    const key = `0x${'ab'.repeat(32)}`;
-    const kept = JSON.stringify({ action: 'link', issuedAt: 100, requestKey: key });
-    const local = store({ [`alpha05.alerts.pendingRequest.84532.${W}`]: kept });
-    const inv = await takeInventory(sources({}, local));
-    const body = JSON.parse(downloadBody(inv, new Date('2026-11-09T00:00:00Z'), [W]));
-    expect(body.records[`alpha05.alerts.pendingRequest.84532.${W}`]).toEqual({ action: 'link', issuedAt: 100, requestKey: WITHHELD_REQUEST_KEY });
-    expect(JSON.stringify(body)).not.toContain(key);
   });
   it('reads one cookie by name', () => {
     expect(readCookie('vaipakam_lang', 'x=1; vaipakam_lang=zh; y=2')).toBe('zh');

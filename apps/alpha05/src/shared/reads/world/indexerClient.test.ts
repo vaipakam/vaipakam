@@ -25,21 +25,3 @@ describe('postJson (OFF-59)', () => {
     await expect(createIndexerClient(null).postJson('/x', {})).rejects.toMatchObject({ why: 'not-configured' });
   });
 });
-
-describe('getJson refusals', () => {
-  const answering = (body: string, status: number) => (async () => new Response(body, { status })) as unknown as typeof fetch;
-  const thrown = async (f: typeof fetch) => {
-    try {
-      await createIndexerClient('https://i', f).getJson('/x');
-    } catch (e) {
-      return e as IndexerUnavailable;
-    }
-    throw new Error('did not throw');
-  };
-  it('keeps the error code a route named, so a stated refusal is told from a missing route', async () => {
-    const named = await thrown(answering(JSON.stringify({ error: 'no-vault' }), 404));
-    expect([named.status, named.code]).toEqual([404, 'no-vault']);
-    const bare = await thrown(answering('Not found', 404));
-    expect([bare.status, bare.code]).toEqual([404, null]);
-  });
-});

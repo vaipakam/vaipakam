@@ -1,0 +1,13 @@
+## Position sale state guard (#3710)
+
+A buyer of a loan position can no longer be sold a position that changed under them. Every position token now carries a state number that rises each time value leaves its position (a payout, any fall in a loan's collateral, a rate or term change, a change to an offer, or the end of a side). Anyone can read it, and anyone can ask the platform to confirm a token is still at a given number. A price for a position is a price for one state number, so an order that carries the number can be refused when it moved.
+
+The wait before a token can move after a value-out now has two lengths. When the holder takes value out of their own position (a collateral withdrawal, a claim, a change to their own offer), their token waits 15 minutes by default, settable from 1 minute to 1 hour. Any other value-out (a repayment, a liquidation, a keeper step) holds the token 60 seconds by default, settable from 1 second to 10 minutes, so the other side cannot keep a token unsellable with small payments. A new wait never shortens a running one, and the token still cannot move in the same block.
+
+The position token contract now sends the standard metadata-update signal whenever a figure a token shows changes, so marketplaces, wallets and explorers refresh the position before showing or filling it.
+
+The marks are placed at the few places every such change must pass rather than route by route: the payout rules, one writer for a loan's collateral amount (with a build check that refuses any other write), the loan-terms writer and the taker of funds held for a lender. A partial liquidation, the matched liquidation legs, the fallback split and the periodic forced sale, which lowered collateral without a mark of their own, are now marked.
+
+A collateral withdrawal now releases the amount into the vault of whoever holds the borrower token, as their free balance, read from the token by the payout rules, never a payee chosen by the withdrawal itself. Nothing a loan or an open offer owes a party is paid to a wallet; the holder moves it out with their own vault withdrawal, under protected mode's delay and lock (owner decision 2026-11-19). A second build check refuses any token or native transfer in the platform's code outside the payout rules and the delivery helper unless it is listed with its reason, so no new route can skip protected mode's delay.
+
+The token contract, the vault code and several facets change, so this reaches a chain by fresh deploy. Design: `PositionSaleStateGuardDesign.md` (card #3710).

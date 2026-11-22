@@ -6,8 +6,6 @@ import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
-import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
-import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {VaultOutflowTypes, OutflowReason} from "../vault/VaultOutflowTypes.sol";
 
@@ -36,24 +34,11 @@ import {VaultOutflowTypes, OutflowReason} from "../vault/VaultOutflowTypes.sol";
  *
  *         Pause: refused while the Diamond is paused, unless the escape
  *         route is open (the same rule the escape route and the payout
- *         release follow). A clawback run by a recovery claim (#3756) is
- *         refused while paused even with the escape route open, and until
- *         {CLAIM_OUTAGE_WAIT} after the latest sequencer outage window ended,
- *         so a claim never completes while the owner could not answer it.
+ *         release follow).
  */
 contract RecoveryClawbackFacet is DiamondReentrancyGuard {
     /// @notice Most assets one clawback or sweep names.
     uint256 internal constant MAX_ASSETS = 32;
-
-    /// @notice #3756 — the trigger a recovery claim runs with
-    ///         (`VaultProtectionBase.TRIGGER_RECOVERY_CLAIM`).
-    uint8 internal constant TRIGGER_RECOVERY_CLAIM = 3;
-
-    /// @notice #3756 — how long after the price guard's latest sequencer
-    ///         outage window ended a recovery claim may run
-    ///         (`RecoveryClaimDesign.md` 4.5). The window already ends after
-    ///         the guard's own grace, so the wait favours the owner.
-    uint256 internal constant CLAIM_OUTAGE_WAIT = 24 hours;
 
     /**
      * @notice `account` was clawed back to `recovery`: each asset listed and
@@ -61,8 +46,7 @@ contract RecoveryClawbackFacet is DiamondReentrancyGuard {
      *         vault's `AccountRecovered` (first clawback only) and one
      *         `VaultOutflow` per asset moved, reason CLAWBACK.
      * @param by   The key that triggered it.
-     * @param role 0 = the owner, 1 = a signer, 3 = the recovery address
-     *             running a matured recovery claim (`VaultProtectionBase.TRIGGER_*`).
+     * @param role 0 = the owner, 1 = a signer (`VaultProtectionBase.TRIGGER_*`).
      * @custom:event-category state-change/vault-mutation
      */
     event AccountClawedBack(
@@ -99,12 +83,6 @@ contract RecoveryClawbackFacet is DiamondReentrancyGuard {
     error TooManyAssets(uint256 count, uint256 max);
     /// @notice The account's record names no recovery address in force.
     error NoRecoveryAddress(address account);
-    /// @notice #3756 — a recovery claim's run waits until `until`, 24 hours
-    ///         after the latest sequencer outage window ended.
-    error ClaimRunAfterOutage(uint256 until);
-    /// @notice #3756 — the sequencer outage window could not be read, so a
-    ///         recovery claim's run is refused (fail closed).
-    error ClaimOutageUnreadable();
 
     /**
      * @notice Move the free balance of `assets` from `account`'s vault to its
@@ -112,12 +90,8 @@ contract RecoveryClawbackFacet is DiamondReentrancyGuard {
      *         clawback the vault has just authorized and recorded.
      * @param account The account (the vault's creation owner).
      * @param by      The key that triggered the clawback.
-     * @param role    Its role (0 owner, 1 signer, 3 recovery claim).
+     * @param role    Its role (0 owner, 1 signer).
      * @param assets  The assets to move.
-     * @dev    A recovery claim's run (role 3) is refused while the platform is
-     *         paused, escape window or not, and until {CLAIM_OUTAGE_WAIT}
-     *         after the latest sequencer outage; the owner's and the signers'
-     *         own clawback is unchanged.
      */
     function applyClawback(
         address account,
@@ -127,7 +101,6 @@ contract RecoveryClawbackFacet is DiamondReentrancyGuard {
     ) external nonReentrant {
         address vault = LibVaipakam.storageSlot().userVaipakamVaults[account];
         if (vault == address(0) || msg.sender != vault) revert NotAccountVault(account, msg.sender);
-        if (role == TRIGGER_RECOVERY_CLAIM) _requireClaimRunOpen();
         (address recovery, bool recovered) = _recoveryOf(account);
         if (!recovered) revert AccountNotRecovered(account);
         uint256[] memory amounts = _move(account, recovery, assets, OutflowReason.CLAWBACK);
@@ -176,26 +149,6 @@ contract RecoveryClawbackFacet is DiamondReentrancyGuard {
     }
 
     // ─── Internals ───────────────────────────────────────────────────────
-
-    /// @dev #3756 4.5 — a recovery claim runs only while the platform is not
-    ///      paused, and not until {CLAIM_OUTAGE_WAIT} after the price guard's
-    ///      latest sequencer outage window ended. Fail closed: a guard that
-    ///      cannot be reached or read refuses the run. A guard with no
-    ///      sequencer feed (an L1) reports no window, and the check passes.
-    function _requireClaimRunOpen() private view {
-        if (LibPausable.paused()) revert LibPausable.EnforcedPause();
-        (bool ok, IPriceGuard g) = LibPriceGuard.tryGuardForRead();
-        if (!ok) revert ClaimOutageUnreadable();
-        uint256 windowEnd;
-        try g.sequencerOutageWindow{gas: LibPriceGuard.GUARD_READ_GAS}() returns (uint256, uint256 e) {
-            windowEnd = e;
-        } catch {
-            revert ClaimOutageUnreadable();
-        }
-        if (windowEnd != 0 && block.timestamp < windowEnd + CLAIM_OUTAGE_WAIT) {
-            revert ClaimRunAfterOutage(windowEnd + CLAIM_OUTAGE_WAIT);
-        }
-    }
 
     function _recoveryOf(address account) private view returns (address recovery, bool recovered) {
         (recovery, recovered) = LibProtectedAccount.recoveryOf(account);
