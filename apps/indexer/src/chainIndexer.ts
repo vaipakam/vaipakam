@@ -173,7 +173,7 @@ import {
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 import { fillSettingsHistory, historyAddresses, historyStatements, type RawLog } from './stateHistory';
-import { LAST_EVENT_SET, eventPosition, lastEventBinds, readPosition, type RowPosition } from './lastEvent';
+import { LAST_EVENT_SET, UNKNOWN_POSITION, eventPosition, lastEventBinds, readPosition, type RowPosition } from './lastEvent';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -3688,7 +3688,13 @@ async function processOfferLogs(
           o.logIndex,
           now,
           now,
-          ...lastEventBinds(o.pos),
+          // #3921 B2 — NOT the OfferCreated position: the figures above come
+          // from the unpinned read (#763), which may already reflect a later
+          // amend, match or acceptance, and its block cannot be named. So the
+          // row's provenance is unknown until an event or a pinned read next
+          // writes it (the range heal re-reads every such row at the settled
+          // block, because it is inserted `collateral_range_stale`).
+          ...lastEventBinds(UNKNOWN_POSITION),
         )
         .run();
       if ((result.meta?.changes ?? 0) > 0) newOffers++;
@@ -6048,7 +6054,10 @@ export async function processLoanLogs(
             // read-back is unpinned, and a sale may already have moved a side.
             lender,
             borrower,
-            ...lastEventBinds(eventPosition(log)),
+            // #3921 B2 — the figures come from that unpinned read-back, whose
+            // block cannot be named, so the row's provenance is unknown until
+            // an event or a pinned read next writes it.
+            ...lastEventBinds(UNKNOWN_POSITION),
           );
         // #1130 — participation seed via the offer-projection resolution
         // above, written with the row by the pass that writes it, for the

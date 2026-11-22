@@ -73,6 +73,11 @@ export function readPosition(block: bigint | number): RowPosition {
   return { block: Number(block), txIndex: null, logIndex: null };
 }
 
+/** A write whose figures came from a read whose block cannot be named (an
+ *  unpinned read at the chain's head). Its provenance is unknown, so the row
+ *  says so rather than naming an event that did not produce the figures. */
+export const UNKNOWN_POSITION: RowPosition = Object.freeze({ block: null, txIndex: null, logIndex: null });
+
 /** The three binds {@link LAST_EVENT_SET} and an INSERT's three columns
  *  take, in column order. */
 export function lastEventBinds(p: RowPosition): [number | null, number | null, number | null] {

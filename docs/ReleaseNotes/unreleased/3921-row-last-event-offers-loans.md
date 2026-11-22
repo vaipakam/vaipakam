@@ -11,8 +11,10 @@ event-derived tables follow one group at a time.
 The three columns say what they know. A row set from a read of the chain's state
 (a heal of a stub, the settlement heal, the reconciliation repair) records the
 block it was read at with no event position, which means "reflects every event
-up to the end of that block". A row last written before this change records
-nothing: unknown, not a guess. The columns only ever move forward, by one shared
+up to the end of that block". A row whose figures came from a read at the
+chain's head, whose block cannot be named (the offer and loan detail reads made
+as a row is first written), and a row last written before this change, record
+nothing: unknown, never an event that did not produce the figures. The columns only ever move forward, by one shared
 rule, because the handlers apply some events grouped by kind within a block: the
 row names the latest event that wrote it in chain order, whatever order the
 handlers ran in, and replaying an older block cannot move it back.
