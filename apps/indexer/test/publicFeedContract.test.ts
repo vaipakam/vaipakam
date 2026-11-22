@@ -112,6 +112,8 @@ function seeded() {
       init_duration_days: 30,
       init_principal_unbacked: 0,
       init_terms_unbacked: 0,
+      init_lender: A,
+      init_borrower: B,
     });
   }
   // B held both loans as borrower and paid interest on the first, so the

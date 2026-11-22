@@ -15,11 +15,11 @@ It is not a score. No figure is combined with another, ranked or coloured. Every
 
 Timing comes from time, not from the late fee alone. A full repayment counts as on time when it is not after the late-fee start that the repayment event states. Until that event carries the late-fee start, a repayment with a late fee counts as late. One made no later than the due date stated at the loan's start counts as on time. Any other repayment is unclassified.
 
-A loan counts for the address that held the borrower position when the loan closed. A payment by someone else counts for the holder. The vehicle loan a lender's sale creates is left out.
+A loan counts for the address that held the borrower position when the loan closed. A payment by someone else counts for the holder. The vehicle loan a lender's sale creates is left out. So is a loan whose opening named the same address as lender and borrower, and a loan whose opening parties the index cannot establish; the record counts each of those on its own line instead, by the same rule every public figure follows.
 
 The fees paid to the platform are not stated yet, because the events do not state each loan's fees. The answer says so instead of showing a partial sum.
 
-The record is also the public data feed's eleventh route, `/public/v1/repayment-record/{address}`, in the feed's envelope. It is the only feed route that takes an address, and it answers for one address at a time: no feed route lists, ranks, searches or filters addresses by their record. The feed's table test now asks a sharper question than before. Every table a feed route reads must be one the indexer rebuilds from the chain alone, never one born off chain or mixed.
+The record is also the public data feed's tenth route, `/public/v1/repayment-record/{address}`, in the feed's envelope. It is the only feed route that takes an address, and it answers for one address at a time: no feed route lists, ranks, searches or filters addresses by their record. The feed's table test now asks a sharper question than before. Every table a feed route reads must be one the indexer rebuilds from the chain alone, never one born off chain or mixed.
 
 The rules are in `docs/RepaymentRecordDerivation.md`. The app's views are separate work.
 

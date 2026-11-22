@@ -60,6 +60,8 @@ A payment made by another address counts for the holder.
 | `interestPaid` | per token, the sum of `LoanInterestPaid` less `LoanInterestUndelivered`, in the token's own units |
 | `rentals.*` | the same rules, for loans whose lent asset is an NFT. A rental is completed when it closed by a repayment route, and ended by default when it closed by a default or a liquidation |
 | `firstLoanAt` | the first time the address held a borrower position |
+| `leftOut.oneAddress` | loans this address held as borrower whose opening event named the same address as lender and borrower. They reach no other figure |
+| `leftOut.openingPartiesUnknown` | loans this address held as borrower whose opening parties the index cannot establish. They reach no other figure and are never assumed to have two parties |
 | `feesPaid` | not stated yet. The events do not state each loan's initiation fee or the platform's share of each interest payment, so this figure is left out rather than guessed |
 
 When a loan closes by a repayment route, that route decides its class, so a
@@ -69,6 +71,13 @@ the first event that began the forced close decides.
 ## Left out
 
 - The vehicle loans that a lender's sale creates.
+- A loan whose opening event named the same address as lender and borrower,
+  and a loan whose opening parties the index cannot establish. This is the
+  one counting rule for every public figure ([`PublicDataFeed.md`](PublicDataFeed.md),
+  "How the figures count"). Each is counted under `leftOut`, not in a class.
+  The test reads the opening event only, so a later sale or handover moves a
+  loan neither in nor out. It sees one address on both sides only; two
+  addresses of one person are the case the record's third statement names.
 - Loans on other networks.
 - Anything before `historyBegins`.
 - Anything outside this platform.

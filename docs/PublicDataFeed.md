@@ -127,6 +127,8 @@ Three rules hold for every figure the feed publishes.
    is left out of rate figures too and counted on its own line
    (`counting.openingPartiesUnknown`); it is never assumed to have two
    parties.
+   The repayment record applies the same test to the loans it counts and
+   states both counts under `leftOut`.
 3. **No mean across assets or terms.** Every rate figure is per lending asset
    and term range. No figure averages the rates of different assets or terms
    together.
@@ -155,7 +157,9 @@ Each response's `about.excludes` lists this for the route. In short:
   chain has not yet confirmed.
 - **The repayment record** covers this network only, from where its index
   begins (`historyBegins`), and leaves out the temporary loan a lender's
-  sale creates and anything outside this platform. A payment by another
+  sale creates and anything outside this platform. Loans opened with one
+  address on both sides, and loans whose opening parties are unknown, are
+  counted under `leftOut` rather than in any class. A payment by another
   address counts for the holder. The fees the address paid are not stated
   yet (`feesPaid.stated` is `false`, with the reason), never shown as a
   partial sum.

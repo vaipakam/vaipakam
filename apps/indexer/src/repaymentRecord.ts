@@ -51,7 +51,15 @@
  *    default or liquidation.
  *  - A closed loan whose closing time the index does not hold is placed by
  *    the current holder of its borrower position.
- *  - LEFT OUT. The vehicle loans a lender's sale creates.
+ *  - LEFT OUT. The vehicle loans a lender's sale creates. And, by the one
+ *    counting rule for public figures (#3879, `figureRules.ts`), a loan
+ *    whose opening event named the same address as lender and borrower,
+ *    and a loan whose opening parties the index cannot establish. Each is
+ *    counted on its own line (`leftOut`), never in a class. The test reads
+ *    the opening event's parties stored with the loan row, so a later sale
+ *    or handover moves a loan neither in nor out. It sees one address on
+ *    both sides only; two addresses of one person stay the statement's
+ *    case, and the fees paid line is what answers it.
  *
  * NOT STATED YET. The fees paid to the platform: the events do not state a
  * loan's initiation fee or the treasury's share of every interest payment
@@ -62,6 +70,7 @@ import { type Env } from './env';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, requestedChainId } from './servedChain';
 import { CURSOR_KIND } from './chainIndexer';
+import { openingPartiesOf } from './figureRules';
 
 export const RECORD_VERSION = 'repayment-record/1';
 
@@ -78,6 +87,8 @@ export const RECORD_EXCLUDES = Object.freeze([
   'loans and rentals on other networks (each network is read on its own)',
   'loans before the history this network’s index begins with (historyBegins)',
   "the vehicle loans a lender's sale creates",
+  'loans whose lender and borrower were the same address when they opened (counted as leftOut.oneAddress; two addresses of one person cannot be seen)',
+  'loans whose opening parties the index cannot establish (counted as leftOut.openingPartiesUnknown; never assumed to be two parties)',
   'who paid: a payment by another address counts for the holder',
   'anything outside this platform',
 ]);
@@ -137,6 +148,12 @@ export interface RecordLoan {
   isSaleVehicle: boolean;
   /** The current borrower-position holder, lower case. */
   currentHolder: string | null;
+  /**
+   * The opening event's parties (#3879): `two` when lender and borrower were
+   * different addresses, `one` when the same address, `unknown` when the
+   * index cannot establish them. Only `two` is counted.
+   */
+  openingParties: 'two' | 'one' | 'unknown';
 }
 
 export interface Acquisition {
@@ -173,6 +190,12 @@ export interface RepaymentRecordFigures {
   interestPaid: { asset: string; total: string }[];
   /** First time this address held a borrower position here; null if never. */
   firstLoanAt: number | null;
+  /**
+   * Loans this address held as borrower that the counting rule leaves out
+   * (#3879), each counted once whatever its state. None of their events
+   * reach any figure above.
+   */
+  leftOut: { oneAddress: number; openingPartiesUnknown: number };
 }
 
 const OPEN_STATUSES = new Set(['active', 'fallback_pending']);
@@ -289,6 +312,7 @@ export function deriveRecord(
     interestPeriods: { closedWithoutSale: 0, collectedBySale: 0 },
     interestPaid: [],
     firstLoanAt: null,
+    leftOut: { oneAddress: 0, openingPartiesUnknown: 0 },
   };
   const eventsByLoan = new Map<number, RecordEvent[]>();
   for (const e of events) {
@@ -296,7 +320,13 @@ export function deriveRecord(
     list.push(e);
     eventsByLoan.set(e.loanId, list);
   }
-  const counted = new Set(loans.filter((l) => !l.isSaleVehicle).map((l) => l.loanId));
+  const isCounted = (l: RecordLoan) => !l.isSaleVehicle && l.openingParties === 'two';
+  for (const l of loans) {
+    if (l.isSaleVehicle) continue;
+    if (l.openingParties === 'one') out.leftOut.oneAddress++;
+    else if (l.openingParties === 'unknown') out.leftOut.openingPartiesUnknown++;
+  }
+  const counted = new Set(loans.filter(isCounted).map((l) => l.loanId));
   const mine = acqs.filter((a) => a.wallet === me && counted.has(a.loanId));
   for (const a of mine) {
     if (out.firstLoanAt === null || a.fromAt < out.firstLoanAt) out.firstLoanAt = a.fromAt;
@@ -305,7 +335,7 @@ export function deriveRecord(
 
   const interest = new Map<string, bigint>();
   for (const loan of loans) {
-    if (loan.isSaleVehicle) continue;
+    if (!isCounted(loan)) continue;
     const evs = eventsByLoan.get(loan.loanId) ?? [];
     const rental = loan.assetType !== 0;
 
@@ -393,10 +423,11 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
   if (!ADDRESS_RE.test(addressRaw)) return json({ error: 'bad-address' }, 400);
   const address = addressRaw.toLowerCase();
 
-  // Every loan this address ever held as borrower, read once as a subquery.
-  const held = `SELECT DISTINCT loan_id FROM loan_participants
-                 WHERE chain_id = ? AND wallet = ? AND role = 'borrower'`;
-  const kinds = RECORD_EVENT_KINDS.map(() => '?').join(',');
+  // Every statement below is static text (the #1149 schema guard reads each
+  // one against the migrated schema): the loans this address ever held as
+  // borrower are the same written-out subquery in each, and the event kinds
+  // are bound as one JSON array.
+  const kinds = JSON.stringify(RECORD_EVENT_KINDS);
   try {
     // The cursor is read first in the same batch, so asOf describes the
     // state the figures were read from.
@@ -407,18 +438,27 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
       ),
       env.DB.prepare(`SELECT deploy_block, adopted_at FROM indexer_deployment WHERE chain_id = ?`).bind(chainId),
       env.DB.prepare(
-        `SELECT loan_id, status, asset_type, is_sale_vehicle, borrower_current_owner
-           FROM loans WHERE chain_id = ? AND loan_id IN (${held})`,
+        `SELECT loan_id, status, asset_type, is_sale_vehicle, borrower_current_owner,
+                init_lender, init_borrower
+           FROM loans
+          WHERE chain_id = ?
+            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
+                             WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
       ).bind(chainId, chainId, address),
       env.DB.prepare(
         `SELECT loan_id, wallet, from_at FROM loan_participants
-          WHERE chain_id = ? AND role = 'borrower' AND loan_id IN (${held})`,
+          WHERE chain_id = ? AND role = 'borrower'
+            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
+                             WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
       ).bind(chainId, chainId, address),
       env.DB.prepare(
         `SELECT loan_id, kind, block_number, log_index, tx_hash, block_at, args_json
            FROM activity_events
-          WHERE chain_id = ? AND kind IN (${kinds}) AND loan_id IN (${held})`,
-      ).bind(chainId, ...RECORD_EVENT_KINDS, chainId, address),
+          WHERE chain_id = ?
+            AND kind IN (SELECT value FROM json_each(?))
+            AND loan_id IN (SELECT DISTINCT loan_id FROM loan_participants
+                             WHERE chain_id = ? AND wallet = ? AND role = 'borrower')`,
+      ).bind(chainId, kinds, chainId, address),
     ]);
     const loans: RecordLoan[] = (
       (loanRows.results ?? []) as {
@@ -427,6 +467,8 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
         asset_type: number;
         is_sale_vehicle: number;
         borrower_current_owner: string | null;
+        init_lender: string | null;
+        init_borrower: string | null;
       }[]
     ).map((r) => ({
       loanId: r.loan_id,
@@ -434,6 +476,7 @@ export async function handleRepaymentRecord(req: Request, env: Env, addressRaw: 
       assetType: r.asset_type,
       isSaleVehicle: r.is_sale_vehicle === 1,
       currentHolder: r.borrower_current_owner?.toLowerCase() ?? null,
+      openingParties: openingPartiesOf(r.init_lender, r.init_borrower),
     }));
     const acqs: Acquisition[] = (
       (acqRows.results ?? []) as { loan_id: number; wallet: string; from_at: number }[]

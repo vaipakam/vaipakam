@@ -48,7 +48,15 @@ function db() {
   /** One loan, held by `holders` in turn (wallet, from time). */
   const loan = (
     id: number,
-    opts: { status?: string; assetType?: number; saleVehicle?: number; holders?: [string, number][]; due?: number } = {},
+    opts: {
+      status?: string;
+      assetType?: number;
+      saleVehicle?: number;
+      holders?: [string, number][];
+      due?: number;
+      /** The opening event's parties; two different addresses by default, null = unknown. */
+      opening?: [string, string] | null;
+    } = {},
   ) => {
     const holders = opts.holders ?? [[ME, T0]];
     insert('loans', {
@@ -67,6 +75,8 @@ function db() {
       start_at: T0,
       updated_at: T0,
       is_sale_vehicle: opts.saleVehicle ?? 0,
+      init_lender: opts.opening === null ? null : (opts.opening?.[0] ?? LENDER),
+      init_borrower: opts.opening === null ? null : (opts.opening?.[1] ?? holders[0][0]),
     });
     for (const [wallet, fromAt] of holders) {
       insert('loan_participants', { chain_id: CHAIN, loan_id: id, wallet, role: 'borrower', from_at: fromAt });
@@ -276,5 +286,39 @@ describe('what every answer says', () => {
     const { env } = db();
     const res = await handleRepaymentRecord(new Request(`https://x/r?chainId=${CHAIN}`), env, '0x12');
     expect(res.status).toBe(400);
+  });
+});
+
+describe('the counting rule for public figures (#3879)', () => {
+  it('leaves out a loan whose opening event named this address on both sides, and counts it apart', async () => {
+    const { loan, event, read } = db();
+    loan(1); event(1, 'LoanRepaid', T0 + 10 * DAY, repaid());
+    loan(2, { opening: [ME, ME] }); event(2, 'LoanRepaid', T0 + 10 * DAY, repaid());
+    event(2, 'LoanInterestPaid', T0 + 10 * DAY, { asset: USDC, gross: '9' });
+    loan(3, { status: 'active', opening: [ME, ME] });
+    const r = await read();
+    expect(r.loans).toMatchObject({ closed: 1, repaidOnTime: 1, openNow: 0 });
+    expect(r.interestPaid).toEqual([]);
+    expect(r.leftOut).toEqual({ oneAddress: 2, openingPartiesUnknown: 0 });
+  });
+
+  it('leaves out a loan whose opening parties are unknown, never assuming two', async () => {
+    const { loan, event, read } = db();
+    loan(1, { opening: null }); event(1, 'LoanRepaid', T0 + 10 * DAY, repaid());
+    const r = await read();
+    expect(r.loans.closed).toBe(0);
+    expect(r.leftOut).toEqual({ oneAddress: 0, openingPartiesUnknown: 1 });
+  });
+
+  it('tests the opening parties only: a loan taken over by its lender stays counted', async () => {
+    // Opened between two addresses; the lender later takes over the borrower
+    // position and closes it. A later holder change moves a loan neither in
+    // nor out, so the closing holder's record counts it.
+    const { loan, event, read } = db();
+    loan(1, { holders: [[ME, T0], [LENDER, T0 + DAY]] });
+    event(1, 'LoanRepaid', T0 + 10 * DAY, repaid());
+    const r = await read(LENDER);
+    expect(r.loans).toMatchObject({ closed: 1, takenOverLater: 1 });
+    expect(r.leftOut).toEqual({ oneAddress: 0, openingPartiesUnknown: 0 });
   });
 });
