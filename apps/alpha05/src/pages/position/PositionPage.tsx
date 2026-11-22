@@ -26,6 +26,7 @@ import { Notice } from '../../shared/ui/Notice';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import { GetCash, cashLoanOf, useCashFlowHeld } from './GetCash';
 import { LoanActions } from './LoanActions';
+import { FallbackEndCard, useFallbackFinishHeld } from './FallbackEndCard';
 import { LoanStatement } from './LoanStatement';
 import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
@@ -149,6 +150,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // neither reads the lender's (no "you must repay").
   const borrowerSide = role?.borrower === true && role.lender !== true;
   const cashHeld = useCashFlowHeld(loanId);
+  const finishHeld = useFallbackFinishHeld(loanId);
   // A gift already under way stays on the page through its outcome, even
   // once the refreshed holders show the receiver as lender: its finish card
   // is the only place that outcome is shown, and it closes on the reader's
@@ -230,6 +232,12 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       )}
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
+      {/* #3865 — a loan in fallback: its dated end, read from the protocol only
+          (the date moves with pauses and outages), and the finish anyone may
+          take once the protocol allows it. */}
+      {(l.status === LOAN_STATUS_FALLBACK_PENDING || finishHeld) && (
+        <FallbackEndCard loanId={loanId} chain={chain} own={own} meta={meta} collateralAsset={l.collateralAsset} lender={role?.lender === true} />
+      )}
       {erc20 && live && role?.borrower === true && <LoanLinkCard loanId={loanId} chainId={chain.chainId} />}
       {erc20 && ((l.status === LOAN_STATUS_ACTIVE && role?.lender === true) || giving !== null) && <GiveLoanCard loanId={loanId} chain={chain} own={own} meta={meta} />}
       {l.status === LOAN_STATUS_ACTIVE && v.holders.lender !== null && v.holders.borrower !== null && !holder && <WatchLoanCard loanId={loanId} chainId={chain.chainId} wallet={account} />}
