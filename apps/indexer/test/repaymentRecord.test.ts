@@ -83,7 +83,13 @@ function db() {
     }
     event(id, 'LoanInitiatedDetails', T0, { loanId: String(id), details: { dueTimestamp: String(opts.due ?? T0 + 30 * DAY) } });
   };
-  /** One event on a loan, in its own transaction unless `tx` is given. */
+  /**
+   * One event on a loan, in its own transaction unless `tx` is given. The
+   * companion interest statements are stored as the indexer stores them,
+   * with no loan_id (`activityRefsPolicy.json` notScoped): only the payload
+   * names the loan.
+   */
+  const UNSCOPED = new Set(['LoanInterestPaid', 'LoanInterestUndelivered', 'LoanInitiatedDetails']);
   const event = (loanId: number, kind: string, at: number | null, args: Row = {}, tx?: string) => {
     block++;
     insert('activity_events', {
@@ -92,7 +98,7 @@ function db() {
       log_index: 0,
       tx_hash: tx ?? `0x${block.toString(16).padStart(64, '0')}`,
       kind,
-      loan_id: loanId,
+      loan_id: UNSCOPED.has(kind) ? null : loanId,
       args_json: JSON.stringify({ loanId: String(loanId), ...args }),
       block_at: at,
     });
@@ -198,6 +204,66 @@ describe('how each loan closed', () => {
   });
 });
 
+describe('Codex #3906 round 1', () => {
+  it('reads a preclose in the grace as after the due date when its breakdown states a late fee', async () => {
+    const { loan, event, read } = db();
+    loan(1);
+    event(1, 'LoanSettlementBreakdown', T0 + 32 * DAY, { lateFee: '3' }, '0xpc1');
+    event(1, 'LoanPreclosedDirect', T0 + 32 * DAY, { borrower: ME }, '0xpc1');
+    // No late fee stated and past the opening due date: not guessed.
+    loan(2);
+    event(2, 'LoanSettlementBreakdown', T0 + 32 * DAY, { lateFee: '0' }, '0xpc2');
+    event(2, 'LoanPreclosedDirect', T0 + 32 * DAY, { borrower: ME }, '0xpc2');
+    // An offset states no late fee: after the opening due date it is unclassified.
+    loan(3); event(3, 'OffsetCompleted', T0 + 31 * DAY, { originalLoanId: '3' });
+    expect((await read()).loans).toMatchObject({ repaidAfterDue: 1, unclassified: 2, repaidOnTime: 0 });
+  });
+
+  it('a fallback cured by added collateral does not decide a later default', async () => {
+    const { loan, event, read } = db();
+    loan(1, { status: 'defaulted' });
+    event(1, 'LiquidationFallback', T0 + 8 * DAY);          // the HF route's fallback
+    event(1, 'LoanCuredFromFallback', T0 + 9 * DAY);
+    event(1, 'LoanDefaulted', T0 + 40 * DAY, { newStatus: 2 });
+    expect((await read()).loans).toMatchObject({ defaulted: 1, liquidated: 0 });
+  });
+
+  it('a period a collateral sale paid is not a period closed with no sale', async () => {
+    const { loan, event, read } = db();
+    loan(1, { status: 'active' });
+    event(1, 'SwapToRepayPartialExecuted', T0 + 10 * DAY, {}, '0xs1');
+    event(1, 'PeriodicInterestSettled', T0 + 10 * DAY, {}, '0xs1');
+    event(1, 'LoanPartiallyLiquidated', T0 + 20 * DAY, {}, '0xs2');
+    event(1, 'PeriodicInterestSettled', T0 + 20 * DAY, {}, '0xs2');
+    event(1, 'PeriodicInterestSettled', T0 + 30 * DAY);
+    expect((await read()).interestPeriods).toEqual({ closedWithoutSale: 1, paidBySale: 2, collectedBySale: 0 });
+  });
+
+  it('reads the interest statements by their payload, since they are stored with no loan', async () => {
+    const { h, loan, event, read } = db();
+    loan(1, { status: 'active' });
+    event(1, 'LoanInterestPaid', T0 + DAY, { asset: USDC, gross: '12' });
+    const stored = h.db.prepare(`SELECT loan_id FROM activity_events WHERE kind = 'LoanInterestPaid'`).get() as Row;
+    expect(stored.loan_id).toBeNull();
+    expect((await read()).interestPaid).toEqual([{ asset: USDC, total: '12' }]);
+  });
+
+  it('does not guess the holder when two acquisitions share one block time', async () => {
+    const { loan, event, read } = db();
+    loan(1, { holders: [[OTHER, T0], [ME, T0 + 5 * DAY], [PAYER, T0 + 5 * DAY]] });
+    event(1, 'LoanRepaid', T0 + 10 * DAY, repaid());
+    event(1, 'LoanInterestPaid', T0 + 10 * DAY, { asset: USDC, gross: '7' });
+    for (const who of [ME, PAYER]) {
+      const r = await read(who);
+      expect(r.loans.closed).toBe(0);
+      expect(r.interestPaid).toEqual([]);
+      expect(r.leftOut.holderUnresolved).toBe(1);
+    }
+    // An address outside the tie is simply not the holder.
+    expect((await read(OTHER)).leftOut.holderUnresolved).toBe(0);
+  });
+});
+
 describe('who a loan counts for', () => {
   it('counts a taken-over loan for the address that closed it, as taken over', async () => {
     const { loan, event, read } = db();
@@ -238,7 +304,7 @@ describe('periods, interest and rentals', () => {
     event(1, 'LoanInterestPaid', T0 + 20 * DAY, { asset: USDC, gross: '100' });
     event(1, 'LoanInterestUndelivered', T0 + 21 * DAY, { asset: USDC, gross: '30' });
     const r = await read();
-    expect(r.interestPeriods).toEqual({ closedWithoutSale: 1, collectedBySale: 1 });
+    expect(r.interestPeriods).toEqual({ closedWithoutSale: 1, paidBySale: 0, collectedBySale: 1 });
     expect(r.interestPaid).toEqual([{ asset: USDC, total: '70' }]);
     expect(r.loans.openNow).toBe(1);
     expect(r.firstLoanAt).toBe(T0 + 15 * DAY);
@@ -299,7 +365,7 @@ describe('the counting rule for public figures (#3879)', () => {
     const r = await read();
     expect(r.loans).toMatchObject({ closed: 1, repaidOnTime: 1, openNow: 0 });
     expect(r.interestPaid).toEqual([]);
-    expect(r.leftOut).toEqual({ oneAddress: 2, openingPartiesUnknown: 0 });
+    expect(r.leftOut).toEqual({ oneAddress: 2, openingPartiesUnknown: 0, holderUnresolved: 0 });
   });
 
   it('leaves out a loan whose opening parties are unknown, never assuming two', async () => {
@@ -307,7 +373,7 @@ describe('the counting rule for public figures (#3879)', () => {
     loan(1, { opening: null }); event(1, 'LoanRepaid', T0 + 10 * DAY, repaid());
     const r = await read();
     expect(r.loans.closed).toBe(0);
-    expect(r.leftOut).toEqual({ oneAddress: 0, openingPartiesUnknown: 1 });
+    expect(r.leftOut).toEqual({ oneAddress: 0, openingPartiesUnknown: 1, holderUnresolved: 0 });
   });
 
   it('tests the opening parties only: a loan taken over by its lender stays counted', async () => {
@@ -319,6 +385,6 @@ describe('the counting rule for public figures (#3879)', () => {
     event(1, 'LoanRepaid', T0 + 10 * DAY, repaid());
     const r = await read(LENDER);
     expect(r.loans).toMatchObject({ closed: 1, takenOverLater: 1 });
-    expect(r.leftOut).toEqual({ oneAddress: 0, openingPartiesUnknown: 0 });
+    expect(r.leftOut).toEqual({ oneAddress: 0, openingPartiesUnknown: 0, holderUnresolved: 0 });
   });
 });
