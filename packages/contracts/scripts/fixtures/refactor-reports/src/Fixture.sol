@@ -138,6 +138,11 @@ contract AFacet {
         }
     }
 
+    function sendNeverRead() external {
+        bool ok = payable(address(ext)).send(1);
+        emit Skipped();
+    }
+
     function flagNeverRead() external {
         (bool ok, ) = address(ext).call("");
         emit Skipped();

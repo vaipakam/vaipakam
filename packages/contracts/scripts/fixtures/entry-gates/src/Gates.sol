@@ -224,6 +224,10 @@ contract GFacet is Guarded {
         LibGate.s().x = 16;
     }
 
+    function writesInModifierArg() external nonReentrant atMost(LibGate.s().x = 19) {
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
     function pureBuiltinsFirst() external nonReentrant {
         bytes memory b = abi.encode(msg.sender, keccak256(new bytes(1)));
         uint256[] memory xs = new uint256[](1);
@@ -251,6 +255,11 @@ contract GFacet is Guarded {
     modifier pokesAfter() {
         _;
         other.poke();
+    }
+
+    modifier atMost(uint256 v) {
+        require(v < 100);
+        _;
     }
 
     modifier maybe() {

@@ -60,6 +60,7 @@ test('silent functions: a self-call whose selector the entry takes from its call
 test('swallowed failures: a catch or failed low-level call that neither reverts nor emits is listed', () => {
   assert.ok(has('swallowed-failures', 'AFacet.catchSwallows() try#1 catch#1'));
   assert.ok(has('swallowed-failures', 'AFacet.flagNeverRead() lowlevel#1'));
+  assert.ok(has('swallowed-failures', 'AFacet.sendNeverRead() lowlevel#1'), '`send` reports failure through its bool too');
   assert.ok(!has('swallowed-failures', 'AFacet.catchReverts()'));
   assert.ok(!has('swallowed-failures', 'AFacet.catchEmits()'));
   assert.ok(!has('swallowed-failures', 'AFacet.flagChecked()'));

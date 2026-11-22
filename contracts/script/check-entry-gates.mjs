@@ -170,7 +170,8 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
    * modifier that may skip its placeholder therefore makes the body
    * conditional, and a call out after the placeholder is read before control
    * returns to the caller. Modifier bodies are exempt only for their own
-   * storage writes. Returns true once a state change is found.
+   * storage writes, never for the arguments passed to them. Returns true once
+   * a state change is found.
    */
   const invoke = (fnNode, conditional, depth, bodyInModifier) => {
     const mods = (fnNode.modifiers ?? []).map((m) => {
@@ -180,7 +181,9 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
     const runFrom = (i, cond) => {
       if (i === mods.length) return visitAll(fnNode.body?.statements, cond, depth, bodyInModifier) === true;
       const { m, body } = mods[i];
-      for (const a of m.arguments ?? []) if (visit(a, cond, depth, true) === true) return true;
+      // A modifier's arguments are the caller's code, run before the
+      // modifier body: they get no modifier-write exemption.
+      for (const a of m.arguments ?? []) if (visit(a, cond, depth, bodyInModifier) === true) return true;
       if (!body) return runFrom(i + 1, cond);
       placeholders.push((c) => {
         postambles.push({ id: body.id, stmts: afterPlaceholder(body.statements), depth: depth + 1 });

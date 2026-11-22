@@ -76,7 +76,7 @@ test('reading: modifiers, calls before the first state change, and where it stop
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'createsFirst', 'deepWriteFirst', 'earlyReturnThenPostamble', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'receive', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaIndexedPointer', 'viaMaybeHelper', 'viaMemberPointer', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'createsFirst', 'deepWriteFirst', 'earlyReturnThenPostamble', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'receive', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaIndexedPointer', 'viaMaybeHelper', 'viaMemberPointer', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesInModifierArg', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);

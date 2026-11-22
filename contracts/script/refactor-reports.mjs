@@ -483,7 +483,9 @@ export function swallowedFailures(units, ctx) {
           const init = s.initialValue;
           let callee = init?.nodeType === 'FunctionCall' ? init.expression : undefined;
           if (callee?.nodeType === 'FunctionCallOptions') callee = callee.expression; // x.call{value: v}(...)
-          const isLowLevel = callee?.nodeType === 'MemberAccess' && LOW_LEVEL.has(callee.memberName);
+          // `address.send` reports failure through its bool like a low-level call.
+          const isSend = callee?.nodeType === 'MemberAccess' && callee.memberName === 'send' && /^address/.test(callee.expression?.typeDescriptions?.typeString ?? '');
+          const isLowLevel = isSend || (callee?.nodeType === 'MemberAccess' && LOW_LEVEL.has(callee.memberName));
           if (!isLowLevel) return;
           const flag = s.declarations?.[0];
           if (!flag || flag.typeDescriptions?.typeString !== 'bool') return;
