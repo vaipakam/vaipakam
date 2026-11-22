@@ -240,16 +240,19 @@ This design adds seven rules to it.
 - **The amount is set right by a count of the liens.** A correction is a count
   of the live liens, made on the chain. Every lien made, changed or ended
   while a count runs moves the running total for the part already counted, in
-  the same step, so no lien is missed and the count never comes out low.
-  Anyone may make the count, at any time, where it can be made in steps, and
-  governance's own step is the fallback. A count made while the amount is not
-  short sets the amount to its total where the two differ, and starts no stop.
-  Each correction states the figure before it and the figure after it in an
-  event. The stop ends only by a correction.
+  the same step, so no lien is missed and the count never comes out low. Only
+  a count that has finished sets the amount: one still running, or left
+  unfinished, sets nothing. Anyone may make the count, at any time, where it
+  can be made in steps, and governance's own step is the fallback. A count
+  made while the amount is not short sets the amount to its total where the
+  two differ, and starts no stop. Every correction that changes the amount
+  states the figure before it and the figure after it in an event, whether a
+  stop was in force or not: a difference either way means a writer of the
+  amount is at fault. The stop ends only by a correction.
 - **No correction is below the liens.** No correction ever sets the pledged
   amount below the total of the live liens on that asset, by the count that
-  anyone makes or by governance's step. This is held as an invariant beside
-  the first rule of this section.
+  anyone makes or by governance's step, with a stop in force or without. This
+  is held as an invariant beside the first rule of this section.
 - **The level a loan records does not depend on the keeper.** It is measured
   against the size the exposure limit uses, the lower of the asset's measured
   tier and its proven tier, which does not lapse. So no loan is marked for its
@@ -403,8 +406,9 @@ parameters table.
   the one at its end, and the preview.
 - A count by anyone and by governance. A lien made, changed and ended behind
   and ahead of a running count. A correction one smallest part below the
-  total of the live liens and at it, by each route. A count while the amount
-  is not short. The figures the event states.
+  total of the live liens and at it, by each route. A count left unfinished.
+  A count while the amount is not short that finds more, less and the same.
+  The figures the event states.
 - A loan opened while every confidence tier had lapsed: the level it records.
 - Two callers of a checkpoint in one hour, a distrusted price at the hour, a
   slot written in a pause, a second write by each actor, and the newest slot
