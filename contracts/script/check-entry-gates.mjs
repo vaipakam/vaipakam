@@ -591,7 +591,7 @@ export function main(argv = process.argv.slice(2)) {
     return 1;
   }
   const manifest = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));
-  const shipped = [...manifest.facets, ...manifest.standalone];
+  const shipped = [...manifest.facets, ...manifest.standalone, ...(manifest.proxy ?? [])];
   const ctx = makeContext(units, manifest.facets);
   const { entries } = entryPoints(units, shipped, ctx.byId, { special: true });
   if (list) {

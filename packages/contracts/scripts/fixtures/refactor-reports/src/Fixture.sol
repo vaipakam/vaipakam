@@ -60,6 +60,8 @@ contract AFacet {
 
     uint256 internal neverRead;
     uint256 internal receivedOnly;
+    uint256 internal nextId;
+    uint256 internal bumpedOnly;
     uint256 internal readByEntry;
     uint256 internal readOnlyInView;
     uint256 public publicOnly;
@@ -136,6 +138,13 @@ contract AFacet {
         try ext.f() {} catch {
             emit Skipped();
         }
+    }
+
+    // `id = ++nextId` reads nextId; `++bumpedOnly;` alone does not.
+    function newId() external returns (uint256 id) {
+        id = ++nextId;
+        ++bumpedOnly;
+        emit Skipped();
     }
 
     function sendNeverRead() external {
@@ -297,4 +306,15 @@ contract Standalone {
     }
 
     function loud() public {}
+
+    // Encoded self-calls land in this contract too.
+    function encodedPing() external {
+        (bool ok, ) = address(this).call(abi.encodeCall(this.ping, ()));
+        require(ok);
+    }
+
+    function encodedShadow() external {
+        (bool ok, ) = address(this).call(abi.encodeWithSignature("loud()"));
+        require(ok);
+    }
 }

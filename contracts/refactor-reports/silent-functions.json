@@ -1,8 +1,8 @@
 {
   "report": "silent-functions",
   "counts": {
-    "entries": 61,
-    "checked": 992
+    "entries": 62,
+    "checked": 994
   },
   "entries": [
     "AggregatorAdapterFactoryFacet.initializeAdapterImplementation()",
@@ -51,6 +51,7 @@
     "SanctionsClearanceAttestor.receive()",
     "SanctionsDelistingTimelock.receive()",
     "SwapAttemptFacet.swapAttempt(struct:LibSwap.Sale,uint256,bytes)",
+    "VaipakamDiamond.receive()",
     "VaipakamNFTFacet.markOfferPositions(uint256,uint256)",
     "VaipakamNFTMetadataFacet.setContractImageURI(string)",
     "VaipakamRewardMessenger.receive()",

@@ -1,12 +1,12 @@
 {
   "report": "ambiguous-errors",
   "counts": {
-    "entries": 1777,
+    "entries": 1782,
     "counts": {
-      "ambiguous": 1758,
+      "ambiguous": 1763,
       "text": 19,
       "reasonless": 0,
-      "errors": 1519,
+      "errors": 1520,
       "uncatalogued": 0
     }
   },
@@ -1737,6 +1737,11 @@
     "ambiguous VPFIDiscountFacet.withdrawVPFIFromVault(uint256) :: TreasuryUnset() x2",
     "ambiguous VPFIDiscountFacet.withdrawVPFIFromVault(uint256) :: VPFIVaultBalanceInsufficient() x2",
     "ambiguous VPFIDiscountFacet.withdrawVPFIFromVault(uint256) :: VaultOutflowFailed() x2",
+    "ambiguous VaipakamDiamond.fallback() :: OnlyDiamondInternal() x5",
+    "ambiguous VaipakamDiamond.fallback() :: PriceReadOutOfGas() x3",
+    "ambiguous VaipakamDiamond.fallback() :: TreasuryUnset() x3",
+    "ambiguous VaipakamDiamond.fallback() :: UnauthorizedCrossFacetCall() x4",
+    "ambiguous VaipakamDiamond.fallback() :: VaultOutflowFailed() x2",
     "ambiguous VaipakamNFTMetadataFacet.tokenURI(uint256) :: InvalidReserves() x2",
     "ambiguous VaipakamRewardMessenger.onCrossChainMessage(uint256,address,bytes,struct:ICrossChainMessenger.TokenAmount[],bytes32) :: BroadcastOnCanonical() x3",
     "ambiguous VaipakamRewardMessenger.onCrossChainMessage(uint256,address,bytes,struct:ICrossChainMessenger.TokenAmount[],bytes32) :: RepatriationOnCanonical() x2",

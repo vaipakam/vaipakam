@@ -94,6 +94,8 @@ test('ambiguous errors: text reverts and errors missing from the catalogue are l
 
 test('write-only storage: a field written by an entry and read only by a view, or never, is listed', () => {
   assert.ok(R['write-only-storage'].entries.includes('AFacet.neverRead'));
+  assert.ok(!R['write-only-storage'].entries.includes('AFacet.nextId'), '`id = ++nextId` uses the value it reads');
+  assert.ok(R['write-only-storage'].entries.includes('AFacet.bumpedOnly'), 'an increment on its own reads only to update');
   assert.ok(R['write-only-storage'].entries.includes('AFacet.readOnlyInView'));
   assert.ok(R['write-only-storage'].entries.includes('AFacet.publicOnly (public getter)'));
   assert.ok(!R['write-only-storage'].entries.includes('AFacet.readByEntry'), 'silentWrite reads it');
@@ -183,4 +185,11 @@ test('silent functions: a standalone contract\'s self-call lands in its own code
   const listed = (k) => r['silent-functions'].entries.some((e) => e.startsWith(k));
   assert.ok(!listed('Standalone.run()'), 'run reaches its own ping, which emits');
   assert.ok(listed('Standalone.shadow()'), 'shadow reaches its own silent loud, not BFacet.loud');
+  assert.ok(!listed('Standalone.encodedPing()'), 'an encoded self-call lands in its own ping, which emits');
+  assert.ok(listed('Standalone.encodedShadow()'), 'an encoded signature lands in its own silent loud, not BFacet.loud');
+});
+
+test('every report reads the proxy (the Diamond itself) as shipped', () => {
+  const r = runReports(UNITS, { facets: ['AFacet', 'BFacet'], standalone: [], proxy: ['Standalone'] }, CATALOGUE, undefined);
+  assert.ok(r['silent-functions'].entries.some((e) => e.startsWith('Standalone.shadow()')));
 });

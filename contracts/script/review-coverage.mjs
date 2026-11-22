@@ -1168,7 +1168,7 @@ async function reviewRepoCommand(cmd, rest) {
       const unit = unitFromRecord(record, { unit: f.unit, slice: index + 1 }, decls);
       requireReviewableSlice(unit, index);
       const { entryPoints } = await import('./check-permissionless-steps.mjs');
-      const shipped = [...g.manifest.facets, ...g.manifest.standalone];
+      const shipped = [...g.manifest.facets, ...g.manifest.standalone, ...(g.manifest.proxy ?? [])];
       const entries = entryPoints(g.units, shipped, g.ctx.byId, { special: true }).entries.filter((e) => e.contract === unit.name);
       const body = reviewDescription(describeSlice(unit, index, { ...g, decls }), gates.checklist(doc, entries, { shipped, ctx: g.ctx }));
       if (typeof f['body-file'] === 'string') {

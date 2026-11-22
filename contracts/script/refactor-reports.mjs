@@ -209,8 +209,13 @@ export function makeContext(units, facetNames) {
     const c = lineage?.[0] === undefined ? undefined : byId.get(lineage[0]);
     if (!c || facetIds.has(c.id) || c.contractKind === 'library') return routes;
     if (!own.has(c.id)) {
+      // Its own functions first; a selector it does not answer is one it
+      // can only be sending on to the Diamond, so the Diamond's table fills
+      // the rest. Every self-call form (`this.f`, an encoded call, a
+      // selector constant) reads this one table.
       const r = new Map();
       addRoutes(r, c);
+      for (const [sel, t] of routes) if (!r.has(sel)) r.set(sel, t);
       own.set(c.id, r);
     }
     return own.get(c.id);
@@ -261,10 +266,9 @@ function constantTarget(declId, ctx, routes = ctx.routes) {
  * external function, `abi.encodeCall(X.f, ...)`,
  * `abi.encodeWithSignature("f(...)")`, `X.f.selector`, or a selector constant
  * (see {constantTarget}). Returns `{ fn, contract }`. `routes` is the table
- * a call on `this` lands in (`ctx.selfRoutes(lineage)`): the Diamond's for a
- * facet, the contract's own otherwise. The other forms name a selector, which
- * the code sends to the Diamond whichever contract builds it, so they always
- * read the Diamond's table.
+ * the walking code's self-calls land in (`ctx.selfRoutes(lineage)`): the
+ * Diamond's for a facet; for any other contract its own functions, then the
+ * Diamond's for a selector it does not answer. Every form reads that table.
  */
 export function routedCallAt(n, ctx, routes = ctx.routes) {
   if (n.nodeType === 'FunctionCall') {
@@ -277,17 +281,17 @@ export function routedCallAt(n, ctx, routes = ctx.routes) {
     if (e?.nodeType === 'MemberAccess' && e.expression?.name === 'abi') {
       const a = n.arguments?.[0];
       if (e.memberName === 'encodeCall' && (a?.nodeType === 'MemberAccess' || a?.nodeType === 'Identifier')) {
-        return routedTarget(a.referencedDeclaration, ctx, ctx.routes);
+        return routedTarget(a.referencedDeclaration, ctx, routes);
       }
       if (e.memberName === 'encodeWithSignature' && a?.nodeType === 'Literal' && a.kind === 'string') {
-        return ctx.routes.get(keccak256Hex(a.value).slice(0, 8));
+        return routes.get(keccak256Hex(a.value).slice(0, 8));
       }
     }
     return undefined;
   }
-  if (n.nodeType === 'MemberAccess' && n.memberName === 'selector') return routedTarget(n.expression?.referencedDeclaration, ctx, ctx.routes);
+  if (n.nodeType === 'MemberAccess' && n.memberName === 'selector') return routedTarget(n.expression?.referencedDeclaration, ctx, routes);
   if ((n.nodeType === 'Identifier' || n.nodeType === 'MemberAccess') && n.referencedDeclaration !== undefined) {
-    return constantTarget(n.referencedDeclaration, ctx).target;
+    return constantTarget(n.referencedDeclaration, ctx, routes).target;
   }
   return undefined;
 }
@@ -383,7 +387,9 @@ function isRevertNode(n) {
 // ─── The shipped contracts ───────────────────────────────────────────────
 
 export function shippedNames(manifest) {
-  return [...manifest.facets, ...manifest.standalone];
+  // The proxy (the Diamond itself) ships too: its fallback and receive are
+  // entry points.
+  return [...manifest.facets, ...manifest.standalone, ...(manifest.proxy ?? [])];
 }
 
 /** Every function and modifier with a body in a src/ file, with its contract. */
@@ -718,19 +724,32 @@ export function writeOnlyStorage(units, manifest, ctx = makeContext(units, manif
     // the arguments of its modifier invocations (`guard(counter)` reads
     // counter before the body runs).
     const code = [fn.body, ...(fn.modifiers ?? []).flatMap((m) => m.arguments ?? [])];
+    // Expressions whose value is thrown away (a statement on its own). An
+    // update anywhere else hands its result on (`id = ++s.next`), which
+    // reads the field.
+    const discarded = new Set();
+    for (const c of code) walk(c, (n) => {
+      if (n.nodeType === 'ExpressionStatement' && n.expression) discarded.add(n.expression.id);
+      return undefined;
+    });
     for (const c of code) walk(c, (n) => {
       let targets = [];
+      let consumed = false;
       if (n.nodeType === 'Assignment') {
         lvalueFields(n.leftHandSide, ctx, targets);
-        // `x += 1` reads x only to update it: not a read by contract code.
+        // `x += 1` reads x only to update it: not a read by contract code,
+        // unless its result is used.
+        consumed = n.operator !== '=' && !discarded.has(n.id);
       } else if (n.nodeType === 'UnaryOperation' && ['++', '--', 'delete'].includes(n.operator)) {
         lvalueFields(n.subExpression, ctx, targets);
+        consumed = n.operator !== 'delete' && !discarded.has(n.id);
       } else if (n.nodeType === 'FunctionCall' && n.expression?.nodeType === 'MemberAccess' && ['push', 'pop'].includes(n.expression.memberName)) {
         lvalueFields(n.expression.expression, ctx, targets);
       }
       for (const t of targets) {
         lv.add(t.node.id);
         bump(writes, t.field.id);
+        if (consumed && live.has(fn.id)) bump(reads, t.field.id);
       }
       return undefined;
     });
