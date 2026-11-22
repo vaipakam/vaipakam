@@ -11,6 +11,7 @@ import {
   cancelFromChat,
   requestRelink,
   requestUnlink,
+  sendPhraseNotices,
   NOTICE_RETRY_SECONDS,
   type ChannelDeps,
   type SendOutcome,
@@ -36,6 +37,11 @@ const PORT_METHODS = [
   'cancelPendingForChat',
   'applyChange',
   'pruneClosed',
+  'phraseMarksOf',
+  'chatNoticeSent',
+  'dueChatNotices',
+  'duePhraseNotices',
+  'phraseNoticeSent',
 ] as const;
 function portOf(store: TelegramStateStore): TelegramStatePort {
   const port: Record<string, unknown> = {};
@@ -102,7 +108,20 @@ describe('requestUnlink', () => {
     const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
     expect(await requestUnlink(d, W, null, NOW)).toEqual({ kind: 'done', pending: [] });
     expect(chat(store, 84532)).toBeNull();
-    expect(sent).toEqual([]);
+    // #3346 — nothing told the chat beforehand, so it is told now.
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.chat).toBe('42');
+    expect(sent[0]!.text).toContain('no longer gets alerts');
+    expect(sent[0]!.text).toContain('Vaipakam app');
+  });
+
+  it('keeps the unlink when the notice to the old chat fails (#3346)', async () => {
+    const { store, state } = harness();
+    link(store, 84532, '42');
+    const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }), NOW, 'refused');
+    expect(await requestUnlink(d, W, 84532, NOW)).toEqual({ kind: 'done', pending: [] });
+    expect(chat(store, 84532)).toBeNull();
+    expect(sent.map((m) => m.chat)).toEqual(['42']);
   });
 
   it('waits the delay while protected, keeps the chat and tells it', async () => {
@@ -115,10 +134,13 @@ describe('requestUnlink', () => {
     // The protected chain keeps its chat; the open one clears at once.
     expect(chat(store, 84532)).toBe('42');
     expect(chat(store, 421614)).toBeNull();
-    expect(sent).toHaveLength(1);
+    // The protected chain's notice, then (#3346) the open chain's at-once one.
+    expect(sent).toHaveLength(2);
     expect(sent[0]!.chat).toBe('42');
     expect(sent[0]!.text).toContain('CANCEL');
     expect(sent[0]!.text).toContain('LOCK');
+    expect(sent[1]!.chat).toBe('42');
+    expect(sent[1]!.text).toContain('no longer gets alerts');
   });
 
   it('changes nothing when a chain cannot be read', async () => {
@@ -162,6 +184,20 @@ describe('requestRelink', () => {
     expect(chat(store, 84532)).toBe('77');
     expect(await requestRelink(d, W, 84532, '77', 'en')).toBe('linked');
     expect(chat(store, 84532)).toBe('77');
+  });
+
+  it('moves an unprotected account at once and tells the chat it left (#3346)', async () => {
+    const { store, state } = harness();
+    link(store, 84532, '42');
+    const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
+    expect(await requestRelink(d, W, 84532, '77', 'en')).toBe('linked');
+    expect(chat(store, 84532)).toBe('77');
+    expect(sent.map((m) => m.chat)).toEqual(['42']);
+    expect(sent[0]!.text).toContain('different Telegram chat');
+    // Linking the same chat again tells nobody.
+    const again = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }));
+    expect(await requestRelink(again.d, W, 84532, '77', 'en')).toBe('linked');
+    expect(again.sent).toEqual([]);
   });
 
   it('moves to a different chat only after the delay, telling both chats', async () => {
@@ -468,5 +504,115 @@ describe('applyDueChannelChanges', () => {
     link(store, 84532, '42');
     expect(store.applyChange(due[0]!.id, NOW + 2 * DAY)).toBeNull();
     expect(chat(store, 84532)).toBe('42');
+  });
+});
+
+describe('the alert phrase in channel messages (#3346)', () => {
+  /** A private chat '42' linked on 84532 that has been told `phrase`. */
+  async function told(phrase: string) {
+    const { store, state } = harness();
+    store.recordChatType('42', true, 0);
+    link(store, 84532, '42');
+    store.setPhrase(W, null, phrase, 1, 1);
+    const open = reader({ 84532: { enabled: false, delaySeconds: 0 } });
+    const first = deps(state, open);
+    await sendPhraseNotices(first.d);
+    return { store, state, open, first };
+  }
+
+  it('the notice states the new phrase, and the chat moves to it once accepted', async () => {
+    const { store, first } = await told('blue heron');
+    expect(first.sent).toHaveLength(1);
+    expect(first.sent[0]!.text).toContain('«blue heron»');
+    // The first notice is led by no phrase: the chat had been told none.
+    expect(first.sent[0]!.text.startsWith('Your alert phrase')).toBe(false);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['blue heron']);
+  });
+
+  it('a change is led by the phrase the chat was told, and kept until Telegram accepts', async () => {
+    const { store, state } = await told('blue heron');
+    store.setPhrase(W, null, 'red kite', 2, 2);
+    const refused = deps(state, reader({ 84532: { enabled: true, delaySeconds: DAY } }), NOW, 'refused');
+    await sendPhraseNotices(refused.d);
+    expect(refused.sent[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
+    expect(refused.sent[0]!.text).toContain('«red kite»');
+    // A protected account is told how to lock.
+    expect(refused.sent[0]!.text).toContain('lock the vault');
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['blue heron']);
+    const later = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 } }), NOW + NOTICE_RETRY_SECONDS + 1);
+    await sendPhraseNotices(later.d);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['red kite']);
+  });
+
+  it('the old chat hears of an unlink with the phrase it was told, and Push is told the network', async () => {
+    const { store, state, open } = await told('blue heron');
+    const pushed: [string, number][] = [];
+    const { d, sent } = deps(state, open);
+    d.pushChange = async (wallet, chainId) => {
+      pushed.push([wallet, chainId]);
+    };
+    await requestUnlink(d, W, null, NOW);
+    expect(chat(store, 84532)).toBeNull();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
+    expect(pushed).toEqual([[W, 84532]]);
+  });
+
+  it('a chat added beside a linked one tells the linked one, never the phrase to the new chat', async () => {
+    const { store, state, open } = await told('blue heron');
+    store.recordChatType('77', true, 0);
+    const { d, sent } = deps(state, open);
+    expect(await requestRelink(d, W, 421614, '77', 'en')).toBe('linked');
+    const toOld = sent.filter((m) => m.chat === '42');
+    expect(toOld).toHaveLength(1);
+    expect(toOld[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
+    expect(toOld[0]!.text).toContain('Another Telegram chat');
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '77', chainId: 84532 }])).toEqual([null]);
+  });
+
+  it('a notice retried after the phrase changed leads with the phrase the chat knows now', async () => {
+    const { store, state, open } = await told('blue heron');
+    store.recordChatType('77', true, 0);
+    // The notice to the linked chat is refused, so it waits for a retry.
+    const refused = deps(state, open, NOW, 'refused');
+    expect(await requestRelink(refused.d, W, 421614, '77', 'en')).toBe('linked');
+    // Meanwhile the phrase changes and the linked chat is told the new one.
+    store.setPhrase(W, null, 'red kite', 2, 2);
+    await sendPhraseNotices(deps(state, open).d);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '42', chainId: 84532 }])).toEqual(['red kite']);
+    const retry = deps(state, open, NOW + NOTICE_RETRY_SECONDS + 1);
+    await applyDueChannelChanges(retry.d);
+    const toOld = retry.sent.filter((m) => m.chat === '42' && m.text.includes('Another Telegram chat'));
+    expect(toOld).toHaveLength(1);
+    expect(toOld[0]!.text.startsWith('Your alert phrase: «red kite»')).toBe(true);
+  });
+
+  it('a protected move to a chat already told on another network leads its notice with that phrase', async () => {
+    const { store, state } = harness();
+    store.recordChatType('42', true, 0);
+    store.recordChatType('77', true, 0);
+    link(store, 84532, '42');
+    link(store, 421614, '77');
+    store.setPhrase(W, null, 'blue heron', 1, 1);
+    const open = reader({ 84532: { enabled: false, delaySeconds: 0 }, 421614: { enabled: false, delaySeconds: 0 } });
+    await sendPhraseNotices(deps(state, open).d);
+    // Move protected 84532 from 42 to 77, which knows the phrase already.
+    const { d, sent } = deps(state, reader({ 84532: { enabled: true, delaySeconds: 2 * DAY }, 421614: { enabled: false, delaySeconds: 0 } }));
+    expect(await requestRelink(d, W, 84532, '77', 'en')).toBe('pending');
+    const toNew = sent.filter((m) => m.chat === '77');
+    expect(toNew).toHaveLength(1);
+    expect(toNew[0]!.text.startsWith('Your alert phrase: «blue heron»')).toBe(true);
+  });
+
+  it('a group chat is never shown the phrase', async () => {
+    const { store, state } = harness();
+    store.recordChatType('42', true, 0);
+    link(store, 84532, '42');
+    link(store, 421614, '-5');
+    store.setPhrase(W, null, 'blue heron', 1, 1);
+    const { d, sent } = deps(state, reader({ 84532: { enabled: false, delaySeconds: 0 }, 421614: { enabled: false, delaySeconds: 0 } }));
+    await sendPhraseNotices(d);
+    expect(sent.map((m) => m.chat)).toEqual(['42']);
+    expect(store.phraseMarksOf([{ wallet: W, chatId: '-5', chainId: 84532 }])).toEqual([null]);
   });
 });

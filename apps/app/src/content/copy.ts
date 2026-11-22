@@ -849,6 +849,55 @@ const copySource = {
       'Waiting for the other owners of this wallet to approve the request. You can keep this page open, or close it and finish the request here later.',
     walletMovedWhileAwaiting:
       'Nothing was sent: the connected wallet or network changed while the approval was awaited. The request is kept; reconnect the same wallet on the same network to finish it.',
+    pendingKindSetPhrase: 'Set the alert phrase',
+    pendingKindClearPhrase: 'Remove the alert phrase',
+    // #3346 — the alert phrase: a phrase only the owner knows, which our
+    // Telegram messages to a private chat lead with. Telegram only.
+    phraseTitle: 'Alert phrase',
+    phraseBody:
+      'Choose a short phrase only you know. Our Telegram messages to your private chat lead with it, so a message that lacks it, or shows a different one, is not from us.',
+    phraseTelegramOnly: 'Your phrase appears on Telegram messages only. Push notifications never show it.',
+    phraseRules:
+      '3 to 32 characters: letters, numbers, spaces and simple punctuation. No links, and no "/", ":" or "@".',
+    phraseLabel: 'Your alert phrase',
+    phraseSetButton: 'Set phrase',
+    phraseChangeButton: 'Change phrase',
+    phraseClearButton: 'Remove phrase',
+    phraseStatusSet: tmpl('A phrase is set (since {{date}}).', ['date']),
+    phraseStatusNone: 'No phrase is set.',
+    phraseStatusUnknown: 'We could not check just now whether a phrase is set.',
+    phraseSignNote:
+      'Your wallet signs a free message naming a fingerprint of the phrase, never the phrase itself. It is not a transaction.',
+    phraseSaved:
+      'Saved for every network. Your private Telegram chat gets a message stating the phrase, and our messages there lead with it from then on.',
+    phraseCleared: 'Removed on every network. Your private Telegram chat is told, and our messages there no longer lead with a phrase.',
+    phraseGroupNote:
+      'A group chat is linked too. Groups are never shown your phrase, so messages there do not carry it.',
+    phraseLinkFirst: 'Nothing was changed: link a private Telegram chat first (for a contract wallet, on this network). The phrase is confirmed there.',
+    phraseTooShort: 'That phrase is too short: use at least 3 characters.',
+    phraseTooLong: 'That phrase is too long: use at most 32 characters.',
+    phraseBadCharacters:
+      'That phrase has a character we do not accept: use letters, numbers, spaces and simple punctuation, with no links.',
+    phraseNotNormalised: 'Remove the spaces at the start or end of the phrase, then try again.',
+    phraseInvalid: 'That phrase cannot be used. Check the rules under the field and try again.',
+    phraseMismatch:
+      'That is not the phrase this request was signed for. Type the same phrase, or discard the request and start again.',
+    phraseRetype: 'Type the phrase again to finish this request: this browser does not keep it.',
+    phraseScopeNote:
+      'Signed with your wallet’s own key, the phrase applies on every network. A contract wallet’s approval covers only the network it is given on, so such a wallet sets the phrase on each network separately.',
+    phraseStatusSetAll: tmpl('A phrase is set for every network (since {{date}}).', ['date']),
+    phraseStatusSetNetwork: tmpl('A phrase is set for {{network}} only (since {{date}}).', [
+      'network',
+      'date',
+    ]),
+    phraseSavedNetwork: tmpl(
+      'Saved for {{network}} only: a contract wallet’s approval covers the network it was given on. Your private Telegram chat linked on {{network}} gets a message stating the phrase, and our messages about {{network}} lead with it from then on.',
+      ['network'],
+    ),
+    phraseClearedNetwork: tmpl('Removed for {{network}} only. Your private Telegram chat linked there is told.', ['network']),
+    phraseOtherNetworks:
+      'Telegram is linked on other networks too. To use a phrase there, switch to each one and set it again: one approval each, and you type the phrase again, since nothing is kept.',
+    phraseSwitchTo: tmpl('Switch to {{network}}', ['network']),
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',
