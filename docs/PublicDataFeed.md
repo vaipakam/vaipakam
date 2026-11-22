@@ -129,7 +129,8 @@ they read the rental table, the cursor and that value, and every one of
 those is rebuilt from chain events.
 
 When rentals first reach a network the indexer has already scanned, the
-rental table is filled once from the rental events already indexed. Until
+rental table is filled from the rental events already indexed, a bounded
+step per indexer pass, each resuming where the last stopped. Until
 that has finished, both rental reads answer `503` with
 `{"error": "rentals-index-building"}` rather than a list that could leave
 rentals out. For an ERC-1155

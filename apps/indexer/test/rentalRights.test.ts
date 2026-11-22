@@ -11,6 +11,8 @@ import {
   MAX_STORED_EXPIRY,
   isActiveRental,
   RENTAL_SEED_CURSOR_KIND,
+  RENTAL_SEED_PASS_COST,
+  RENTAL_SEED_PROGRESS_KIND,
   rentalActiveAt,
   seedRentalRights,
   recordRentalRights,
@@ -198,8 +200,8 @@ describe('rental rights table (#3882)', () => {
     // The live hook already wrote a LATER state of loan 2: the seed never puts it back.
     await recordRentalRights(t.d1, CHAIN, [ev({ loanId: 2, block: 1_500, user: ZERO, quantity: 0n })], NOW);
     const d1 = t.h.d1 as unknown as Parameters<typeof seedRentalRights>[0];
-    expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toBe(2);
-    expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toBeNull();
+    expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'done', replayed: 2 });
+    expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'seeded' });
     expect(t.rows().map((r) => [r.loan_id, r.user, r.quantity])).toEqual([
       [1, RENTER, '1'],
       [2, ZERO, '0'],
@@ -207,6 +209,122 @@ describe('rental rights table (#3882)', () => {
     const after = await handleRentalsByCollection(new Request(url), t.env);
     expect(after.status).toBe(200);
     expect(((await after.json()) as { rentals: { rentalId: string }[] }).rentals.map((r) => r.rentalId)).toEqual(['1']);
+  });
+
+  describe('Codex #3908 r2 — the seed runs in bounded, resumable steps', () => {
+    const history = (t: ReturnType<typeof db>, rows: Array<[block: number, log: number, loanId: number]>) => {
+      t.h.db.exec(`DELETE FROM indexer_cursor WHERE kind = '${RENTAL_SEED_CURSOR_KIND}'`);
+      const act = t.h.db.prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (?, ?, ?, ?, 'VaultRentalUpdated', ?, ?)`,
+      );
+      for (const [block, log, loanId] of rows) {
+        act.run(
+          CHAIN,
+          block,
+          log,
+          `0x${block.toString(16)}${log}`,
+          JSON.stringify({ lender: OWNER, nftContract: NFT, tokenId: '7', loanId: String(loanId), user: RENTER, expires: String(NOW + 86_400), quantity: '1' }),
+          NOW,
+        );
+      }
+    };
+    /** The D1 handle, counting every statement prepared through it. */
+    const counted = (t: ReturnType<typeof db>) => {
+      let prepared = 0;
+      const d1 = new Proxy(t.h.d1, {
+        get(target, prop, recv) {
+          if (prop === 'prepare') {
+            return (sql: string) => {
+              prepared++;
+              return (target as unknown as { prepare: (q: string) => unknown }).prepare(sql);
+            };
+          }
+          const v = Reflect.get(target, prop, recv);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }) as unknown as Parameters<typeof seedRentalRights>[0];
+      return { d1, take: () => { const n = prepared; prepared = 0; return n; } };
+    };
+    const progress = (t: ReturnType<typeof db>) =>
+      (t.h.db.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).get(CHAIN, RENTAL_SEED_PROGRESS_KIND) as
+        | { last_block: number }
+        | undefined)?.last_block;
+
+    it('replays one page a step within its stated cost, gives back a block a page ends inside, and marks only at the end', async () => {
+      const t = db();
+      // 499 blocks of one event each, then a block of two: the first page
+      // (500 rows) ends inside that last block.
+      const rows: Array<[number, number, number]> = [];
+      for (let b = 1; b <= 499; b++) rows.push([b, 0, b]);
+      rows.push([500, 0, 500], [500, 1, 501]);
+      history(t, rows);
+      const { d1, take } = counted(t);
+      expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'progress', replayed: 499, through: 499 });
+      expect(take()).toBeLessThanOrEqual(RENTAL_SEED_PASS_COST.d1Queries);
+      expect(progress(t)).toBe(499);
+      expect(t.rows()).toHaveLength(499);
+      // Not marked yet: the rental reads still answer 503.
+      const mid = await handleRentalsByCollection(new Request(`https://x/rentals/by-collection?chainId=${CHAIN}&collection=${NFT}`), t.env);
+      expect(mid.status).toBe(503);
+      expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'done', replayed: 2 });
+      expect(take()).toBeLessThanOrEqual(RENTAL_SEED_PASS_COST.d1Queries);
+      expect(progress(t)).toBeUndefined();
+      expect(t.rows()).toHaveLength(501);
+      expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'seeded' });
+      expect(take()).toBe(1);
+    });
+
+    it('reads a page that lies wholly inside one block in full, and resumes after it', async () => {
+      const t = db();
+      const rows: Array<[number, number, number]> = [];
+      for (let l = 0; l < 501; l++) rows.push([5, l, l + 1]);
+      rows.push([6, 0, 900]);
+      history(t, rows);
+      const { d1, take } = counted(t);
+      expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'progress', replayed: 501, through: 5 });
+      expect(take()).toBeLessThanOrEqual(RENTAL_SEED_PASS_COST.d1Queries);
+      expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'done', replayed: 1 });
+      expect(t.rows()).toHaveLength(502);
+    });
+
+    it('a failed step leaves the last good progress, and the next step resumes from it', async () => {
+      const t = db();
+      const rows: Array<[number, number, number]> = [];
+      for (let b = 1; b <= 600; b++) rows.push([b, 0, b]);
+      history(t, rows);
+      const d1 = t.h.d1 as unknown as Parameters<typeof seedRentalRights>[0];
+      expect((await seedRentalRights(d1, CHAIN, 1_000, NOW)).state).toBe('progress');
+      expect(progress(t)).toBe(499);
+      const failing = new Proxy(t.h.d1, {
+        get(target, prop, recv) {
+          if (prop === 'batch') return async () => { throw new Error('D1 down'); };
+          const v = Reflect.get(target, prop, recv);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }) as unknown as Parameters<typeof seedRentalRights>[0];
+      await expect(seedRentalRights(failing, CHAIN, 1_000, NOW)).rejects.toThrow('D1 down');
+      expect(progress(t)).toBe(499);
+      expect(await seedRentalRights(d1, CHAIN, 1_000, NOW)).toEqual({ state: 'done', replayed: 101 });
+      expect(t.rows()).toHaveLength(600);
+    });
+
+    it('writes each step\'s rows in one statement, by the same mapping the scan hook uses', async () => {
+      const t = db();
+      const big = (2n ** 64n - 1n).toString();
+      t.h.db.exec(`DELETE FROM indexer_cursor WHERE kind = '${RENTAL_SEED_CURSOR_KIND}'`);
+      t.h.db
+        .prepare(
+          `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+           VALUES (?, 3, 1, '0x31', 'VaultRentalUpdated', ?, ?)`,
+        )
+        .run(CHAIN, JSON.stringify({ lender: OWNER.toUpperCase().replace('0X', '0x'), nftContract: NFT, tokenId: '007', loanId: '9', user: RENTER, expires: big, quantity: '3' }), NOW);
+      const d1 = t.h.d1 as unknown as Parameters<typeof seedRentalRights>[0];
+      await seedRentalRights(d1, CHAIN, 1_000, NOW);
+      expect(t.rows()).toEqual([
+        expect.objectContaining({ loan_id: 9, token_id: '7', owner: OWNER.toLowerCase(), expires: Number.MAX_SAFE_INTEGER, quantity: '3', block_number: 3, log_index: 1 }),
+      ]);
+    });
   });
 
   it('reads activity_events for one value only: the network\'s latest block time at or below the cursor', () => {

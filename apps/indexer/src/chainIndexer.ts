@@ -63,7 +63,7 @@ import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { recordLoanLifecycle } from './loanLifecycleGuard';
-import { recordRentalRights, seedRentalRights } from './rentalRights';
+import { RENTAL_SEED_PASS_COST, recordRentalRights, seedRentalRights } from './rentalRights';
 import {
   quarantineStatements,
   discloseQuarantineReleases,
@@ -143,6 +143,7 @@ import {
   reportSpend,
   spent,
   affords,
+  plus,
   holdBack,
   release,
   isRefusing,
@@ -2349,12 +2350,16 @@ async function runChainPass(
       : null;
   const scanFrom = lastBlock + 1n;
 
-  // #3882 — once per chain, seed the rental table from the rental events
-  // already recorded below the cursor (rentalRights.ts). Blocks above it are
-  // the scan's. A failure leaves the chain unseeded, its rental reads
-  // answering 503, and the next pass tries again.
+  // #3882 — seed the rental table from the rental events already recorded
+  // below the cursor (rentalRights.ts), one bounded step a pass, and only
+  // when the step and the scan's tail both fit this invocation's budget.
+  // Blocks above the cursor are the scan's. Until the last step writes the
+  // mark the rental reads answer 503; a failed step is retried from the
+  // progress the last good one recorded (Codex #3908 r2).
   try {
-    await seedRentalRights(env.DB, chainId, Number(lastBlock), Math.floor(Date.now() / 1000));
+    if (affords(budget, plus(RENTAL_SEED_PASS_COST, SCAN_TAIL_RESERVE))) {
+      await seedRentalRights(env.DB, chainId, Number(lastBlock), Math.floor(Date.now() / 1000));
+    }
   } catch (err) {
     console.warn(`[chainIndexer] chain ${chainId}: rental seed failed`, redactedError(err));
   }
