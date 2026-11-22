@@ -342,7 +342,8 @@ settling time it would let the new guard act alone (G13). So the confirmation is
 the guard gives an accepted price for the asset at that moment, where the source's own latest
 answer is dated after the record, and in the record's own block. A source that states no time
 for its answers gives a weaker proof, and which assets rest on such a source is published for
-each asset. The same holds for the last resort for a source that has ended, without exception.
+each asset. The same proof is required of the last resort for a source that has ended, without
+exception. Its other rules are still to be designed (loan settings design, section 3).
 
 A read that ran out of gas is never silence (below). Nor is a read that fails for want
 of a signed reading the caller should bring: a record of silence made without that reading is
@@ -646,9 +647,13 @@ inside it and retire the applied version. So a retirement carries these guards:
   plain clock and lies well after the settling time. A pause or an outage shorter than the
   difference (22 hours at the proposed figures) leaves the whole settling time to run after it.
   A longer one spends what is left of it. That is accepted and stated (alternative 19).
-- **The floor is the named version exactly.** The named version must be the current one at the
-  proposal and at the execute. A setting changed on the guard after the execute makes a
-  newer version for new loans. It changes neither the floor nor the version the loans moved to.
+- **The floor is the named version exactly.** The named version is one that is not retired and
+  is newer than every version the retirement retires, at the proposal and at the execute. It
+  need not be the current one (owner decision 2026-11-22): anyone may carry out a due change of
+  the guard, and each makes a new current version, so a retirement that had to name the current
+  one could be made to lapse by anyone. A setting changed on the guard during the notice or
+  after the execute makes a newer version for new loans. It changes neither the floor nor the
+  version the loans moved to.
 - **One at a time.** A retirement is not executed inside the settling time of a replacement, or
   before the floor of an earlier retirement has taken effect. A replacement is not applied
   before the floor of a retirement has taken effect. So no step reads the guard in force at more
@@ -659,10 +664,12 @@ inside it and retire the applied version. So a retirement carries these guards:
   feed registry, that would make one more is not executed until a retirement has brought the
   count down. So the check of a retirement and the check of a replacement have a known most
   pages, and neither can outgrow its window. At the most, no setting changes until a retirement
-  has been executed, and a retirement names the current version. So if the current version is
-  the one at fault, room for its correction is made only by moving loans onto it first. One
-  place is therefore kept free: an alert fires when a guard reaches one below the most, and
-  older versions are retired then.
+  has been executed. A retirement names any version that is not retired and is newer than those
+  it retires. So where the current version is the one at fault, room for its correction is made
+  by moving the oldest loans to a sound version below it, never onto the faulty one. One place
+  is still kept free, for a change carried out by the owner of the setting itself (loan settings
+  design, section 3): an alert fires when a guard reaches one below the most, and older
+  versions are retired then.
 - **What waits on no step of the platform.** The guard's immediate levers stay its own: a mute
   of a secondary source reaches every version at once. And a retirement's execute stays open
   while the platform is paused, as the replacement step does. A dead source is a likely reason

@@ -83,8 +83,17 @@ and EIP-170 room comes back to `OracleFacet`.
 - **The second: a bounded stop of one asset's price** (owner decision
   2026-11-22). The guardian may stop one asset's price at once. While the
   stop holds, the guard gives a distrusted price for that asset at every
-  price version: a step that needs the price is refused, and a repayment, a
-  top-up of collateral and a cure stay open. The stop names no figure and
+  price version, so every step that needs the price waits: a liquidation on
+  every route, a default by time, a sale of collateral to repay, a
+  refinance, a cure that needs a health reading, and every claim or sharing
+  of collateral that prices the asset. No step that waits falls to the route
+  for an asset with no price: a default during a stop never hands the
+  collateral over whole, and no claim reads a stop as a missing price. A
+  repayment and a top-up of collateral need no price and stay open, with
+  every close-out that needs none: a repayment in full, which cures, and an
+  early close the borrower pays. A cure by top-up waits beside the close-out
+  it would prevent, so a stop takes nothing from a borrower, and a top-up
+  made during it counts when the price returns. The stop names no figure and
   changes no setting, and it is published with its reason. It lapses by
   itself after the stop time (24 hours proposed), and the guardian or
   governance can lift it sooner. Only governance can make it hold longer:

@@ -178,8 +178,7 @@ version, retirement, replacement of the guard, move by consent or extension
 changes it, in either direction. A loan opened on an asset with no price
 never becomes one that a price can liquidate, since nobody agreed to that,
 and a loan opened as priced never takes the route for an asset with no
-price. A new loan is the way to change either. The one exception is the last resort for a source that has ended.
-Three things follow:
+price. A new loan is the way to change either. Three things follow:
 
 - an offer, a signed offer, a refinance request and an Auto-lend slot are
   agreed before the loan opens. Each carries the standing every asset had
@@ -189,6 +188,17 @@ Three things follow:
   version with no source for it is refused, and both holders are told ahead
   when an extension they planned will be refused for that reason;
 - the vault holds the same line by its own check (below).
+
+**The last resort is decided in principle only.** For a priced asset whose
+source has ended for good, the owner has decided that a guarded last resort
+exists (2026-11-22). Its rules are not part of this design. Who may start
+it, what proof of an ended source it needs, how long it waits, what it lets
+a loan settle and what a vault then allows all belong to the close-out
+rules, and are still to be designed. Until they are, nothing here relies on
+it: no step moves a priced asset onto the route for an asset with no price,
+the vault refuses that without exception, and the ways out for such a loan
+are the ones this design does give, a repayment and a later price version
+that gives the asset a source again.
 
 ### Retired price versions are refused by the guard itself
 
@@ -213,7 +223,7 @@ no retirement can name a version without a source for that asset, and no
 guard without one can replace the guard. The floor is one line, so no
 version above the pinned one is retired either. After a change that drops
 such a source, the guard has only the places left of its most, and then
-makes no further version until those loans end or the last resort has run.
+makes no further version until those loans end.
 The way out is a later version that gives the asset a source again, by the
 place kept for the owner. New use of an asset is stopped by its pause, never
 by dropping its source. The preview of a change of the guard or its registry
@@ -510,8 +520,10 @@ fallback custody or past default cannot be moved.
   vault validates the same named settings.
 - A live listing is cancelled and cleaned up through its original executor
   and conduit after a marketplace move.
-- A retirement whose named replacement stops being current before execution
-  lapses; a loan moved late lands on the named replacement, not a newer one.
+- A retirement of a route set or a marketplace whose named replacement stops
+  being current before execution lapses. A retirement of a price version
+  does not lapse when a newer version is made during its notice. A loan
+  moved late lands on the named replacement, not a newer one.
 - Consent: both sides, exact set number, refused in fallback custody and
   after default; every holder on a divided loan.
 - Try-list indexes stay stable for a loan across a reorder.
