@@ -202,7 +202,23 @@ interface IRateReference {
         BandMinDistanceBps,
         MaxLiveSeries,
         OpenSeries,
-        Unmute
+        Unmute,
+        AddLevel,
+        RetireLevel
+    }
+
+    /// @notice A standard cap or floor level of a lending asset
+    ///         (`FloatingRateCapFloorLevelsDesign.md`). Its rate never
+    ///         changes once added; open loans signed it.
+    struct Level {
+        address asset;
+        uint16 rateBps;
+        bool isCap;
+        /// @dev No new loan may open on a retired level; it keeps accruing
+        ///      while any loan on it is open.
+        bool retired;
+        /// @dev Open loans on this level, across every series.
+        uint32 openLoans;
     }
 
     // ─── Events ──────────────────────────────────────────────────────────
@@ -243,6 +259,19 @@ interface IRateReference {
     /// @notice The Diamond moved a series' open-loan count.
     event SeriesLoanCount(uint32 indexed seriesId, uint32 openLoans);
     /// @notice A source was muted (at once) or unmuted (after the delay).
+    /// @notice A level was added to `asset`'s list.
+    event LevelAdded(address indexed asset, uint32 indexed levelId, uint16 rateBps, bool isCap);
+    /// @notice A level was retired: no new loan may open on it.
+    event LevelRetired(address indexed asset, uint32 indexed levelId);
+    /// @notice A level is no longer accrued: it is retired and no loan on it
+    ///         is open.
+    event LevelUntracked(address indexed asset, uint32 indexed levelId);
+    /// @notice A level's running total on a series changed in an update:
+    ///         the excess above a cap, or the shortfall below a floor, times
+    ///         seconds, 1e18-scaled.
+    event LevelAccrued(uint32 indexed seriesId, uint32 indexed levelId, uint256 total);
+    /// @notice The open-loan count of a level on a series changed.
+    event LevelLoanCount(uint32 indexed seriesId, uint32 indexed levelId, uint32 openLoans);
     event SourceMuted(address indexed asset, bytes32 indexed sourceKey, address by);
     event SourceUnmuted(address indexed asset, bytes32 indexed sourceKey);
     event ChangeProposed(Kind indexed kind, bytes32 indexed subject, bytes32 value, uint64 executableAt);
@@ -260,35 +289,53 @@ interface IRateReference {
         view
         returns (bool available, uint256 rate1e18, AvgReason reason);
 
-    /// @notice The term average for a loan of `termDays` (#3713 section 6.2).
-    function termAverage(address asset, uint256 termDays) external view returns (TermAverage memory);
+    /// @notice The read side (term average, linked rate, band), a
+    ///         stateless companion this reference deployed: an
+    ///         {IRateReferenceReads}. Split off so the levels fit (#3337
+    ///         part 2, levels ruling 6).
+    function READS() external view returns (address);
 
-    /// @notice The rate a link of `kind` produces for a loan of `termDays`
-    ///         now, before the maker's margin, or why it cannot be used.
-    ///         The window follows the term (24 hours up to 30 days, 7 days up
-    ///         to 365, 30 days beyond); a term over 30 days waits while the
-    ///         reference is unusual or its state is not known.
-    function linkedRate(address asset, uint256 termDays, LinkKind kind)
-        external
-        view
-        returns (uint256 rate1e18, LinkRefusal refusal);
+    /// @notice The platform settings.
+    function settings() external view returns (Settings memory);
 
-    /// @notice Where a fixed rate of `rateBps` for `termDays` sits against
-    ///         the warning band.
-    function band(address asset, uint256 termDays, uint256 rateBps) external view returns (Band memory);
+    /// @notice A series' measured state.
+    function seriesOf(uint32 id) external view returns (Series memory);
 
-    /// @notice The state of `asset`'s newest series.
-    function status(address asset) external view returns (Status memory);
+    /// @notice A series' fixed configuration.
+    function configOf(uint32 id) external view returns (SeriesConfig memory);
 
     /// @notice `asset`'s newest series id; 0 when it has no reference.
     function newestSeries(address asset) external view returns (uint32);
 
     // ─── The Diamond's two entries (part 2 calls them) ───────────────────
 
-    /// @notice Count a floating loan opened on `asset`'s newest series and
-    ///         return that series. The Diamond only.
-    function noteLoanOpened(address asset) external returns (uint32 seriesId);
+    /// @notice Count a floating loan opened on `asset`'s newest series with
+    ///         cap level `capId` and floor level `floorId` (0 = none). The
+    ///         Diamond only. Refuses an unknown, retired or wrong-side level,
+    ///         a floor not below the effective cap (the cap level, or with
+    ///         none the series' ceiling) and a stale or holding series.
+    /// @return seriesId   The series the loan reads for its whole life.
+    /// @return clamped    The loan's clamped sum now ({clampedSum}): its
+    ///                    snapshot.
+    /// @return ceilingBps The series' ceiling, an uncapped loan's cap.
+    function noteLoanOpened(address asset, uint32 capId, uint32 floorId)
+        external
+        returns (uint32 seriesId, uint256 clamped, uint16 ceilingBps);
 
-    /// @notice Count a floating loan on `seriesId` closed. The Diamond only.
-    function noteLoanClosed(uint32 seriesId) external;
+    /// @notice Count a floating loan on `seriesId` with those levels closed.
+    ///         The Diamond only.
+    function noteLoanClosed(uint32 seriesId, uint32 capId, uint32 floorId) external;
+
+    /// @notice The one running sum a floating loan reads, at the present
+    ///         second: `index - excess above the cap + shortfall below the
+    ///         floor` on `seriesId` (level 0 = none). The interest on a
+    ///         principal between two moments is the difference of this sum,
+    ///         as for the index, and equals `clamp(reference, floor, cap)`
+    ///         accrued exactly.
+    /// @return clamped    The sum, 1e18-scaled rate times seconds.
+    /// @return ceilingBps The series' ceiling, an uncapped loan's cap.
+    function clampedSum(uint32 seriesId, uint32 capId, uint32 floorId)
+        external
+        view
+        returns (uint256 clamped, uint16 ceilingBps);
 }

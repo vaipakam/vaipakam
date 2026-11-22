@@ -472,6 +472,10 @@ FACETS=(
   # facet). The rate reference per series, its averages, the term average
   # and the band; the rate-curve page and the indexer read it.
   "RateReference"
+  # #3337 part 2 — the RateReference's read side (standalone; deployed by the
+  # reference, found through its READS()): term average, linked rate, band,
+  # unusual state and status.
+  "RateReferenceReads"
   # #3379 B2 — the vault code (standalone; NOT a diamond facet). Every user
   # vault runs it; the app reads its protected record and its owner from it
   # and sends protected-mode writes to it (`protect`).
