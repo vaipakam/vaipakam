@@ -97,13 +97,16 @@ is a way to add the higher health floor at once.
   old reading so never raises a cap by falling away.
 - Whichever applies is cut to the tier's ceiling when a loan reads it, and to
   the cap of every deeper tier (section 3).
-- A reading higher than the one before it applies no higher than the figure
-  it replaced, or the default if that is higher, until it is refreshed again
-  in a later hour, counted as the hourly checkpoints count hours (section 9).
-  It is never above the new reading itself. The first reading for a tier is
-  held to the default the same way. Anyone may make that refresh, and it
-  applies what it finds unless that is higher again. A lower reading applies
-  at once. So a refresh timed to a spike lifts no cap past that bound.
+- A rise needs two readings in different hours. A refresh lifts the cap that
+  applies past the higher of the default and the cap that applied before it
+  only as far as the lower of its reading and the reading before it, and only
+  where that earlier reading was found in an earlier hour, counted as the
+  hourly checkpoints count hours (section 9). Otherwise the cap stays at that
+  bound. The rule is measured against the cap that applies, so a waiting
+  reading that falls and still lies above that cap lifts nothing in the same
+  hour. The first reading for a tier is held to the default. A refresh that
+  lowers the cap applies at once. So a refresh timed to a spike lifts no cap
+  past that bound.
 - A reading past half the usable age raises a notice while it still applies.
 
 **The peer reading.** Anyone may refresh it.
@@ -131,7 +134,7 @@ what a second platform lends at. No quick step raises one: turning the caps
 off, a pause of peer reads and a reading that grows old each leave every cap
 at or below what it was. A cap rises only by a new usable reading or by a
 setting that has waited, and past the higher of the default and the figure
-before it only by a reading that was refreshed again in a later hour.
+before it only by two readings found in different hours.
 
 ## 5. The liquidation line
 
@@ -351,8 +354,9 @@ parameters table.
   a shallower tier's, read by a loan of each tier and of none, below High and
   at High. A lowest tier cap at and below the least cap. A raised reading read
   before and after a refresh in the same hour and in a later one, with the
-  figure it replaced below and above the default. A first reading above the
-  default, a lower reading, and readings that rise at every refresh.
+  cap before it below and above the default. A waiting reading that falls and
+  stays above the cap that applies. A first reading above the default, a
+  reading that lowers the cap, and readings that rise at every refresh.
 - One platform alone, two that disagree past the band, one reference asset, a
   failed read, a frozen asset, one platform raised far above the other, and
   the lowest platform raised alone, up to and past the second. A refresh in a
@@ -388,8 +392,8 @@ parameters table.
    lowest of those that agree costs a little room, and bounds what one
    platform that loosens its own figure can do by the figure of a second.
 4. **A raised reading waits a set time before it applies.** Not taken: it is
-   a new figure. A second refresh in a later hour, which anyone may make, is
-   asked for instead.
+   a new figure. A second reading in a later hour, which anyone may refresh,
+   is asked for instead.
 5. **Keep the three per-asset settings.** Not taken. Each gives a named asset
    terms of its own, and the pause and the confidence tier already make one
    asset more careful without choosing its figures.
