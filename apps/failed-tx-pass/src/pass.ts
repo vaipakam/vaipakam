@@ -339,6 +339,11 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
       // not built yet, so the cursor only marks the blocks passed.
     }
 
+    // One rule for every record, whichever source found it.
+    const unreachable = (r: FailedTxRecord) => {
+      if (r.stateUnreachable) alert(`unreachable-${r.txHash}`, `Chain ${chainId}: ${r.txHash} failed, but the node no longer held its block's state; the record holds the receipt only.`);
+    };
+
     // 5. Decode. The records travel in the cursor write (below), so a record
     // is never stored without the checkpoint that lets a later run find its
     // block replaced. One write carries at most RECORDS_PER_WRITE, so the run
@@ -385,7 +390,7 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
       note(`overfull-${overfull}`, `Chain ${chainId}: block ${overfull} holds more failed transactions than one write carries; its records were stored ahead of the cursor.`);
     }
     result.records += kept.length;
-    for (const r of kept) if (r.stateUnreachable) alert(`unreachable-${r.txHash}`, `Chain ${chainId}: ${r.txHash} failed, but the node no longer held its block's state; the record holds the receipt only.`);
+    for (const r of kept) unreachable(r);
     const cursorTo = Math.max(start, to);
     if (from <= cursorTo) result.scanned = { from, to: cursorTo };
     // The first block of the lists' present unbroken coverage: set when the
@@ -463,7 +468,10 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
             const audited: FailedTxRecord[] = [];
             for (const m of missed) {
               const r = await recordFor({ rpc, chainId, mode, nameOf: ctx.nameOf }, m.hash, 'audit');
-              if (r) audited.push(r);
+              if (r) {
+                audited.push(r);
+                unreachable(r);
+              }
               if (measured) {
                 alert(`audit-missed-${m.hash}`, `Chain ${chainId}: the audit found ${m.hash} (block ${m.blockNumber}), a failed transaction the explorer's list did not return. It is now recorded; open a card for the miss.`);
               }

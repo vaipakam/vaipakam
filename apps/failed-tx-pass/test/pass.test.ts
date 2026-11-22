@@ -498,6 +498,16 @@ describe('the failed transaction pass', () => {
     expect(skipped?.text).toContain('were not watched');
   });
 
+  it('alerts on a state no longer reachable for a failure the audit found', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const windowStart = DEPLOY + 86_400;
+    chain.txs.push({ hash: txHash(29), block: windowStart + 3, to: DIAMOND, input: repay(29n), status: 0, revert: REVERT, trace: 'gone', call: 'gone' });
+    const ix = realIndexer();
+    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW));
+    expect(r.audited).toMatchObject({ from: windowStart, found: 1 });
+    expect(r.findings.some((f) => f.level === 'alert' && f.key === `unreachable-${txHash(29)}`)).toBe(true);
+  });
+
   it('with no explorer key, runs sends-and-audit and states the watched share', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const ix = realIndexer();
