@@ -2,6 +2,8 @@ import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
+// #3921 — build.json, the commit this build names, read into the build history.
+import { buildFilePlugin } from '@vaipakam/lib/buildFile';
 import { indexerOrigin } from './src/lib/indexerOrigin';
 
 // Minimal Vite config for the marketing SPA.
@@ -21,6 +23,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
+      buildFilePlugin() as Plugin,
       cspScriptHashesPlugin() as Plugin,
       cspConnectSourcesPlugin({ sources: () => [indexerOrigin(env.VITE_INDEXER_ORIGIN)] }) as Plugin,
     ],

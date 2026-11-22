@@ -154,6 +154,9 @@ export type { SecretBinding };
  * separately on each for a reason — see `WorkerEnv.DB` (#2239).
  */
 interface BaseEnv {
+  /** #3921 — the version-metadata binding: this version's id and its deploy
+   *  stamp tag, noted into the build history. Absent in local dev / tests. */
+  CF_VERSION_METADATA?: { id: string; tag?: string };
   // #1722 — the agent's Telegram state (links, handshake codes, pending
   // removals, LOCK requests): a SQLite Durable Object bound to this Worker
   // only. No Cloudflare API reaches its storage from outside the Worker.

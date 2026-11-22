@@ -114,6 +114,8 @@ export const BORN_OFF_CHAIN_TABLES = new Set([
   'failed_tx',
   'failed_tx_cursor',
   'failed_tx_range',
+  // #3921 (migration 0126) — the build history, noted as each service ran.
+  'service_build_history',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -187,6 +189,7 @@ const ERA_GATED_TABLES = {
   failed_tx: 'migration 0123 (#3918)',
   failed_tx_cursor: 'migration 0123 (#3918)',
   failed_tx_range: 'migration 0123 (#3918)',
+  service_build_history: 'migration 0126 (#3921)',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -260,6 +263,7 @@ const REQUIRED_TABLE_COLUMNS = {
     'chain_id', 'kind', 'from_block', 'to_block', 'block_hash', 'reason', 'found', 'missed',
     'marked', 'replaced_at', 'recorded_at',
   ],
+  service_build_history: ['service', 'seen_at', 'build', 'version_id', 'source'],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -283,6 +287,7 @@ const TRUSTED_PRIMARY_KEYS = {
   failed_tx: ['chain_id', 'tx_hash', 'block_hash'],
   failed_tx_cursor: ['chain_id'],
   failed_tx_range: ['chain_id', 'kind', 'from_block', 'to_block'],
+  service_build_history: ['service', 'seen_at', 'build'],
 };
 
 // Every OTHER uniqueness the schema declares on a born-off-chain table,
@@ -311,6 +316,9 @@ const TRUSTED_COLUMN_SHAPES = {
   // and in these shapes, and refuses any other.
   failed_tx: { tx_hash: HASH_SHAPE, block_hash: HASH_SHAPE, diamond: ADDRESS_SHAPE, sender: ADDRESS_SHAPE, contract: ADDRESS_SHAPE },
   failed_tx_cursor: { diamond: ADDRESS_SHAPE },
+  // Written only through @vaipakam/lib/buildHistory, which stores the deploy
+  // stamp's tag or 'unstamped' and nothing else.
+  service_build_history: { build: /^(?:[0-9a-f]{12}(?:-dirty)?|unstamped)$/ },
 };
 
 /**

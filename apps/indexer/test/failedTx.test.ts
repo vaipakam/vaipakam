@@ -35,7 +35,7 @@ import {
   type FailedTxPassState,
 } from '../src/failedTx';
 
-const DDL = ['0123_failed_transactions.sql', '0124_failed_tx_pass_state.sql'].map((f) =>
+const DDL = ['0123_failed_transactions.sql', '0124_failed_tx_pass_state.sql', '0126_service_build_history.sql'].map((f) =>
   readFileSync(new URL(`../migrations/${f}`, import.meta.url), 'utf8'),
 );
 const CHAIN = 84532;
@@ -80,11 +80,11 @@ const readBody = async (req: Request, max: number) => {
 function setup() {
   const h = createSqliteD1(DDL);
   // Every write names the Diamond it was made under; the bundle's unless a test says otherwise.
-  const post = (body: unknown, token: string | null = TOKEN) =>
+  const post = (body: unknown, token: string | null = TOKEN, extra: Record<string, string> = {}) =>
     handleFailedTxWrite(
       new Request('https://x/internal/failed-tx', {
         method: 'POST',
-        headers: token ? { authorization: `Bearer ${token}` } : {},
+        headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra },
         body: JSON.stringify(body && typeof body === 'object' && !('diamond' in body) ? { ...body, diamond: DIAMOND } : body),
       }),
       h.d1 as D1Write,
@@ -105,6 +105,19 @@ function setup() {
 }
 
 describe('POST /internal/failed-tx', () => {
+  it('notes the build the pass names on its cursor writes, once per build (#3921)', async () => {
+    const s = setup();
+    const cursor = { kind: 'cursor', chainId: CHAIN, cursor: { mode: 'trace-filter', blockNumber: 600, blockTime: NOW, checkpoints: [], gaps: [], audits: [] } };
+    expect((await s.post(cursor, TOKEN, { 'x-vaipakam-build': 'abcdef012345' })).status).toBe(200);
+    expect((await s.post(cursor, TOKEN, { 'x-vaipakam-build': 'abcdef012345' })).status).toBe(200);
+    expect((await s.post({ kind: 'records', chainId: CHAIN, records: [record()] }, TOKEN, { 'x-vaipakam-build': 'bbbbbbbbbbbb' })).status).toBe(200);
+    expect(s.rows('SELECT service, build, source FROM service_build_history')).toEqual([
+      { service: 'failed-tx-pass', build: 'abcdef012345', source: 'pass-report' },
+    ]);
+    expect((await s.post(cursor, TOKEN, { 'x-vaipakam-build': '<bad>' })).status).toBe(200);
+    expect(s.rows('SELECT build FROM service_build_history ORDER BY rowid').map((r) => r.build)).toEqual(['abcdef012345', 'unstamped']);
+  });
+
   it('refuses without the token, with a wrong one, and when no token is set', async () => {
     const s = setup();
     expect((await s.post({ kind: 'records', chainId: CHAIN, records: [record()] }, null)).status).toBe(401);

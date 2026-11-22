@@ -161,6 +161,9 @@ export interface WorkerEnv {
    *  deployed?" a one-curl question (surfaced on the stats routes).
    *  Absent in local dev / tests. */
   CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
+  /** #3921 — the static builds whose `build.json` the build history reads,
+   *  as `service=https://origin` pairs separated by commas. */
+  BUILD_FILE_ORIGINS?: string;
 }
 
 /**
@@ -273,6 +276,8 @@ export interface Env {
    *  deployed?" a one-curl question (surfaced on the stats routes).
    *  Absent in local dev / tests. */
   CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
+  /** #3921 — see the raw env's field. */
+  BUILD_FILE_ORIGINS?: string;
 
   // Per-chain RPC URLs — chain-event scan + live-ownership multicalls.
   RPC_BASE?: string;
@@ -363,6 +368,7 @@ export async function resolveEnv(
     // halves — see the `doIngestEnabled` field doc.
     doIngestEnabled: isDoIngestEnabled(raw),
     CF_VERSION_METADATA: raw.CF_VERSION_METADATA,
+    BUILD_FILE_ORIGINS: raw.BUILD_FILE_ORIGINS,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
     OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.

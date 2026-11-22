@@ -151,6 +151,9 @@ const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
   { table: 'failed_tx', migrationPrefix: '0123' },
   { table: 'failed_tx_cursor', migrationPrefix: '0123' },
   { table: 'failed_tx_range', migrationPrefix: '0123' },
+  //   - service_build_history (#3921, migration 0126) — which build of each
+  //     service ran from when, noted as it ran. No replay recreates it.
+  { table: 'service_build_history', migrationPrefix: '0126' },
 ];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).

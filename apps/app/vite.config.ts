@@ -7,6 +7,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { buildCommitLabel, buildSourceTime } from '@vaipakam/lib/buildTime';
+// #3921 — build.json, the commit this build names, read into the build history.
+import { buildFilePlugin } from '@vaipakam/lib/buildFile';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { connectSources, rpcConfigProblems } from './src/lib/endpoints.ts';
@@ -178,7 +180,7 @@ export default defineConfig(({ mode, command }) => {
   return {
   plugins: process.env.APP_E2E
     ? [e2eDeploymentsBundle(), react(), cspScriptHashes()]
-    : [react(), cloudflare(), cspScriptHashes(), cspConnectSources(mode), serviceWorker()],
+    : [react(), cloudflare(), cspScriptHashes(), cspConnectSources(mode), serviceWorker(), buildFilePlugin() as Plugin],
   build: {
     rollupOptions: {
       output: {

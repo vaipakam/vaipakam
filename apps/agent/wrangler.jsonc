@@ -160,6 +160,12 @@
     },
   ],
 
+  // #3921 — this version's id and deploy stamp tag, noted into the build
+  // history on the first scheduled tick each version runs.
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA",
+  },
+
   // R2 bucket — T-075 — private store for the legal documents
   // uploaded when a protocol admin places a diagnostics legal hold
   // (the e-signed order / scanned letter). Private by default; the
