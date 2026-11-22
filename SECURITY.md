@@ -12,17 +12,15 @@ For admin-key custody, role custody, and the timelock that mediates privileged c
 
 Two private channels — pick either:
 
-1. **GitHub Security Advisories (preferred for first-time reporters)** —
-   file privately at
+1. **Email** `security@vaipakam.com`. This is the only security email
+   address Vaipakam owns; treat any other address that claims to receive
+   Vaipakam vulnerability reports as not ours.
+2. **GitHub Security Advisories** — file privately at
    [`vaipakam/vaipakam/security/advisories/new`](https://github.com/vaipakam/vaipakam/security/advisories/new).
    No email required; the advisory is invisible to the public until
    it's published. Maintainers see it immediately. This is the
    channel GitHub's built-in private vulnerability reporting
    surfaces.
-2. **Email** `security@vaipakam.xyz` (PGP key in repo root
-   `security.asc`). Use this if you need an out-of-band channel,
-   prefer encrypted comms, or are not comfortable filing through
-   GitHub.
 
 **Do not** open a public GitHub Issue for security-sensitive reports.
 
