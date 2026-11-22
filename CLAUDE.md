@@ -2627,11 +2627,12 @@ live in `docs/procedures/`.
   `security` / `audit` / `testnet-rehearsal` / `mainnet-rollout` as
   cross-cutting overlays.
 - The `thread:*`, `priority:p1`..`p5` and `stage:*` labels are the
-  source of truth for the board's `Thread`, `Priority` and `Stage`
-  fields: `.github/workflows/board-label-sync.yml` mirrors them hourly
-  and on every label change, so set the label, never the field. The
-  other fields (`Module`, `Size`, `Estimate`, `Iteration`) are still
-  set by hand.
+  source of truth for the `Thread`, `Priority` and `Stage` ISSUE fields
+  (defined for the repository's owner; the values live on the issue and
+  the board views group by them): `.github/workflows/board-label-sync.yml`
+  mirrors them hourly and on every label change with the workflow's own
+  token, so set the label, never the field. The project's other fields
+  (`Module`, `Size`, `Estimate`, `Iteration`) are still set by hand.
 - Issue Templates ([`.github/ISSUE_TEMPLATE/bug.yml`](.github/ISSUE_TEMPLATE/bug.yml)
   + [`.github/ISSUE_TEMPLATE/feature_request.yml`](.github/ISSUE_TEMPLATE/feature_request.yml))
   auto-apply the primary label and auto-assign `Raja4Shekar`. Blank

@@ -1,28 +1,54 @@
 #!/usr/bin/env node
 /**
- * Mirror `priority:*`, `stage:*` and `thread:*` issue labels onto the
- * `@vaipakam-labs` board's `Priority`, `Stage` and `Thread` fields.
+ * Mirror `priority:*`, `stage:*` and `thread:*` issue labels onto the issue
+ * fields `Priority`, `Stage` and `Thread`, the account-level issue fields the
+ * `@vaipakam-labs` board views group by.
  *
  * WHY. Labels are the one place project agents can record priority, stage and
- * ownership: the board's fields have no API those agents can write. So the
- * labels are the source of truth and the board follows them (owner decision
- * 2026-11-22). This script is the "follows": it reads the labels, reads the
- * board, and writes only the fields that differ. It never reads a field to
- * decide a label — the direction is one way.
+ * ownership, so the labels are the source of truth and the issue fields follow
+ * them (owner decision 2026-11-22). This script is the "follows": it reads the
+ * labels and the issue's current field values, and writes only the values that
+ * differ. It never reads a field to decide a label — the direction is one way.
+ * The values live on the ISSUE, not on a project card, so nothing here reads
+ * or pages the board.
+ *
+ * THE API THIS RELIES ON (read 2026-11-22):
+ *   - Field values, REST, documented for GitHub App INSTALLATION tokens (which
+ *     the Actions `GITHUB_TOKEN` is) with the repository "Issues" permission:
+ *       read:   every issue object carries `issue_field_values` (the issue
+ *               listing and the single-issue read both returned the key);
+ *       add:    POST   /repos/{o}/{r}/issues/{n}/issue-field-values
+ *               body {issue_field_values: [{field_id, value}]}, a single-select
+ *               value given as the option NAME, a text value as the string;
+ *       delete: DELETE /repos/{o}/{r}/issues/{n}/issue-field-values/{field_id}.
+ *     https://docs.github.com/en/rest/issues/issue-field-values
+ *     (PUT on the same path REPLACES every value on the issue, including fields
+ *     this job does not own, so it is never used.)
+ *   - Field definitions, GraphQL `Repository.issueFields` ("the repository's
+ *     issue fields, inherited from the repository's owner"), added 2026-05-20.
+ *     It is used because the REST definition endpoints are owner-scoped
+ *     (`/orgs/{org}/issue-fields` needs an organization permission,
+ *     `/user/issue-fields` a USER token) and this repository's owner is a
+ *     personal account, so neither is reachable with a repository token.
+ *     https://docs.github.com/en/graphql/reference/repos#repository
+ *     https://docs.github.com/en/graphql/overview/changelog/2026
+ *   The docs name no permission for that GraphQL read; whether the Actions
+ *   token may make it is established by the first live run, which fails
+ *   loudly (never writes) if it may not.
  *
  * WHAT IS PURE AND WHAT IS NOT. `planWrites` decides every write and every
  * report line from plain data, with no I/O, and is what the self-test pins
- * (`board-label-sync.selftest.mjs`). `listBoard` pages the board through an
- * injected GraphQL transport, so its pagination is pinned there too. Only the
- * transport (`gh` under `GH_DEBUG=api`) and the REST reads touch the network.
+ * (`board-label-sync.selftest.mjs`). `listIssueFields` pages the definitions
+ * through an injected GraphQL transport, so its pagination is pinned there
+ * too. Only the transport (`gh` under `GH_DEBUG=api`) and the paginated REST
+ * reads touch the network.
  *
  * Usage (the workflow sets every variable):
  *   node .github/scripts/board-label-sync.mjs              # reconcile every open issue
  *   node .github/scripts/board-label-sync.mjs --issue 123  # one issue (a label event)
  *
- *   PROJECT_OWNER, PROJECT_NUMBER, ISSUE_REPO   which board, which repository
- *   GH_TOKEN      the PAT: project reads and writes (GraphQL only)
- *   REPO_TOKEN    the Actions token: issue and label reads (REST only)
+ *   ISSUE_REPO    owner/name: the only repository read or written
+ *   GH_TOKEN      the Actions token (`issues: write`)
  *   DRY_RUN=true  plan and report, write nothing
  *   MAX_WRITES    the most field writes one run makes (default 300)
  *   RETRY_WAIT_CAP_SECONDS, RETRY_MARGIN_SECONDS  the rate-limit wait bounds
@@ -35,152 +61,102 @@ import { fileURLToPath } from 'node:url';
 
 // ── the label families ──────────────────────────────────────────────────────
 
-/** The five stages, in the order the board shows them. The option names on
- *  the board's `Stage` field are these strings exactly. */
+/** The five stages. The `Stage` field's option names are these, matched
+ *  case-insensitively (the live options are capitalised: `Held-for-Batch`). */
 export const STAGES = ['building', 'held-for-batch', 'queued', 'waiting-on-owner', 'built-not-closed'];
+const PRIORITIES = ['p1', 'p2', 'p3', 'p4', 'p5'];
 
 /**
- * One entry per mirrored family. `field` is the board field's NAME — matched
- * at run time, case-insensitively; no field or option id is ever written into
- * this file, so renaming or recreating an option on the board cannot leave a
- * stale id behind.
+ * One entry per mirrored family. `field` is the issue field's NAME, matched at
+ * run time, case-insensitively; no field id is ever written into this file.
+ * `dataType` is the type the field must have: a field of another type is
+ * reported as missing rather than written into.
  *
  * `valid(value)` says whether a label suffix is a value this family defines;
- * a label that fails it is reported as unrecognised and ignored.
- * `matches(optionName, value)` says whether a board option carries `value`.
- * `optionFor(value)` is the option name the summary asks the owner to add.
+ * a label that fails it is reported as unrecognised and ignored. `owned` is
+ * the set of values the sync itself writes — the only values it ever clears
+ * (for Thread, the repository's own `thread:` suffixes, passed at run time).
  */
 export const FAMILIES = [
-  {
-    key: 'priority',
-    prefix: 'priority:',
-    field: 'Priority',
-    valid: (v) => /^p[1-5]$/.test(v),
-    // `P1`, `p1`, `P1 – security`: the same P-number, followed by anything
-    // that is not another digit (so `P1` never matches a `P10`).
-    matches: (opt, v) => new RegExp(`^${v}(?![0-9])`, 'i').test(opt.trim()),
-    optionFor: (v) => v.toUpperCase(),
-  },
-  {
-    key: 'stage',
-    prefix: 'stage:',
-    field: 'Stage',
-    valid: (v) => STAGES.includes(v),
-    matches: (opt, v) => opt.trim().toLowerCase() === v,
-    optionFor: (v) => v,
-  },
-  {
-    key: 'thread',
-    prefix: 'thread:',
-    field: 'Thread',
-    // Any non-empty suffix is a thread; whether the board has an option for
-    // it is the "missing option" report, not a validity question.
-    valid: (v) => v.length > 0,
-    matches: (opt, v) => opt.trim().toLowerCase() === v,
-    optionFor: (v) => v,
-  },
+  { key: 'priority', prefix: 'priority:', field: 'Priority', dataType: 'SINGLE_SELECT',
+    valid: (v) => PRIORITIES.includes(v), owned: PRIORITIES },
+  { key: 'stage', prefix: 'stage:', field: 'Stage', dataType: 'SINGLE_SELECT',
+    valid: (v) => STAGES.includes(v), owned: STAGES },
+  // Free text: any non-empty suffix is a thread, written as the label has it.
+  { key: 'thread', prefix: 'thread:', field: 'Thread', dataType: 'TEXT',
+    valid: (v) => v.length > 0, owned: null },
 ];
+
+const lc = (s) => String(s ?? '').trim().toLowerCase();
 
 // ── the planner (pure) ──────────────────────────────────────────────────────
 
 /**
- * Decide every field write for the given issues and board items.
+ * Decide every field write for the given issues.
  *
- * @param {Array<{number:number,url:string,labels:string[]}>} issues
- *   The OPEN issues of `repo`, with their label names. Only these are planned.
- * @param {Array<{id:string,type:string,url?:string,repo?:string,state?:string,
- *                values:Record<string,{optionId:string,name:string}>}>} boardItems
- *   Board items. `values` is keyed by field id and holds single-select values.
- * @param {Array<{id:string,name:string,dataType?:string,options?:Array<{id:string,name:string}>}>} fields
- *   The board's fields.
- * @param {{repo:string, threadValues?:string[]}} context
- *   `repo` is `owner/name`; only that repository's issues are ever touched.
+ * @param {Array<{number:number, state?:string, labels:string[],
+ *                values:Array<{fieldId:number|null, fieldName:string, text:string|null}>}>} issues
+ *   Issues of this repository with their label names and their current field
+ *   values (`valuesFromRest`). Only OPEN ones are planned.
+ * @param {Array<{dbId:number, name:string, dataType:string, options?:Array<{name:string}>}>} fields
+ *   The issue fields available to the repository (`listIssueFields`).
+ * @param {{threadValues?:string[]}} context
  *   `threadValues` lists every `thread:` suffix defined in the repository — a
  *   Thread value counts as one the sync would have written only when it is in
  *   this list (see the clearing rule below).
  * @returns {{writes:Array<object>, conflicts:Array<object>, unrecognised:Array<object>,
- *            missingFields:string[], missingOptions:Record<string,string[]>,
- *            notOnBoard:number[], closedOnBoard:number[], foreignItems:number}}
+ *            missingFields:Array<{field:string, dataType:string}>,
+ *            missingOptions:Record<string,string[]>, notOpen:number[]}}
  */
-export function planWrites(issues, boardItems, fields, context) {
-  const repo = context.repo.toLowerCase();
-  const threadValues = new Set((context.threadValues ?? []).map((v) => v.toLowerCase()));
+export function planWrites(issues, fields, context = {}) {
+  const threadValues = new Set((context.threadValues ?? []).map(lc));
 
-  // Resolve each family's field by NAME. A field that is not a single select
-  // is treated as absent: writing an option id into a text field would fail
-  // every write, and reporting it as missing says what to fix.
+  // Resolve each family's field by NAME and TYPE. A field of the wrong type is
+  // treated as absent: writing an option name into a text field (or the
+  // reverse) would put the wrong kind of value on every issue.
   const resolved = {};
   const missingFields = [];
   for (const fam of FAMILIES) {
-    const f = fields.find(
-      (x) => x.name.trim().toLowerCase() === fam.field.toLowerCase() &&
-        Array.isArray(x.options) && (x.dataType === undefined || x.dataType === 'SINGLE_SELECT'),
-    );
+    const f = fields.find((x) => lc(x.name) === lc(fam.field) && x.dataType === fam.dataType);
     if (f) resolved[fam.key] = f;
-    else missingFields.push(fam.field);
-  }
-
-  // Which options of a field the sync itself would write. Only a value that is
-  // one of these is ever cleared when its label goes away; anything else on
-  // the field was put there by a person or another tool and is left alone.
-  const known = (fam, f) => (opt) => {
-    if (fam.key === 'thread') {
-      return [...threadValues].some((v) => fam.matches(opt.name, v));
-    }
-    const values = fam.key === 'priority' ? ['p1', 'p2', 'p3', 'p4', 'p5'] : STAGES;
-    return values.some((v) => fam.matches(opt.name, v));
-  };
-
-  // Only this repository's issue items. Drafts, pull requests and other
-  // repositories' issues are counted and never touched.
-  const byUrl = new Map();
-  let foreignItems = 0;
-  for (const it of boardItems) {
-    if (it.type === 'Issue' && (it.repo ?? '').toLowerCase() === repo && it.url) {
-      byUrl.set(it.url, it);
-    } else {
-      foreignItems += 1;
-    }
+    else missingFields.push({ field: fam.field, dataType: fam.dataType });
   }
 
   const writes = [];
   const conflicts = [];
   const unrecognised = [];
   const missingOptions = {};
-  const notOnBoard = [];
-  const closedOnBoard = [];
+  const notOpen = [];
 
   for (const issue of [...issues].sort((a, b) => a.number - b.number)) {
-    const item = byUrl.get(issue.url);
-    if (!item) {
-      notOnBoard.push(issue.number);
-      continue;
-    }
-    // The issue list says open; a board that says closed is a race between
-    // the two reads. Closed cards are never written, so it is skipped and the
-    // next run, reading both again, settles it.
-    if ((item.state ?? 'OPEN') !== 'OPEN') {
-      closedOnBoard.push(issue.number);
+    // The listing says open; an issue read as anything else is never written.
+    if (issue.state !== undefined && lc(issue.state) !== 'open') {
+      notOpen.push(issue.number);
       continue;
     }
 
     for (const fam of FAMILIES) {
-      const values = [];
+      // Distinct values, keyed case-insensitively; a thread keeps its case.
+      const values = new Map();
       for (const label of issue.labels) {
-        if (!label.toLowerCase().startsWith(fam.prefix)) continue;
-        const v = label.slice(fam.prefix.length).trim().toLowerCase();
-        if (fam.valid(v)) values.push(v);
+        if (!lc(label).startsWith(fam.prefix)) continue;
+        const raw = label.slice(fam.prefix.length).trim();
+        const v = fam.key === 'thread' ? raw : raw.toLowerCase();
+        if (fam.valid(v)) { if (!values.has(lc(v))) values.set(lc(v), v); }
         else unrecognised.push({ issue: issue.number, label });
       }
-      const unique = [...new Set(values)];
+      const unique = [...values.values()];
 
       const field = resolved[fam.key];
       if (!field) continue; // reported once, in missingFields
-      const current = item.values?.[field.id] ?? null;
+      // The current value, matched by the field's id (by name only when the
+      // value carries no id).
+      const cur = (issue.values ?? []).find((x) => (x.fieldId != null ? x.fieldId === field.dbId : lc(x.fieldName) === lc(field.name)));
+      const current = cur?.text ?? null;
 
       if (unique.length > 1) {
         // Two labels of one family: the sync picks neither and leaves the
-        // field as it is. Choosing one would put a guess on the board that
+        // field as it is. Choosing one would put a guess on the issue that
         // nobody asked for.
         conflicts.push({ issue: issue.number, family: fam.key, labels: unique.map((v) => fam.prefix + v) });
         continue;
@@ -188,187 +164,116 @@ export function planWrites(issues, boardItems, fields, context) {
 
       if (unique.length === 1) {
         const v = unique[0];
-        // An exact name beats a prefix match, so `P1` wins over `P1 (old)`.
-        const opts = field.options.filter((o) => fam.matches(o.name, v));
-        const opt = opts.find((o) => o.name.trim().toLowerCase() === fam.optionFor(v).toLowerCase()) ?? opts[0];
-        if (!opt) {
-          (missingOptions[fam.field] ??= []);
-          const want = fam.optionFor(v);
-          if (!missingOptions[fam.field].includes(want)) missingOptions[fam.field].push(want);
-          continue;
+        let value;
+        if (fam.dataType === 'SINGLE_SELECT') {
+          // Case-insensitive: the label `stage:held-for-batch` is the option
+          // `Held-for-Batch`. The option's own name is what is written.
+          const opt = (field.options ?? []).find((o) => lc(o.name) === v);
+          if (!opt) {
+            (missingOptions[fam.field] ??= []);
+            if (!missingOptions[fam.field].includes(v)) missingOptions[fam.field].push(v);
+            continue;
+          }
+          if (current !== null && lc(current) === lc(opt.name)) continue;
+          value = opt.name;
+        } else {
+          if (current === v) continue;
+          value = v;
         }
-        if (current && current.optionId === opt.id) continue;
-        writes.push({
-          action: 'set', issue: issue.number, itemId: item.id, field: fam.field, fieldId: field.id,
-          optionId: opt.id, optionName: opt.name, from: current?.name ?? null,
-        });
+        writes.push({ action: 'set', issue: issue.number, field: fam.field, fieldId: field.dbId, value, from: current });
         continue;
       }
 
       // No label of this family. Clear only a value the sync would have
       // written; leave anything else alone.
-      if (current && field.options.some((o) => o.id === current.optionId && known(fam, field)(o))) {
-        writes.push({
-          action: 'clear', issue: issue.number, itemId: item.id, field: fam.field, fieldId: field.id,
-          optionId: null, optionName: null, from: current.name,
-        });
+      if (current === null) continue;
+      const owned = fam.owned ? fam.owned.includes(lc(current)) : threadValues.has(lc(current));
+      if (owned) {
+        writes.push({ action: 'clear', issue: issue.number, field: fam.field, fieldId: field.dbId, value: null, from: current });
       }
     }
   }
 
   for (const k of Object.keys(missingOptions)) missingOptions[k].sort();
-  return { writes, conflicts, unrecognised, missingFields, missingOptions, notOnBoard, closedOnBoard, foreignItems };
-}
-
-// ── GraphQL documents ───────────────────────────────────────────────────────
-
-const FIELDS_FRAGMENT = `
-  fields(first: 50) {
-    nodes {
-      ... on ProjectV2FieldCommon { id name dataType }
-      ... on ProjectV2SingleSelectField { options { id name } }
-    }
-  }`;
-
-const VALUES_FRAGMENT = `
-  fieldValues(first: 30) {
-    nodes {
-      ... on ProjectV2ItemFieldSingleSelectValue {
-        optionId
-        name
-        field { ... on ProjectV2FieldCommon { id } }
-      }
-    }
-  }`;
-
-/** One page of board items, and (on the first page only) the project id and
- *  its fields. No titles or bodies are requested: Drafts on this board exist
- *  nowhere else, and nothing here needs them. */
-export const BOARD_PAGE_QUERY = `
-query($owner: String!, $number: Int!, $after: String, $first: Boolean!) {
-  user(login: $owner) {
-    projectV2(number: $number) {
-      id @include(if: $first)
-      ${FIELDS_FRAGMENT.replace('fields(first: 50)', 'fields(first: 50) @include(if: $first)')}
-      items(first: 100, after: $after) {
-        totalCount
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          content {
-            __typename
-            ... on Issue { number url state repository { nameWithOwner } }
-          }
-          ${VALUES_FRAGMENT}
-        }
-      }
-    }
-  }
-}`;
-
-/** One issue's board item, with the board's fields, in ONE request — what a
- *  label event costs before any write. */
-export const ISSUE_ITEM_QUERY = `
-query($owner: String!, $number: Int!, $repoOwner: String!, $repoName: String!, $issue: Int!) {
-  user(login: $owner) {
-    projectV2(number: $number) {
-      id
-      ${FIELDS_FRAGMENT}
-    }
-  }
-  repository(owner: $repoOwner, name: $repoName) {
-    issue(number: $issue) {
-      number
-      url
-      state
-      projectItems(first: 20) {
-        nodes {
-          id
-          project { id }
-          ${VALUES_FRAGMENT}
-        }
-      }
-    }
-  }
-}`;
-
-/** Normalise a GraphQL item node into the planner's shape. */
-export function itemFromNode(node, fallback = {}) {
-  const c = node.content ?? {};
-  const values = {};
-  for (const v of node.fieldValues?.nodes ?? []) {
-    if (v && v.optionId && v.field?.id) values[v.field.id] = { optionId: v.optionId, name: v.name };
-  }
-  return {
-    id: node.id,
-    type: c.__typename ?? fallback.type ?? 'Unknown',
-    url: c.url ?? fallback.url,
-    repo: c.repository?.nameWithOwner ?? fallback.repo,
-    state: c.state ?? fallback.state,
-    number: c.number ?? fallback.number,
-    values,
-  };
-}
-
-/** Normalise the fields connection. Non-select fields keep no `options`. */
-export function fieldsFromNodes(nodes) {
-  return (nodes ?? [])
-    .filter((n) => n && n.id && n.name)
-    .map((n) => ({ id: n.id, name: n.name, dataType: n.dataType, options: n.options }));
+  return { writes, conflicts, unrecognised, missingFields, missingOptions, notOpen };
 }
 
 /**
- * Page every board item, once. `gql(query, variables)` returns the decoded
- * response body (`{data: …}`). Aborts on a short read rather than plan from
- * part of the board: an item read as absent is merely skipped, but a
- * truncated listing hides how much was skipped.
+ * Normalise an issue's REST `issue_field_values` into the planner's shape.
+ * A single-select value's `value` is the option's ID; its name is in
+ * `single_select_option.name`, and the name is what is compared. A text
+ * value's `value` is the string. Throws when the key is absent: without it
+ * the current values are unknown, and planning from "none" would miss every
+ * clear.
  */
-export async function listBoard(gql, owner, number, { maxPages = 100 } = {}) {
-  let after = null;
-  let projectId = null;
-  let fields = null;
-  let total = null;
-  const items = [];
-  for (let page = 0; page < maxPages; page += 1) {
-    const res = await gql(BOARD_PAGE_QUERY, { owner, number, after, first: page === 0 });
-    const proj = res?.data?.user?.projectV2;
-    if (!proj) throw new Error(`board ${owner}/${number} not readable (no projectV2 in the response)`);
-    if (page === 0) {
-      projectId = proj.id;
-      fields = fieldsFromNodes(proj.fields?.nodes);
-      total = proj.items.totalCount;
-    }
-    for (const n of proj.items.nodes ?? []) items.push(itemFromNode(n));
-    if (!proj.items.pageInfo.hasNextPage) {
-      if (items.length < total) {
-        throw new Error(`board listing returned ${items.length} of ${total} items`);
-      }
-      return { projectId, fields, items, pages: page + 1 };
-    }
-    after = proj.items.pageInfo.endCursor;
+export function valuesFromRest(issueFieldValues, issueNumber) {
+  if (!Array.isArray(issueFieldValues)) {
+    throw new Error(`#${issueNumber}: the issue read carries no issue_field_values, so its current field values are unknown`);
   }
-  throw new Error(`board listing did not end within ${maxPages} pages`);
+  return issueFieldValues.map((x) => ({
+    fieldId: x.issue_field_id == null ? null : Number(x.issue_field_id),
+    fieldName: x.issue_field_name ?? '',
+    text: x.single_select_option ? (x.single_select_option.name ?? null)
+      : (typeof x.value === 'string' ? x.value : (x.value == null ? null : String(x.value))),
+  }));
 }
 
-/** Build one aliased mutation document for a batch of writes, values passed
- *  as variables (never interpolated into the document). */
-export function mutationFor(projectId, batch) {
-  const decls = ['$p: ID!'];
-  const parts = [];
-  const variables = { p: projectId };
-  batch.forEach((w, i) => {
-    decls.push(`$i${i}: ID!`, `$f${i}: ID!`);
-    variables[`i${i}`] = w.itemId;
-    variables[`f${i}`] = w.fieldId;
-    if (w.action === 'set') {
-      decls.push(`$o${i}: String!`);
-      variables[`o${i}`] = w.optionId;
-      parts.push(`w${i}: updateProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i${i}, fieldId: $f${i}, value: {singleSelectOptionId: $o${i}}}) { clientMutationId }`);
-    } else {
-      parts.push(`w${i}: clearProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i${i}, fieldId: $f${i}}) { clientMutationId }`);
+/** The writes for one issue as REST requests: every set in ONE add request,
+ *  each clear as its own delete. Values travel in the JSON body. */
+export function requestsFor(repo, issueNumber, writes) {
+  const base = `repos/${repo}/issues/${issueNumber}/issue-field-values`;
+  const out = [];
+  const sets = writes.filter((w) => w.action === 'set');
+  if (sets.length) {
+    out.push({ method: 'POST', path: base, body: { issue_field_values: sets.map((w) => ({ field_id: w.fieldId, value: w.value })) }, writes: sets.length });
+  }
+  for (const w of writes.filter((x) => x.action === 'clear')) {
+    out.push({ method: 'DELETE', path: `${base}/${w.fieldId}`, body: null, writes: 1 });
+  }
+  return out;
+}
+
+// ── field definitions (GraphQL) ─────────────────────────────────────────────
+
+/** One page of the issue fields the repository inherits from its owner. No
+ *  values and no issues: only names, types, database ids and option names. */
+export const ISSUE_FIELDS_QUERY = `
+query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issueFields(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        ... on IssueFieldCommon { name dataType fullDatabaseId }
+        ... on IssueFieldSingleSelect { options { name } }
+      }
     }
-  });
-  return { query: `mutation(${decls.join(', ')}) {\n  ${parts.join('\n  ')}\n}`, variables };
+  }
+}`;
+
+/**
+ * Page every issue field definition. `gql(query, variables)` returns the
+ * decoded body (`{data: …}`). `fullDatabaseId` is the `field_id` the REST
+ * value endpoints take; it arrives as a BigInt string.
+ */
+export async function listIssueFields(gql, repo, { maxPages = 10 } = {}) {
+  const [owner, name] = repo.split('/');
+  let after = null;
+  const fields = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    const res = await gql(ISSUE_FIELDS_QUERY, { owner, name, after });
+    const conn = res?.data?.repository?.issueFields;
+    if (!conn) {
+      const msg = (res?.errors ?? []).map((e) => e.message).join('; ').slice(0, 300);
+      throw new Error(`issue fields of ${repo} not readable${msg ? `: ${msg}` : ''}`);
+    }
+    for (const n of conn.nodes ?? []) {
+      if (!n || !n.name || n.fullDatabaseId == null) continue;
+      fields.push({ dbId: Number(n.fullDatabaseId), name: n.name, dataType: n.dataType, options: n.options });
+    }
+    if (!conn.pageInfo.hasNextPage) return { fields, pages: page + 1 };
+    after = conn.pageInfo.endCursor;
+  }
+  throw new Error(`issue field listing did not end within ${maxPages} pages`);
 }
 
 // ── the transport: gh, with the reconcile job's rate-limit rule ─────────────
@@ -395,17 +300,22 @@ export function traceEvidence(trace) {
     .slice(-20000);
 }
 
+/** The REST API version the issue-field-values documentation is written
+ *  against; sent on those requests only. */
+export const FIELD_VALUES_API_VERSION = '2026-03-10';
+
 /**
- * A GraphQL transport over `gh api graphql`, carrying the reconcile job's
- * rule unchanged: when a request fails, its OWN trace is classified by
- * `gh-trace-ratelimit-wait.sh` (the one statement of what counts as a limit);
- * a recognised limit whose wait, margin included, fits under the cap is waited
- * out and the request tried ONCE more. Anything else fails at once.
+ * A transport over `gh api`, carrying the reconcile job's rule unchanged:
+ * when a request fails, its OWN trace is classified by
+ * `gh-trace-ratelimit-wait.sh` (the one statement of what counts as a limit,
+ * GraphQL's 200-with-error and REST's 403 alike); a recognised limit whose
+ * wait, margin included, fits under the cap is waited out and the request
+ * tried ONCE more. Anything else fails at once.
  *
  * ONE wait per RUN, not per request: a run that meets the limit twice has met
- * a bucket some other tool is draining, and parking the runner again would
+ * a bucket something else is draining, and parking the runner again would
  * hide that. The second failure ends the run; the writes are idempotent and
- * the next hourly run carries on from what the board then shows.
+ * the next hourly run carries on from what the issues then show.
  *
  * `deps` is injectable so the self-test can drive the rule without a network:
  * `run(args, input)` → {status, stdout, stderr}, `classify(trace)` →
@@ -414,12 +324,11 @@ export function traceEvidence(trace) {
 export function makeGhTransport(deps, { waitCap = 900, margin = 5 } = {}) {
   let waited = false;
   const stats = { calls: 0, waits: 0 };
-  async function gql(query, variables) {
-    const body = JSON.stringify({ query, variables });
+  async function call(args, input, what) {
     for (let attempt = 0; ; attempt += 1) {
       stats.calls += 1;
-      const r = deps.run(['api', 'graphql', '--input', '-'], body);
-      if (r.status === 0) return JSON.parse(r.stdout);
+      const r = deps.run(args, input);
+      if (r.status === 0) return r.stdout && r.stdout.trim() ? JSON.parse(r.stdout) : null;
       const c = deps.classify(r.stderr ?? '');
       let note;
       if (c.rc === 0) {
@@ -428,7 +337,7 @@ export function makeGhTransport(deps, { waitCap = 900, margin = 5 } = {}) {
         if (attempt === 0 && !waited && wait <= waitCap) {
           waited = true;
           stats.waits += 1;
-          deps.log(`::warning::GraphQL request was rate limited (${reason}); waiting ${wait}s before trying once more`);
+          deps.log(`::warning::${what} was rate limited (${reason}); waiting ${wait}s before trying once more`);
           await deps.sleep(wait);
           continue;
         }
@@ -440,12 +349,20 @@ export function makeGhTransport(deps, { waitCap = 900, margin = 5 } = {}) {
       } else {
         note = 'failed with no recognised rate limit';
       }
-      const err = new Error(`GraphQL request ${note}`);
+      const err = new Error(`${what} ${note}`);
       err.evidence = traceEvidence(r.stderr ?? '');
       throw err;
     }
   }
-  return { gql, stats };
+  /** A GraphQL read; variables travel in the body, never in the document. */
+  const gql = (query, variables) => call(['api', 'graphql', '--input', '-'], JSON.stringify({ query, variables }), 'GraphQL request');
+  /** A REST write to the issue-field-values endpoints. */
+  const rest = (method, path, body) => call(
+    ['api', '--method', method, path, '-H', `X-GitHub-Api-Version: ${FIELD_VALUES_API_VERSION}`, ...(body ? ['--input', '-'] : [])],
+    body ? JSON.stringify(body) : undefined,
+    `${method} ${path.replace(/^repos\/[^/]+\/[^/]+\//, '')}`,
+  );
+  return { gql, rest, stats };
 }
 
 const PARSER = join(dirname(fileURLToPath(import.meta.url)), 'gh-trace-ratelimit-wait.sh');
@@ -475,12 +392,11 @@ function realDeps() {
   };
 }
 
-/** A REST read with the repository-scoped token, never the PAT: issue and
- *  label listings have their own budget, untouched by the board's. */
-function restLines(path, jq, token) {
+/** A paginated REST read. Its stderr is NOT printed whole: an error line is
+ *  cut to 500 characters and carries no trace (GH_DEBUG is not set here). */
+function restLines(path, jq) {
   const r = spawnSync('gh', ['api', '--paginate', path, '--jq', jq], {
     encoding: 'utf8', maxBuffer: 256 * 1024 * 1024,
-    env: { ...process.env, GH_TOKEN: token },
   });
   if (r.status !== 0) throw new Error(`REST read of ${path.split('?')[0]} failed: ${(r.stderr ?? '').trim().slice(0, 500)}`);
   return r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -491,31 +407,26 @@ function restLines(path, jq, token) {
 /** Render the job summary. Every missing field or option is an instruction
  *  for the owner, and is listed as one. */
 export function renderSummary(plan, outcome) {
-  const lines = ['## Board label sync', ''];
+  const lines = ['## Issue field label sync', ''];
   lines.push(`- mode: ${outcome.mode}${outcome.dryRun ? ' (dry run — nothing written)' : ''}`);
   lines.push(`- open issues read: ${outcome.issues}`);
-  lines.push(`- board items read: ${outcome.boardItems} (other items, never touched: ${plan.foreignItems})`);
-  lines.push(`- writes planned: ${plan.writes.length}; made: ${outcome.written}; deferred to the next run by MAX_WRITES: ${outcome.deferred}`);
+  lines.push(`- field writes planned: ${plan.writes.length}; made: ${outcome.written}; deferred to the next run by MAX_WRITES: ${outcome.deferred}`);
   if (outcome.failed) lines.push(`- writes not confirmed (the next run re-plans them): ${outcome.failed}`);
-  lines.push(`- GraphQL requests: ${outcome.calls}${outcome.waits ? `, after one rate-limit wait` : ''}`);
-  if (plan.notOnBoard.length) {
-    lines.push(`- open issues not on the board, skipped (project-board-reconcile.yml adds them): ${plan.notOnBoard.map((n) => `#${n}`).join(', ')}`);
-  }
-  if (plan.closedOnBoard.length) {
-    lines.push(`- open issues the board shows as closed, skipped this run: ${plan.closedOnBoard.map((n) => `#${n}`).join(', ')}`);
+  lines.push(`- API requests through the rate-limit rule: ${outcome.calls}${outcome.waits ? ', after one rate-limit wait' : ''}`);
+  if (plan.notOpen.length) {
+    lines.push(`- issues read as not open, skipped: ${plan.notOpen.map((n) => `#${n}`).join(', ')}`);
   }
   const todo = [];
-  for (const f of plan.missingFields) {
-    const fam = FAMILIES.find((x) => x.field === f);
-    const hint = fam.key === 'priority' ? 'options P1, P2, P3, P4, P5'
-      : fam.key === 'stage' ? `options ${STAGES.join(', ')}`
-        : 'one option per `thread:` label suffix';
-    todo.push(`- Add the single-select field **${f}** on the board (${hint}). Its writes are skipped until it exists.`);
+  for (const { field, dataType } of plan.missingFields) {
+    const hint = field === 'Priority' ? 'single select, options P1, P2, P3, P4, P5'
+      : field === 'Stage' ? `single select, options ${STAGES.join(', ')} (any capitalisation)`
+        : 'text';
+    todo.push(`- Add the issue field **${field}** (${hint}) for the repository's owner, or fix its type (it must be ${dataType}). Its writes are skipped until it exists.`);
   }
   for (const [f, opts] of Object.entries(plan.missingOptions)) {
-    for (const o of opts) todo.push(`- Add the option **${o}** to the **${f}** field. Issues labelled with it are skipped until it exists.`);
+    for (const o of opts) todo.push(`- Add the option **${o}** to the **${f}** issue field. Issues labelled with it are skipped until it exists.`);
   }
-  if (todo.length) lines.push('', '### Add on the board', '', ...todo);
+  if (todo.length) lines.push('', '### Add to the issue fields', '', ...todo);
   if (plan.conflicts.length) {
     lines.push('', '### Two labels of one family (field left as it is)', '');
     for (const c of plan.conflicts) lines.push(`- #${c.issue}: ${c.labels.map((l) => `\`${l}\``).join(' and ')} — remove all but one`);
@@ -527,7 +438,7 @@ export function renderSummary(plan, outcome) {
   if (plan.writes.length) {
     lines.push('', '### Writes', '');
     for (const w of plan.writes.slice(0, 200)) {
-      lines.push(`- #${w.issue} ${w.field}: ${w.from ?? '(empty)'} → ${w.action === 'set' ? w.optionName : '(cleared)'}`);
+      lines.push(`- #${w.issue} ${w.field}: ${w.from ?? '(empty)'} → ${w.action === 'set' ? w.value : '(cleared)'}`);
     }
     if (plan.writes.length > 200) lines.push(`- … and ${plan.writes.length - 200} more`);
   }
@@ -536,8 +447,12 @@ export function renderSummary(plan, outcome) {
 
 // ── main ────────────────────────────────────────────────────────────────────
 
-const BATCH = 20; // writes per mutation document
-const BATCH_PAUSE_SECONDS = 4; // between documents: at most 300 writes a minute
+// Each write request creates content and notifies the issue's subscribers, and
+// GitHub meters content creation with a secondary limit; one request a second
+// stays well under it.
+const REQUEST_PAUSE_SECONDS = 1;
+
+const ISSUE_JQ = '{number, state, pr: has("pull_request"), labels: [.labels[].name], ifv: .issue_field_values} | tojson';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -548,91 +463,79 @@ async function main() {
     return 2;
   }
   const env = process.env;
-  for (const k of ['PROJECT_OWNER', 'PROJECT_NUMBER', 'ISSUE_REPO', 'GH_TOKEN', 'REPO_TOKEN']) {
+  for (const k of ['ISSUE_REPO', 'GH_TOKEN']) {
     if (!env[k]) { console.error(`::error::${k} is not set`); return 2; }
   }
-  const owner = env.PROJECT_OWNER;
-  const number = Number(env.PROJECT_NUMBER);
   const repo = env.ISSUE_REPO;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) { console.error('::error::ISSUE_REPO is not owner/name'); return 2; }
   const dryRun = env.DRY_RUN === 'true';
   const maxWrites = Number(env.MAX_WRITES || '300');
   const deps = realDeps();
-  const { gql, stats } = makeGhTransport(deps, {
+  const { gql, rest, stats } = makeGhTransport(deps, {
     waitCap: Number(env.RETRY_WAIT_CAP_SECONDS || '900'),
     margin: Number(env.RETRY_MARGIN_SECONDS || '5'),
   });
 
   // Every `thread:` label the repository defines — what decides whether a
-  // Thread value on the board is one this sync would have written.
-  const threadValues = restLines(`repos/${repo}/labels?per_page=100`, '.[].name | select(startswith("thread:")) | tojson', env.REPO_TOKEN)
+  // Thread value on an issue is one this sync would have written.
+  const threadValues = restLines(`repos/${repo}/labels?per_page=100`, '.[].name | select(startswith("thread:")) | tojson')
     .map((n) => n.slice('thread:'.length));
 
-  let issues;
-  let board;
+  let rows;
   if (issueNo === null) {
-    issues = restLines(`repos/${repo}/issues?state=open&per_page=100`,
-      '.[] | select(has("pull_request") | not) | {number, url: .html_url, labels: [.labels[].name]} | tojson', env.REPO_TOKEN);
-    console.log(`open issues: ${issues.length}`);
-    board = await listBoard(gql, owner, number);
-    console.log(`board items: ${board.items.length} over ${board.pages} page(s)`);
+    rows = restLines(`repos/${repo}/issues?state=open&per_page=100`, `.[] | ${ISSUE_JQ}`).filter((r) => !r.pr);
   } else {
-    const [one] = restLines(`repos/${repo}/issues/${issueNo}`,
-      '{number, url: .html_url, state, pr: has("pull_request"), labels: [.labels[].name]} | tojson', env.REPO_TOKEN);
+    const [one] = restLines(`repos/${repo}/issues/${issueNo}`, ISSUE_JQ);
     if (one.pr || one.state !== 'open') {
       console.log(`#${issueNo} is ${one.pr ? 'a pull request' : 'closed'}; nothing to mirror`);
       return 0;
     }
-    issues = [{ number: one.number, url: one.url, labels: one.labels }];
-    const [repoOwner, repoName] = repo.split('/');
-    const res = await gql(ISSUE_ITEM_QUERY, { owner, number, repoOwner, repoName, issue: issueNo });
-    const proj = res?.data?.user?.projectV2;
-    const iss = res?.data?.repository?.issue;
-    if (!proj || !iss) throw new Error('board or issue not readable');
-    const node = (iss.projectItems?.nodes ?? []).find((n) => n.project?.id === proj.id);
-    board = {
-      projectId: proj.id,
-      fields: fieldsFromNodes(proj.fields?.nodes),
-      items: node ? [itemFromNode(node, { type: 'Issue', url: iss.url, repo, state: iss.state, number: iss.number })] : [],
-      pages: 1,
-    };
+    rows = [one];
   }
+  const issues = rows.map((r) => ({ number: r.number, state: r.state, labels: r.labels, values: valuesFromRest(r.ifv, r.number) }));
+  console.log(`open issues: ${issues.length}`);
 
-  const plan = planWrites(issues, board.items, board.fields, { repo, threadValues });
+  const { fields, pages } = await listIssueFields(gql, repo);
+  console.log(`issue fields: ${fields.length} over ${pages} page(s)`);
+
+  const plan = planWrites(issues, fields, { threadValues });
   const todo = plan.writes.slice(0, maxWrites);
   const deferred = plan.writes.length - todo.length;
   let written = 0;
   let failed = 0;
   let fatal = null;
   if (!dryRun) {
-    for (let i = 0; i < todo.length; i += BATCH) {
-      const batch = todo.slice(i, i + BATCH);
+    const byIssue = new Map();
+    for (const w of todo) byIssue.set(w.issue, [...(byIssue.get(w.issue) ?? []), w]);
+    const requests = [...byIssue].flatMap(([n, ws]) => requestsFor(repo, n, ws));
+    for (let i = 0; i < requests.length; i += 1) {
+      const q = requests[i];
       try {
-        const { query, variables } = mutationFor(board.projectId, batch);
-        await gql(query, variables);
-        written += batch.length;
+        await rest(q.method, q.path, q.body);
+        written += q.writes;
       } catch (e) {
-        failed += todo.length - i;
+        failed = todo.length - written;
         fatal = e;
         break; // a failed write does not get followed by more of the same
       }
-      if (i + BATCH < todo.length) await deps.sleep(BATCH_PAUSE_SECONDS);
+      if (i + 1 < requests.length) await deps.sleep(REQUEST_PAUSE_SECONDS);
     }
   }
 
   const summary = renderSummary(plan, {
     mode: issueNo === null ? 'scheduled reconcile' : `label event on #${issueNo}`,
-    dryRun, issues: issues.length, boardItems: board.items.length,
+    dryRun, issues: issues.length,
     written, failed, deferred: dryRun ? 0 : deferred, calls: stats.calls, waits: stats.waits,
   });
   console.log(summary);
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, summary);
   if (deferred && !dryRun) console.log(`::warning::${deferred} write(s) over MAX_WRITES=${maxWrites} left for the next run`);
   if (plan.missingFields.length || Object.keys(plan.missingOptions).length) {
-    console.log('::notice::board fields or options are missing — see the job summary for what to add');
+    console.log('::notice::issue fields or options are missing — see the job summary for what to add');
   }
   if (fatal) {
     console.log('::group::failed request — status, rate-limit headers, error message');
-    console.log(fatal.evidence || '(nothing recognised in the trace; it is not printed because it carries board contents)');
+    console.log(fatal.evidence || '(nothing recognised in the trace; it is not printed because it carries response bodies)');
     console.log('::endgroup::');
     console.log(`::error::${fatal.message}; ${written} write(s) made before it`);
     return 1;
@@ -644,7 +547,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().then((code) => process.exit(code), (e) => {
     if (e.evidence !== undefined) {
       console.log('::group::failed request — status, rate-limit headers, error message');
-      console.log(e.evidence || '(nothing recognised in the trace; it is not printed because it carries board contents)');
+      console.log(e.evidence || '(nothing recognised in the trace; it is not printed because it carries response bodies)');
       console.log('::endgroup::');
     }
     console.log(`::error::${e.message}`);

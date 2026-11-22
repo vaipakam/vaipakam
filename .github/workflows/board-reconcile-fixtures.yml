@@ -19,7 +19,8 @@
 # under a docs workflow's ownership (#2139 r3).
 #
 # The `label-sync` job runs the fixtures for `board-label-sync.yml`'s script
-# here too: the same board automation, and it reuses the same trace parser.
+# here too: it feeds the fields the board views group by, and it reuses the
+# same trace parser.
 name: Board reconcile fixtures
 
 on:
@@ -72,11 +73,12 @@ jobs:
         with:
           node-version: 22
 
-      # The planner, the board pagination, the mutation document and the
-      # transport's rate-limit rule — the last against the REAL trace parser,
-      # so this job also fails if that parser changes under the sync.
+      # The planner, the issue-field value parsing, the field-definition
+      # pagination, the write requests and the transport's rate-limit rule —
+      # the last against the REAL trace parser, so this job also fails if that
+      # parser changes under the sync.
       - name: Run the fixtures
         run: |
           set -euo pipefail
           node .github/scripts/board-label-sync.selftest.mjs
-          echo "Board label sync fixtures OK (planner + pagination + rate-limit rule)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Label sync fixtures OK (planner + field values + write requests + rate-limit rule)." >> "$GITHUB_STEP_SUMMARY"
