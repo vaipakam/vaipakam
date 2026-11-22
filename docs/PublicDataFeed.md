@@ -31,9 +31,19 @@ Every table the feed reads is one the indexer rebuilds from the chain alone
 reads a table born off chain, or one that mixes the two. A test holds both
 rules, and records the tables each route reads.
 
-One route takes an address: the repayment record. A route that takes an
-address joins the feed only when a design names it public, and none lists,
-ranks, searches or filters addresses by their record.
+Two routes take an address, each exactly one: the repayment record, and the
+rental `may-use` read. A route that takes an address joins the feed only
+when a design names it public, and none lists, ranks, searches or filters
+addresses by their record.
+
+The two rental reads are public because they return only what the chain
+already publishes: every row restates one `VaultRentalUpdated` event, and an
+ERC-721 renter can also be read from the owner's vault. They do not hide who
+rents. `by-collection` lists every renter of a collection, and anyone can
+read every collection, or the events themselves, and work out what one
+address rents. Both answer from the event-built rental table, reading
+beside it only the latest block time the index recorded, so they can never
+join anything the platform keeps for a wallet; a test holds that.
 
 ## Versioning
 
@@ -100,6 +110,35 @@ today are testnets; the platform is not live on any mainnet.
 | `/loans/rate-candles` | The agreed rates of this platform's own past loans for one pair and term, by interval (open, high, low, close). `fills` is each interval's sample size. | `lendingAsset`, `collateralAsset`, `durationDays` (all required), `interval` (`1h`, `4h`, `1d`), `range` (`7d`, `30d`, `90d`, `all`) |
 | `/loans/{id}` | One loan by id, with its status. | |
 | `/repayment-record/{address}` | A count of how the loans and rentals one address held as borrower or renter here closed, with the statements of what it is and is not. An address with no history gets an empty record, not an error. The rules are in [`RepaymentRecordDerivation.md`](RepaymentRecordDerivation.md). | |
+| `/rentals/by-collection` | Each active rental of one collection: `rentalId`, `tokenId`, `user`, `expires`, `quantity`, and the `owner` of the vault holding the item. 200 a page by rental id; pass `nextCursor` back as `cursor`. | `collection` (required, exactly one), `tokenId`, `cursor` |
+| `/rentals/may-use` | The active rentals in one collection that name one address as `user`: what that address may use there, until when, and how many units. `truncated` is `true` past 500. | `collection` and `user` (both required, exactly one each), `tokenId` |
+
+**Active**, for both rental reads, means not cleared and with an expiry not
+before `activeAt`: the vault's own comparison (`expires >= activeAt`). Each
+answer states `asOf` (`block`, the block the clearings are known through, and
+`chainTime`, the latest block time the index recorded at or below it) and
+`activeAt`, the later of the server's time and `chainTime`. A server clock
+behind the chain therefore cannot show a rental the chain already treats as
+ended. An expiry fires no event, so a rental past its expiry is left out even
+when the indexer has seen no block since. The feed can say "ended" a few
+seconds before the chain's newest block does; that is the safe side.
+`chainTime` is a floor of the `asOf` block's own time, which the index does
+not store. To read it the rental routes read `activity_events` for that one
+value only, the network's largest recorded block time at or below `asOf`;
+they read the rental table, the cursor and that value, and every one of
+those is rebuilt from chain events.
+
+When rentals first reach a network the indexer has already scanned, the
+rental table is filled from the rental events already indexed, a bounded
+step per indexer pass, each resuming where the last stopped. Until
+that has finished, both rental reads answer `503` with
+`{"error": "rentals-index-building"}` rather than a list that could leave
+rentals out. For an ERC-1155
+item several rentals of one token can be active at once, one row each.
+
+The rental reads refuse a repeated `collection` or `user`, a list, and a
+wildcard, with `400` and `{"error": "one-value-required", "parameter": ...}`;
+a missing one is `{"error": "missing-parameter", ...}`.
 
 Each route takes only the parameters listed (and `chainId`). Any other
 parameter is refused with `400` and `{"error": "unknown-parameter",
@@ -165,6 +204,9 @@ Each response's `about.excludes` lists this for the route. In short:
   by another address counts for the holder. The fees the address paid are not stated
   yet (`feesPaid.stated` is `false`, with the reason), never shown as a
   partial sum.
+- **The rental reads** leave out cleared rentals and rentals past their
+  expiry. They form no rent figure; when one is first built from the rental
+  table it follows the same one-address rule as the loan figures.
 
 ## Errors
 

@@ -721,6 +721,47 @@ describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
     expect(JSON.parse(kept.related_json).activity_events).toHaveLength(2);
   });
 
+  const seedRental = (h: ReturnType<typeof createSqliteD1>, id: number, block = 10) =>
+    h.db
+      .prepare(
+        `INSERT INTO rental_rights (chain_id, loan_id, collection, token_id, owner, user, expires, quantity,
+           block_number, log_index, updated_at)
+         VALUES (?, ?, '0xnft', '7', '0xlend', '0xrenter', 9999999999, '1', ?, 0, 1)
+         ON CONFLICT (chain_id, loan_id) DO UPDATE SET user = excluded.user, block_number = excluded.block_number`,
+      )
+      .run(CHAIN, id, block);
+
+  it('Codex #3908 r2 — takes the loan\'s rental row along, kept whole, so the rental reads stop naming its renter', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 66);
+    seedRelated(h, 66);
+    seedRental(h, 66);
+    seedActiveLoan(h, 67);
+    seedRental(h, 67);
+    expect(await withdrawOrphanLoan(h.d1 as never, CHAIN, DIAMOND, 66, 'active', 100n, 1)).toBe(true);
+    expect(count(h, 'rental_rights', 66)).toBe(0);
+    expect(count(h, 'rental_rights', 67)).toBe(1);
+    const kept = h.db.prepare('SELECT related_json FROM loan_orphans WHERE loan_id = 66').get() as { related_json: string };
+    expect(JSON.parse(kept.related_json).rental_rights).toEqual([
+      expect.objectContaining({ loan_id: 66, collection: '0xnft', user: '0xrenter', block_number: 10 }),
+    ]);
+  });
+
+  it('Codex #3908 r2 — a rental update between the read and the move aborts it whole', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 68);
+    seedRental(h, 68);
+    // A later update replaces the row in place: same rowid, new content.
+    const updated = racing(h, () => seedRental(h, 68, 11));
+    expect(await withdrawOrphanLoan(updated as never, CHAIN, DIAMOND, 68, 'active', 100n, 1)).toBe(false);
+    expect(count(h, 'loans', 68)).toBe(1);
+    expect(count(h, 'rental_rights', 68)).toBe(1);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
+    expect(await withdrawOrphanLoan(h.d1 as never, CHAIN, DIAMOND, 68, 'active', 100n, 2)).toBe(true);
+    const kept = h.db.prepare('SELECT related_json FROM loan_orphans WHERE loan_id = 68').get() as { related_json: string };
+    expect(JSON.parse(kept.related_json).rental_rights[0].block_number).toBe(11);
+  });
+
   it('a related row that disappears in between aborts it too', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedActiveLoan(h, 65);

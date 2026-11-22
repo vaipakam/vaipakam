@@ -63,6 +63,7 @@ import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { recordLoanLifecycle } from './loanLifecycleGuard';
+import { RENTAL_SEED_PASS_COST, recordRentalRights, seedRentalRights } from './rentalRights';
 import {
   quarantineStatements,
   discloseQuarantineReleases,
@@ -142,6 +143,7 @@ import {
   reportSpend,
   spent,
   affords,
+  plus,
   holdBack,
   release,
   isRefusing,
@@ -2348,6 +2350,20 @@ async function runChainPass(
       : null;
   const scanFrom = lastBlock + 1n;
 
+  // #3882 — seed the rental table from the rental events already recorded
+  // below the cursor (rentalRights.ts), one bounded step a pass, and only
+  // when the step and the scan's tail both fit this invocation's budget.
+  // Blocks above the cursor are the scan's. Until the last step writes the
+  // mark the rental reads answer 503; a failed step is retried from the
+  // progress the last good one recorded (Codex #3908 r2).
+  try {
+    if (affords(budget, plus(RENTAL_SEED_PASS_COST, SCAN_TAIL_RESERVE))) {
+      await seedRentalRights(env.DB, chainId, Number(lastBlock), Math.floor(Date.now() / 1000));
+    }
+  } catch (err) {
+    console.warn(`[chainIndexer] chain ${chainId}: rental seed failed`, redactedError(err));
+  }
+
   // #2201 — no settled head: hold the scan (see above). Said every tick,
   // with the provider's own bounded reason, because a hold that repeats is a
   // chain that is not being indexed.
@@ -2814,6 +2830,9 @@ async function runChainPass(
     // corrects the `loans` projection above, because healing is exactly what
     // would hide the drift it reports. See loanLifecycleGuard.ts.
     await recordLoanLifecycle(env.DB, chainId, logs, blockTimestamps);
+    // #3882 — the rental rights table, folded from VaultRentalUpdated alone.
+    // Its own table only; a later update replaces a row, an older one never.
+    await recordRentalRights(env.DB, chainId, logs, Math.floor(Date.now() / 1000));
     // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
     // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
     // events. Runs after the offer/loan passes; it touches only its own table.

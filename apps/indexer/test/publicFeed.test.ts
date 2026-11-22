@@ -53,6 +53,8 @@ describe('public data feed', () => {
       '/loans/rate-candles',
       '/loans/{id}',
       '/repayment-record/{address}',
+      '/rentals/by-collection',
+      '/rentals/may-use',
     ]);
     for (const r of FEED_ROUTES) {
       expect(r.about.source.length).toBeGreaterThan(0);

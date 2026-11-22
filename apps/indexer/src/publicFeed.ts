@@ -29,7 +29,8 @@
  * TABLES. The feed reads only tables `scripts/check-table-classification.mjs`
  * classes as replay-derived (rebuilt from the chain alone), never one born
  * off-chain or hybrid. A route taking an address joins only when a design
- * names it public; today that is the repayment record alone (#3778).
+ * names it public: the repayment record (#3778) and the rental may-use read
+ * (#3882), each for exactly one address.
  *
  * PARAMETERS. Each route lists the query parameters it takes. Only those
  * and `chainId` reach the handler; any other is refused with a 400 naming
@@ -61,6 +62,7 @@ import {
 } from './loanRoutes';
 import { NO_VALUE_TOTAL, ONE_ADDRESS_EXCLUDES, PARTIES_UNKNOWN_EXCLUDES } from './figureRules';
 import { RECORD_EXCLUDES, handleRepaymentRecord } from './repaymentRecord';
+import { handleRentalsByCollection, handleRentalsMayUse } from './rentalRoutes';
 
 export const PUBLIC_FEED_PREFIX = '/public/v1';
 export const PUBLIC_FEED_VERSION = 'v1';
@@ -102,6 +104,11 @@ interface FeedRoute {
 }
 
 const CHAIN_EVENTS = "the Diamond's own events on this chain, as the indexer recorded them";
+const RENTALS_SOURCE =
+  "the Diamond's VaultRentalUpdated events on this chain, one row per rental, and the latest block time the index recorded at or below asOf (for activeAt). Public on chain: an ERC-721 renter can also be read from the owner's vault";
+/** What "active" means in both rental reads (#3882, design §12). */
+const ACTIVE_RULE =
+  "Active means not cleared and with an expiry not before `activeAt` (the vault's own comparison). `activeAt` is the later of the server's time and the chain time the index holds for `asOf`, both stated in the answer, so it can say \"ended\" a few seconds before the chain's newest block does: the safe side.";
 
 /**
  * The v1 subset. Adding a route is additive; changing a route's shape or
@@ -233,6 +240,41 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
       what: 'A count of how the loans and rentals one address held as borrower or renter on this platform closed, with the statements of what it is and is not.',
       source: CHAIN_EVENTS,
       excludes: [...RECORD_EXCLUDES],
+    },
+  },
+  {
+    // #3882 — the rental reads (ProjectKitDesign.md §6, §12). Both answer
+    // from the event-built rental table (and the latest recorded block time,
+    // for activeAt), for exactly one collection.
+    pattern: /^\/rentals\/by-collection$/,
+    path: '/rentals/by-collection',
+    target: '/rentals/by-collection',
+    handler: handleRentalsByCollection,
+    params: ['collection', 'tokenId', 'cursor'],
+    about: {
+      what:
+        "Each active rental of one collection: rental id, token id, user, expiry, quantity, and the owner of the vault holding the item. " + ACTIVE_RULE + " Paginated by rental id (`nextCursor`).",
+      source: RENTALS_SOURCE,
+      excludes: [
+        'cleared rentals and rentals past their expiry',
+        "anything the platform keeps for a wallet: every row restates one public VaultRentalUpdated event",
+      ],
+    },
+  },
+  {
+    pattern: /^\/rentals\/may-use$/,
+    path: '/rentals/may-use',
+    target: '/rentals/may-use',
+    handler: handleRentalsMayUse,
+    params: ['collection', 'user', 'tokenId'],
+    about: {
+      what:
+        "The active rentals in one collection that name one address as user: what that address may use there, until when, and how many units. " + ACTIVE_RULE + " `truncated` is true past 500 rentals.",
+      source: RENTALS_SOURCE,
+      excludes: [
+        'cleared rentals and rentals past their expiry',
+        "anything the platform keeps for a wallet: every row restates one public VaultRentalUpdated event",
+      ],
     },
   },
 ]);
