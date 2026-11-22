@@ -6,8 +6,9 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$HERE/.." && pwd)"
 # shellcheck source=rehearsal-forks.sh
-source "$HERE/rehearsal-forks.sh"
+source "$SCRIPT_DIR/lib/rehearsal-forks.sh"
 WORK="$(mktemp -d)"
 SRC_PORT="${RH_TEST_SRC_PORT:-18601}"
 src_pid=""

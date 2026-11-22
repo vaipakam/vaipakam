@@ -4,7 +4,8 @@
 # no node, network or key is involved. Run: bash contracts/script/lib/rehearsal.test.sh
 set -uo pipefail
 
-LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/rehearsal.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LIB="$SCRIPT_DIR/lib/rehearsal.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin" "$WORK/contracts/cache"
@@ -28,7 +29,7 @@ chmod +x "$WORK/bin/forge" "$WORK/bin/cast"
 export PATH="$WORK/bin:$PATH"
 
 # shellcheck source=rehearsal.sh
-source "$LIB"
+source "$SCRIPT_DIR/lib/rehearsal.sh"
 fails=0
 ok() { echo "ok    $1"; }
 bad() { fails=$((fails + 1)); echo "FAIL  $1"; }
@@ -107,7 +108,7 @@ expect_true "rehearsal: a simulation is unchanged" '[ "$out" = "forge script scr
 out=$(vk_cast_send ADMIN 0xd "f()")
 expect_true "rehearsal: cast send goes from the impersonated address, no key" '[ "$out" = "cast send --unlocked --from $ADMIN_ADDRESS 0xd f()" ]'
 # shellcheck source=retired-deployment.sh
-source "$(dirname "$LIB")/retired-deployment.sh"
+source "$SCRIPT_DIR/lib/retired-deployment.sh"
 out=$(seed_retired_deployments_now "$WORK/no-repo")
 expect_true "rehearsal: the real indexer database is never seeded" '[[ "$out" == *"not seeded"* ]]'
 
