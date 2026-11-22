@@ -841,39 +841,68 @@ const gitDiffNames = (clone) => (a, b) => run('git', ['diff', '--name-only', a, 
  * declarations removed. Checked against {reviewPrProblems} before anything
  * is pushed.
  */
-export function makeReviewBranches({ clone, unit, slice, pinned, fix, solc }) {
+export function makeReviewBranches({ clone, unit, slice, pinned, fix, fixBase, solc, parse = (fs) => parseSources(fs, solc) }) {
   const tag = `${unit.name.toLowerCase()}-${slice + 1}`;
   const head = `${REVIEW_PREFIX}${tag}-head`;
   const base = `${REVIEW_PREFIX}${tag}-base`;
-  run('git', ['checkout', '-q', '-B', head, pinned], { cwd: clone });
+  const git = (args, opts = {}) => run('git', args, { cwd: clone, ...opts });
+  const commit = (msg) => git(['-c', 'user.name=review-coverage', '-c', 'user.email=review-coverage@invalid', 'commit', '-q', '--allow-empty', '-m', msg]);
+  const work = `${REVIEW_PREFIX}${tag}-work`;
+  git(['checkout', '-q', '-B', work, pinned]);
+  // The reviewed tree: the pinned copy, plus the unit's fix. The fix comes
+  // from the production repository, whose history the copy does not carry
+  // (the copy is a root commit), so it is transplanted as a diff against the
+  // production commit the copy was made from, never merged.
   let fixPaths = [];
   if (fix) {
-    run('git', ['merge', '-q', '--no-edit', fix], { cwd: clone });
-    fixPaths = gitDiffNames(clone)(pinned, head);
+    const from = fixBase ?? copiedFrom(git(['log', '-1', '--format=%B', pinned]));
+    if (!from) throw new Error(`--fix needs --fix-base <production commit>: ${pinned} does not say which commit it copies`);
+    const exclude = COPY_STRIPPED.map((x) => `:(exclude)${x}`);
+    fixPaths = git(['diff', '--name-only', from, fix, '--', '.', ...exclude]).split('\n').filter(Boolean);
+    const patch = git(['diff', '--binary', from, fix, '--', '.', ...exclude]);
+    if (patch) {
+      git(['apply', '--index', '--whitespace=nowarn', '-'], { input: `${patch}\n` });
+      commit(`The unit's fix (${fix}), transplanted from ${from}`);
+    }
   }
+  const reviewed = git(['rev-parse', 'HEAD']);
   const files = {};
   for (const d of unit.slices[slice].declarations) files[d.path] ??= readFileSync(join(clone, 'contracts', d.path));
   // The slice's spans were taken from the tree the unit was derived from. A
-  // merged fix moves offsets, so each declaration is found again, by file
-  // and label, in the head as it now stands, and cut there.
-  const decls = locateInHead(unit.slices[slice].declarations, files, (fs) => parseSources(fs, solc));
+  // fix moves offsets, so each declaration is found again, by file and
+  // label, in the reviewed tree, and cut there.
+  const decls = locateInHead(unit.slices[slice].declarations, files, parse);
   const cut = baseFiles(files, decls);
-  run('git', ['checkout', '-q', '-B', base, head], { cwd: clone });
+  const unitPaths = Object.keys(cut).map((p) => `contracts/${p}`);
+  // The base: the reviewed tree with the slice's declarations removed.
+  git(['checkout', '-q', '-B', base, reviewed]);
   for (const [path, buf] of Object.entries(cut)) writeFileSync(join(clone, 'contracts', path), buf);
-  run('git', ['add', '-A', 'contracts/src'], { cwd: clone });
-  run('git', ['-c', 'user.name=review-coverage', '-c', 'user.email=review-coverage@invalid', 'commit', '-q', '-m', `Review base for ${unit.name} slice ${slice + 1}: its declarations removed`], { cwd: clone });
+  git(['add', '-A', '--', ...unitPaths]);
+  commit(`Review base for ${unit.name} slice ${slice + 1}: its declarations removed`);
+  // The head: a child of the base that restores the reviewed tree, so the
+  // pull request shows exactly the slice's declarations as new code.
+  git(['checkout', '-q', '-B', head, base]);
+  git(['checkout', reviewed, '--', ...unitPaths]);
+  commit(`Review head for ${unit.name} slice ${slice + 1}: the code as reviewed`);
+  git(['branch', '-q', '-D', work]);
   const problems = reviewPrProblems({
     base,
     head,
     pinned,
     baseTree: base,
     headTree: head,
-    unitPaths: Object.keys(cut).map((p) => `contracts/${p}`),
+    unitPaths,
     fixPaths,
     diff: gitDiffNames(clone),
   });
+  const isAncestor = spawnSync('git', ['merge-base', '--is-ancestor', base, head], { cwd: clone }).status === 0;
+  if (!isAncestor) problems.push(`the base ${base} is not an ancestor of the head ${head}: the pull request would not show the slice as new code`);
+  if (git(['rev-parse', `${head}^{tree}`]) !== git(['rev-parse', `${reviewed}^{tree}`])) problems.push('the head does not restore the reviewed tree exactly');
   return { head, base, problems };
 }
+
+/** The production commit a review copy names in its message, or undefined. */
+export const copiedFrom = (message) => message.match(/^Review copy of ([0-9a-f]{7,40})\b/m)?.[1];
 
 /**
  * Each of `decls` found again in `files` (path → Buffer of the head), by
@@ -895,6 +924,20 @@ export function locateInHead(decls, files, parse) {
   });
   if (missing.length) throw new Error(`the slice no longer matches the head: ${missing.join('; ')}. Derive the unit again from the head`);
   return out;
+}
+
+/**
+ * Refuses a slice over the size limit (design §3.2): one declaration bigger
+ * than the limit is never reviewed whole. A struct is split at its fields
+ * (#4008); a function is split in the source.
+ */
+export function requireReviewableSlice(unit, index) {
+  const s = unit.slices[index];
+  if (s?.oversize) {
+    const d = s.declarations[0];
+    const how = d.kind === 'StructDefinition' ? 'split it at its fields (#4008)' : 'split it in the source';
+    throw new Error(`slice ${index + 1} is one declaration over the ${unit.limit}-line limit (${d.path}:${d.label}, ${s.lines} lines): ${how}`);
+  }
 }
 
 /** A review-only pull request's description: the slice, then the rules checklist. */
@@ -940,7 +983,7 @@ function flags(rest) {
  *   planted record --id <id> --size <lines> --planted <n> --missed <n> --missing-rule <n>
  *                  --lenses <a,b,..> --depths <a,b,..> [--at <iso>]
  *   planted due
- *   branches <Unit> --slice <n> --clone <dir> --pinned <sha> [--fix <ref>] [--push]
+ *   branches <Unit> --slice <n> --clone <dir> --pinned <copy sha> [--fix <production ref> [--fix-base <production sha>]] [--push]
  *   open --repo <owner/name> --base <branch> --head <branch> --title <text> --unit <Contract> --slice <n>
  *        [--rules <file>] [--body-file <path>]   (the description is generated; a body file must equal it)
  *   close --repo <owner/name> --pr <n>          (closes, then deletes both branches)
@@ -981,9 +1024,10 @@ async function reviewRepoCommand(cmd, rest) {
       const order = readJson(ORDER_FILE, { sharedLibraries: [] });
       const decls = buildDeclarations(g.units, (p) => readFileSync(join(CONTRACTS_DIR, p)));
       const unit = deriveUnit(f._[0], { ...g, decls, ledger, shared: order.sharedLibraries ?? [], limit: ledger.sizeLimit?.lines ?? DEFAULT_LIMIT });
+      requireReviewableSlice(unit, Number(f.slice) - 1);
       const solc = f.solc || findSolc();
       if (!solc) throw new Error('no solc 0.8.29 found (run forge build once, or pass --solc)');
-      const { head, base, problems } = makeReviewBranches({ clone: f.clone, unit, slice: Number(f.slice) - 1, pinned: f.pinned, fix: f.fix, solc });
+      const { head, base, problems } = makeReviewBranches({ clone: f.clone, unit, slice: Number(f.slice) - 1, pinned: f.pinned, fix: f.fix, fixBase: f['fix-base'], solc });
       for (const p of problems) console.error(`  ✗ ${p}`);
       if (problems.length) return 1;
       if (f.push) run('git', ['push', '-q', 'origin', head, base], { cwd: f.clone });
@@ -1006,6 +1050,7 @@ async function reviewRepoCommand(cmd, rest) {
       const unit = deriveUnit(f.unit, { ...g, decls, ledger, shared: order.sharedLibraries ?? [], limit: ledger.sizeLimit?.lines ?? DEFAULT_LIMIT });
       const index = Number(f.slice) - 1;
       if (!(index >= 0 && index < unit.slices.length)) throw new Error(`--slice must be 1..${unit.slices.length}`);
+      requireReviewableSlice(unit, index);
       const { entryPoints } = await import('./check-permissionless-steps.mjs');
       const shipped = [...g.manifest.facets, ...g.manifest.standalone];
       const entries = entryPoints(g.units, shipped, g.ctx.byId).entries.filter((e) => e.contract === unit.name);
@@ -1053,7 +1098,8 @@ async function reviewRepoCommand(cmd, rest) {
       run('git', ['read-tree', f.commit], { cwd: f.clone, env });
       run('git', ['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...COPY_STRIPPED], { cwd: f.clone, env });
       const tree = run('git', ['write-tree'], { cwd: f.clone, env });
-      const copy = run('git', ['commit-tree', tree, '-m', `Review copy of ${f.commit}, without workflows or the dependency-update config`], { cwd: f.clone });
+      const full = run('git', ['rev-parse', `${f.commit}^{commit}`], { cwd: f.clone });
+      const copy = run('git', ['commit-tree', tree, '-m', `Review copy of ${full}, without workflows or the dependency-update config`], { cwd: f.clone });
       const diff = run('git', ['diff', '--no-renames', '--name-status', f.commit, copy], { cwd: f.clone })
         .split('\n').filter(Boolean).map((l) => ({ status: l.split('\t')[0], path: l.split('\t')[1] }));
       const pinnedPaths = run('git', ['ls-tree', '-r', '--name-only', f.commit], { cwd: f.clone }).split('\n').filter(Boolean);

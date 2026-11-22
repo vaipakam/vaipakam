@@ -43,10 +43,15 @@ test('reading: modifiers, calls before the first state change, and where it stop
   assert.match(carried('externalWithOptionsFirst').stoppedAt, /external call \(IOther\.pay\)/, 'call options {value, gas} do not hide the call');
   assert.match(carried('selfMutateFirst').stoppedAt, /call back into the Diamond \(HostFacet\.mutate\)/);
   assert.ok(carried('viaHost').calls.has('HostFacet.requireTerms'), 'a self-call to a view host is a check, read through');
+  assert.equal(carried('viaHelperEarlyReturn').calls.get(FLAG).conditional, true, 'a check after a helper\'s early return runs on some paths only');
+  assert.equal(carried('viaHelper').calls.get(FLAG).conditional, false);
+  const out = carried('modifierCallsOut');
+  assert.match(out.stoppedAt, /external call \(IOther\.poke\)/, 'a modifier is exempt for its lock writes, not for a call out');
+  assert.ok(!out.calls.has(FLAG));
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'selfMutateFirst', 'viaHost', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);
@@ -70,7 +75,7 @@ test('an exemption passes an entry with a reason, and is refused without one, wh
 
 test('modifier checks and the applies-to vocabulary', () => {
   const guard = rule({ id: 'reentry-guard', statement: 'Every open GFacet entry holds the re-entry guard.', check: { anyOf: [{ modifier: 'nonReentrant' }] } });
-  assert.deepEqual(flagged({ rules: [guard] }), ['noGuard']);
+  assert.deepEqual(flagged({ rules: [guard] }), ['modifierCallsOut', 'noGuard']);
   const gated = rule({ id: 'diamond-only', statement: 'Every caller-gated GFacet entry is the Diamond-only kind.', appliesTo: { contracts: ['GFacet'], caller: 'gated' }, check: { anyOf: [{ modifier: 'onlySelf' }] } });
   assert.deepEqual(flagged({ rules: [gated] }), []);
   const reached = () => new Set(['LibGate.s']);

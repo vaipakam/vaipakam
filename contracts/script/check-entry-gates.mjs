@@ -138,6 +138,7 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
   const unseen = [];
   let stoppedAt;
   const seen = new Set();
+  let helperDepth = 0;
   const note = (l, conditional) => {
     const prev = calls.get(l);
     if (!prev || (prev.conditional && !conditional)) calls.set(l, { conditional });
@@ -210,7 +211,9 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         const l = `${routed.contract.name}.${routed.fn.name}`;
         note(l, conditional);
         const view = ['view', 'pure'].includes(routed.fn.stateMutability);
-        if (!view && !gateLabels.has(l) && !inModifier) {
+        // A modifier is exempt only for its own lock writes: a call out of
+        // it is a boundary like any other.
+        if (!view && !gateLabels.has(l)) {
           stoppedAt = `a call back into the Diamond (${l})`;
           return true;
         }
@@ -220,7 +223,7 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         const external = /\bexternal\b/.test(typeString) && ctx.contractOf.get(d.id)?.contractKind !== 'library';
         if (external) {
           note(label(d, ctx), conditional);
-          if (!['view', 'pure'].includes(d.stateMutability) && !inModifier) {
+          if (!['view', 'pure'].includes(d.stateMutability)) {
             stoppedAt = `an external call (${label(d, ctx)})`;
             return true;
           }
@@ -235,7 +238,9 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         }
         if (seen.has(target.id)) return false;
         seen.add(target.id);
+        helperDepth++;
         const r = visitAll(target.body.statements, conditional, depth + 1, inModifier);
+        helperDepth--;
         seen.delete(target.id);
         return r === true;
       }
@@ -243,17 +248,14 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         stoppedAt = `a storage ${e.memberName}`;
         return true;
       }
-      if (!inModifier && e?.nodeType === 'MemberAccess' && ['call', 'delegatecall', 'send', 'transfer'].includes(e.memberName)) {
+      if (e?.nodeType === 'MemberAccess' && ['call', 'delegatecall', 'send', 'transfer'].includes(e.memberName)) {
         stoppedAt = `a low-level ${e.memberName}`;
-        return true;
-      }
-      if (e?.nodeType === 'FunctionCallOptions' && e.expression?.nodeType === 'MemberAccess' && e.expression.memberName === 'call' && !inModifier) {
-        stoppedAt = 'a low-level call';
         return true;
       }
       if (typeString.startsWith('function') && !d && e?.nodeType === 'Identifier') unseen.push('a call through a function pointer');
       return false;
     }
+    if (t === 'Block' || t === 'UncheckedBlock') return visitAll(n.statements, conditional, depth, inModifier);
     for (const c of children(n)) {
       const r = visit(c, conditional, depth, inModifier);
       if (r === true) return true;
@@ -261,10 +263,16 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
     }
     return false;
   };
+  // Inside a helper, a statement that may return hands control back to the
+  // caller, which goes on: whatever follows it in the helper runs only on
+  // some paths. (In the entry or a modifier, an early return ends the call
+  // before any later state change, so it does not weaken a check.)
   const visitAll = (stmts, conditional, depth, inModifier) => {
+    let cond = conditional;
     for (const s of stmts ?? []) {
-      const r = visit(s, conditional, depth, inModifier);
+      const r = visit(s, cond, depth, inModifier);
       if (r === true || r === 'placeholder') return r;
+      if (helperDepth > 0 && mayReturn(s)) cond = true;
     }
     return false;
   };
@@ -280,6 +288,23 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
   }
   visitAll(fn.body?.statements, false, 0, false);
   return { calls, modifiers, stoppedAt, unseen };
+}
+
+/** Whether a statement contains a `return` of its own (not one in a nested function). */
+function mayReturn(node) {
+  let found = false;
+  const scan = (n) => {
+    if (found || !n || typeof n !== 'object') return;
+    if (n.nodeType === 'Return') {
+      found = true;
+      return;
+    }
+    if (n.nodeType === 'FunctionDefinition' || n.nodeType === 'ModifierDefinition') return;
+    for (const v of Object.values(n)) if (Array.isArray(v)) v.forEach(scan);
+    else if (v && typeof v === 'object') scan(v);
+  };
+  scan(node);
+  return found;
 }
 
 // ─── Rules ───────────────────────────────────────────────────────────────

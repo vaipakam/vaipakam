@@ -59,6 +59,8 @@ test('swallowed failures: a catch or failed low-level call that neither reverts 
   assert.ok(!has('swallowed-failures', 'AFacet.catchReverts()'));
   assert.ok(!has('swallowed-failures', 'AFacet.catchEmits()'));
   assert.ok(!has('swallowed-failures', 'AFacet.flagChecked()'));
+  assert.ok(has('swallowed-failures', 'AFacet.compoundSwallows() lowlevel#1'), 'a failure side inside `||` is a failure test');
+  assert.ok(!has('swallowed-failures', 'AFacet.compoundChecked()'), '`!(ok && x)` reverting is a handled failure');
 });
 
 test('ambiguous errors: two raise sites of one parameterless error in one entry are listed, one is not', () => {

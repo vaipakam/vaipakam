@@ -121,6 +121,17 @@ contract AFacet {
         if (!ok) revert Failed();
     }
 
+    function compoundSwallows() external {
+        (bool ok, bytes memory ret) = address(ext).call("");
+        if (!ok || ret.length < 32) return;
+        emit Skipped();
+    }
+
+    function compoundChecked() external {
+        (bool ok, bytes memory ret) = address(ext).call("");
+        if (!(ok && ret.length >= 32)) revert Failed();
+    }
+
     // ─── ambiguous-errors ────────────────────────────────────────────────
     function twoSites(uint256 a) external {
         if (a == 1) revert Bad();

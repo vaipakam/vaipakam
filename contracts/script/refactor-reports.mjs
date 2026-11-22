@@ -394,10 +394,24 @@ function handles(stmts, contract, ctx) {
   return hit;
 }
 
-/** `ok` / `!ok` against the flag declared by a low-level call. */
+/**
+ * How a condition reads the flag a low-level call declared: 'ok' when the
+ * branch runs only if the call succeeded, 'failed' when it runs whenever the
+ * call failed. `!ok || x` is a failure test (it holds whenever the call
+ * failed), `ok && x` a success test; parentheses are looked through.
+ */
 function flagTest(cond, flagId) {
+  while (cond?.nodeType === 'TupleExpression' && cond.components?.length === 1) cond = cond.components[0];
   if (cond?.nodeType === 'Identifier' && cond.referencedDeclaration === flagId) return 'ok';
-  if (cond?.nodeType === 'UnaryOperation' && cond.operator === '!' && cond.subExpression?.nodeType === 'Identifier' && cond.subExpression.referencedDeclaration === flagId) return 'failed';
+  if (cond?.nodeType === 'UnaryOperation' && cond.operator === '!') {
+    const inner = flagTest(cond.subExpression, flagId);
+    return inner === 'ok' ? 'failed' : inner === 'failed' ? 'ok' : undefined;
+  }
+  if (cond?.nodeType === 'BinaryOperation' && (cond.operator === '||' || cond.operator === '&&')) {
+    const sides = [flagTest(cond.leftExpression, flagId), flagTest(cond.rightExpression, flagId)];
+    if (cond.operator === '||' && sides.includes('failed')) return 'failed';
+    if (cond.operator === '&&' && sides.includes('ok')) return 'ok';
+  }
   return undefined;
 }
 

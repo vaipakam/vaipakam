@@ -124,4 +124,24 @@ contract GFacet is Guarded {
     function _screen() internal view {
         LibGate.requireNotFlagged(msg.sender);
     }
+
+    function viaHelperEarlyReturn(bool skip) external nonReentrant {
+        _screenUnless(skip);
+        LibGate.s().x = 8;
+    }
+
+    function modifierCallsOut() external pokesFirst {
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 9;
+    }
+
+    function _screenUnless(bool skip) internal view {
+        if (skip) return;
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    modifier pokesFirst() {
+        other.poke();
+        _;
+    }
 }

@@ -5,7 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -158,6 +160,9 @@ import {
   applyPlantedRun,
   baseFiles,
   locateInHead,
+  makeReviewBranches,
+  copiedFrom,
+  requireReviewableSlice,
   reviewDescription,
   descriptionProblems,
   buildDeclarations,
@@ -348,4 +353,48 @@ test('copy: it differs from the pinned commit by exactly the workflow files and 
   assert.match(strippedCopyProblems({ diff: [...good, { status: 'M', path: 'contracts/src/A.sol' }], pinnedPaths })[0], /not a stripped path/);
   assert.match(strippedCopyProblems({ diff: [...good, del('.github/LABELS.md')], pinnedPaths })[0], /LABELS\.md, which is not a stripped path/);
   assert.match(strippedCopyProblems({ diff: [...good.slice(0, 2), { status: 'M', path: '.github/dependabot.yml' }], pinnedPaths })[0], /changes \.github\/dependabot\.yml instead of leaving it out/);
+});
+
+test('review branches on a history-free copy: the fix is transplanted, the base is the head\'s parent line, the head restores the reviewed tree (§3, §5)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rc-branches-'));
+  const g = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', ...a], { cwd: dir, encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main');
+  const file = 'src/Original.sol';
+  mkdirSync(join(dir, 'contracts', 'src'), { recursive: true });
+  mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
+  writeFileSync(join(dir, 'contracts', file), readFileSync(join(FIXTURE, file)));
+  writeFileSync(join(dir, 'contracts', 'src', 'Other.sol'), '// other\n');
+  writeFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'on: push\n');
+  g('add', '-A');
+  g('commit', '-q', '-m', 'production');
+  const production = g('rev-parse', 'HEAD');
+  // The fix, on production: touches another file and the workflows (which the copy never carries).
+  g('checkout', '-q', '-b', 'fix');
+  writeFileSync(join(dir, 'contracts', 'src', 'Other.sol'), '// other, fixed\n');
+  writeFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'on: pull_request\n');
+  g('commit', '-q', '-am', 'fix');
+  // The copy: a root commit of the production tree without the workflows.
+  g('checkout', '-q', 'main');
+  g('rm', '-q', '-r', '--cached', '.github/workflows');
+  const tree = g('write-tree');
+  g('reset', '-q');
+  const copy = g('commit-tree', tree, '-m', `Review copy of ${production}, without workflows`);
+  assert.equal(copiedFrom(`Review copy of ${production}, without workflows`), production);
+  const slice = decls(file).filter((d) => d.label === 'Original.add(uint256)');
+  const unit = { name: 'Original', slices: [{ declarations: slice }] };
+  const r = makeReviewBranches({ clone: dir, unit, slice: 0, pinned: copy, fix: 'fix', parse: () => new Map([[file, UNITS[file]]]) });
+  assert.deepEqual(r.problems, []);
+  g('merge-base', '--is-ancestor', r.base, r.head);
+  assert.deepEqual(g('diff', '--name-only', `${r.base}...${r.head}`).split('\n'), [`contracts/${file}`], 'the pull request shows the unit file only');
+  assert.match(g('diff', `${r.base}...${r.head}`), /\+\s*function add\(/);
+  assert.equal(g('show', `${r.head}:contracts/src/Other.sol`), '// other, fixed', 'the fix is in the reviewed tree');
+  assert.throws(() => g('show', `${r.head}:.github/workflows/ci.yml`), 'the stripped paths stay stripped');
+});
+
+test('a slice of one declaration over the limit is refused, never reviewed whole (§3.2)', () => {
+  const big = { name: 'L', limit: 1000, slices: [{ lines: 5476, oversize: true, declarations: [{ path: 'src/L.sol', label: 'L.Storage', kind: 'StructDefinition' }] }, { lines: 10, oversize: false, declarations: [] }] };
+  assert.throws(() => requireReviewableSlice(big, 0), /split it at its fields \(#4008\)/);
+  assert.doesNotThrow(() => requireReviewableSlice(big, 1));
+  big.slices[0].declarations[0].kind = 'FunctionDefinition';
+  assert.throws(() => requireReviewableSlice(big, 0), /split it in the source/);
 });
