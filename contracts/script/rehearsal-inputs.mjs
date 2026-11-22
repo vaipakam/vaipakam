@@ -25,12 +25,15 @@
  *       every UPPER_SNAKE string literal is taken as a key a name may be built
  *       from, and must be an input, left out, matched by `hashedPatterns`, or
  *       listed under `notInputs` with its reason. `chainPrefixes` must be the
- *       prefixes `Deployments.envPrefix()` returns.
+ *       prefixes `Deployments.envPrefix()` returns. The deploy shell wrappers
+ *       are checked too, for the settings they hand forge and cast: every
+ *       `ETH_*` name, and every name they build as `${...}_SUFFIX`, must be
+ *       covered the same way (the gas pins are the case today).
  *
  * The digest never prints a value: only the hash and, with --names, the names.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONTRACTS_DIR, EXEMPT, findSolc, parse, scriptSources } from './check-signer-seam.mjs';
@@ -171,6 +174,43 @@ export function checkReads(asts, spec) {
   return problems;
 }
 
+/** Names the deploy shell wrappers hand forge and cast. Pure over the text. */
+export function shellReadsIn(text) {
+  const literals = new Set(text.match(/\bETH_[A-Z0-9_]+\b/g) ?? []);
+  // A name built as `${SLUG}_SUFFIX` (or "$SLUG"_SUFFIX) reaches the shell as
+  // the suffix alone; it is checked as some prefix plus that suffix.
+  const suffixes = new Set([...text.matchAll(/\}(_[A-Z][A-Z0-9_]*)\b/g)].map((m) => m[1]).filter((x) => /_(GAS|PRICE|WEI)/.test(x)));
+  return { literals, suffixes };
+}
+
+/** Problems over the deploy shell wrappers' texts. Pure. */
+export function checkShellReads(texts, spec) {
+  const known = new Set(spec.inputs);
+  const left = spec.leftOut.map((e) => globToRe(e.pattern));
+  const hashed = (spec.hashedPatterns ?? []).map((e) => globToRe(e.pattern));
+  const covered = (n) => known.has(n) || left.some((re) => re.test(n)) || hashed.some((re) => re.test(n));
+  const problems = [];
+  for (const [p, text] of texts) {
+    const { literals, suffixes } = shellReadsIn(text);
+    for (const n of literals) if (!covered(n)) problems.push(`${p} hands ${n} to forge or cast, and it is not an input, left out or hashed by pattern`);
+    for (const x of suffixes) if (!covered(`X${x}`)) problems.push(`${p} builds a name ending ${x}, which no hashedPatterns entry matches`);
+  }
+  return problems;
+}
+
+/** The deploy shell wrappers and their libraries, by path under contracts/. */
+export function shellSources(dir = CONTRACTS_DIR) {
+  const out = new Map();
+  for (const sub of ['script', 'script/lib']) {
+    for (const f of readdirSync(join(dir, sub))) {
+      if (!f.endsWith('.sh') || f.endsWith('.test.sh')) continue;
+      if (sub === 'script' && !/^deploy-/.test(f)) continue;
+      out.set(`${sub}/${f}`, readFileSync(join(dir, sub, f), 'utf8'));
+    }
+  }
+  return out;
+}
+
 export function main(argv = process.argv.slice(2)) {
   const [cmd, ...rest] = argv;
   const spec = readInputs();
@@ -204,7 +244,7 @@ export function main(argv = process.argv.slice(2)) {
       for (const e of errors) console.error(`  ✗ ${e}`);
       return 1;
     }
-    const problems = checkReads(asts, spec);
+    const problems = [...checkReads(asts, spec), ...checkShellReads(shellSources(), spec)];
     for (const p of problems) console.error(`  ✗ ${p}`);
     if (!problems.length) console.log(`  ✓ every variable an operator script reads is in ${INPUTS_FILE}`);
     return problems.length ? 1 : 0;

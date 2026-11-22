@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CARRIED,
+  CHAINS,
   CONTRACTS_DIR,
   buildPlan,
   derivedLanes,
@@ -74,6 +75,7 @@ test('the launch waits for the armed day read from the chain, not a fixed distan
 test('validation refuses the mistakes the file invites', () => {
   const cases = [
     [(d) => { d.chains['arb-sepolia'].role = 'canonical'; }, /exactly one canonical/],
+    [(d) => { d.chains['arb-sepolia'].role = 'canonical'; d.chains['base-sepolia'].role = 'mirror'; }, /arb-sepolia: role canonical disagrees with the deploy scripts/],
     [(d) => { d.chains.mars = { role: 'mirror' }; d.keeper.armed.mars = []; }, /mars: not a chain/],
     [(d) => { d.keeper.armed['bnb-testnet'].push('NOT_A_FLAG_ENABLED'); }, /NOT_A_FLAG_ENABLED is not a flag the keeper reads/],
     [(d) => { delete d.keeper.armed['arb-sepolia']; }, /no list for arb-sepolia/],
@@ -206,4 +208,12 @@ test('the plan names the desired file and its hash, so the plan digest covers it
 
 test('today anchor is 00:00 UTC', () => {
   assert.equal(todayAnchor(1795305600 + 3599), 1795305600);
+});
+
+test('the canonical reward chain is the one Deployments.isCanonicalRewardChainId names', () => {
+  const src = readFileSync(join(CONTRACTS_DIR, 'script/lib/Deployments.sol'), 'utf8');
+  const body = src.match(/function isCanonicalRewardChainId\(uint256 chainId\)[^{]*\{([^}]*)\}/)[1];
+  const ids = new Set([...body.matchAll(/chainId == (\d+)/g)].map((m) => Number(m[1])));
+  assert.ok(ids.size > 0);
+  for (const [slug, c] of Object.entries(CHAINS)) assert.equal(Boolean(c.canonicalReward), ids.has(c.chainId), slug);
 });

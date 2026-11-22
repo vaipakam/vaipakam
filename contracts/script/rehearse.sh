@@ -487,12 +487,14 @@ for s in "${STEP_LINES[@]}"; do
       fi
       ;;
     cmd)
+      # The hand step runs under `set -eo pipefail`: a compound step stops at
+      # its first failing command, and the run stops with it (design §4).
       chain="${words[1]}"
       text="${s#*|}"; text="${text#*-- }"
       log "  → [$n] plan:$ln $chain hand step: $text"
       steplog="$LOGS/$(printf '%03d' "$n")-$chain-cmd.log"
       if ! (cd "$CONTRACTS_DIR" && REHEARSE=1 VAIPAKAM_REHEARSAL=1 VAIPAKAM_REHEARSAL_RPC_URL="${FORK_URL[$chain]}" \
-            RPC="${FORK_URL[$chain]}" bash -c "source '$SCRIPT_DIR/lib/rehearsal.sh' && rehearsal_enter \"\$RPC\" '$CONTRACTS_DIR' '$RH_ENV_FILE' || exit 1; $text") 2>&1 \
+            RPC="${FORK_URL[$chain]}" bash -c "source '$SCRIPT_DIR/lib/rehearsal.sh' && rehearsal_enter \"\$RPC\" '$CONTRACTS_DIR' '$RH_ENV_FILE' || exit 1; set -eo pipefail; $text") 2>&1 \
           | rh_redact > "$steplog"; then
         FAILED_STAGE="steps (plan:$ln hand step)"
         tail -20 "$steplog" | sed 's/^/      /' | tee -a "$LOGS/driver.log"

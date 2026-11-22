@@ -38,8 +38,14 @@ export const CONTRACTS_DIR = join(HERE, '..');
 export const REPO_ROOT = join(CONTRACTS_DIR, '..');
 
 /** The chains deploy-testnet.sh / deploy-mainnet.sh know, by slug. */
+/**
+ * The chains the deploy scripts know. `canonicalReward` marks the chain
+ * `Deployments.isCanonicalRewardChainId` names: the configure step makes it
+ * the canonical reward chain whatever a desired-state file says, so the file's
+ * role must agree (a test pins this set to that function).
+ */
 export const CHAINS = {
-  'base-sepolia': { chainId: 84532, prefix: 'BASE_SEPOLIA', network: 'testnet' },
+  'base-sepolia': { chainId: 84532, prefix: 'BASE_SEPOLIA', network: 'testnet', canonicalReward: true },
   sepolia: { chainId: 11155111, prefix: 'SEPOLIA', network: 'testnet' },
   'arb-sepolia': { chainId: 421614, prefix: 'ARB_SEPOLIA', network: 'testnet' },
   'op-sepolia': { chainId: 11155420, prefix: 'OP_SEPOLIA', network: 'testnet' },
@@ -88,6 +94,9 @@ export function validate(d, { flags, terms }) {
     if (!CHAINS[s]) p.push(`chain ${s}: not a chain the deploy scripts know`);
     else if (CHAINS[s].network !== d.network) p.push(`chain ${s}: not a ${d.network} chain`);
     if (!['canonical', 'mirror'].includes(d.chains[s]?.role)) p.push(`chain ${s}: role must be canonical or mirror`);
+    else if (CHAINS[s] && (d.chains[s].role === 'canonical') !== Boolean(CHAINS[s].canonicalReward)) {
+      p.push(`chain ${s}: role ${d.chains[s].role} disagrees with the deploy scripts, which make ${Object.keys(CHAINS).filter((c) => CHAINS[c].canonicalReward).join(', ')} the canonical reward chain`);
+    }
   }
   const canon = slugs.filter((s) => d.chains[s]?.role === 'canonical');
   if (canon.length !== 1) p.push(`exactly one canonical chain is needed (found ${canon.length})`);

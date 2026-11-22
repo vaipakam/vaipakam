@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkReads, envFileNames, envReadsIn, envPrefixLiteralsIn, inputDigest, readInputs } from '../../../contracts/script/rehearsal-inputs.mjs';
+import { checkReads, envFileNames, envReadsIn, envPrefixLiteralsIn, checkShellReads, inputDigest, readInputs, shellSources } from '../../../contracts/script/rehearsal-inputs.mjs';
 
 const spec = readInputs();
 const lit = (value) => ({ nodeType: 'Literal', kind: 'string', value });
@@ -85,4 +85,16 @@ test('chainPrefixes must be the prefixes envPrefix returns', () => {
   assert.deepEqual([...envPrefixLiteralsIn(dep)].sort(), ['BASE_SEPOLIA_', 'NEW_CHAIN_']);
   const p = checkReads(new Map([['script/lib/Deployments.sol', { nodeType: 'SourceUnit', nodes: [dep] }]]), { ...spec, dynamicSites: [] });
   assert.ok(p.some((x) => /chainPrefixes/.test(x)), p.join('\n'));
+});
+
+test('the shell-consumed gas pins are in the digest and covered by the check', () => {
+  const spec = readInputs();
+  const base = inputDigest({}, [], spec).digest;
+  assert.notEqual(inputDigest({ ETH_GAS_PRICE: '1' }, [], spec).digest, base);
+  assert.notEqual(inputDigest({ ETH_PRIORITY_GAS_PRICE: '1' }, [], spec).digest, base);
+  assert.notEqual(inputDigest({ BNB_TESTNET_GAS_PRICE_WEI: '1' }, [], spec).digest, base);
+  assert.deepEqual(checkShellReads(shellSources(), spec), []);
+  const text = 'x="${CCIP_SLUG}_FEE_PRICE_WEI"; export ETH_NEW_KNOB=1';
+  const p = checkShellReads(new Map([['script/deploy-x.sh', text]]), spec);
+  assert.equal(p.length, 2);
 });

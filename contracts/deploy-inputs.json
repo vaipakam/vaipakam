@@ -41,6 +41,8 @@
     "EMERGENCY_REVOKER_ADDRESS",
     "ETH_AAVE_V3_POOL",
     "ETH_BALANCER_V2_VAULT",
+    "ETH_GAS_PRICE",
+    "ETH_PRIORITY_GAS_PRICE",
     "FAUCET_ILLIQUID_TOKEN",
     "FAUCET_ILLIQUID_TOKEN_2",
     "FAUCET_LIQUID_TOKEN",
@@ -313,6 +315,10 @@
     {
       "pattern": "*_FEED",
       "reason": "Per-symbol price feeds: PriceGuardDeployment builds <SYMBOL>_FEED from VPFI_STABLE_FEED_SYMBOLS."
+    },
+    {
+      "pattern": "*_GAS_PRICE_WEI",
+      "reason": "Per-chain gas pins: the deploy wrappers build <SLUG>_GAS_PRICE_WEI and <SLUG>_PRIORITY_GAS_PRICE_WEI and export them as ETH_GAS_PRICE / ETH_PRIORITY_GAS_PRICE."
     }
   ],
   "chainPrefixes": [
