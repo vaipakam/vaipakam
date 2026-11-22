@@ -468,3 +468,25 @@ test('a model in its own file still lends its accounts to its domain', () => {
   const f = run([['vlt.md', fm], ['vlt-model.md', model], ['record.md', RECORD([['VLT-020']])]]);
   assert.ok(!has(f, 'account', /./), JSON.stringify(f));
 });
+
+test('a parameter id is never a statement citation in a model', () => {
+  const params = '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-901 | Limit | 5 |\n';
+  const model = MODEL(['| Not created | Create | Anyone | PRM-901 | Recovered |'], ['| Create | PRM-901 |']);
+  const f = run([['vlt.md', model], ['params.md', params]]);
+  assert.ok(has(f, 'model', /cites no statement/), JSON.stringify(f));
+});
+
+test('a model\'s domain does not depend on the order of its guards', () => {
+  const fm = STMT('VLT-020', 'fund movement', '- **From:** the owner\'s vault.\n- **To:** the owner\'s vault.\n- **Comes to rest in:** a vault\'s free balance.\n- **Amount:** the amount owed.\n- **Rounding:** down, in the vault\'s favour.\n');
+  const plt = STMT('PLT-030', 'rule');
+  const model = MODEL(['| Not created | Create | Anyone | PLT-030, VLT-020 | Open |', '| Open | Recover | The owner | VLT-020 | Recovered |'], ['| Create | VLT-020 |', '| Recover | VLT-020 |']);
+  const f = run([['vlt.md', fm + model], ['plt.md', plt], ['record.md', RECORD([['VLT-020'], ['PLT-030']])]]);
+  assert.ok(!has(f, 'account', /./), JSON.stringify(f));
+});
+
+test('an abbreviated mistake id belongs to the nearest full id before it', () => {
+  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n\n### LON-M02 · b\n\n**Who:** the owner.\n\n### LON-M03 · c\n\n**Who:** the owner.\n';
+  const fmLine = 'VLT-M01, refuse; LON-M02 and M03, bound.';
+  const f = run([['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', `- **For the mistake:** ${fmLine}\n- **Tests owed:**`)], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(!has(f, 'mistake', /LON-M03|VLT-M03/), JSON.stringify(f));
+});

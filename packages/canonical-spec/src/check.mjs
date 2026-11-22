@@ -16,7 +16,6 @@
 import { createHash } from 'node:crypto';
 import {
   ID_RE,
-  MISTAKE_ID_RE,
   OWED_RE,
   PARAM_ID_RE,
   REQUIRED_PARTS,
@@ -129,6 +128,9 @@ export const hashWord = (salt, phrase) => createHash('sha256').update(`${salt}:$
  * Check a whole set of parsed files. `opts`: {mode: 'folder'|'draft',
  * wording, readme: {completeDomains: Set}}. Returns findings.
  */
+/** The statement ids a text cites: every <CODE>-<nnn> but a parameter's (PRM-…). */
+const statementIds = (text) => [...text.matchAll(ID_RE)].filter((x) => x[1] !== 'PRM').map((x) => `${x[1]}-${x[2]}`);
+
 export function checkSpec(parsed, opts = {}) {
   const mode = opts.mode ?? 'folder';
   const findings = [];
@@ -293,7 +295,7 @@ export function checkSpec(parsed, opts = {}) {
     for (const r of m.steps) {
       stepNames.add(r.Step);
       for (const st of [r.From, r.To]) if (!states.has(st)) add(m.file, r.line, 'model', `model "${m.name}": the state "${st}" is not in its States list`);
-      const cites = [...r['Guarded by'].matchAll(ID_RE)].map((x) => `${x[1]}-${x[2]}`);
+      const cites = statementIds(r['Guarded by']);
       if (!cites.length) add(m.file, r.line, 'model', `model "${m.name}": the row ${r.From} → ${r.Step} → ${r.To} cites no statement`);
       for (const c of cites) {
         if (retired.has(c)) add(m.file, r.line, 'model', `model "${m.name}": the row ${r.From} → ${r.Step} cites ${c}, which is retired`);
@@ -305,7 +307,7 @@ export function checkSpec(parsed, opts = {}) {
     }
     const refused = new Set(m.refusals.map((r) => r.Step));
     for (const r of m.refusals) {
-      const cites = [...r['Refused by'].matchAll(ID_RE)].map((x) => `${x[1]}-${x[2]}`);
+      const cites = statementIds(r['Refused by']);
       if (!cites.length) add(m.file, r.line, 'model', `model "${m.name}": the refusal of "${r.Step}" out of state cites no statement`);
       for (const c of cites) {
         if (retired.has(c)) add(m.file, r.line, 'model', `model "${m.name}": the refusal of "${r.Step}" cites ${c}, which is retired`);
@@ -325,7 +327,7 @@ export function checkSpec(parsed, opts = {}) {
     }
     for (const st of m.states) if (!reach.has(st)) add(m.file, m.line, 'model', `model "${m.name}": no route from "${m.start}" reaches the ${m.ends.includes(st) ? 'end ' : ''}state "${st}"`);
     for (const d of m.dimensions) {
-      const cites = [...d['Named by'].matchAll(ID_RE)].map((x) => `${x[1]}-${x[2]}`);
+      const cites = statementIds(d['Named by']);
       if (!cites.length) add(m.file, d.line, 'model', `model "${m.name}": the dimension "${d.Dimension}" is named by no statement`);
       for (const c of cites) {
         if (retired.has(c)) add(m.file, d.line, 'model', `model "${m.name}": the dimension "${d.Dimension}" is named by ${c}, which is retired`);
@@ -337,10 +339,13 @@ export function checkSpec(parsed, opts = {}) {
   }
   const accountsByCode = new Map();
   for (const m of models) {
-    // A model's domain is the domain of the statements that guard its steps,
-    // wherever its file sits (§3.5 lets a domain split its files).
-    const guard = m.steps.flatMap((r) => [...r['Guarded by'].matchAll(ID_RE)].map((x) => x[1]))[0];
-    const code = guard ?? (statements.find((s) => s.file === m.file) ?? {}).code;
+    // A model belongs to the domain of the statements beside it; a model in a
+    // file of its own (§3.5 lets a domain split its files) belongs to the domain
+    // most of its guards come from, whatever their order, ties by code.
+    const tally = new Map();
+    for (const r of m.steps) for (const id of statementIds(r['Guarded by'])) tally.set(id.slice(0, 3), (tally.get(id.slice(0, 3)) ?? 0) + 1);
+    const byGuards = [...tally].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
+    const code = (statements.find((s) => s.file === m.file) ?? {}).code ?? byGuards;
     if (!code) continue;
     if (!accountsByCode.has(code)) accountsByCode.set(code, new Set());
     for (const a of m.accounts) accountsByCode.get(code).add(a.toLowerCase().replace(/\.$/, ''));
@@ -357,10 +362,14 @@ export function checkSpec(parsed, opts = {}) {
   for (const s of statements) {
     const fm = s.parts['For the mistake'];
     if (!fm) continue;
-    const ids = [...fm.matchAll(MISTAKE_ID_RE)].map((x) => `${x[1]}-M${x[2]}`);
-    // "VLT-M15, M18 and M21": bare M-numbers after a full id belong to its domain.
-    const first = ids[0]?.slice(0, 3);
-    if (first) for (const x of fm.matchAll(/(?<![A-Z]-)\bM(\d{2,3})\b/g)) ids.push(`${first}-M${x[1]}`);
+    // Read left to right: "VLT-M15, M18 and M21" — a bare M-number belongs to
+    // the domain of the nearest full id before it.
+    const ids = [];
+    let domain = null;
+    for (const x of fm.matchAll(/\b(?:([A-Z]{3})-)?M(\d{2,3})\b/g)) {
+      if (x[1]) domain = x[1];
+      if (domain) ids.push(`${domain}-M${x[2]}`);
+    }
     const ans = /\b(refuse|bound|undo|warn only)\b/i.exec(fm);
     // Separate answers are separated by ";", and each names its own action;
     // ids grouped before one action share it ("VLT-M15, VLT-M18 and M21, refuse").
@@ -429,7 +438,7 @@ export function neighbours(parsed) {
     for (const r of [...m.steps.map((x) => ({ step: x.Step, cites: x['Guarded by'] })), ...m.refusals.map((x) => ({ step: x.Step, cites: x['Refused by'] }))]) {
       const key = `${m.name}|${r.step}`;
       if (!groups.has(key)) groups.set(key, { model: m.name, step: r.step, ids: new Set() });
-      for (const x of r.cites.matchAll(ID_RE)) groups.get(key).ids.add(`${x[1]}-${x[2]}`);
+      for (const id of statementIds(r.cites)) groups.get(key).ids.add(id);
     }
   }
   return [...groups.values()].filter((g) => g.ids.size > 1).map((g) => ({ ...g, ids: [...g.ids].sort() }));
