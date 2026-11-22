@@ -165,7 +165,7 @@ function sourceFiles(dir: URL): string[] {
     if (statSync(url).isDirectory()) {
       if (name === 'node_modules' || name === 'test' || name === '__tests__') continue;
       out.push(...sourceFiles(new URL(`${name}/`, dir)));
-    } else if (/\.(ts|mts|mjs|js)$/.test(name) && !/\.(test|spec)\.|\.d\.(ts|mts)$/.test(name)) {
+    } else if (/\.(ts|mts|mjs|js)$/.test(name) && !/\.(test|spec)\./.test(name) && !/\.d\.(ts|mts)$/.test(name)) {
       out.push(url.pathname);
     }
   }
