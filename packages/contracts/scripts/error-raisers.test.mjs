@@ -78,6 +78,24 @@ test('a self-call by selector reaches the facet that implements it', () => {
   assert.deepEqual(raisers['0xeeeeeeee'], ['Caller.go(0x00000002)', 'Host.host(0x12345678)']);
 });
 
+test('an encoded call to another platform contract reaches that contract, not the Diamond routing', () => {
+  const E = errDef('E', '0xeeeeeeee');
+  const F = errDef('F', '0xffffffff');
+  // The vault answers grant(); a facet ALSO routes a grant() with the same selector.
+  const vaultGrant = fn('grant', block(revertWith(E)), { selector: '0x0000aaaa' });
+  const Vault = contract('Vault', [E, vaultGrant]);
+  const Other = contract('OtherFacet', [F, fn('grant', block(revertWith(F)), { selector: '0x0000aaaa' }), fn('extra', block(), { selector: '0x0000bbbb' })]);
+  const encodeCall = { nodeType: 'MemberAccess', memberName: 'encodeCall', expression: { nodeType: 'Identifier', name: 'abi' } };
+  const caller = fn('go', block(stmt(call(encodeCall, [ref(vaultGrant)]))), { selector: '0x00000002' });
+  const C = contract('CallerFacet', [caller]);
+  const { raisers } = raisersFrom(
+    [unit('src/V.sol', Vault), unit('src/O.sol', Other), unit('src/C.sol', C)],
+    manifest(['CallerFacet', 'OtherFacet'], ['Vault']),
+  );
+  assert.deepEqual(raisers['0xeeeeeeee'], ['CallerFacet.go(0x00000002)', 'Vault.grant(0x0000aaaa)']);
+  assert.deepEqual(raisers['0xffffffff'], ['OtherFacet.grant(0x0000aaaa)']);
+});
+
 test('super.f() is not re-dispatched into the override, and call options are seen through', () => {
   const E = errDef('E', '0xeeeeeeee');
   const baseF = fn('f', block(revertWith(E)), { selector: '0x0000000f', visibility: 'public', virtual: true });

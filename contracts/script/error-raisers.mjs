@@ -37,10 +37,17 @@
  *   - internal and library calls, and modifiers, with a virtual function or
  *     modifier resolved to the most-derived override in the contract the
  *     entry belongs to;
- *   - SELF-CALLS into the Diamond: `abi.encodeWithSelector(F.selector, ...)`,
- *     `abi.encodeCall(F, ...)`, `F.selector` passed to a call, and a typed
- *     call on `address(this)` or `this`, where F's selector is routed by a
- *     facet. The call is followed into every facet that implements it;
+ *   - SELF-CALLS: a typed call on `address(this)` or `this`. From a facet it
+ *     is followed into every facet that routes the selector; from a
+ *     standalone contract, into that contract;
+ *   - ENCODED calls: `abi.encodeWithSelector(F.selector, ...)`,
+ *     `abi.encodeCall(F, ...)` and `F.selector` passed to a call. The bytes
+ *     can go anywhere, so the target is taken from F's DECLARATION, by the
+ *     same rule as a typed external call below (a facet's function reaches
+ *     the Diamond's routing; `VaipakamVaultImplementation.grantAllowance`
+ *     reaches the vault), plus F in the encoding contract itself when it is
+ *     standalone. A low-level call whose failure the caller catches is still
+ *     followed: this map states presence, not path feasibility;
  *   - typed external calls to an interface or contract DECLARED IN `src/`
  *     (the protocol's own interfaces), followed into each shipped contract
  *     that implements it: inherits it, or has every function it declares (a
@@ -277,6 +284,11 @@ function bodyFacts(fn, byId) {
   const internal = []; // {decl, dispatch}: dispatch = resolve virtually at walk time
   const selfSelectors = new Set();
   const externalDecls = [];
+  // Functions named by an encoding (`F.selector` passed to a call,
+  // `abi.encodeCall(F, ...)`): the bytes may go to the Diamond, to this
+  // contract or to another platform contract, so the target is resolved from
+  // F's declaration at walk time, the same way as a typed external call.
+  const encodedDecls = [];
   const unknownErrors = [];
 
   const raiseError = (d) => {
@@ -313,17 +325,17 @@ function bodyFacts(fn, byId) {
       }
     }
 
-    // `E.selector` passed to a call is a typed raise; `F.selector` a self-call.
+    // `E.selector` passed to a call is a typed raise; `F.selector` names F.
     for (const a of args) {
       const err = errorOfSelector(a, byId);
       if (err) raiseError(err);
       const f = functionOfSelector(a, byId);
-      if (f?.functionSelector) selfSelectors.add(hex4(f.functionSelector));
+      if (f?.functionSelector) encodedDecls.push(f);
     }
     // abi.encodeCall(F, (...)) names F directly.
     if (e?.nodeType === 'MemberAccess' && e.memberName === 'encodeCall' && unwrap(e.expression)?.name === 'abi') {
       const f = byId.get(unwrap(args[0])?.referencedDeclaration);
-      if (f?.nodeType === 'FunctionDefinition' && f.functionSelector) selfSelectors.add(hex4(f.functionSelector));
+      if (f?.nodeType === 'FunctionDefinition' && f.functionSelector) encodedDecls.push(f);
     }
 
     if (callee?.nodeType === 'FunctionDefinition') {
@@ -344,7 +356,7 @@ function bodyFacts(fn, byId) {
     return undefined;
   });
 
-  return { raises, internal, selfSelectors, externalDecls, unknownErrors };
+  return { raises, internal, selfSelectors, externalDecls, encodedDecls, unknownErrors };
 }
 
 /**
@@ -410,7 +422,13 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
     }
     return conformance.get(key);
   };
+  // Only an interface, or a contract some facet is built from, can be the
+  // Diamond's: a concrete standalone contract (the vault implementation) is
+  // that contract even when facets happen to route every one of its
+  // selectors.
+  const facetLineage = new Set(shipped.filter((c) => c.role === 'facet').flatMap((c) => c.lineage));
   const diamondImplements = (iface) => {
+    if (iface.contractKind !== 'interface' && !facetLineage.has(iface.id)) return false;
     const sels = selectorsOf(iface);
     return sels.length > 0 && sels.every((x) => routing.has(hex4(x)));
   };
@@ -425,6 +443,22 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
       if (fn) out.push({ contract: c, fn });
     }
     if (diamondImplements(owner.contract)) out.push(...(routing.get(hex4(decl.functionSelector)) ?? []));
+    return out;
+  };
+
+  // An encoded call names a function, not a target. It reaches every
+  // implementation a typed call through F's declaration would reach (the
+  // Diamond's routing when the Diamond implements F's contract or interface,
+  // and each shipped contract that implements it, the encoding contract
+  // itself included), and, from a standalone contract, F in that contract
+  // when it has one. A declaration outside src/ (a token's `transfer`) is
+  // followed nowhere, as for a typed call.
+  const encodedTargets = (decl, from) => {
+    const out = externalTargets(decl);
+    if (from.role !== 'facet' && from.role !== 'proxy') {
+      const own = from.bySelector.get(decl.functionSelector);
+      if (own && !out.some((t) => t.fn === own && t.contract === from)) out.push({ contract: from, fn: own });
+    }
     return out;
   };
 
@@ -469,6 +503,9 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
       }
       for (const d of ff.externalDecls) {
         for (const t of externalTargets(d)) if (t.fn.body) stack.push([t.fn, t.contract]);
+      }
+      for (const d of ff.encodedDecls) {
+        for (const t of encodedTargets(d, c)) if (t.fn.body) stack.push([t.fn, t.contract]);
       }
     }
     return out;
