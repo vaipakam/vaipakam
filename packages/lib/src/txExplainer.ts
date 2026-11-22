@@ -136,7 +136,13 @@ export interface ExplainInput {
    * end of the block, for the top-level selector. Shown only; never read as
    * the code that ran.
    */
-  routes?: { selector: string; atBlockStart?: string; atBlockEnd?: string };
+  routes?: {
+    selector: string;
+    /** The route's code; `null` when the loupe answered that no facet routes
+     *  it; absent when the read failed (not known). */
+    atBlockStart?: string | null;
+    atBlockEnd?: string | null;
+  };
   /** ABIs to decode calls and events with (the Diamond union and the platform's
    *  standalone contracts). Errors are decoded from the error catalogue. */
   abis: readonly Abi[];
@@ -209,13 +215,19 @@ export interface StopPoint {
   rawData?: string;
   /** The node's word for the failure. */
   failure?: string;
-  /** The innermost failed call: where the failure began. */
+  /**
+   * Where the error the transaction returned was raised: followed down
+   * through each failed call that returned the very same bytes (bubbled up
+   * unchanged), and no further.
+   */
   origin?: { depth: number; code: ExplainedCode; function?: string };
   /**
-   * The innermost call's own error when it differs from what the
-   * transaction returned (a caller turned it into another error).
+   * The last call that failed inside the origin before it raised its own
+   * error. The trace does not show whether the origin's error came from this
+   * failure (it may have been caught, and a later step raised the error), so
+   * it is stated as an earlier failure, never as the error's cause.
    */
-  originError?: DecodedError;
+  earlierFailure?: { depth: number; code: ExplainedCode; function?: string; error?: DecodedError };
   /** A plain sentence for empty revert data. */
   emptyRevert?: string;
 }
@@ -389,12 +401,18 @@ function codeOf(address: string, nameOf: ExplainInput['nameOf']): ExplainedCode 
   return out;
 }
 
-/** The innermost failed frame, following the last failed child each time:
- *  the call its parent was running when it gave up. */
-function innermostFailure(frame: CallFrame, depth = 0): { frame: CallFrame; depth: number } {
-  const failed = (frame.calls ?? []).filter((c) => typeof c.error === 'string');
-  const last = failed[failed.length - 1];
-  return last ? innermostFailure(last, depth + 1) : { frame, depth };
+const failedChildren = (frame: CallFrame): CallFrame[] => (frame.calls ?? []).filter((c) => typeof c.error === 'string');
+
+/**
+ * Where the returned error was raised: descend into a failed child only while
+ * it returned exactly the bytes its parent returned, which is what an
+ * unchanged bubble looks like. A parent that caught a failure and later
+ * raised something else stops the descent at the parent.
+ */
+function errorOrigin(frame: CallFrame): CallFrame {
+  const same = failedChildren(frame).filter((c) => lower(c.output) === lower(frame.output));
+  const last = same[same.length - 1];
+  return last ? errorOrigin(last) : frame;
 }
 
 interface WalkContext {
@@ -546,23 +564,34 @@ export function explainTransaction(input: ExplainInput): Explanation {
     outcome = topFailed ? 'failed' : 'succeeded';
     gasUsed = input.receipt && input.source !== 'attempt' ? input.receipt.gasUsed.toString() : hexToDec(input.trace.gasUsed);
     if (topFailed) {
-      const inner = innermostFailure(input.trace);
+      const origin = errorOrigin(input.trace);
       const s: StopPoint = {};
       if (input.trace.error !== undefined) s.failure = input.trace.error;
       const err = decodeRevert(input.trace.output);
       if (err) s.error = err;
       else if (input.trace.output && input.trace.output !== '0x') s.rawData = input.trace.output;
-      else s.emptyRevert = emptyRevertSentence(inner.frame);
-      const originStep = stepOf.get(inner.frame);
+      else s.emptyRevert = emptyRevertSentence(origin);
+      const originStep = stepOf.get(origin);
       if (originStep) {
         s.origin = { depth: originStep.depth, code: originStep.code };
         if (originStep.function) s.origin.function = originStep.function.name;
       }
-      if (lower(inner.frame.output) !== lower(input.trace.output)) {
-        const oe = decodeRevert(inner.frame.output);
-        if (oe) s.originError = oe;
+      const earlier = failedChildren(origin).at(-1);
+      const earlierStep = earlier ? stepOf.get(earlier) : undefined;
+      if (earlier && earlierStep) {
+        s.earlierFailure = { depth: earlierStep.depth, code: earlierStep.code };
+        if (earlierStep.function) s.earlierFailure.function = earlierStep.function.name;
+        const ee = decodeRevert(earlier.output);
+        if (ee) s.earlierFailure.error = ee;
       }
       stop = s;
+    }
+    // A node's call tracer may drop the logs of failed calls (geth's does,
+    // with withLog on), so an absent undone event is not evidence of none.
+    const anyFailed = steps.some((st) => st.kind === 'call' && st.failed);
+    const anyUndone = steps.some((st) => st.kind === 'event' && st.undone);
+    if (anyFailed && !anyUndone) {
+      notes.push('No events are shown inside the failed calls. Some node tracers drop the events a failed call emitted, so whether those calls emitted any (and then undid them) is not known from this trace.');
     }
     if (input.source === 'node-trace' && input.receipt && (input.receipt.status === 'reverted') !== topFailed) {
       notes.push("The node's trace and its receipt disagree on whether the transaction failed.");
@@ -583,9 +612,11 @@ export function explainTransaction(input: ExplainInput): Explanation {
       if (outcome === 'failed') notes.push('A receipt does not carry the error; without a trace the error is not known.');
     }
     const r = input.routes;
-    if (r && (r.atBlockStart || r.atBlockEnd)) {
-      const show = (a: string | undefined) => (a ? describeCode(codeOf(a, input.nameOf)) : 'no route');
-      if (lower(r.atBlockStart) !== lower(r.atBlockEnd)) {
+    if (r && (r.atBlockStart !== undefined || r.atBlockEnd !== undefined)) {
+      const show = (a: string | null | undefined) => (a === undefined ? 'not readable' : a === null ? 'no route' : describeCode(codeOf(a, input.nameOf)));
+      if (r.atBlockStart === undefined || r.atBlockEnd === undefined) {
+        notes.push(`The route for ${r.selector} could be read only at the ${r.atBlockStart === undefined ? 'end' : 'start'} of the block: ${show(r.atBlockStart ?? r.atBlockEnd)}. At the ${r.atBlockStart === undefined ? 'start' : 'end'} it was not readable, so whether it changed within the block is not known.`);
+      } else if (lower(r.atBlockStart ?? undefined) !== lower(r.atBlockEnd ?? undefined)) {
         notes.push(`The route for ${r.selector} changed within the block: ${show(r.atBlockStart)} at its start, ${show(r.atBlockEnd)} at its end. Which of them ran is not known.`);
       } else {
         notes.push(`The route for ${r.selector} pointed at ${show(r.atBlockStart)} at both the start and the end of the block. That is the route in force, not a record of the code that ran.`);
@@ -701,9 +732,11 @@ export function renderExplanation(e: Explanation): string {
     if (st.origin) {
       lines.push(`  It began in ${describeCode(st.origin.code)}${st.origin.function ? `.${st.origin.function}` : ''}, at depth ${st.origin.depth}.`);
     }
-    if (st.originError) {
-      lines.push('  There it was first raised as:');
-      lines.push(...formatError(st.originError).map((l) => `    ${l}`));
+    if (st.earlierFailure) {
+      const ef = st.earlierFailure;
+      lines.push(`  Before raising it, a call it made had failed: ${describeCode(ef.code)}${ef.function ? `.${ef.function}` : ''}, at depth ${ef.depth}${ef.error ? ', with:' : ' (no decodable error).'}`);
+      if (ef.error) lines.push(...formatError(ef.error).map((l) => `    ${l}`));
+      lines.push('  The trace does not show whether the error above came from that failure: it may have been caught, and a later step raised the error.');
     }
   }
 

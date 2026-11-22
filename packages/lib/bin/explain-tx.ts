@@ -113,6 +113,14 @@ async function startLocalCopy(anvil: string, rpcUrl: string, forkArgs: string[])
     stdio: 'ignore',
   });
   let exited = false;
+  // A spawn failure (anvil missing, not executable) arrives as an 'error'
+  // event. Unheard, Node prints it with the spawn arguments, which carry the
+  // endpoint; heard, it becomes a plain refusal and the fallback runs.
+  let spawnFailure: string | undefined;
+  child.once('error', (e: NodeJS.ErrnoException) => {
+    spawnFailure = `the local copy could not be started (${e.code ?? 'spawn failed'})`;
+    exited = true;
+  });
   child.once('exit', () => {
     exited = true;
   });
@@ -122,6 +130,7 @@ async function startLocalCopy(anvil: string, rpcUrl: string, forkArgs: string[])
   const client = createPublicClient({ transport: http(`http://127.0.0.1:${port}`, { retryCount: 0, timeout: 120_000 }) });
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
+    if (spawnFailure) throw new Error(spawnFailure);
     if (exited) throw new Error('the local copy exited while starting (the node may not keep the state of that block)');
     try {
       await client.getChainId();
@@ -139,9 +148,12 @@ async function trace(client: PublicClient, method: 'debug_traceTransaction' | 'd
 }
 
 async function routesAround(client: PublicClient, diamond: Hex, selector: Hex, block: bigint): Promise<ExplainInput['routes']> {
-  const read = async (at: bigint) => {
+  // A failed read is UNKNOWN (pruned state, a node error), never "no route":
+  // an absent route is the loupe answering the zero address.
+  const read = async (at: bigint): Promise<string | null | undefined> => {
     try {
-      return (await client.readContract({ address: diamond, abi: abis.DIAMOND_ABI_VIEM, functionName: 'facetAddress', args: [selector], blockNumber: at })) as string;
+      const a = (await client.readContract({ address: diamond, abi: abis.DIAMOND_ABI_VIEM, functionName: 'facetAddress', args: [selector], blockNumber: at })) as string;
+      return /^0x0{40}$/i.test(a) ? null : a;
     } catch {
       return undefined;
     }
@@ -149,8 +161,8 @@ async function routesAround(client: PublicClient, diamond: Hex, selector: Hex, b
   const routes: NonNullable<ExplainInput['routes']> = { selector };
   const start = await read(block - 1n);
   const end = await read(block);
-  if (start) routes.atBlockStart = start;
-  if (end) routes.atBlockEnd = end;
+  if (start !== undefined) routes.atBlockStart = start;
+  if (end !== undefined) routes.atBlockEnd = end;
   return routes;
 }
 
@@ -275,6 +287,10 @@ async function main(): Promise<void> {
   if (!dep) process.stderr.write(`No deployment record for chain ${a.chain}: code will be shown by address only.\n`);
   const nameOf = dep ? codeNamesFromDeployment(dep as unknown as Parameters<typeof codeNamesFromDeployment>[0]) : () => undefined;
   const client = createPublicClient({ transport: http(rpcUrl, { retryCount: 1, timeout: 60_000 }) });
+  // The endpoint must be the chain asked about: every name and label below is
+  // that chain's, so a mistaken endpoint would be explained confidently wrong.
+  const served = await client.getChainId();
+  if (served !== a.chain) throw new Error(`the endpoint in ${a.rpcEnv} serves chain ${served}, not chain ${a.chain}`);
 
   const input = a.tx ? await explainTx(a, rpcUrl, client, nameOf) : await explainAttempt(a, rpcUrl, client, nameOf);
   const explanation = explainTransaction(input);

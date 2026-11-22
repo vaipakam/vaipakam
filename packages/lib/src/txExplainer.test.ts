@@ -97,7 +97,7 @@ describe('explainTransaction', () => {
     expect(e.stop?.error?.meaning).toBe(ERROR_CATALOGUE[e.stop!.error!.selector]!.message);
     expect(e.stop?.origin?.code.name).toBe('RiskFacet');
     expect(e.stop?.origin?.depth).toBe(2);
-    expect(e.stop?.originError).toBeUndefined();
+    expect(e.stop?.earlierFailure).toBeUndefined();
     const text = renderExplanation(e);
     expect(text).toContain('RiskFacet.triggerLiquidation');
     expect(text).toContain('ListingFloorBelowReviewed(');
@@ -160,13 +160,31 @@ describe('explainTransaction', () => {
     expect(order).toEqual(['repayLoan', '1', 'repayPartial', '2 undone', '3']);
   });
 
-  it('shows where an error began when a caller turned it into another', () => {
+  it('places the error where it was raised, and states an earlier failed call without claiming it as the cause', () => {
     const c = viaDiamond(DIAMOND, FACET_C, call('triggerLiquidation', [1n, 0n, []]), { error: 'execution reverted', output: SEQUENCER_DOWN });
     const top = viaDiamond(USER, FACET_A, call('repayLoan', [7n]), { error: 'execution reverted', output: FLOOR, calls: [c] });
     const e = explainTransaction(base({ trace: top }));
     expect(e.stop?.error?.name).toBe('ListingFloorBelowReviewed');
-    expect(e.stop?.originError?.name).toBe('SequencerDown');
-    expect(e.stop?.origin?.code.name).toBe('RiskFacet');
+    expect(e.stop?.origin?.code.name).toBe('OfferAcceptFacet');
+    expect(e.stop?.earlierFailure?.code.name).toBe('RiskFacet');
+    expect(e.stop?.earlierFailure?.error?.name).toBe('SequencerDown');
+    expect(renderExplanation(e)).toContain('does not show whether the error above came from that failure');
+  });
+
+  it('a caught failure followed by a successful retry and a later error of its own is not read as the origin', () => {
+    // One swap attempt fails and is caught, the next succeeds, then the caller raises its own error.
+    const failedTry = viaDiamond(DIAMOND, FACET_C, call('triggerLiquidation', [1n, 0n, []]), { error: 'execution reverted', output: SEQUENCER_DOWN });
+    const okTry = viaDiamond(DIAMOND, FACET_B, call('repayPartial', [1n, 2n]));
+    const top = viaDiamond(USER, FACET_A, call('repayLoan', [7n]), { error: 'execution reverted', output: FLOOR, calls: [failedTry, okTry] });
+    const e = explainTransaction(base({ trace: top }));
+    expect(e.stop?.origin?.code.name).toBe('OfferAcceptFacet');
+    expect(e.stop?.origin?.depth).toBe(0);
+    expect(e.stop?.error?.name).toBe('ListingFloorBelowReviewed');
+  });
+
+  it('says events inside failed calls are unknown when the tracer reported none', () => {
+    const e = explainTransaction(base({ trace: threeDeep(FACET_C) }));
+    expect(e.notes.join(' ')).toContain('Some node tracers drop the events a failed call emitted');
   });
 
   it('reads a panic as a fault of the platform, and an empty revert in words', () => {
@@ -196,6 +214,15 @@ describe('explainTransaction', () => {
     expect(e.notes.join(' ')).toContain('changed within the block');
     expect(e.notes.join(' ')).toContain('Which of them ran is not known');
     expect(e.heading).toContain('code that ran are not known');
+  });
+
+  it('a route that could not be read is unknown, never "no route" and never a change', () => {
+    const one = explainTransaction(base({ source: 'none', receipt: { status: 'success', gasUsed: 9n, logs: [] }, routes: { selector: '0x12345678', atBlockEnd: FACET_C } }));
+    const text = one.notes.join(' ');
+    expect(text).not.toContain('changed within the block:');
+    expect(text).toContain('whether it changed within the block is not known');
+    const absent = explainTransaction(base({ source: 'none', receipt: { status: 'success', gasUsed: 9n, logs: [] }, routes: { selector: '0x12345678', atBlockStart: null, atBlockEnd: FACET_C } }));
+    expect(absent.notes.join(' ')).toContain('no route at its start');
   });
 
   it('an attempt is headed as a simulation, never a record', () => {
