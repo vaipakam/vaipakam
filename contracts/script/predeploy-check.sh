@@ -338,6 +338,24 @@ else
   FAIL=1
 fi
 
+# ── 1e4. Entry gates (#3944) ─────────────────────────────────────────
+# Each entry point's checks (modifiers, and the gate calls reached before it
+# first changes state) compared with the cross-cutting rules file. The rules
+# stay in the private review repository until the check reports nothing; with
+# no contracts/entry-gate-rules.json this step says so and passes. Once the
+# file is here, a finding fails. Same AST artifacts as 1d.
+echo
+echo "[predeploy 1e4/4] entry gates (#3944)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-entry-gates.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ an entry point lacks a check its kind requires, or the rules file is malformed (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1f. Error raisers ─────────────────────────────────────────────────
 # The error catalogue's "raised by" lists come from the same AST artifacts
 # as 1d/1e (#3916). The catalogue itself (names, values, meanings) is checked

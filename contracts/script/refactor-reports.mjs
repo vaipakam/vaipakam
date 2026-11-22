@@ -194,7 +194,7 @@ export function makeContext(units, facetNames) {
   return { byId, contracts, contractOf, routes };
 }
 
-function mostDerived(decl, lineage, ctx) {
+export function mostDerived(decl, lineage, ctx) {
   if (!decl?.virtual || !lineage) return decl;
   const sig = typeList(decl);
   for (const baseId of lineage) {

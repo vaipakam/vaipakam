@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+// Fixture for check-entry-gates.mjs (#3944). Each GFacet entry is one case.
+
+library LibGate {
+    struct S {
+        uint256 x;
+        mapping(address => bool) flagged;
+        bool paused;
+        uint256[] list;
+    }
+
+    function s() internal pure returns (S storage st) {
+        assembly {
+            st.slot := 0
+        }
+    }
+
+    function requireNotFlagged(address a) internal view {
+        if (s().flagged[a]) revert();
+    }
+
+    function requireNotPaused() internal view {
+        if (s().paused) revert();
+    }
+}
+
+abstract contract Guarded {
+    uint256 private _lock;
+
+    modifier nonReentrant() {
+        require(_lock == 0);
+        _lock = 1;
+        _;
+        _lock = 0;
+    }
+
+    modifier whenNotPaused() {
+        LibGate.requireNotPaused();
+        _;
+    }
+
+    modifier onlySelf() {
+        require(msg.sender == address(this));
+        _;
+    }
+}
+
+interface IOther {
+    function poke() external;
+}
+
+contract HostFacet {
+    function requireTerms(address) external view {}
+
+    function mutate() external {}
+}
+
+contract GFacet is Guarded {
+    IOther internal other;
+
+    function good() external nonReentrant whenNotPaused {
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 1;
+    }
+
+    function writesFirst() external nonReentrant {
+        LibGate.s().x = 2;
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function writesThroughPointer() external nonReentrant {
+        LibGate.S storage st = LibGate.s();
+        st.list.push(1);
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function branchOnly(bool b) external nonReentrant {
+        if (b) LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 3;
+    }
+
+    function viaHelper() external nonReentrant {
+        _screen();
+        LibGate.s().x = 4;
+    }
+
+    function noGuard() external {
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 5;
+    }
+
+    function viaHost() external nonReentrant {
+        HostFacet(address(this)).requireTerms(msg.sender);
+        LibGate.s().x = 6;
+    }
+
+    function externalFirst() external nonReentrant {
+        other.poke();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function selfMutateFirst() external nonReentrant {
+        HostFacet(address(this)).mutate();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function internalOnly() external onlySelf {
+        LibGate.s().x = 7;
+    }
+
+    function peek() external view returns (uint256) {
+        return LibGate.s().x;
+    }
+
+    function _screen() internal view {
+        LibGate.requireNotFlagged(msg.sender);
+    }
+}
