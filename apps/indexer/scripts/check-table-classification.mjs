@@ -114,7 +114,6 @@ export const CLASSIFICATION = {
   chain_event_log: { class: 'replay-derived', reason: 'every platform contract log, the full event record (#3921)' },
   settings_history: { class: 'replay-derived', reason: 'settings changes with the settings read at each block (#3921)' },
   facet_history: { class: 'replay-derived', reason: 'the Diamond routing changes, from DiamondCut (#3921)' },
-  history_coverage: { class: 'replay-derived', reason: 'the first block the #3921 histories cover, rewritten by the replay' },
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },

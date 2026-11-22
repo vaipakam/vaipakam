@@ -271,18 +271,6 @@ export function historyStatements(opts: {
   return out;
 }
 
-/**
- * Notes the first block a pass records history from, once per network: the
- * histories begin there, and a reader is told so rather than shown an empty
- * past as a quiet one (an indexer that took this build on mid-chain has no
- * history below it).
- */
-export function historyStartStatement(db: HistoryDb, chainId: number, fromBlock: number): HistoryStatement {
-  return db
-    .prepare(`INSERT OR IGNORE INTO history_coverage (chain_id, from_block) VALUES (?1, ?2)`)
-    .bind(chainId, fromBlock);
-}
-
 // ─── Filling the settings rows' values ───────────────────────────────────
 
 /** A settings read that never answers for a block is given up after this many tries. */
@@ -429,9 +417,9 @@ export function eventSettingKey(eventName: string, args: Record<string, unknown>
  *     event layer is exact.
  *
  * `inBlock` lists the changes made inside the point's block from the point
- * on. `historyFrom` is the first block the history covers (null: none yet);
- * a point below it, or a setting never changed since it, is not described by
- * the event layer.
+ * on. `historyFrom` is the first block on record (null: none yet); a point
+ * below it, or a setting never changed since it, is not described by the
+ * event layer.
  */
 export async function settingsAt(
   db: HistoryDb,
@@ -444,10 +432,14 @@ export async function settingsAt(
   inBlock: SettingsRow[];
 }> {
   const tx = at.txIndex ?? 0;
+  // The first block on record. Nothing is recorded below it, so a reader is
+  // told where the record begins rather than shown an empty past as a quiet
+  // one (an indexer that took this build on mid-chain has no history below
+  // it; a new Diamond's record begins with its deploy cut).
   const coverage = await db
-    .prepare(`SELECT from_block FROM history_coverage WHERE chain_id = ?1`)
+    .prepare(`SELECT MIN(block_number) AS from_block FROM chain_event_log WHERE chain_id = ?1`)
     .bind(chainId)
-    .first<{ from_block: number }>();
+    .first<{ from_block: number | null }>();
   const before = await db
     .prepare(
       `SELECT block_number, tx_index, log_index, tx_hash, event_name, event_args_json, values_basis, values_json, unknown_between, read_error, block_at

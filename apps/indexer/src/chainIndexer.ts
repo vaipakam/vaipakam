@@ -172,7 +172,7 @@ import {
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
-import { fillSettingsHistory, historyAddresses, historyStartStatement, historyStatements, type RawLog } from './stateHistory';
+import { fillSettingsHistory, historyAddresses, historyStatements, type RawLog } from './stateHistory';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -2521,7 +2521,6 @@ async function runChainPass(
       blockNumber: lastBlock,
       headBlock: head,
     });
-    await fillSettingsHistoryStep(env, budget, chainId, client, diamond, lastBlock);
     // #1213 PR 2 (Codex #1298 r1) — the calendar sweep is TIME-driven
     // for the same reason: a loan enters its T-7d/T-1d/grace window by
     // clock alone, with no new block or log. This caught-up path is
@@ -2625,6 +2624,9 @@ async function runChainPass(
     // blocks above it are what is pending. Before the heal lanes, which spend
     // what is left of the budget by design.
     const quietPendingChanged = await refreshPendingLane(env, client, chainId, diamond, lastBlock, budget);
+    // #3921 — the settings history's values, after the pending lane (which
+    // users read) and before the heal lanes (which take what is left).
+    await fillSettingsHistoryStep(env, budget, chainId, client, diamond, lastBlock);
     const quietHeal = await runHealLanes(
       client,
       diamond,
@@ -2958,9 +2960,6 @@ async function runChainPass(
    *  the ingest loop retries, not progress. */
   let stoppedForBlockTime = false;
   try {
-    // #3921 — where the histories begin on this network, noted once (an
-    // indexer that took them on mid-chain has none below it).
-    if (blocks.length > 0) await historyStartStatement(env.DB, chainId, Number(scanFrom)).run();
     for (const [i, { blockNumber, logs, raw }] of blocks.entries()) {
       if (i === 1) holdBack(budget, SCAN_TAIL_RESERVE);
       let done: Awaited<ReturnType<typeof scanBlock>>;
@@ -3119,9 +3118,6 @@ async function runChainPass(
     blockNumber: scanTo,
     headBlock: head,
   });
-  // #3921 — the settings history's values, read at the end of each block
-  // that changed them, a few blocks a pass and only within the budget.
-  await fillSettingsHistoryStep(env, budget, chainId, client, diamond, scanTo);
 
   // #1213 PR 2 — the TIME-derived calendar rows (maturity T-7d / T-1d,
   // grace entered): no event fires when a due date approaches, so a
@@ -3211,6 +3207,11 @@ async function runChainPass(
     stoppedAt === null && scanTo === head
       ? await refreshPendingLane(env, client, chainId, diamond, scanTo, budget)
       : false;
+  // #3921 — the settings history's values, read at the end of each block
+  // that changed them, a few blocks a pass and only within the budget: after
+  // the pending lane (which users read), before the heal lanes (which take
+  // what is left).
+  await fillSettingsHistoryStep(env, budget, chainId, client, diamond, scanTo);
   const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } =
     stoppedAt === null
       ? await runHealLanes(

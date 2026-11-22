@@ -1,7 +1,7 @@
 -- #3921 — the indexer's event history and the state at a block
 -- (TroubleshootingPictureDesign.md §4.5, §4.6).
 --
--- Three replay-derived histories (and where they begin), each written by the scan in the same pass
+-- Three replay-derived histories, each written by the scan in the same pass
 -- as the block it came from, and each cleared and rebuilt with the chain's
 -- other rows on a reorg rebuild or a new Diamond (deploymentEpoch.ts finds
 -- them by their chain_id column).
@@ -79,10 +79,3 @@ CREATE TABLE IF NOT EXISTS facet_history (
 );
 CREATE INDEX IF NOT EXISTS idx_facet_history_selector ON facet_history(chain_id, selector, block_number, tx_index, log_index);
 
--- The first block the histories above cover on a network. An indexer that
--- took them on mid-chain has no history below it, and a reader is told so
--- rather than shown an empty past as a quiet one.
-CREATE TABLE IF NOT EXISTS history_coverage (
-  chain_id    INTEGER PRIMARY KEY,
-  from_block  INTEGER NOT NULL
-);

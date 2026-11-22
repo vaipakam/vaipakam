@@ -12,7 +12,6 @@ import {
   eventSettingKey,
   facetAt,
   fillSettingsHistory,
-  historyStartStatement,
   historyStatements,
   settingsAt,
   VALUE_NOT_CARRIED_EVENTS,
@@ -260,8 +259,7 @@ describe('the event history (#3921)', () => {
   it('states where the history begins', async () => {
     const { d1 } = db();
     expect((await settingsAt(d1, CHAIN, { block: 10 })).historyFrom).toBeNull();
-    await historyStartStatement(d1, CHAIN, 90).run();
-    await historyStartStatement(d1, CHAIN, 500).run();
+    await record(d1, [backstopSet(500, 0, true), backstopSet(90, 0, false)]);
     expect((await settingsAt(d1, CHAIN, { block: 10 })).historyFrom).toBe(90);
   });
 

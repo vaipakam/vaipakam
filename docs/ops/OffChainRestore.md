@@ -1677,7 +1677,6 @@ DELETE FROM activity_events; \
 DELETE FROM chain_event_log; \
 DELETE FROM settings_history; \
 DELETE FROM facet_history; \
-DELETE FROM history_coverage; \
 DELETE FROM activity_participants; \
 DELETE FROM activity_participants_state; \
 DELETE FROM loan_participants; \
