@@ -10,5 +10,7 @@ The testnet deploy is stated once, in `contracts/deployments/testnets.desired.js
 
 Closes #3891. Advances #3111. The readback (#3893), the relay between forks (#3892), the local off-chain stack and smoke flows, and the gate on the real deploy (#3896) follow in their own PRs.
 
-> Caveat: price feeds are not yet re-stamped after a clock step, so a step past a feed's maximum age reads that feed as stale (design open item 4).
+After a clock step, every price feed the chain's guard holds is brought to the new time. The list is read from the fork. A feed is moved only in its time, and this is proven after the step. A real feed is replaced on the fork by a stand-in that carries the same round, answer and decimals, and the report lists it as replaced. The sequencer status feed is left alone. A Pyth or secondary query source fails the run by name, because neither can be re-stamped.
+
+> Caveat: a deploy that binds a Pyth cross-check or a secondary query oracle cannot be rehearsed past a clock step until that source has a mechanism of its own.
 > Caveat: cross-chain messages are not delivered until the relay is wired in; until then, relay steps are reported as not covered.
