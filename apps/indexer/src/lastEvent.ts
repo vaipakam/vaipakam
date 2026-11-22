@@ -68,7 +68,11 @@ export function eventPosition(log: PositionedLog): RowPosition {
   };
 }
 
-/** A row set from a read of the chain's state pinned at `block`. */
+/** A row set from a read of the chain's state pinned at `block`. A handler
+ *  that reads the post-image at its own event's block records this, not the
+ *  event: the read returns the END of the block, which may already include a
+ *  later transaction in it (a match followed by a repayment), so naming the
+ *  handler's event would attribute that later outcome to it. */
 export function readPosition(block: bigint | number): RowPosition {
   return { block: Number(block), txIndex: null, logIndex: null };
 }

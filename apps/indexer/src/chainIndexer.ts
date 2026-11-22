@@ -3433,8 +3433,7 @@ async function processOfferLogs(
     // re-read block-pinned, like a match, so a re-scan writes the same row.
     | { kind: 'collection';
         offerId: bigint;
-        blockNumber: bigint;
-        pos: RowPosition; };
+        blockNumber: bigint; };
   const orderedMatchAndModify: ModifiedOrMatched[] = [];
   for (const log of logs) {
     const a = log.args;
@@ -3486,7 +3485,6 @@ async function processOfferLogs(
         kind: 'collection',
         offerId: a.offerId as bigint,
         blockNumber: log.blockNumber,
-        pos: eventPosition(log),
       });
     } else if (log.eventName === 'OfferClosed') {
       closed.push({
@@ -3842,7 +3840,7 @@ async function processOfferLogs(
              ${LAST_EVENT_SET}
          WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
       )
-        .bind(absFilled.toString(), now, ...lastEventBinds(ev.pos), chainId, Number(ev.lenderOfferId))
+        .bind(absFilled.toString(), now, ...lastEventBinds(readPosition(ev.blockNumber)), chainId, Number(ev.lenderOfferId))
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
       // #2382 r2 — the borrower offer's fills are re-read by the refresh
@@ -3888,7 +3886,7 @@ async function processOfferLogs(
           BigInt(od.amountMax).toString(),
           BigInt(od.amountFilled).toString(),
           now,
-          ...lastEventBinds(ev.pos),
+          ...lastEventBinds(readPosition(ev.blockNumber)),
           chainId,
           Number(ev.offerId),
         )
@@ -6406,7 +6404,7 @@ export async function processLoanLogs(
           detail.collateralAmount.toString(),
           Number(detail.startTime),
           now,
-          ...lastEventBinds(eventPosition(log)),
+          ...lastEventBinds(readPosition(log.blockNumber)),
           chainId,
           loanId,
         )
@@ -6517,7 +6515,7 @@ export async function processLoanLogs(
           Number(term.durationDays),
           Number(term.startTime),
           Math.floor(Date.now() / 1000),
-          ...lastEventBinds(eventPosition(log)),
+          ...lastEventBinds(readPosition(log.blockNumber)),
           chainId,
           transferredLoanId,
         )
@@ -6676,7 +6674,7 @@ export async function processLoanLogs(
           String(d.lenderTokenId),
           newLender,
           Math.floor(Date.now() / 1000),
-          ...lastEventBinds(eventPosition(log)),
+          ...lastEventBinds(readPosition(log.blockNumber)),
           chainId,
           loanId,
         )
@@ -6936,7 +6934,7 @@ export async function processLoanLogs(
               Number(log.blockNumber),
               now,
               now,
-              ...lastEventBinds(eventPosition(log)),
+              ...lastEventBinds(readPosition(log.blockNumber)),
               chainId,
               loanId,
             )
@@ -6964,7 +6962,7 @@ export async function processLoanLogs(
               absPrincipal.toString(),
               absCollateral.toString(),
               now,
-              ...lastEventBinds(eventPosition(log)),
+              ...lastEventBinds(readPosition(log.blockNumber)),
               chainId,
               loanId,
             )

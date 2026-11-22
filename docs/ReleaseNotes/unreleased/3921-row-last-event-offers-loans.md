@@ -9,8 +9,9 @@ transaction did. This is the first handler group of the troubleshooting design's
 event-derived tables follow one group at a time.
 
 The three columns say what they know. A row set from a read of the chain's state
-(a heal of a stub, the settlement heal, the reconciliation repair) records the
-block it was read at with no event position, which means "reflects every event
+(a heal of a stub, the settlement heal, the reconciliation repair, and every
+handler that reads a loan or offer back at its event's block, since that read
+returns the end of the block) records the block it was read at with no event position, which means "reflects every event
 up to the end of that block". A row whose figures came from a read at the
 chain's head, whose block cannot be named (the offer and loan detail reads made
 as a row is first written), and a row last written before this change, record

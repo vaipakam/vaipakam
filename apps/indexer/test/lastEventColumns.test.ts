@@ -117,6 +117,42 @@ describe('a loan row names its last event (#3921 B2)', () => {
   });
 });
 
+describe('a figure read back at its event\'s block names the block, not the event (#3921 B2, Codex r2)', () => {
+  it('the obligation handover records the end-of-block read', async () => {
+    // The term is read at the event's block, which returns the END of that
+    // block: a later transaction in it may already show. So the row names the
+    // read at that block, not the handover's own log.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 11);
+    const client = {
+      readContract: async () => ({
+        collateralAmount: 350n,
+        collateralTokenId: 0n,
+        interestRateBps: 720n,
+        durationDays: 14n,
+        startTime: 50_000n,
+      }),
+    };
+    await processLoanLogs(
+      [
+        log(
+          'LoanObligationTransferred',
+          { loanId: 11n, newBorrower: '0x00000000000000000000000000000000000000be', newBorrowerTokenId: 9n },
+          600n,
+          3,
+          1,
+        ),
+      ] as never,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[600n, 1_700_000_000]]),
+      client as never,
+      DIAMOND,
+    );
+    expect(lastEvent(h, 'loans', 'loan_id', 11)).toEqual([600, null, null]);
+  });
+});
+
 describe('an offer row names its last event (#3921 B2)', () => {
   it('the match mark records the match that consumed each offer', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
