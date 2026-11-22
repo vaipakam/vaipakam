@@ -36,6 +36,11 @@
       "types": "./src/ccipSelectors.ts",
       "default": "./src/ccipSelectors.ts"
     },
+    "./error-catalogue": {
+      "types": "./src/errorCatalogue.ts",
+      "default": "./src/errorCatalogue.ts"
+    },
+    "./error-raisers.json": "./src/errorRaisers.json",
     "./abis/*.json": "./src/abis/*.json",
     "./deployments": {
       "types": "./src/deployments.ts",

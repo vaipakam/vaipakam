@@ -612,6 +612,28 @@ if ! node "$CONTRACTS_PKG_DIR/scripts/build-diamond-abi.mjs" \
   exit 1
 fi
 
+# #3916 — the error catalogue, from the STAGED interfaces, before anything is
+# published. Its "raised by" half needs the compiler's AST, so this builds src/
+# once more with `--ast` (quick profile, about five minutes cold); its other
+# half is the staged ABIs plus the hand-written errors/meanings.json. A new
+# error with no meaning, a stale meaning, or a meaning file whose count of
+# errors without a meaning is out of date stops the export here, with nothing
+# written, the same way an unclassified facet does.
+if ! node "$CONTRACTS_DIR/script/error-raisers.mjs" --build \
+     --abi-dir "$STAGE_DIR" --write "$STAGE_DIR/_errorRaisers.json"; then
+  echo "" >&2
+  echo "The error raisers could not be derived — NOTHING was published." >&2
+  exit 1
+fi
+if ! node "$CONTRACTS_PKG_DIR/scripts/build-error-catalogue.mjs" \
+     --abi-dir "$STAGE_DIR" --raisers "$STAGE_DIR/_errorRaisers.json" \
+     --out "$STAGE_DIR/_errorCatalogue.json"; then
+  echo "" >&2
+  echo "The error catalogue could not be built — NOTHING was published." >&2
+  echo "Fix packages/contracts/errors/meanings.json (named above) and re-run." >&2
+  exit 1
+fi
+
 # Every inspect succeeded and the union is built; publish the complete set.
 # Same filesystem, so each rename is atomic and no reader can observe a
 # half-written file. Facets, union and facet list land together.
@@ -619,6 +641,8 @@ for facet in "${FACETS[@]}"; do
   mv "$STAGE_DIR/$facet.json" "$OUT_DIR/$facet.json"
 done
 mv "$STAGE_DIR/_diamondAbi.json" "$CONTRACTS_PKG_DIR/src/diamondAbi.json"
+mv "$STAGE_DIR/_errorRaisers.json" "$CONTRACTS_PKG_DIR/src/errorRaisers.json"
+mv "$STAGE_DIR/_errorCatalogue.json" "$CONTRACTS_PKG_DIR/src/errorCatalogue.json"
 
 # The sidecar records the facet list this export ran with, and nothing
 # else (#2343). It used to carry the exporting commit and a timestamp. Both
@@ -634,6 +658,7 @@ cat > "$OUT_DIR/_source.json" <<EOF
 EOF
 echo "  facet list -> $OUT_DIR/_source.json"
 echo "  combined Diamond ABI -> $CONTRACTS_PKG_DIR/src/diamondAbi.json"
+echo "  error catalogue -> $CONTRACTS_PKG_DIR/src/errorCatalogue.json (+ errorRaisers.json)"
 
 echo ""
 echo "Done. Next steps:"

@@ -1,0 +1,673 @@
+{
+  "_readme": "Written by hand. What each error the platform ships means, in plain words, who can act on it (user, operator, nobody) and whether it is internal (it should be impossible; the apps then show it as a fault of the platform, never as something the user did). A key is an error NAME (applies to every error of that name) or a full signature such as NotOwner(address) (that error only; it wins over the name). message is the text shown to whoever hits the error: what happened and what they can do. shownByName lists errors users are known to reach that still show their name turned into words; give each a message and move it out. maxErrorsWithoutEntry may only fall. The generated catalogue is src/errorCatalogue.json (scripts/build-error-catalogue.mjs).",
+  "maxErrorsWithoutEntry": 1372,
+  "shownByName": [
+    "AmountMutationUnsupportedForShape",
+    "InsufficientAllowance",
+    "InvalidAddress",
+    "InvalidAsset",
+    "RefinanceCarryOverCollateralShortfall",
+    "SaleListingActive",
+    "SaleOfferAlreadyExists",
+    "SaleOfferCollateralMustBeERC20",
+    "SalePositionNotConsolidatable",
+    "SaleVehicleImmutable",
+    "SaleVehicleNotMatchable"
+  ],
+  "entries": {
+    "AccessControlUnauthorizedAccount": {
+      "actor": "user",
+      "message": "Your account does not have the required role for this action."
+    },
+    "AlreadyRegistered()": {
+      "actor": "user",
+      "message": "Country already registered — cannot change after initial set."
+    },
+    "AlreadyRegistered(address)": {
+      "actor": "operator",
+      "message": "This vault code is already registered as a version with the vault beacon, so registering it again changes nothing. Nothing was done."
+    },
+    "AmountMaxMustBePositive": {
+      "actor": "user",
+      "message": "Enter a maximum amount greater than zero."
+    },
+    "AmountMustBePositive": {
+      "actor": "user",
+      "message": "Enter an amount greater than zero."
+    },
+    "AmountTooHigh": {
+      "actor": "user",
+      "message": "Withdrawal amount exceeds the maximum allowed without breaching the health factor."
+    },
+    "AonRequiresFullFill": {
+      "actor": "user",
+      "message": "This offer is All-or-Nothing — the matcher would only land a partial fill, which violates the offer terms. Match the full size or skip the pair."
+    },
+    "AonRequiresSingleValueAmount": {
+      "actor": "user",
+      "message": "All-or-Nothing offers require single-value amount (min equal to max). Adjust the range so both ends match."
+    },
+    "AssetPaused": {
+      "actor": "user",
+      "message": "This asset is currently paused by governance. Wait for the pause to lift before retrying."
+    },
+    "BorrowerSanctioned": {
+      "actor": "user",
+      "message": "The borrower wallet is flagged by the on-chain sanctions oracle, so this match can't proceed."
+    },
+    "CancelCooldownActive": {
+      "actor": "user",
+      "message": "5-minute cancel cooldown is in effect for unfilled offers. The countdown on the row shows when the offer becomes cancellable."
+    },
+    "CollateralAmountMaxMustBePositive": {
+      "actor": "user",
+      "message": "Enter a maximum collateral amount greater than zero."
+    },
+    "CollateralMustBePositive": {
+      "actor": "user",
+      "message": "Enter a collateral amount greater than zero."
+    },
+    "CollateralMutationUnsupportedForShape": {
+      "actor": "user",
+      "message": "Collateral cannot be modified on this offer shape (borrower NFT-rental offers vault prepay, not collateral). Use modifyOffer for amount or rate only."
+    },
+    "CountriesNotCompatible": {
+      "actor": "user",
+      "message": "Counterparty countries are not compatible (sanctions/compliance)."
+    },
+    "CrossFacetCallFailed": {
+      "actor": "user",
+      "message": "A cross-facet call inside the transaction failed. Please share the diagnostics export with support."
+    },
+    "DeadlinePassed": {
+      "actor": "user",
+      "message": "This transaction waited too long before it reached the chain, so it expired without doing anything. Review the terms and send it again."
+    },
+    "DeadlineRequired": {
+      "actor": "user",
+      "message": "This action needs a time limit and none was sent. Nothing was done; reload the page and try again."
+    },
+    "EnforcedPause": {
+      "actor": "user",
+      "message": "The protocol is currently paused for maintenance. Please try again later."
+    },
+    "ERC20InsufficientAllowance": {
+      "actor": "user",
+      "message": "Insufficient token allowance. Approve the token for the required amount and try again."
+    },
+    "ERC20InsufficientBalance": {
+      "actor": "user",
+      "message": "Insufficient token balance. Your wallet does not hold enough of the token for this amount."
+    },
+    "ERC20InvalidReceiver": {
+      "actor": "user",
+      "message": "Invalid recipient address for the token transfer."
+    },
+    "ERC20InvalidSender": {
+      "actor": "user",
+      "message": "Invalid sender address for the token transfer."
+    },
+    "ERC20InvalidSpender": {
+      "actor": "user",
+      "message": "Invalid spender address for the token approval."
+    },
+    "ERC721IncorrectOwner": {
+      "actor": "user",
+      "message": "You do not own this NFT."
+    },
+    "ERC721InsufficientApproval": {
+      "actor": "user",
+      "message": "NFT approval missing — approve the NFT first."
+    },
+    "ERC721InvalidOwner": {
+      "actor": "user",
+      "message": "Invalid NFT owner."
+    },
+    "ERC721InvalidReceiver": {
+      "actor": "user",
+      "message": "Invalid recipient for NFT transfer."
+    },
+    "ERC721InvalidSender": {
+      "actor": "user",
+      "message": "Invalid sender for NFT transfer."
+    },
+    "ERC721NonexistentToken": {
+      "actor": "user",
+      "message": "This NFT does not exist."
+    },
+    "FeeTooHigh": {
+      "actor": "user",
+      "message": "The fee for this action exceeds the allowed maximum."
+    },
+    "FunctionDisabled": {
+      "actor": "user",
+      "message": "This feature is currently turned off by protocol governance. Please try again later."
+    },
+    "FunctionDoesNotExist": {
+      "actor": "user",
+      "message": "Function not available on this contract deployment (facet may not be cut in)."
+    },
+    "GetUserVaultFailed": {
+      "actor": "user",
+      "message": "Could not resolve your user vault. Try reconnecting your wallet or contact support."
+    },
+    "HealthFactorCalculationFailed": {
+      "actor": "user",
+      "message": "Health factor calculation failed — please retry."
+    },
+    "HealthFactorNotLow": {
+      "actor": "user",
+      "message": "Health factor is not below the liquidation threshold."
+    },
+    "HealthFactorTooLow": {
+      "actor": "user",
+      "message": "Health factor too low. Add collateral to bring it above 1.5."
+    },
+    "IlliquidAsset": {
+      "actor": "user",
+      "message": "This asset is illiquid (no price feed or DEX pool)."
+    },
+    "IlliquidAssetNotAcknowledged": {
+      "actor": "user",
+      "message": "One of the assets is illiquid. Tick the illiquid-asset acknowledgement to continue."
+    },
+    "IlliquidPairNotConsented": {
+      "actor": "user",
+      "message": "Both sides must consent to the illiquid-asset terms before this can proceed."
+    },
+    "InitLtvAboveTier": {
+      "actor": "user",
+      "message": "This loan would exceed the LTV limit for its risk tier (prices or tier caps have moved). Lower the borrow amount or add collateral, then try again."
+    },
+    "InstantSourceRepeated": {
+      "actor": "user",
+      "message": "This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again."
+    },
+    "InsufficientCollateral": {
+      "actor": "user",
+      "message": "New borrower collateral is insufficient (must be ≥ original)."
+    },
+    "InsufficientLiquidity": {
+      "actor": "user",
+      "message": "Insufficient on-chain liquidity for this asset."
+    },
+    "InsufficientPartialAmount": {
+      "actor": "user",
+      "message": "Partial repayment amount is too small (below minimum threshold)."
+    },
+    "InsufficientPrepay": {
+      "actor": "user",
+      "message": "Insufficient prepaid rental balance to cover the accrued fees."
+    },
+    "InsufficientProceeds": {
+      "actor": "user",
+      "message": "Liquidation proceeds were insufficient to cover the loan."
+    },
+    "IntentCapitalInsufficient": {
+      "actor": "user",
+      "message": "The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent."
+    },
+    "IntentTermsTooFresh": {
+      "actor": "user",
+      "message": "This standing offer was set or changed a few seconds ago, and it can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent."
+    },
+    "InteractionRewardBackingShort": {
+      "actor": "user",
+      "message": "Rewards are temporarily unfunded on this network — the tokens for this claim have not arrived yet. Your claim was not consumed, so nothing has been used up and you can claim again once funding lands. Try again later."
+    },
+    "InterestRateAboveCeiling": {
+      "actor": "user",
+      "message": "The interest rate is above the protocol's current ceiling. Lower the rate and try again."
+    },
+    "InvalidAmount": {
+      "actor": "user",
+      "message": "Invalid amount — the value must be greater than zero."
+    },
+    "InvalidAmountRange": {
+      "actor": "user",
+      "message": "The amount range is invalid — the maximum must be at least the minimum."
+    },
+    "InvalidAssetType": {
+      "actor": "user",
+      "message": "Invalid asset type."
+    },
+    "InvalidCollateralAmountRange": {
+      "actor": "user",
+      "message": "The collateral range is invalid — the maximum must be at least the minimum."
+    },
+    "InvalidCountry": {
+      "actor": "user",
+      "message": "Invalid country code."
+    },
+    "InvalidLoan": {
+      "actor": "user",
+      "message": "Invalid loan — loan not found or not in expected state."
+    },
+    "InvalidLoanStatus": {
+      "actor": "user",
+      "message": "Loan is not in the required status for this action."
+    },
+    "InvalidNewBorrower": {
+      "actor": "user",
+      "message": "Invalid new borrower address."
+    },
+    "InvalidOffer": {
+      "actor": "user",
+      "message": "Offer not found or no longer valid."
+    },
+    "InvalidOfferTerms": {
+      "actor": "user",
+      "message": "Replacement offer terms do not meet lender-favorability requirements."
+    },
+    "InvalidOfferType": {
+      "actor": "user",
+      "message": "Invalid offer type — duration must be at least 1 day."
+    },
+    "InvalidRateRange": {
+      "actor": "user",
+      "message": "The interest-rate range is invalid — the maximum must be at least the minimum."
+    },
+    "InvalidRefinanceOffer": {
+      "actor": "user",
+      "message": "Invalid refinance offer — must be a borrower offer for the same asset."
+    },
+    "InvalidRoyalty": {
+      "actor": "user",
+      "message": "Invalid royalty configuration."
+    },
+    "InvalidSaleOffer": {
+      "actor": "user",
+      "message": "Invalid sale offer — must be a lender offer for the same asset type."
+    },
+    "InvalidThresholds": {
+      "actor": "user",
+      "message": "Invalid KYC thresholds (Tier0 must be below Tier1)."
+    },
+    "InvalidTosParams": {
+      "actor": "operator",
+      "message": "The submitted Terms-of-Service version or content hash is invalid (governance-side configuration error)."
+    },
+    "InvalidTosVersion": {
+      "actor": "user",
+      "message": "The Terms of Service version you signed for is no longer current. Reload the app, review the updated Terms, and re-sign."
+    },
+    "IocRequiresExpiry": {
+      "actor": "user",
+      "message": "Immediate-or-Cancel offers require an expiry window. Set a deadline before publishing."
+    },
+    "KeeperAccessRequired": {
+      "actor": "user",
+      "message": "Keeper access required — you are not authorized to execute on behalf of this party."
+    },
+    "KeeperAlreadyApproved": {
+      "actor": "user",
+      "message": "This keeper is already on your whitelist."
+    },
+    "KeeperNotApproved": {
+      "actor": "user",
+      "message": "This keeper is not on your whitelist."
+    },
+    "KeeperWhitelistFull": {
+      "actor": "user",
+      "message": "Keeper whitelist is full — remove an existing keeper before adding a new one."
+    },
+    "KYCRequired": {
+      "actor": "user",
+      "message": "KYC required — complete verification for this transaction size before continuing."
+    },
+    "LenderCannotRepayOwnLoan": {
+      "actor": "user",
+      "message": "You can't repay a loan where you are the lender — repaying your own loan isn't allowed."
+    },
+    "LenderResolutionFailed": {
+      "actor": "user",
+      "message": "Lender vault resolution failed — please retry."
+    },
+    "LiquidationFailed": {
+      "actor": "user",
+      "message": "Liquidation swap failed — please retry."
+    },
+    "LiquidityMismatch": {
+      "actor": "user",
+      "message": "Liquidity mismatch — one of the assets is illiquid and you have not consented to the illiquid-asset path."
+    },
+    "ListingFloorBelowReviewed": {
+      "actor": "user",
+      "message": "The minimum this listing would guarantee you has dropped since you reviewed it (time has passed, or the loan has changed). Nothing was listed. Review the listing again to see the current figure."
+    },
+    "ListingHeldAboveReviewed": {
+      "actor": "user",
+      "message": "More has been set aside for the lender on this loan since you reviewed the listing. Nothing was listed. Review the listing again to see the current figures."
+    },
+    "LoanInitiationFailed": {
+      "actor": "user",
+      "message": "Loan initiation failed — please retry."
+    },
+    "LoanNotActive": {
+      "actor": "user",
+      "message": "Loan is not active."
+    },
+    "LTVCalculationFailed": {
+      "actor": "user",
+      "message": "LTV calculation failed — please retry."
+    },
+    "LTVExceeded": {
+      "actor": "user",
+      "message": "Loan-to-value ratio too high. Add more collateral or reduce the borrow amount."
+    },
+    "MatchHFTooLow": {
+      "actor": "user",
+      "message": "This would leave the loan below the minimum health factor (1.5). Add collateral or reduce the borrow amount."
+    },
+    "MaxLendingAboveCeiling": {
+      "actor": "user",
+      "message": "Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again."
+    },
+    "MinCollateralBelowFloor": {
+      "actor": "user",
+      "message": "The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again."
+    },
+    "ModifyBelowFilledFloor": {
+      "actor": "user",
+      "message": "Cannot shrink the cap below the portion already filled — partial fills against this offer have committed value at the current size."
+    },
+    "NFTBurnFailed": {
+      "actor": "user",
+      "message": "Position NFT burn failed — please retry."
+    },
+    "NFTMintFailed": {
+      "actor": "user",
+      "message": "Position NFT mint failed — please retry. If it persists, contact support."
+    },
+    "NFTRenterUpdateFailed": {
+      "actor": "user",
+      "message": "NFT renter update failed — please retry."
+    },
+    "NFTStatusUpdateFailed": {
+      "actor": "user",
+      "message": "NFT status update failed — please retry."
+    },
+    "NFTTransferFailed": {
+      "actor": "user",
+      "message": "NFT transfer failed — please retry."
+    },
+    "NoDexPool": {
+      "actor": "user",
+      "message": "No DEX liquidity pool found for this asset."
+    },
+    "NonLiquidAsset": {
+      "actor": "user",
+      "message": "One or more assets in this loan are illiquid. Both parties must consent to illiquid terms."
+    },
+    "NoPriceFeed": {
+      "actor": "user",
+      "message": "No price feed found for this asset. The token may not be supported on this network."
+    },
+    "NotAuthorized": {
+      "actor": "user",
+      "message": "Not authorized. This action is restricted to a specific role or caller."
+    },
+    "NotBorrower": {
+      "actor": "user",
+      "message": "Only the borrower can perform this action."
+    },
+    "NotBorrowerNftOwner": {
+      "actor": "user",
+      "message": "Only the current borrower-position holder can do this."
+    },
+    "NotCreatorOrNotExpired": {
+      "actor": "user",
+      "message": "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls."
+    },
+    "NotDailyYet": {
+      "actor": "user",
+      "message": "Daily deduction not yet due — wait until 24 hours have passed."
+    },
+    "NotDefaultedYet": {
+      "actor": "user",
+      "message": "Loan has not defaulted yet — the grace period has not expired."
+    },
+    "NotLender": {
+      "actor": "user",
+      "message": "Only the lender can perform this action."
+    },
+    "NotLenderNftOwner": {
+      "actor": "user",
+      "message": "Only the current lender-position holder can do this."
+    },
+    "NotNFTOwner": {
+      "actor": "user",
+      "message": "You must own the position NFT to perform this action."
+    },
+    "NotNFTRental": {
+      "actor": "user",
+      "message": "This action only applies to NFT rental loans."
+    },
+    "NotOfferCreator": {
+      "actor": "user",
+      "message": "Only the creator of this offer can perform this action."
+    },
+    "NoVault": {
+      "actor": "user",
+      "message": "This wallet has no vault yet. Open one via a deposit or your first loan, then retry."
+    },
+    "OfferAcceptFailed": {
+      "actor": "user",
+      "message": "Offer acceptance failed — please retry."
+    },
+    "OfferAlreadyAccepted": {
+      "actor": "user",
+      "message": "Offer has already been accepted."
+    },
+    "OfferBelowMinimumValue": {
+      "actor": "user",
+      "message": "This offer is smaller than the protocol allows: the amount, or the smallest part one match may take, is worth less than the minimum offer value. Raise the amount and try again."
+    },
+    "OfferCreationFailed": {
+      "actor": "user",
+      "message": "Offer creation failed — please retry."
+    },
+    "OfferDurationExceedsCap": {
+      "actor": "user",
+      "message": "The loan duration is longer than the protocol allows. Choose a shorter term."
+    },
+    "OfferExpired": {
+      "actor": "user",
+      "message": "This offer has expired and can no longer be accepted or matched."
+    },
+    "OfferExpiryAboveCap": {
+      "actor": "user",
+      "message": "Offer expiry is too far in the future (1-year horizon cap). Pick an earlier deadline."
+    },
+    "OfferExpiryInPast": {
+      "actor": "user",
+      "message": "Offer expiry must be a future timestamp. Pick a deadline at least 1 second past now."
+    },
+    "OfferNotAccepted": {
+      "actor": "user",
+      "message": "The borrower offer has not been accepted yet."
+    },
+    "OfferTermsTooFresh": {
+      "actor": "user",
+      "message": "This offer was posted or changed a few seconds ago, and an offer can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent."
+    },
+    "OffsetNotLinked": {
+      "actor": "user",
+      "message": "Offset offer is not linked to this loan."
+    },
+    "OffsetOfferNotAccepted": {
+      "actor": "user",
+      "message": "Offset offer has not been accepted yet."
+    },
+    "OraclePriceDivergence": {
+      "actor": "user",
+      "message": "Chainlink and the configured secondary oracles (Tellor / API3 / DIA) disagreed beyond the allowed tolerance under the Soft 2-of-N quorum. The price read is rejected so no action runs against an unverified price. Try again shortly."
+    },
+    "Panic": {
+      "actor": "nobody",
+      "message": "The contract stopped on an internal check (an arithmetic overflow, a division by zero, or an out-of-range index). This should never happen and is a fault in the platform. Please report it with the transaction.",
+      "internal": true
+    },
+    "PartialRepayNotAllowed": {
+      "actor": "user",
+      "message": "This loan doesn't allow partial repayment — repay the full amount instead."
+    },
+    "PartialRepayWorsensHealthFactor": {
+      "actor": "user",
+      "message": "This partial repayment would lower the loan health factor instead of improving it. A partial repay must not worsen HF — adjust the amount and try again."
+    },
+    "PartialSwapWorsensHealthFactor": {
+      "actor": "user",
+      "message": "This collateral swap-to-repay would lower the loan health factor instead of improving it. Adjust the swap so it does not worsen HF."
+    },
+    "PeriodicInterestDisabled": {
+      "actor": "user",
+      "message": "Periodic interest payments are currently disabled on this deployment."
+    },
+    "PrincipalNotKYCd": {
+      "actor": "user",
+      "message": "This action requires identity verification (KYC) for this size on this deployment."
+    },
+    "PrincipalSanctioned": {
+      "actor": "user",
+      "message": "This wallet is flagged by the on-chain sanctions oracle, so the protocol can't open a new position for it."
+    },
+    "RateShortfallTooHigh": {
+      "actor": "user",
+      "message": "Interest rate shortfall exceeds allowed limit for this loan sale."
+    },
+    "ReentrancyGuardReentrantCall": {
+      "actor": "user",
+      "message": "Transaction reverted due to reentrancy protection. Please retry."
+    },
+    "RefinanceBlockedByOffset": {
+      "actor": "user",
+      "message": "An offset is open on this loan, so a refinance can't go ahead. The borrower has to cancel the offset first."
+    },
+    "RefinanceRequestNotCancelled": {
+      "actor": "user",
+      "message": "Your earlier refinance request for this loan has expired but was never cancelled. Cancel it first (that returns anything it still holds), then post the new one."
+    },
+    "RefinanceRequestNotLive": {
+      "actor": "user",
+      "message": "This refinance request can no longer be accepted: it has been taken, cancelled or has expired, or the loan no longer fits it."
+    },
+    "RefinanceRequestNotRecorded": {
+      "actor": "user",
+      "message": "This refinance request is not the loan's current request, so it can't be accepted. It may predate an upgrade or have been replaced; its borrower can cancel it and post a new one."
+    },
+    "RefinanceRequestOpen": {
+      "actor": "user",
+      "message": "This loan has an open refinance request, which holds the loan as it is: partial repayments, early close, handing the loan over, offsetting, withdrawing collateral, extending and posting another request all wait while it stands. Cancel that request first, then try again."
+    },
+    "RepaymentPastGracePeriod": {
+      "actor": "user",
+      "message": "Repayment window closed — the grace period has expired. The loan must be defaulted."
+    },
+    "RiskAndTermsConsentRequired": {
+      "actor": "user",
+      "message": "Please accept the risk disclosures and terms before continuing."
+    },
+    "RiskTierTooLow": {
+      "actor": "user",
+      "message": "Your VPFI risk tier is below what this offer requires."
+    },
+    "SaleAboveHeldCeiling": {
+      "actor": "user",
+      "message": "This listing can't be bought any more: more has been set aside for the lender on this loan since it was listed, beyond what the listing allows. Nothing was taken. The seller can cancel it and list again."
+    },
+    "SaleBelowSellerFloor": {
+      "actor": "user",
+      "message": "This listing can't be bought any more: the loan has changed since it was listed (for example, part of it was repaid), so the sale would pay the seller less than the minimum their listing guarantees. Nothing was taken. The seller can cancel it and list again."
+    },
+    "SaleHeldAboveReviewed": {
+      "actor": "user",
+      "message": "More has been set aside for the lender on this loan since you reviewed the sale. Nothing was sold. Review the sale again to see the current figures."
+    },
+    "SaleNetBelowReviewed": {
+      "actor": "user",
+      "message": "This sale would now pay you less than the minimum you reviewed (part of the loan may have been repaid). Nothing was sold. Review the sale again to see the current figure."
+    },
+    "SaleNotLinked": {
+      "actor": "user",
+      "message": "Sale offer is not linked to this loan."
+    },
+    "SaleOfferNotAccepted": {
+      "actor": "user",
+      "message": "Sale offer has not been accepted yet."
+    },
+    "SanctionedAddress": {
+      "actor": "user",
+      "message": "This wallet (or the offer creator) is flagged by the on-chain sanctions oracle. The protocol cannot pair you with a sanctioned address. If you believe this is a mismatch, contact the sanctions-oracle operator directly — Vaipakam does not maintain its own sanctions list."
+    },
+    "SelfCollateralizedOffer": {
+      "actor": "user",
+      "message": "The loan asset and the collateral asset must be different."
+    },
+    "SelfTrade": {
+      "actor": "user",
+      "message": "You can't match your own offer — the lender and borrower can't be the same wallet."
+    },
+    "SelfTradeForbidden": {
+      "actor": "user",
+      "message": "Self-trade not allowed — the lender and borrower addresses are the same. Match against a counterparty's offer instead."
+    },
+    "SequencerDown": {
+      "actor": "user",
+      "message": "L2 sequencer is currently down. Price reads are paused until the sequencer is healthy again."
+    },
+    "SequencerGracePeriod": {
+      "actor": "user",
+      "message": "L2 sequencer just came back up — prices are gated for 1 hour after recovery. Try again shortly."
+    },
+    "SequencerUnhealthy": {
+      "actor": "user",
+      "message": "L2 sequencer is currently considered unhealthy (down or in the 1h post-recovery grace window). Try again shortly."
+    },
+    "StalePriceData": {
+      "actor": "user",
+      "message": "Price data is stale — the oracle has not updated recently."
+    },
+    "TooManyOpenOffers": {
+      "actor": "user",
+      "message": "This wallet already has as many open offers as the protocol allows. Cancel an offer you no longer need (an expired offer counts until you cancel it), then try again."
+    },
+    "TreasuryTransferFailed": {
+      "actor": "user",
+      "message": "Treasury transfer failed — please retry."
+    },
+    "UnauthorizedCrossFacetCall": {
+      "actor": "nobody",
+      "message": "A step that only the platform itself may take was called from outside. This is a fault in the platform, not something the caller did. Please report it with the transaction.",
+      "internal": true
+    },
+    "UnsupportedLoanShape": {
+      "actor": "user",
+      "message": "This combination of assets or terms isn't supported for this action."
+    },
+    "UpdateNotAllowed": {
+      "actor": "user",
+      "message": "This configuration update is not currently allowed."
+    },
+    "VaultResolutionFailed": {
+      "actor": "user",
+      "message": "Vault resolution failed — please retry."
+    },
+    "VaultTransferFailed": {
+      "actor": "user",
+      "message": "Vault transfer failed — please retry."
+    },
+    "VaultWithdrawFailed": {
+      "actor": "user",
+      "message": "Vault withdraw failed — please retry."
+    },
+    "ZeroAmount": {
+      "actor": "user",
+      "message": "No treasury balance to claim for this asset."
+    },
+    "ZeroCollateral": {
+      "actor": "user",
+      "message": "Loan has zero collateral."
+    }
+  }
+}

@@ -12,6 +12,12 @@
  * ladders at the call site anymore.
  */
 
+import {
+  ERROR_CATALOGUE,
+  errorsByName,
+  type ErrorCatalogueRow,
+} from '@vaipakam/contracts/error-catalogue';
+
 interface DecodableError {
   reason?: string;
   shortMessage?: string;
@@ -23,378 +29,34 @@ interface DecodableError {
 }
 
 /**
- * Human-friendly, user-facing messages for known revert selectors. Falls back
- * to the raw selector name when no friendly copy is defined.
+ * Every contract error's copy comes from ONE place: the error catalogue in
+ * `@vaipakam/contracts/error-catalogue` (#3916). It is generated from the
+ * shipped interfaces (so every selector the platform can raise resolves to its
+ * name) and from the hand-written `packages/contracts/errors/meanings.json`
+ * (the plain message, who can act, whether the error is internal). The two
+ * hand-kept tables this file used to carry (selector-keyed and name-keyed
+ * copy, plus a hand-transcribed selector list guarded by a drift test) moved
+ * there; apps keep only their translations, keyed as {@link contractErrorKey}
+ * says.
  */
-export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
-  // ── ERC-20 (OpenZeppelin) ─────────────────────────────────────────────
-  '0xe450d38c':
-    'Insufficient token balance. Your wallet does not hold enough of the token for this amount.',
-  '0xfb8f41b2':
-    'Insufficient token allowance. Approve the token for the required amount and try again.',
-  '0x96c6fd1e': 'Invalid sender address for the token transfer.',
-  '0x94280d62': 'Invalid spender address for the token approval.',
-  '0xec442f05': 'Invalid recipient address for the token transfer.',
+const ERROR_STRING_SELECTOR = '0x08c379a0';
 
-  // ── ERC-721 (LibERC721 / OpenZeppelin-style) ──────────────────────────
-  '0x89c62b64': 'Invalid NFT owner.',
-  '0x7e273289': 'This NFT does not exist.',
-  '0x64283d7b': 'You do not own this NFT.',
-  '0x73c6ac6e': 'Invalid sender for NFT transfer.',
-  '0x64a0ae92': 'Invalid recipient for NFT transfer.',
-  '0x177e802f': 'NFT approval missing — approve the NFT first.',
+/** Selector → `Name(types)` for every catalogued error but `Error(string)`
+ *  (whose human text is the reason itself, carried in the base message). */
+export const KNOWN_ERROR_SELECTORS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(ERROR_CATALOGUE)
+    .filter(([sel]) => sel !== ERROR_STRING_SELECTOR)
+    .map(([sel, row]) => [sel, row.signature]),
+);
 
-  // ── Offer lifecycle ───────────────────────────────────────────────────
-  '0x7fa19075': 'Invalid offer type — duration must be at least 1 day.',
-  '0x2c5211c6': 'Invalid amount — the value must be greater than zero.',
-  '0x23654b56': 'Invalid asset type.',
-  '0x2ee39802': 'Offer not found or no longer valid.',
-  '0x93f1b0b3': 'Offer has already been accepted.',
-  '0xe8439f49': 'Only the creator of this offer can perform this action.',
-  // #195 — GTT / offer-expiry user-facing copy
-  '0xd9e46813':
-    'This offer has expired and can no longer be accepted or matched.',
-  '0x7900bcc7':
-    'Offer expiry must be a future timestamp. Pick a deadline at least 1 second past now.',
-  '0x252d948e':
-    'Offer expiry is too far in the future (1-year horizon cap). Pick an earlier deadline.',
-  // #3412 / #3443 — the one timing rule (LibTiming)
-  '0xbfb22adf':
-    'This transaction waited too long before it reached the chain, so it expired without doing anything. Review the terms and send it again.',
-  '0xc01cfcfc':
-    'This action needs a time limit and none was sent. Nothing was done; reload the page and try again.',
-  '0x1debda9c':
-    'This offer was posted or changed a few seconds ago, and an offer can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
-  '0x18af14b3':
-    'This standing offer was set or changed a few seconds ago, and it can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
-  '0xa04ac4d0':
-    "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls.",
-  '0xc681ed8e':
-    "5-minute cancel cooldown is in effect for unfilled offers. The countdown on the row shows when the offer becomes cancellable.",
-  // #3761 — the instant borrow and the takeover
-  '0x48dbacca':
-    'This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again.',
-  '0x31f81794':
-    'The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent.',
-  // #194 — self-trade
-  '0x64f4618d':
-    "Self-trade not allowed — the lender and borrower addresses are the same. Match against a counterparty's offer instead.",
-  // #125 — AON / IOC fill-mode
-  '0x23d29961':
-    'This offer is All-or-Nothing — the matcher would only land a partial fill, which violates the offer terms. Match the full size or skip the pair.',
-  '0x7b0e3b56':
-    'All-or-Nothing offers require single-value amount (min equal to max). Adjust the range so both ends match.',
-  '0x40cd23e2':
-    'Immediate-or-Cancel offers require an expiry window. Set a deadline before publishing.',
-  // #193 — in-place offer modification
-  '0x159351ed':
-    "Cannot shrink the cap below the portion already filled — partial fills against this offer have committed value at the current size.",
-  '0x9ce967aa':
-    'Collateral cannot be modified on this offer shape (borrower NFT-rental offers vault prepay, not collateral). Use modifyOffer for amount or rate only.',
-
-  // ── Compliance / KYC ──────────────────────────────────────────────────
-  '0x04a6799c':
-    'Counterparty countries are not compatible (sanctions/compliance).',
-  '0x83855724':
-    'KYC required — complete verification for this transaction size before continuing.',
-  '0xe522f8e6': 'Invalid country code.',
-  '0x3a81d6fc': 'Country already registered — cannot change after initial set.',
-  '0x5d061126': 'Invalid KYC thresholds (Tier0 must be below Tier1).',
-
-  // ── Liquidity / illiquid consent ──────────────────────────────────────
-  '0x0bb578c2':
-    'Liquidity mismatch — one of the assets is illiquid and you have not consented to the illiquid-asset path.',
-  '0x97fe4161':
-    'Both parties must explicitly consent before an illiquid-asset offer can be accepted.',
-  '0xb87a5be9':
-    'One or more assets in this loan are illiquid. Both parties must consent to illiquid terms.',
-  '0x96624a75': 'This asset is illiquid (no price feed or DEX pool).',
-
-  // ── Oracle / price feed ───────────────────────────────────────────────
-  '0xfb94c4ed':
-    'No price feed found for this asset. The token may not be supported on this network.',
-  '0x7d5a81eb': 'No DEX liquidity pool found for this asset.',
-  '0x355e186c': 'Price data is stale — the oracle has not updated recently.',
-  '0xbb55fd27': 'Insufficient on-chain liquidity for this asset.',
-
-  // ── Risk / LTV / Health Factor ────────────────────────────────────────
-  '0xc5af7001':
-    'Loan-to-value ratio too high. Add more collateral or reduce the borrow amount.',
-  '0x62e82dca':
-    'Health factor too low. Add collateral to bring it above 1.5.',
-  '0xfbfb1a44': 'LTV calculation failed — please retry.',
-  '0xfa8b5b08': 'Health factor calculation failed — please retry.',
-  '0x32549ba3': 'Health factor is not below the liquidation threshold.',
-  '0x045f33d1': 'Invalid loan — loan not found or not in expected state.',
-  '0xebb1e0ba': 'Loan has zero collateral.',
-
-  // ── Loan lifecycle ────────────────────────────────────────────────────
-  '0x082f7846': 'Loan is not active.',
-  '0x8e0f1450': 'Loan is not in the required status for this action.',
-  '0xcb1e8f38': 'Only the borrower can perform this action.',
-  '0x8c380003': 'Only the lender can perform this action.',
-  '0x4088c61c': 'You must own the position NFT to perform this action.',
-
-  // ── Repayment ─────────────────────────────────────────────────────────
-  '0xa6f27c4d':
-    'Repayment window closed — the grace period has expired. The loan must be defaulted.',
-  '0x2f93bdda':
-    'Insufficient prepaid rental balance to cover the accrued fees.',
-  '0xf9ee54f0':
-    'Partial repayment amount is too small (below minimum threshold).',
-  '0x1cd92a3c':
-    'Daily deduction not yet due — wait until 24 hours have passed.',
-  '0x426ad30d': 'This action only applies to NFT rental loans.',
-
-  // ── Default ───────────────────────────────────────────────────────────
-  '0xb79cb16c':
-    'Loan has not defaulted yet — the grace period has not expired.',
-  '0x05c4d8ac': 'Liquidation swap failed — please retry.',
-  '0xe8775e4a':
-    'Liquidation proceeds were insufficient to cover the loan.',
-
-  // ── Preclose / obligation transfer ────────────────────────────────────
-  '0x1fc326a5': 'Invalid new borrower address.',
-  '0x944295c4':
-    'Replacement offer terms do not meet lender-favorability requirements.',
-  '0x3a23d825':
-    'New borrower collateral is insufficient (must be ≥ original).',
-  '0xcbc34ec5': 'Offset offer is not linked to this loan.',
-  '0x2a69fdaf': 'Offset offer has not been accepted yet.',
-
-  // ── Refinance ─────────────────────────────────────────────────────────
-  '0xbfa0482c':
-    'Invalid refinance offer — must be a borrower offer for the same asset.',
-  '0x88be51dc': 'The borrower offer has not been accepted yet.',
-
-  // ── Early withdrawal / loan sale ──────────────────────────────────────
-  '0x910fb9b3':
-    'Invalid sale offer — must be a lender offer for the same asset type.',
-  '0xdce02f61':
-    'Interest rate shortfall exceeds allowed limit for this loan sale.',
-  '0x492a2b84': 'Sale offer is not linked to this loan.',
-  '0x1f5d7665': 'Sale offer has not been accepted yet.',
-
-  // ── Partial withdrawal ────────────────────────────────────────────────
-  '0xfd7850ad':
-    'Withdrawal amount exceeds the maximum allowed without breaching the health factor.',
-
-  // ── Keeper / third-party execution ────────────────────────────────────
-  '0x7583f2aa':
-    'Keeper access required — you are not authorized to execute on behalf of this party.',
-  '0xf7c08f1e': 'This keeper is already on your whitelist.',
-  '0x8ebf27d0': 'This keeper is not on your whitelist.',
-  '0x1a7025d1':
-    'Keeper whitelist is full — remove an existing keeper before adding a new one.',
-
-  // ── Treasury ──────────────────────────────────────────────────────────
-  '0x1f2a2005': 'No treasury balance to claim for this asset.',
-
-  // ── Vault / NFT infrastructure ───────────────────────────────────────
-  '0xb70f4664':
-    'Position NFT mint failed — please retry. If it persists, contact support.',
-  '0x6154d8fb': 'Position NFT burn failed — please retry.',
-  '0xddb59ac0': 'NFT status update failed — please retry.',
-  '0x4605c598': 'NFT transfer failed — please retry.',
-  '0x503f0d38': 'Vault withdraw failed — please retry.',
-  '0xeec96fd9': 'Vault resolution failed — please retry.',
-  '0x34272bc8': 'Vault transfer failed — please retry.',
-  '0x0e373cf8': 'Treasury transfer failed — please retry.',
-  '0xb1fb1c95': 'NFT renter update failed — please retry.',
-  '0xf367ddf6': 'Loan initiation failed — please retry.',
-  '0xd52f4d8a': 'Offer creation failed — please retry.',
-  '0x892d90b7': 'Offer acceptance failed — please retry.',
-  '0xa9dea49f': 'Lender vault resolution failed — please retry.',
-  '0x03b8265d':
-    'Could not resolve your user vault. Try reconnecting your wallet or contact support.',
-  '0x3f6cc768': 'Invalid NFT token ID.',
-  '0xc24e5557': 'This position NFT has already been burned.',
-  '0xe0e54ced': 'Invalid royalty configuration.',
-
-  // ── Access control / authorization ────────────────────────────────────
-  '0xea8e4eb5':
-    'Not authorized. This action is restricted to a specific role or caller.',
-  '0x001accb5':
-    'This function can only be called internally by the diamond (cross-facet).',
-  '0xa9ad62f8':
-    'Function not available on this contract deployment (facet may not be cut in).',
-  '0xe2517d3f':
-    'Your account does not have the required role for this action.',
-  '0x8e848bae': 'This configuration update is not currently allowed.',
-
-  // ── Guards / infrastructure ───────────────────────────────────────────
-  '0xd93c0665':
-    'The protocol is currently paused for maintenance. Please try again later.',
-  '0x3ee5aeb5':
-    'Transaction reverted due to reentrancy protection. Please retry.',
-  '0xeb1df718':
-    'Illegal loan state transition — the loan cannot move to the requested status.',
-  '0x573c3147':
-    'A cross-facet call inside the transaction failed. Please share the diagnostics export with support.',
-
-  // ── Phase 3.1 / 3.2 — Oracle hardening ────────────────────────────────
-  '0x55d2a2a6':
-    'L2 sequencer is currently considered unhealthy (down or in the 1h post-recovery grace window). Try again shortly.',
-  '0x032b3d00':
-    'L2 sequencer is currently down. Price reads are paused until the sequencer is healthy again.',
-  '0xb5d44b5c':
-    'L2 sequencer just came back up — prices are gated for 1 hour after recovery. Try again shortly.',
-  '0x28871998':
-    'Chainlink and the configured secondary oracles (Tellor / API3 / DIA) disagreed beyond the allowed tolerance under the Soft 2-of-N quorum. The price read is rejected so no action runs against an unverified price. Try again shortly.',
-
-  // ── Phase 4.1 — Terms of Service gate ─────────────────────────────────
-  '0x2a75db7f':
-    'The Terms of Service version you signed for is no longer current. Reload the app, review the updated Terms, and re-sign.',
-  '0x1b30f0a8':
-    'The submitted Terms-of-Service version or content hash is invalid (governance-side configuration error).',
-
-  // ── Phase 4.3 — Address sanctions ─────────────────────────────────────
-  '0x80279111':
-    'This wallet (or the offer creator) is flagged by the on-chain sanctions oracle. The protocol cannot pair you with a sanctioned address. If you believe this is a mismatch, contact the sanctions-oracle operator directly — Vaipakam does not maintain its own sanctions list.',
-
-  // ── Other facet errors observed in production ─────────────────────────
-  '0x8e2218e4':
-    'Self-collateralized offer — the principal asset and collateral asset must be different.',
-  '0x26e4b25d':
-    'This asset is currently paused by governance. Wait for the pause to lift before retrying.',
-  '0x515faa71':
-    'This position NFT is locked while a strategic flow (preclose / refinance / loan-sale) is mid-flight.',
-  '0x3baaf353':
-    'Trade between these two countries is not allowed by the current compliance configuration.',
-  '0x01d01c9f':
-    'This loan is not in a phase where repayment is accepted right now.',
-  // #1108: the 0x0857e728 "repayment exceeds owed" entry was RETIRED. It was
-  // added as "observed in production" (#838) but matches no error in the
-  // compiled Diamond ABI or any of the 713 source-side error declarations, and
-  // RepayFacet has no such revert (full repay pays exactly what's owed; partial
-  // repay uses InsufficientPartialAmount / PartialWouldRetireFullPrincipal), so
-  // it was dead copy that could only ever mislabel a future selector collision.
-  '0xf33650bd':
-    'This NFT rental loan is not currently active.',
-};
-
-/**
- * Friendly, user-facing copy keyed by the ERROR NAME (not its 4-byte
- * selector). Name-keying is deliberately drift-proof: a selector is a hash of
- * the full signature, so a param-type tweak silently breaks a selector-keyed
- * entry, whereas the name is stable. `decodeContractError` resolves
- * selector → name (via `KNOWN_ERROR_SELECTORS`) → this map; the connected app
- * pre-sign simulation resolves the name straight from the Diamond ABI and
- * looks it up here directly, so BOTH surfaces share one source of copy.
- *
- * Only the errors a NORMAL user can actually reach through the borrow / lend /
- * accept / repay / claim / VPFI flows are curated here. Everything else falls
- * through to `humanizeErrorName` (a readable sentence from the PascalCase
- * name) so no error ever surfaces as a bare hex blob.
- */
-const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
-  MaxLendingAboveCeiling:
-    'Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again.',
-  MinCollateralBelowFloor:
-    'The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.',
-  MatchHFTooLow:
-    'This would leave the loan below the minimum health factor (1.5). Add collateral or reduce the borrow amount.',
-  InitLtvAboveTier:
-    'This loan would exceed the LTV limit for its risk tier (prices or tier caps have moved). Lower the borrow amount or add collateral, then try again.',
-  InterestRateAboveCeiling:
-    "The interest rate is above the protocol's current ceiling. Lower the rate and try again.",
-  OfferDurationExceedsCap:
-    'The loan duration is longer than the protocol allows. Choose a shorter term.',
-  OfferBelowMinimumValue:
-    'This offer is smaller than the protocol allows: the amount, or the smallest part one match may take, is worth less than the minimum offer value. Raise the amount and try again.',
-  TooManyOpenOffers:
-    'This wallet already has as many open offers as the protocol allows. Cancel an offer you no longer need (an expired offer counts until you cancel it), then try again.',
-  LenderCannotRepayOwnLoan:
-    "You can't repay a loan where you are the lender — repaying your own loan isn't allowed.",
-  PartialRepayNotAllowed:
-    "This loan doesn't allow partial repayment — repay the full amount instead.",
-  PartialRepayWorsensHealthFactor:
-    'This partial repayment would lower the loan health factor instead of improving it. A partial repay must not worsen HF — adjust the amount and try again.',
-  PartialSwapWorsensHealthFactor:
-    'This collateral swap-to-repay would lower the loan health factor instead of improving it. Adjust the swap so it does not worsen HF.',
-  RiskAndTermsConsentRequired:
-    'Please accept the risk disclosures and terms before continuing.',
-  FunctionDisabled:
-    'This feature is currently turned off by protocol governance. Please try again later.',
-  PeriodicInterestDisabled:
-    'Periodic interest payments are currently disabled on this deployment.',
-  // #2407 — a standing refinance request holds the loan as it is. Each copy
-  // names the one action that clears the refusal.
-  RefinanceRequestOpen:
-    'This loan has an open refinance request, which holds the loan as it is: partial repayments, early close, handing the loan over, offsetting, withdrawing collateral, extending and posting another request all wait while it stands. Cancel that request first, then try again.',
-  RefinanceRequestNotCancelled:
-    'Your earlier refinance request for this loan has expired but was never cancelled. Cancel it first (that returns anything it still holds), then post the new one.',
-  RefinanceRequestNotRecorded:
-    "This refinance request is not the loan's current request, so it can't be accepted. It may predate an upgrade or have been replaced; its borrower can cancel it and post a new one.",
-  RefinanceBlockedByOffset:
-    "An offset is open on this loan, so a refinance can't go ahead. The borrower has to cancel the offset first.",
-  RefinanceRequestNotLive:
-    'This refinance request can no longer be accepted: it has been taken, cancelled or has expired, or the loan no longer fits it.',
-  // #1810 — a sale listing records a minimum for the seller and a ceiling on
-  // what is already set aside for the lender. The LISTING refuses when the
-  // figures it would record are worse for the seller than the ones they
-  // reviewed; a SALE refuses when the loan has since moved past them. Each
-  // copy says that nothing happened and what to do next.
-  ListingFloorBelowReviewed:
-    'The minimum this listing would guarantee you has dropped since you reviewed it (time has passed, or the loan has changed). Nothing was listed. Review the listing again to see the current figure.',
-  ListingHeldAboveReviewed:
-    'More has been set aside for the lender on this loan since you reviewed the listing. Nothing was listed. Review the listing again to see the current figures.',
-  // #3412 — the direct sale into a standing offer to buy is bound to the
-  // figures the seller reviewed, like a listing.
-  SaleNetBelowReviewed:
-    'This sale would now pay you less than the minimum you reviewed (part of the loan may have been repaid). Nothing was sold. Review the sale again to see the current figure.',
-  SaleHeldAboveReviewed:
-    'More has been set aside for the lender on this loan since you reviewed the sale. Nothing was sold. Review the sale again to see the current figures.',
-  SaleBelowSellerFloor:
-    "This listing can't be bought any more: the loan has changed since it was listed (for example, part of it was repaid), so the sale would pay the seller less than the minimum their listing guarantees. Nothing was taken. The seller can cancel it and list again.",
-  SaleAboveHeldCeiling:
-    "This listing can't be bought any more: more has been set aside for the lender on this loan since it was listed, beyond what the listing allows. Nothing was taken. The seller can cancel it and list again.",
-  AmountMustBePositive: 'Enter an amount greater than zero.',
-  AmountMaxMustBePositive: 'Enter a maximum amount greater than zero.',
-  CollateralMustBePositive: 'Enter a collateral amount greater than zero.',
-  CollateralAmountMaxMustBePositive:
-    'Enter a maximum collateral amount greater than zero.',
-  InvalidAmountRange: 'The amount range is invalid — the maximum must be at least the minimum.',
-  InvalidRateRange: 'The interest-rate range is invalid — the maximum must be at least the minimum.',
-  InvalidCollateralAmountRange:
-    'The collateral range is invalid — the maximum must be at least the minimum.',
-  SelfTrade:
-    "You can't match your own offer — the lender and borrower can't be the same wallet.",
-  SelfCollateralizedOffer:
-    'The loan asset and the collateral asset must be different.',
-  IlliquidAssetNotAcknowledged:
-    'One of the assets is illiquid. Tick the illiquid-asset acknowledgement to continue.',
-  IlliquidPairNotConsented:
-    'Both sides must consent to the illiquid-asset terms before this can proceed.',
-  RiskTierTooLow: 'Your VPFI risk tier is below what this offer requires.',
-  // #1460 — recoverable FUNDING back-pressure, not a terminal state, and the
-  // copy has to say so. But it must not overpromise (Codex #1497 r3): the
-  // backing gate runs AFTER the 69M schedule cap, so a claim whose raw
-  // entitlement exceeded the remaining allocation was already scaled down
-  // before this error was raised — funding and retrying pays the capped
-  // amount, not the raw one, and a concurrent claim can reduce it further.
-  // So: nothing is CONSUMED (the distinction that matters versus a partial
-  // payment), and no promise about the amount or about unconditional
-  // success. Deliberately distinct from InteractionPoolExhausted, which
-  // never resolves.
-  InteractionRewardBackingShort:
-    'Rewards are temporarily unfunded on this network — the tokens for this claim have not arrived yet. Your claim was not consumed, so nothing has been used up and you can claim again once funding lands. Try again later.',
-  FeeTooHigh: 'The fee for this action exceeds the allowed maximum.',
-  UserHasNoVault:
-    "You don't have a vault yet — it is created on your first deposit or loan. Try the action that opens it, then retry.",
-  NoVault:
-    "This wallet has no vault yet. Open one via a deposit or your first loan, then retry.",
-  UnsupportedLoanShape:
-    "This combination of assets or terms isn't supported for this action.",
-  PrincipalNotKYCd:
-    'This action requires identity verification (KYC) for this size on this deployment.',
-  PrincipalSanctioned:
-    "This wallet is flagged by the on-chain sanctions oracle, so the protocol can't open a new position for it.",
-  BorrowerSanctioned:
-    "The borrower wallet is flagged by the on-chain sanctions oracle, so this match can't proceed.",
-  NotBorrowerNftOwner: 'Only the current borrower-position holder can do this.',
-  NotLenderNftOwner: 'Only the current lender-position holder can do this.',
-};
+/** Stable key + English copy for an INTERNAL error: one the catalogue marks as
+ *  "should be impossible". It is shown as a fault of the platform, never as
+ *  something the user did. */
+export const INTERNAL_FAULT_KEY = '_internalFault';
+const INTERNAL_FAULT_MESSAGE =
+  'Something went wrong inside the platform. This is not something you did, ' +
+  'and nothing was done. Please report it and share the diagnostics export ' +
+  'with support.';
 
 /**
  * Turn a PascalCase Solidity error name into a readable sentence fragment —
@@ -426,53 +88,64 @@ export function humanizeErrorName(name: string): string {
  * return the display string (localized, or the English as-is). Passed in by a
  * frontend that wants translated revert copy; omitted everywhere else so the
  * decoder stays English-by-default (keeper bot, tests, servers). The English
- * text is the single source — the lib owns it; an app localizes by key, it
+ * text has one source, the error catalogue; an app localizes by key, it
  * does NOT re-list these strings.
  */
 export type ContractErrorTranslator = (key: string, english: string) => string;
 
+/** How many signatures each error name has across the catalogue. */
+const SIGNATURES_PER_NAME: ReadonlyMap<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (const row of Object.values(ERROR_CATALOGUE)) m.set(row.name, (m.get(row.name) ?? 0) + 1);
+  return m;
+})();
+
 /**
- * The stable translation key for a resolved error: the Solidity error NAME
- * when we can resolve one (readable + drift-proof — a selector is a hash of
- * the full signature, so a param-type tweak breaks selector-keying but never
- * name-keying), else the raw 4-byte selector. BOTH decode paths (raw selector
- * and ABI-decoded name) converge on the same key, so a locale override lands
- * regardless of how the error arrived.
+ * The stable translation key of a catalogued error: its NAME when only one
+ * error carries that name (readable, and unchanged by a parameter edit), else
+ * its full signature, so two errors that share a name but mean different
+ * things never share a translation.
  */
-function contractErrorKey(opts: { name?: string; selector?: string }): string | null {
+function contractErrorKey(row: ErrorCatalogueRow): string {
+  return (SIGNATURES_PER_NAME.get(row.name) ?? 1) > 1 ? row.signature : row.name;
+}
+
+/** The catalogue row for a selector and/or a decoded name. A name with
+ *  several signatures resolves only when they all carry the same copy. A
+ *  caller that words a refusal itself reads `internal` here, so a fault of
+ *  the platform is never presented as a refusal of the user's step. */
+export function contractErrorRow(opts: { name?: string; selector?: string }): ErrorCatalogueRow | undefined {
   const sel = opts.selector?.toLowerCase();
-  const nameFromSelector = sel
-    ? KNOWN_ERROR_SELECTORS[sel]?.replace(/\(.*/, '')
-    : undefined;
-  return opts.name ?? nameFromSelector ?? sel ?? null;
+  if (sel && sel !== ERROR_STRING_SELECTOR) {
+    const row = ERROR_CATALOGUE[sel];
+    if (row) return row;
+  }
+  if (!opts.name || opts.name === 'Error') return undefined;
+  const rows = errorsByName(opts.name).map(([, r]) => r);
+  if (rows.length === 1) return rows[0];
+  if (rows.length > 1 && rows.every((r) => r.message === rows[0]!.message && !!r.internal === !!rows[0]!.internal)) return rows[0];
+  return undefined;
 }
 
 /**
  * Resolve friendly copy + its stable key from an error NAME and/or 4-byte
- * selector. Returns curated copy when available, else a humanized sentence
- * from the name, else `null` (caller falls back to its own default). The
- * pre-sign simulation passes the ABI-decoded `name`; the write-path decoder
- * passes the `selector`.
+ * selector, through the catalogue: an internal error gets the platform-fault
+ * copy, an error with a written message gets that, any other catalogued error
+ * its name turned into words, and a name the catalogue does not know its name
+ * turned into words too. Returns `null` when nothing resolves (the caller
+ * falls back to its own default).
  */
 function resolveFriendly(opts: {
   name?: string;
   selector?: string;
 }): { key: string; message: string } | null {
-  const sel = opts.selector?.toLowerCase();
-  // Prefer the curated SELECTOR copy the write-path banner uses
-  // (`FRIENDLY_ERROR_MESSAGES`), so the dry-run footer and the submit
-  // banner speak with one voice — e.g. `ERC20InsufficientBalance` /
-  // `HealthFactorTooLow` keep their fuller selector-specific guidance
-  // instead of degrading to a humanized name (#1094 Codex).
-  if (sel && FRIENDLY_ERROR_MESSAGES[sel]) {
-    return { key: contractErrorKey({ selector: sel }) ?? sel, message: FRIENDLY_ERROR_MESSAGES[sel] };
+  const row = contractErrorRow(opts);
+  if (row) {
+    if (row.internal) return { key: INTERNAL_FAULT_KEY, message: INTERNAL_FAULT_MESSAGE };
+    return { key: contractErrorKey(row), message: row.message ?? humanizeErrorName(row.name) };
   }
-  const nameFromSelector = sel
-    ? KNOWN_ERROR_SELECTORS[sel]?.replace(/\(.*/, '')
-    : undefined;
-  const name = opts.name ?? nameFromSelector;
-  if (!name) return null;
-  return { key: name, message: FRIENDLY_ERROR_BY_NAME[name] ?? humanizeErrorName(name) };
+  if (opts.name && opts.name !== 'Error') return { key: opts.name, message: humanizeErrorName(opts.name) };
+  return null;
 }
 
 /**
@@ -495,321 +168,29 @@ export function friendlyContractError(
 }
 
 /**
- * Every curated contract-error string keyed by its STABLE translation key
- * (error name, or selector hex when no name resolves) — the source a frontend
- * seeds its locale template from, so the English lives here ONCE and apps
- * localize by key via the `translate` hook rather than re-listing copy.
+ * Every contract-error string a translator should see, keyed by its STABLE
+ * translation key — the source a frontend seeds its locale template from, so
+ * the English lives in the catalogue ONCE and apps localize by key via the
+ * `translate` hook.
  *
- * Mirrors {@link decodeContractError}'s runtime precedence: the humanized
- * fallback for every KNOWN selector name is laid down first, then the
- * name-keyed curated map, then the selector-keyed curated map (resolved to
- * its name) overrides on top — so the catalog value for a key equals what the
- * decoder actually returns for that error, curated or humanized. This means a
- * reachable-but-uncurated error (e.g. `SaleListingActive`, `InvalidAsset`) is
- * still seeded (as its humanized sentence) so translators see it. Includes the
- * #780 gas-estimate rewrite. Only genuinely UNKNOWN selectors (in no table)
- * can't be pre-seeded — they surface as a support-triage `Name (0x…)` string.
+ * It holds: every catalogued error with a written message; every error the
+ * catalogue marks `shownByName` (users reach it, and it still shows its name
+ * turned into words, so that text must be translatable); the platform-fault
+ * copy for internal errors; and the #780 gas-estimate rewrite. Any other
+ * catalogued error resolves at runtime to its name turned into words, in
+ * English, until it is given a message.
  */
 export function contractErrorCatalog(): Record<string, string> {
   const out: Record<string, string> = {};
-  // Humanized fallback for every known selector name — the decoder returns
-  // this for a reachable error with no curated copy, so it must be translatable.
-  for (const signature of Object.values(KNOWN_ERROR_SELECTORS)) {
-    const name = signature.replace(/\(.*/, '');
-    out[name] = humanizeErrorName(name);
+  for (const row of Object.values(ERROR_CATALOGUE)) {
+    if (row.internal) continue;
+    if (row.message) out[contractErrorKey(row)] = row.message;
+    else if (row.shownByName) out[contractErrorKey(row)] = humanizeErrorName(row.name);
   }
-  for (const [name, message] of Object.entries(FRIENDLY_ERROR_BY_NAME)) {
-    out[name] = message;
-  }
-  for (const [selector, message] of Object.entries(FRIENDLY_ERROR_MESSAGES)) {
-    out[contractErrorKey({ selector }) ?? selector] = message;
-  }
+  out[INTERNAL_FAULT_KEY] = INTERNAL_FAULT_MESSAGE;
   out[GAS_ESTIMATE_UNAVAILABLE_KEY] = GAS_ESTIMATE_UNAVAILABLE_MESSAGE;
   return out;
 }
-
-/**
- * Known custom-error selectors from the Vaipakam facets. Any selector not
- * listed renders as `<name?> (0xselector)` so support can map it by hand
- * against the contract source. Keep this table literal (selectors computed
- * offline with `cast sig`) to avoid pulling a hash lib into the bundle.
- *
- * Drift guard (#68): `decodeContractError.drift.test.ts` recomputes every
- * key with viem's `toFunctionSelector(signature)` and fails if it doesn't
- * match — so a hand-typed selector that doesn't hash from its signature (the
- * `ERC20InvalidSender`/`ERC20InvalidSpender` mix-up this table shipped with)
- * can't recur — and cross-checks each mapped name against the compiled
- * Diamond ABI so a Solidity-side signature change surfaces at CI time.
- */
-export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
-  // ── Range / offer-create bounds (OfferCreateFacet) — reachable friendly set,
-  //    selectors derived from the compiled ABI (keccak of the signature). ──
-  '0xa46539d8': 'MaxLendingAboveCeiling(uint256,uint256)',
-  '0x6aac1798': 'MinCollateralBelowFloor(uint256,uint256)',
-  '0xd779ce4f': 'FunctionDisabled(uint8)',
-  '0xfb45ee07': 'InterestRateAboveCeiling()',
-  '0x1df8547f': 'OfferDurationExceedsCap(uint256,uint256)',
-  '0xad2ab1e2': 'OfferBelowMinimumValue(uint256,uint256)',
-  '0x1c3937bb': 'TooManyOpenOffers(uint256,uint256)',
-  '0x5c2262de': 'AmountMustBePositive()',
-  '0xb66583b8': 'AmountMaxMustBePositive()',
-  '0x57b061fc': 'CollateralMustBePositive()',
-  '0x3a488e6a': 'CollateralAmountMaxMustBePositive()',
-  '0x424b8933': 'InvalidAmountRange()',
-  '0xdaff1e76': 'InvalidRateRange()',
-  '0x822054c8': 'InvalidCollateralAmountRange()',
-  '0xd68a1e65': 'SelfTrade()',
-  '0x48d3adf6': 'MatchHFTooLow()',
-  '0x8eb7de56': 'InitLtvAboveTier(uint256,uint256)',
-  '0xc602c4b6': 'LenderCannotRepayOwnLoan()',
-  '0x6d5f92a6': 'PartialRepayNotAllowed()',
-  '0xd97070dd': 'RiskAndTermsConsentRequired()',
-  '0x103d10ae': 'PeriodicInterestDisabled()',
-  '0x3a1de410': 'UnsupportedLoanShape()',
-  '0x86b1e0b2': 'IlliquidAssetNotAcknowledged(address)',
-  '0x25a9fe81': 'IlliquidPairNotConsented(address,bytes32)',
-  '0x98369199': 'RiskTierTooLow(address,uint8,uint8)',
-  '0xcd4e6167': 'FeeTooHigh()',
-  '0x7234a923': 'UserHasNoVault()',
-  '0xa1b86ccf': 'NoVault()',
-  '0x761da04b': 'PrincipalNotKYCd()',
-  '0x9739e02f': 'PrincipalSanctioned()',
-  '0xb61be333': 'BorrowerSanctioned(uint256,address)',
-  '0xee7d09a2': 'NotBorrowerNftOwner()',
-  '0xf59924fa': 'NotLenderNftOwner()',
-
-  // ── ERC-20 (OpenZeppelin) ─────────────────────────────────────────────
-  '0xe450d38c': 'ERC20InsufficientBalance(address,uint256,uint256)',
-  '0xfb8f41b2': 'ERC20InsufficientAllowance(address,uint256,uint256)',
-  // #68 drift fix: 0x94280d62 is ERC20InvalidSpender(address) (the approve
-  // path), NOT ERC20InvalidSender — that hand-transcription was wrong. The
-  // real ERC20InvalidSender(address) is 0x96c6fd1e (the transfer path), which
-  // was entirely missing until now. The drift test asserts selector ==
-  // keccak(signature) so this can't recur.
-  '0x96c6fd1e': 'ERC20InvalidSender(address)',
-  '0x94280d62': 'ERC20InvalidSpender(address)',
-  '0xec442f05': 'ERC20InvalidReceiver(address)',
-
-  // ── ERC-721 (LibERC721) ───────────────────────────────────────────────
-  '0x89c62b64': 'ERC721InvalidOwner(address)',
-  '0x7e273289': 'ERC721NonexistentToken(uint256)',
-  '0x64283d7b': 'ERC721IncorrectOwner(address,uint256,address)',
-  '0x73c6ac6e': 'ERC721InvalidSender(address)',
-  '0x64a0ae92': 'ERC721InvalidReceiver(address)',
-  '0x177e802f': 'ERC721InsufficientApproval(address,uint256)',
-
-  // ── Offer lifecycle (OfferFacet) ──────────────────────────────────────
-  '0x7fa19075': 'InvalidOfferType()',
-  '0x2c5211c6': 'InvalidAmount()',
-  '0x23654b56': 'InvalidAssetType()',
-  '0x2ee39802': 'InvalidOffer()',
-  '0x93f1b0b3': 'OfferAlreadyAccepted()',
-  '0xe8439f49': 'NotOfferCreator()',
-  // #195 — GTT / offer-expiry surface
-  '0xd9e46813': 'OfferExpired(uint256,uint64)',
-  '0x7900bcc7': 'OfferExpiryInPast()',
-  '0x252d948e': 'OfferExpiryAboveCap(uint64,uint256)',
-  // #3412 / #3443 — LibTiming
-  '0xbfb22adf': 'DeadlinePassed(uint256)',
-  '0xc01cfcfc': 'DeadlineRequired()',
-  '0x1debda9c': 'OfferTermsTooFresh(uint256,uint256)',
-  '0x18af14b3': 'IntentTermsTooFresh(address,uint256)',
-  '0xa04ac4d0': 'NotCreatorOrNotExpired(address,uint64)',
-  '0xc681ed8e': 'CancelCooldownActive()',
-  // #194 — self-trade prevention
-  '0x64f4618d': 'SelfTradeForbidden(address)',
-  // #3761 — the instant borrow and the takeover
-  '0x48dbacca': 'InstantSourceRepeated(uint256)',
-  '0x31f81794': 'IntentCapitalInsufficient(address,address,address,uint8,uint256,uint256)',
-  // #125 — AON / IOC fill-mode surface
-  '0x23d29961': 'AonRequiresFullFill(uint256,uint256,uint256)',
-  '0x7b0e3b56': 'AonRequiresSingleValueAmount()',
-  '0x40cd23e2': 'IocRequiresExpiry()',
-  // #193 — in-place offer modification surface
-  '0x159351ed': 'ModifyBelowFilledFloor(uint256,uint256)',
-  '0x9ce967aa': 'CollateralMutationUnsupportedForShape()',
-  // #595 — refinance-tagged offer amount is frozen to the target principal.
-  '0x7e1011f9': 'AmountMutationUnsupportedForShape()',
-  // #595 — carry-over match where the lender wants more collateral than carried.
-  '0x298a5fb3': 'RefinanceCarryOverCollateralShortfall()',
-  '0x13be252b': 'InsufficientAllowance()',
-  '0x0bb578c2': 'LiquidityMismatch()',
-  '0x97fe4161': 'NonLiquidAssetAndNoIlliquidAsset()',
-
-  // ── Compliance (ProfileFacet / IVaipakamErrors) ───────────────────────
-  '0x04a6799c': 'CountriesNotCompatible()',
-  '0x83855724': 'KYCRequired()',
-  '0xe522f8e6': 'InvalidCountry()',
-  '0x3a81d6fc': 'AlreadyRegistered()',
-  '0x5d061126': 'InvalidThresholds()',
-
-  // ── Oracle (OracleFacet) ──────────────────────────────────────────────
-  '0xfb94c4ed': 'NoPriceFeed()',
-  '0x7d5a81eb': 'NoDexPool()',
-  '0x355e186c': 'StalePriceData()',
-  '0xbb55fd27': 'InsufficientLiquidity()',
-
-  // ── Liquidity / illiquid consent ──────────────────────────────────────
-  '0xb87a5be9': 'NonLiquidAsset()',
-  '0x96624a75': 'IlliquidAsset()',
-  '0xc891add2': 'InvalidAsset()',
-
-  // ── Risk / LTV / HF (RiskFacet / IVaipakamErrors) ────────────────────
-  '0xc5af7001': 'LTVExceeded()',
-  '0x62e82dca': 'HealthFactorTooLow()',
-  '0xfbfb1a44': 'LTVCalculationFailed()',
-  '0xfa8b5b08': 'HealthFactorCalculationFailed()',
-  '0x32549ba3': 'HealthFactorNotLow()',
-  '0x045f33d1': 'InvalidLoan()',
-  '0xebb1e0ba': 'ZeroCollateral()',
-
-  // ── Loan lifecycle ────────────────────────────────────────────────────
-  '0x082f7846': 'LoanNotActive()',
-  '0x8e0f1450': 'InvalidLoanStatus()',
-  '0xcb1e8f38': 'NotBorrower()',
-  '0x8c380003': 'NotLender()',
-  '0x4088c61c': 'NotNFTOwner()',
-
-  // ── Repayment (RepayFacet) ────────────────────────────────────────────
-  '0xa6f27c4d': 'RepaymentPastGracePeriod()',
-  '0x2f93bdda': 'InsufficientPrepay()',
-  '0xf9ee54f0': 'InsufficientPartialAmount()',
-  '0x1cd92a3c': 'NotDailyYet()',
-  '0x426ad30d': 'NotNFTRental()',
-  // Pass-2 A2 (#1190/#1191) — a voluntary partial (repay or swap-to-repay) that
-  // would LOWER the health factor is rejected by the monotonicity gate. These
-  // are the two new reverts; RepayFacet + SwapToRepayFacet respectively.
-  '0x5a671452': 'PartialRepayWorsensHealthFactor(uint256,uint256)',
-  '0x4a8b8932': 'PartialSwapWorsensHealthFactor(uint256,uint256)',
-
-  // ── Default (DefaultedFacet) ──────────────────────────────────────────
-  '0xb79cb16c': 'NotDefaultedYet()',
-  '0x05c4d8ac': 'LiquidationFailed()',
-  '0xe8775e4a': 'InsufficientProceeds()',
-
-  // ── Preclose (PrecloseFacet) ──────────────────────────────────────────
-  '0x1fc326a5': 'InvalidNewBorrower()',
-  '0x944295c4': 'InvalidOfferTerms()',
-  '0x3a23d825': 'InsufficientCollateral()',
-  '0xcbc34ec5': 'OffsetNotLinked()',
-  '0x2a69fdaf': 'OffsetOfferNotAccepted()',
-
-  // ── Refinance (RefinanceFacet) ────────────────────────────────────────
-  '0xbfa0482c': 'InvalidRefinanceOffer()',
-  '0x88be51dc': 'OfferNotAccepted()',
-  // #2407 — the loan's standing refinance request (LibRefinanceRequest).
-  '0xdf811b45': 'RefinanceRequestOpen(uint256,uint256)',
-  '0x8365fae4': 'RefinanceRequestNotCancelled(uint256,uint256)',
-  '0xb93f752b': 'RefinanceRequestNotRecorded(uint256,uint256)',
-  '0xfda31e2c': 'RefinanceBlockedByOffset(uint256,uint256)',
-  '0xddbe651d': 'RefinanceRequestNotLive(uint256,uint256)',
-
-  // ── Early withdrawal (EarlyWithdrawalFacet) ───────────────────────────
-  '0x910fb9b3': 'InvalidSaleOffer()',
-  '0xdce02f61': 'RateShortfallTooHigh()',
-  '0x492a2b84': 'SaleNotLinked()',
-  '0x1f5d7665': 'SaleOfferNotAccepted()',
-  // #951 lender position-sale vehicle guards (redesign). SaleVehicleNotMatchable
-  // is on OfferMatchFacet and SaleVehicleImmutable on OfferMutateFacet, grouped
-  // here as the decoder map is flat and these are all sale-vehicle reverts.
-  '0x9de6799c': 'SaleOfferAlreadyExists()',
-  '0x04159aeb': 'SaleOfferCollateralMustBeERC20()',
-  '0xfd916a6f': 'SalePositionNotConsolidatable()',
-  '0xf3e9b780': 'SaleVehicleNotMatchable()',
-  '0x236f6aa6': 'SaleVehicleImmutable()',
-  // #1810 — the seller bounds a listing records (#1812) and the binding of
-  // those bounds to what the seller reviewed.
-  '0x0681b723': 'ListingFloorBelowReviewed(uint256,uint256)',
-  '0xfff1caa4': 'ListingHeldAboveReviewed(uint256,uint256)',
-  '0x12de31e0': 'SaleBelowSellerFloor(uint256,uint256)',
-  '0xb7ea2f98': 'SaleAboveHeldCeiling(uint256,uint256)',
-  // #3412 — the direct sale's binding to what the seller reviewed.
-  '0xe5ee16cb': 'SaleNetBelowReviewed(uint256,uint256)',
-  '0x95d7fb8a': 'SaleHeldAboveReviewed(uint256,uint256)',
-
-  // ── Partial withdrawal ────────────────────────────────────────────────
-  '0xfd7850ad': 'AmountTooHigh()',
-  // #951 (Codex #959 round-6) — collateral is frozen while a lender-sale listing
-  // is live; `partialWithdrawCollateral` reverts this until the seller cancels.
-  '0x5d3eb8f5': 'SaleListingActive()',
-
-  // ── Keeper (ProfileFacet / IVaipakamErrors) ───────────────────────────
-  '0x7583f2aa': 'KeeperAccessRequired()',
-  '0xf7c08f1e': 'KeeperAlreadyApproved()',
-  '0x8ebf27d0': 'KeeperNotApproved()',
-  '0x1a7025d1': 'KeeperWhitelistFull()',
-
-  // ── Treasury (TreasuryFacet) ──────────────────────────────────────────
-  '0x1f2a2005': 'ZeroAmount()',
-
-  // ── Interaction rewards (RewardClaimFacet) ────────────────────────────
-  // #1460 — without this selector→name row the name-keyed copy above is
-  // unreachable on the raw-payload path (wallets that surface only the
-  // revert data), and the claim would show hex where a plain revert used
-  // to be. The #68 drift test recomputes this key from the signature and
-  // cross-checks the name against the compiled Diamond ABI.
-  '0x6248ee4e': 'InteractionRewardBackingShort(uint256,uint256)',
-
-  // ── Vault / NFT infrastructure (IVaipakamErrors + facets) ────────────
-  '0xb70f4664': 'NFTMintFailed()',
-  '0x6154d8fb': 'NFTBurnFailed()',
-  '0xddb59ac0': 'NFTStatusUpdateFailed()',
-  '0x4605c598': 'NFTTransferFailed()',
-  '0x503f0d38': 'VaultWithdrawFailed()',
-  '0xeec96fd9': 'VaultResolutionFailed()',
-  '0x34272bc8': 'VaultTransferFailed()',
-  '0x0e373cf8': 'TreasuryTransferFailed()',
-  '0xb1fb1c95': 'NFTRenterUpdateFailed()',
-  '0xf367ddf6': 'LoanInitiationFailed()',
-  '0xd52f4d8a': 'OfferCreationFailed()',
-  '0x892d90b7': 'OfferAcceptFailed()',
-  '0xa9dea49f': 'LenderResolutionFailed()',
-  '0x03b8265d': 'GetUserVaultFailed(string)',
-  '0x3f6cc768': 'InvalidTokenId()',
-  '0xc24e5557': 'NFTAlreadyBurned()',
-  '0xe0e54ced': 'InvalidRoyalty()',
-
-  // ── Access control / authorization ────────────────────────────────────
-  '0xea8e4eb5': 'NotAuthorized()',
-  '0x001accb5': 'UnauthorizedCrossFacetCall()',
-  '0xa9ad62f8': 'FunctionDoesNotExist()',
-  '0xe2517d3f': 'AccessControlUnauthorizedAccount(address,bytes32)',
-  '0xe6c4247b': 'InvalidAddress()',
-  '0x8e848bae': 'UpdateNotAllowed()',
-
-  // ── Guards / infrastructure ───────────────────────────────────────────
-  '0xd93c0665': 'EnforcedPause()',
-  '0x3ee5aeb5': 'ReentrancyGuardReentrantCall()',
-  '0xeb1df718': 'IllegalTransition(uint8,uint8)',
-  '0x573c3147': 'CrossFacetCallFailed(string)',
-
-  // ── Phase 3 / 4 surface (added when each phase landed) ────────────────
-  '0x55d2a2a6': 'SequencerUnhealthy()',
-  '0x032b3d00': 'SequencerDown()',
-  '0xb5d44b5c': 'SequencerGracePeriod()',
-  '0x28871998': 'OraclePriceDivergence()',
-  '0x2a75db7f': 'InvalidTosVersion()',
-  '0x1b30f0a8': 'InvalidTosParams()',
-  '0x80279111': 'SanctionedAddress(address)',
-
-  // ── Misc previously-unmapped facet errors (only entries NOT already
-  // listed in this same table above) ───────────────────────────────────
-  '0x8e2218e4': 'SelfCollateralizedOffer()',
-  '0x01d01c9f': 'LoanNotInRepayablePhase()',
-  '0xf33650bd': 'RentalNotActive()',
-  '0x26e4b25d': 'AssetPaused(address)',
-  '0x3baaf353': 'TradeNotAllowed()',
-  '0x515faa71': 'PositionNFTLocked()',
-
-  // LayerZero ULN302 executor-options friendly-message entry was
-  // dropped in #230 alongside the rest of the LayerZero-era surface —
-  // T-068 (2026-05-18) replaced the OApp / SendUln302 transport with
-  // Chainlink CCIP, which uses Risk Management Network + a committing
-  // DON instead of the LayerZero DVN fleet. The 0x6592671c selector
-  // is no longer reachable from any active code path; the entry was
-  // removed to keep the decoder table aligned with the post-CCIP
-  // contract surface.
-};
 
 /** Revert bytes in a SINGLE error node's STRUCTURED fields (no cause
  *  traversal, no message text). These are what the provider or wallet
