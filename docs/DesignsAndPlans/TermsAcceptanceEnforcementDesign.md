@@ -95,6 +95,14 @@ stays as it is and fills again once its owner has accepted.
 - Defaults, liquidations and every other step a third party or the keeper
   takes to settle a loan. A loan always settles, whatever its parties have or
   have not accepted.
+- **A run of a standing instruction.** A collateral top-up, an interest
+  payment, a repayment at the due date and a sale that repays before
+  liquidation each only pay, top up, reduce or end their owner's own open
+  loan, and a third party or the keeper sends them. They run whatever their
+  owner has accepted since the instruction was set. Setting or changing an
+  instruction is the step that asks the rule (3.1). A plan for the due date
+  that would start a new term, an extension or a roll, is not a run of this
+  kind: it asks the rule when it runs (3.1).
 - Third parties who are not a party to the loan: the matcher, the liquidator,
   the keeper. **Default.**
 - Opening a vault, depositing into it and account-safety settings.
@@ -232,6 +240,9 @@ raised to a new version, or to a version that is already the latest.
   has accepted none of them takes on no new position: its offers and its
   Auto-lend stop filling, and an extension or a roll does not start a new
   term, so the loan runs to its agreed end. Its open loans are not touched.
+  A standing instruction it set earlier keeps running as it was set (3.2).
+  The wallet cannot set or change one until it accepts, and it can always
+  switch one off.
 - The notice is at least 7 days, and 14 by **Default**. The first version on
   a network needs no notice.
 - An announcement can be withdrawn before it comes into force, and a
@@ -247,8 +258,12 @@ raised to a new version, or to a version that is already the latest.
     same raise can be announced again later, with a full notice.
 
 The announcement and the time are an event. Every alert channel carries it to
-wallets with an open offer, Auto-lend or a standing instruction, with the
-date their commitments stop filling.
+wallets with an open offer, Auto-lend, a loan set to extend or roll, or a
+standing instruction, with the date and what changes for each on it: an
+offer and Auto-lend stop filling, an extension or a roll does not start a
+new term, and a standing instruction keeps running but can no longer be set
+or changed. A wallet whose only item is a standing instruction is told too,
+with that last line.
 
 ## 6. What follows from a paid, own-wallet acceptance
 
@@ -258,10 +273,12 @@ date their commitments stop filling.
   its signed offers can be filled or shown as fillable. Signing offers stays
   free; taking a position on the platform does not start without the paid
   acceptance.
-- **After a material change** (section 5.2), the owner of an offer, Auto-lend
-  or a standing instruction sends a new acceptance to keep it filling. A
-  small change (section 5.1) asks nothing of them. The notice period
-  and the alerts of section 5 are what give time for that.
+- **After a material change** (section 5.2), the owner of an offer or
+  Auto-lend sends a new acceptance to keep it filling, and a holder of a
+  loan set to extend or roll sends one for the new term to start. A standing
+  instruction needs none to keep running; its owner sends one before setting
+  or changing it. A small change (section 5.1) asks nothing of them. The
+  notice period and the alerts of section 5 are what give time for that.
 - **The keeper records nothing.** Its fill passes read the preview and skip,
   with the reason, a fill that the rule refuses. It carries the
   announcement's alert to affected wallets and does no more.
@@ -317,11 +334,13 @@ date their commitments stop filling.
   - The first time a wallet uses another network the app asks for the
     acceptance there, before anything else on that network.
   - During the notice of a material change, the request at Connect also lists
-    the other networks where the wallet has something that would stop on the
-    date: an open offer, Auto-lend, a standing instruction, or a loan set to
-    extend or roll. It walks through them one at a time: switch network,
-    confirm, next. Each step names the network, says that its only cost is
-    that network's fee, and says what stops there on the date.
+    the other networks where the wallet has something that would change on
+    the date: an open offer or Auto-lend, which would stop filling, a loan
+    set to extend or roll, which would not start a new term, or a standing
+    instruction, which keeps running but could no longer be set or changed.
+    It walks through them one at a time: switch network, confirm, next. Each
+    step names the network, says that its only cost is that network's fee,
+    and says what changes there on the date.
   - A network where the wallet has nothing is not listed and not asked. It
     asks at the wallet's next use there.
   - Each step stands alone. One that is skipped, rejected or fails leaves the
@@ -451,6 +470,13 @@ date their commitments stop filling.
     principal is not current, a collection on one of the adapter's loans
     completes, does not lend the proceeds again, and leaves them for the
     principal to withdraw.
+24. A standing instruction after a material change. A borrower sets each
+    instruction while current, and the new minimum comes into force without
+    its acceptance. A collateral top-up, an interest payment, a repayment at
+    the due date and a sale that repays before liquidation each still run
+    when their condition is met. Setting a new instruction and changing one
+    are refused, and each refusal names the wallet. Switching one off
+    succeeds. The wallet accepts and the change it was refused goes through.
 
 ## 10. Residuals
 
