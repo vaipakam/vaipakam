@@ -383,7 +383,7 @@ bash contracts/script/deploy-testnet.sh bnb-testnet  --phase preflight
 ```
 
 Checks RPC chain id, required vars, deployer balance (`phase_preflight`).
-A WARN for `BASE_REWARD_DEPLOYMENT` unset is expected; configure takes it from the records.
+A note that `BASE_REWARD_DEPLOYMENT` is unset is expected; configure takes it from the records and reads it back after the spell.
 
 ### 3.2 contracts (all three chains)
 

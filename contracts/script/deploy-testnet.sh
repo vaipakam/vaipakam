@@ -1688,6 +1688,12 @@ EOF
     --rpc-url "$RPC" --broadcast --slow
   require_broadcast_ok DiamondConfigSpell.s.sol
 
+  # #3891, design ruling 2026-11-22 item 4 — read the reward identities back
+  # before the marker. The spell warns and skips, so a rerun can leave an old
+  # value in force; the Diamond must name exactly what the records name.
+  forge script script/ConfigureRewardReporter.s.sol --sig 'verifyIdentities()' --rpc-url "$RPC" \
+    || { echo "FAIL: the reward identities on this Diamond do not match the records (see above)." >&2; exit 1; }
+
   # #946 — the sanctions screen is part of configuring a chain, not an
   # operator's memory. Until it is set every wallet reads as unsanctioned;
   # on a testnet the screen is the admin's TestnetSanctionsOverlay (#2439),

@@ -310,9 +310,19 @@ contract ConfigureRewardReporter is Script {
             // #3891 — unset, the registry is taken from each expected source
             // chain's own record; set, every pair must agree with the record
             // (checked in {_applyMirrorDeployments}).
+            //
+            // Mainnet (design ruling 2026-11-22): the registry is always the
+            // records' and covers every expected mirror; a stated value must
+            // name exactly the same pairs.
             string memory mirrorCsv =
                 vm.envOr("MIRROR_REWARD_DEPLOYMENTS", string(""));
-            if (bytes(mirrorCsv).length == 0) {
+            if (Deployments.requiresProductionGovernance()) {
+                string memory fromRecords = _mirrorDeploymentsFromRecords(
+                    vm.envOr("REWARD_EXPECTED_SOURCE_CHAIN_IDS", string(""))
+                );
+                if (bytes(mirrorCsv).length != 0) _requireSamePairs(mirrorCsv, fromRecords);
+                mirrorCsv = fromRecords;
+            } else if (bytes(mirrorCsv).length == 0) {
                 mirrorCsv = _mirrorDeploymentsFromRecords(
                     vm.envOr("REWARD_EXPECTED_SOURCE_CHAIN_IDS", string(""))
                 );
@@ -445,7 +455,20 @@ contract ConfigureRewardReporter is Script {
         returns (address)
     {
         address recorded = _recordedDiamond(cid);
-        if (recorded == address(0)) return stated;
+        if (recorded == address(0)) {
+            // Mainnet: the record is the only source (design ruling
+            // 2026-11-22). Every chain's contracts phase runs before any
+            // configure, so a missing record means the order was broken.
+            if (Deployments.requiresProductionGovernance()) {
+                revert(
+                    string.concat(
+                        "ConfigureRewardReporter: ", name, ": chain ", vm.toString(cid),
+                        " has no record with a Diamond - run every chain's contracts phase before any configure"
+                    )
+                );
+            }
+            return stated;
+        }
         if (stated != address(0) && stated != recorded) {
             revert(
                 string.concat(
@@ -473,10 +496,97 @@ contract ConfigureRewardReporter is Script {
             if (ids[i] == block.chainid) continue;
             address dep = _recordedDiamond(ids[i]);
             if (dep == address(0)) {
+                if (Deployments.requiresProductionGovernance()) {
+                    revert(
+                        string.concat(
+                            "ConfigureRewardReporter: expected mirror chain ", vm.toString(uint256(ids[i])),
+                            " has no record with a Diamond - run every chain's contracts phase before any configure"
+                        )
+                    );
+                }
                 console.log("WARNING: no record for mirror chain", uint256(ids[i]), "- its reward deployment is not registered");
                 continue;
             }
             out = string.concat(out, bytes(out).length == 0 ? "" : ",", vm.toString(uint256(ids[i])), ":", vm.toString(dep));
+        }
+    }
+
+    /// @dev Mainnet: the stated registry must hold the same pairs as the
+    ///      records', in any order, each once.
+    function _requireSamePairs(string memory stated, string memory fromRecords) internal pure {
+        string[] memory a = vm.split(stated, ",");
+        string[] memory b = vm.split(fromRecords, ",");
+        bool same = a.length == b.length;
+        for (uint256 i; same && i < a.length; ++i) {
+            uint256 hits;
+            for (uint256 j; j < b.length; ++j) {
+                if (keccak256(bytes(vm.toLowercase(a[i]))) == keccak256(bytes(vm.toLowercase(b[j])))) ++hits;
+            }
+            for (uint256 j; j < i; ++j) {
+                if (keccak256(bytes(vm.toLowercase(a[i]))) == keccak256(bytes(vm.toLowercase(a[j])))) hits = 0;
+            }
+            same = hits == 1;
+        }
+        require(
+            same,
+            "ConfigureRewardReporter: MIRROR_REWARD_DEPLOYMENTS does not name exactly the expected mirrors' recorded Diamonds - remove it from .env (the records are used)"
+        );
+    }
+
+    /// @notice #3891, design ruling 2026-11-22 item 4 — read the reward
+    ///         identities back from this chain's Diamond after the spell,
+    ///         before the configure marker. The spell warns and skips, so a
+    ///         rerun can leave an old value in force: a mirror's base
+    ///         deployment must equal canonical Base's record, and Base's
+    ///         registry must equal the record for every expected mirror.
+    ///         A chain with no record is reported and, on a testnet,
+    ///         skipped; on mainnet it fails.
+    function verifyIdentities() external view {
+        _verifyIdentities(
+            _isCanonicalRewardChain() ? 0 : vm.envUint("BASE_CHAIN_ID"),
+            vm.envOr("REWARD_EXPECTED_SOURCE_CHAIN_IDS", string(""))
+        );
+    }
+
+    /// @dev {verifyIdentities} over its two inputs (tests pass them directly).
+    function _verifyIdentities(uint256 baseChainId, string memory csv) internal view {
+        address diamond = Deployments.readDiamond();
+        bool strict = Deployments.requiresProductionGovernance();
+        if (!_isCanonicalRewardChain()) {
+            address want = _recordedDiamond(baseChainId);
+            if (want == address(0)) {
+                require(!strict, "verifyIdentities: canonical Base has no record with a Diamond");
+                console.log("verifyIdentities: no record for canonical Base; base deployment not checked");
+                return;
+            }
+            address got = RewardReporterFacet(diamond).getBaseRewardDeployment();
+            require(
+                got == want,
+                string.concat("verifyIdentities: base reward deployment is ", vm.toString(got), ", Base's record names ", vm.toString(want))
+            );
+            console.log("verifyIdentities: base reward deployment matches Base's record", want);
+            return;
+        }
+        require(!strict || bytes(csv).length != 0, "verifyIdentities: REWARD_EXPECTED_SOURCE_CHAIN_IDS is not set");
+        if (bytes(csv).length == 0) return;
+        uint32[] memory ids = _parseChainIdCsv(csv);
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] == block.chainid) continue;
+            address want = _recordedDiamond(ids[i]);
+            if (want == address(0)) {
+                require(!strict, string.concat("verifyIdentities: expected mirror ", vm.toString(uint256(ids[i])), " has no record with a Diamond"));
+                console.log("verifyIdentities: no record for mirror", uint256(ids[i]), "; not checked");
+                continue;
+            }
+            address got = RewardCommitmentFacet(diamond).getMirrorRewardDeployment(ids[i]);
+            require(
+                got == want,
+                string.concat(
+                    "verifyIdentities: mirror ", vm.toString(uint256(ids[i])), " is registered as ", vm.toString(got),
+                    ", its record names ", vm.toString(want)
+                )
+            );
+            console.log("verifyIdentities: mirror matches its record", uint256(ids[i]), want);
         }
     }
 

@@ -521,10 +521,11 @@ takes a governance write, so keep the rule.
   1. **Initial setup** — register every mirror's Diamond on Base as
      part of the reward-mesh configuration.
      `ConfigureRewardReporter.s.sol` does this on canonical chains from
-     `MIRROR_REWARD_DEPLOYMENTS` (format
-     `"42161:0xMirrorDiamond,10:0xMirrorDiamond"`); leaving it unset
-     logs a loud warning and leaves zeroed-day compensation quoting
-     unreachable for the unregistered lanes.
+     each expected mirror's own record (#3891). A
+     `MIRROR_REWARD_DEPLOYMENTS` value must agree with the records; on a
+     testnet a mirror with no record logs a loud warning and stays
+     unregistered (zeroed-day compensation quoting unreachable for that
+     lane), and on mainnet it refuses.
   1b. **Lapse terminals need no arming (#2875).** The two
      permissionless lapse terminals work from deploy: each day closes on
      its own frozen clock. The one-shot arm, the legacy receipt stamp,
