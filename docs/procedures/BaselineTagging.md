@@ -24,6 +24,7 @@ From a clean checkout of exactly that commit, in `contracts/`:
 
 ```bash
 FOUNDRY_PROFILE=default forge build --skip test --ast
+mkdir -p ../baseline-manifests
 bash script/run-regression.sh --manifest ../baseline-manifests/full.tsv
 ```
 
@@ -90,8 +91,10 @@ the signer's public key first (the key GitHub shows as verified for the
 account that pushed). A message that only looks signed is refused. It rebuilds the tagged commit in a temporary worktree and refuses, by name, on
 any difference: the tag unsigned or lightweight, the message without the
 record's hash, the commit changing more than the record, another source
-digest, another library pin or storage layout, another build tool or
-compiler, or any deployable's runtime code hash, size, interface hash or
+digest, another library pin or storage layout, a gas section missing an
+action, a regression section that is missing, does not add up to its own
+manifests, is not green, or that the tagged tree's own `run-regression.sh
+--verify-shards` refuses, another build tool or compiler, or any deployable's runtime code hash, size, interface hash or
 immutables. It must pass before
 anything below happens.
 

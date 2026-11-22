@@ -43,6 +43,7 @@ import {
   SOURCE_DIGEST_RULE,
   sha256,
   sourceDigest,
+  regressionAgreement,
 } from './lib/baseline.mjs';
 import { librariesAt, treeEntries } from './lib/baseline-git.mjs';
 
@@ -116,6 +117,13 @@ export function main(argv = process.argv.slice(2)) {
     libraries: librariesAt(REPO, 'HEAD'),
     layoutText: readFileSync(LAYOUT_FILE),
   });
+  // The same rule the check applies: a record carries a green regression whose
+  // totals are what its manifests add up to.
+  const regressionGaps = regressionAgreement(record.regression);
+  if (regressionGaps.length) {
+    for (const g of regressionGaps) console.error(`baseline-record: ${g}`);
+    return 1;
+  }
   const text = canonicalJson(record);
   const dest = join(REPO, rel);
   mkdirSync(dirname(dest), { recursive: true });

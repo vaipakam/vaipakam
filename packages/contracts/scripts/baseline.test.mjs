@@ -162,7 +162,16 @@ test('the tag facts: annotated, signed, its message carrying the record hash, it
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
 
 /** A repository with one deployable and a tag of the series made the documented way (unsigned unless a key is given). */
-function repoWithTag(tag, { extraFile = false, wrongHash = false, message } = {}) {
+const GREEN = {
+  planDigest: 'abc',
+  chunks: 1,
+  chunksPassed: 1,
+  testsRun: 3,
+  testsPassed: 3,
+  manifests: { 'full.tsv': 'plan\tabc\nshard\t1/1\npass\ttest/{A}.t.sol\ntests\ttest/{A}.t.sol\t3\t3\ncomplete\t1\n' },
+};
+
+function repoWithTag(tag, { extraFile = false, wrongHash = false, message, regression } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'baseline-repo-'));
   git(repo, 'init', '-q', '-b', 'main');
   mkdirSync(join(repo, 'contracts/storage-layout'), { recursive: true });
@@ -171,6 +180,10 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message } = {}
   writeFileSync(join(repo, 'contracts/gas-suite/budgets.json'), JSON.stringify({ actions: { repay: { gas: 1 } } }));
   writeFileSync(join(repo, 'contracts/storage-layout/layout.golden.json'), '{"layout":1}\n');
   writeFileSync(join(repo, 'contracts/lib/dep/x.sol'), '// dep\n');
+  // The tagged tree's verifier: this stand-in accepts manifests cut from plan
+  // "abc" only, so the check is seen running the TAG's run-regression.sh.
+  mkdirSync(join(repo, 'contracts/script'), { recursive: true });
+  writeFileSync(join(repo, 'contracts/script/run-regression.sh'), '#!/usr/bin/env bash\ngrep -rqP "^plan\\tabc$" "$2" || { echo "verify-shards: cut from a different plan" >&2; exit 1; }\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'source');
   const source = { commit: git(repo, 'rev-parse', 'HEAD'), digest: sourceDigest(treeEntries(repo, 'HEAD')) };
@@ -183,6 +196,7 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message } = {}
     source,
     contracts: built.contracts,
     gas: { repay: { gas: 1 } },
+    regression: regression ?? GREEN,
     storageLayout: { file: 'contracts/storage-layout/layout.golden.json', sha256: execFileSync('sha256sum', [join(repo, 'contracts/storage-layout/layout.golden.json')], { encoding: 'utf8' }).split(' ')[0] },
     versions: { build: built.build, forge: 'forge 1.8.6', libraries: { dep: { type: 'vendored', hash: meta.split(' ')[2] } } },
   };
@@ -274,4 +288,24 @@ test('the gas section must hold every action the suite lists, and only those', (
   assert.deepEqual(gasCompleteness({ repay: {}, borrow: {} }, budgets), []);
   assert.match(gasCompleteness({ repay: {} }, budgets).join(), /no figures for borrow; collect every shard's out-gas-suite/);
   assert.match(gasCompleteness({ repay: {}, borrow: {}, x: {} }, budgets).join(), /figures for x, which contracts\/gas-suite\/budgets\.json does not list/);
+});
+
+test('the check requires a green regression section that adds up and that the tagged tree verifies', () => {
+  const tag = 'v0.9-pre-refactor';
+  const cases = [
+    [null, /no regression section/],
+    [{ ...GREEN, testsRun: 4 }, /states testsRun 4, its manifests add up to 3/],
+    [{ ...GREEN, chunksPassed: 0, manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('pass\t', 'fail\t') } }, /1 of 1 chunks failed/],
+    [{ ...GREEN, planDigest: 'zzz', manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('abc', 'zzz') } }, /verify-shards: cut from a different plan/],
+    [{ ...GREEN, manifests: { '../escape.tsv': GREEN.manifests['full.tsv'] } }, /not a relative \*\.tsv path/],
+  ];
+  for (const [regression, want] of cases) {
+    const { repo, dir } = repoWithTag(tag, { regression: regression ?? false });
+    try {
+      const { refusals } = checkBaseline({ repo, tag, outDir: dir, verifyTag: verified });
+      assert.ok(refusals.some((x) => want.test(x)), `${want}: ${refusals.join('\n')}`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
 });

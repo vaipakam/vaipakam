@@ -270,14 +270,25 @@ export function collectRegression(dir) {
   files.sort(byBytes);
   if (!files.length) throw new Error(`baseline: no *.tsv regression manifests in ${dir}`);
   const manifests = {};
+  for (const f of files) manifests[f] = readFileSync(join(dir, f), 'utf8');
+  return regressionFromManifests(manifests);
+}
+
+/**
+ * The regression section from the manifests' text, keyed by relative path:
+ * the one plan digest, the chunk and test totals, and the manifests
+ * themselves. Throws, naming the manifest, on a count row missing or malformed.
+ */
+export function regressionFromManifests(manifests) {
+  const files = Object.keys(manifests).sort(byBytes);
+  if (!files.length) throw new Error('baseline: the regression section carries no manifests');
   const digests = new Set();
   let chunks = 0;
   let passed = 0;
   let testsRun = 0;
   let testsPassed = 0;
   for (const f of files) {
-    const text = readFileSync(join(dir, f), 'utf8');
-    manifests[f] = text;
+    const text = manifests[f];
     // Every chunk the manifest records carries exactly one count row, so the
     // record states measured figures, never a zero for a count it lacks.
     const ran = [];
@@ -303,7 +314,33 @@ export function collectRegression(dir) {
     for (const g of counts.keys()) if (!ran.includes(g)) throw new Error(`baseline: ${f}: a count row for ${g}, which the manifest does not record as run`);
   }
   if (digests.size !== 1) throw new Error(`baseline: the manifests name ${digests.size} plan digests; one regression has one plan`);
-  return { planDigest: [...digests][0], chunks, chunksPassed: passed, testsRun, testsPassed, manifests };
+  const sorted = {};
+  for (const f of files) sorted[f] = manifests[f];
+  return { planDigest: [...digests][0], chunks, chunksPassed: passed, testsRun, testsPassed, manifests: sorted };
+}
+
+/**
+ * Whether a record's regression section is the evidence §3.2 asks for: present,
+ * its totals and plan digest the ones its own manifests add up to, and green
+ * (every chunk and every test passed). Returns every refusal as a sentence.
+ * Whether the manifests cover the tagged tree's plan is the tree's own
+ * verifier's question (`run-regression.sh --verify-shards`), asked separately.
+ */
+export function regressionAgreement(regression) {
+  if (!regression || typeof regression !== 'object') return ['regression: the record carries no regression section; a baseline records its full regression'];
+  let derived;
+  try {
+    derived = regressionFromManifests(regression.manifests ?? {});
+  } catch (e) {
+    return [`regression: ${e.message.replace(/^baseline: /, '')}`];
+  }
+  const out = [];
+  for (const k of ['planDigest', 'chunks', 'chunksPassed', 'testsRun', 'testsPassed']) {
+    if (regression[k] !== derived[k]) out.push(`regression: the record states ${k} ${regression[k]}, its manifests add up to ${derived[k]}`);
+  }
+  if (derived.chunksPassed !== derived.chunks) out.push(`regression: ${derived.chunks - derived.chunksPassed} of ${derived.chunks} chunks failed; a baseline records a green regression`);
+  if (derived.testsPassed !== derived.testsRun) out.push(`regression: ${derived.testsRun - derived.testsPassed} of ${derived.testsRun} tests failed; a baseline records a green regression`);
+  return out;
 }
 
 /**

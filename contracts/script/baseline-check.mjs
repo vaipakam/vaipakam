@@ -12,6 +12,10 @@
  *     baseline records left out) differs from the record's;
  *   - the vendored libraries or the storage layout's recorded file differ, or
  *     the record lacks a gas figure for an action the suite lists;
+ *   - the record carries no regression section, its stated totals are not
+ *     what its own manifests add up to, a chunk or test failed, or the tagged
+ *     tree's `run-regression.sh --verify-shards` refuses the manifests (its
+ *     plan, every shard once, every chunk run once);
  *   - the build tool is not the recorded version (named);
  *   - a rebuild of the tagged commit gives another compiler or settings
  *     (named), or any deployable's runtime code hash, size or interface hash
@@ -32,9 +36,9 @@
  * Exit 0 when the tag passes, 1 on any refusal, 2 on a usage error.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   canonicalJson,
@@ -44,6 +48,7 @@ import {
   GAS_BUDGETS_FILE,
   gasCompleteness,
   recordPath,
+  regressionAgreement,
   sha256,
   sourceDigest,
 } from './lib/baseline.mjs';
@@ -116,10 +121,53 @@ export function buildAt(repo, commit) {
 }
 
 /**
- * Judge `tag`. `build(commit)` returns {outDir, cleanup}; `forgeVersion()` the
- * build tool's version line. Returns {refusals, record}.
+ * Run the TAGGED tree's own `run-regression.sh --verify-shards` over the
+ * record's manifests, so the plan they are checked against is the tag's, not
+ * this checkout's. Returns its refusals (empty when it accepts). Needs no
+ * forge: the plan is read from the tree's test files.
  */
-export function checkBaseline({ repo, tag, outDir, build = (c) => buildAt(repo, c), forgeVersion, verifyTag }) {
+export function verifyShardsAt(repo, commit, manifests) {
+  const scratch = mkdtempSync(join(tmpdir(), 'baseline-shards-'));
+  const wt = join(scratch, 'tree');
+  const dir = join(scratch, 'manifests');
+  try {
+    for (const [rel, text] of Object.entries(manifests ?? {})) {
+      // A manifest key is a relative *.tsv path inside the folder, never one
+      // that climbs out of it.
+      if (!rel.endsWith('.tsv') || rel.startsWith('/') || rel.split('/').some((p) => p === '..' || p === '' || p === '.')) {
+        return [`regression: the manifest key ${JSON.stringify(rel)} is not a relative *.tsv path`];
+      }
+      mkdirSync(dirname(join(dir, rel)), { recursive: true });
+      writeFileSync(join(dir, rel), text);
+    }
+    run('git', ['worktree', 'add', '--detach', '--quiet', wt, commit], { cwd: repo });
+    try {
+      run('bash', [join(wt, 'contracts/script/run-regression.sh'), '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'] });
+      return [];
+    } catch (e) {
+      const said = `${e.stderr ?? ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
+      return said.length ? said.map((l) => `regression: ${l}`) : ['regression: the tagged tree\'s run-regression.sh --verify-shards refused the manifests'];
+    }
+  } finally {
+    tryGit(repo, ['worktree', 'remove', '--force', wt]);
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Judge `tag`. `build(commit)` returns {outDir, cleanup}; `forgeVersion()` the
+ * build tool's version line; `verifyShards(commit, manifests)` the tagged
+ * tree's verdict on the regression manifests (a list of refusals). Returns {refusals, record}.
+ */
+export function checkBaseline({
+  repo,
+  tag,
+  outDir,
+  build = (c) => buildAt(repo, c),
+  forgeVersion,
+  verifyTag,
+  verifyShards = (commit, manifests) => verifyShardsAt(repo, commit, manifests),
+}) {
   const facts = tagFacts(repo, tag, verifyTag);
   const refusals = checkTagFacts(tag, facts);
   if (facts.recordText == null) return { refusals };
@@ -145,6 +193,9 @@ export function checkBaseline({ repo, tag, outDir, build = (c) => buildAt(repo, 
   }
   const budgets = tryGit(repo, ['show', `${facts.commit}:${GAS_BUDGETS_FILE}`]);
   refusals.push(...gasCompleteness(record.gas, budgets == null ? {} : JSON.parse(budgets)));
+  const regressionRefusals = regressionAgreement(record.regression);
+  refusals.push(...regressionRefusals);
+  if (!regressionRefusals.length) refusals.push(...verifyShards(facts.commit, record.regression.manifests));
   if (!outDir) {
     const forge = forgeVersion();
     if (forge !== record.versions?.forge) {
