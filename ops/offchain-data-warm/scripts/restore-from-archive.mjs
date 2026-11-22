@@ -108,6 +108,12 @@ export const BORN_OFF_CHAIN_TABLES = new Set([
   // maintains. Imported through RESTORE_PROJECTIONS below, which hands the
   // replay-maintained part back to the §6 replay instead of restoring it.
   'signed_offers',
+  // #3918 (migration 0123) — the failed transaction record and its pass's
+  // state: decoded while the node still held the state, so no replay can
+  // recreate them.
+  'failed_tx',
+  'failed_tx_cursor',
+  'failed_tx_range',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -178,6 +184,9 @@ const ERA_GATED_TABLES = {
   // Its migration is older than the archiving: what gates it is #1481, the
   // change that started exporting it.
   signed_offers: 'the backup since #1481',
+  failed_tx: 'migration 0123 (#3918)',
+  failed_tx_cursor: 'migration 0123 (#3918)',
+  failed_tx_range: 'migration 0123 (#3918)',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -237,6 +246,20 @@ const REQUIRED_TABLE_COLUMNS = {
     'fill_mode', 'expires_at', 'deadline', 'nonce',
     'status', 'filled_amount', 'created_at', 'updated_at', 'offer_set',
   ],
+  // The decoded error and explanation are the point of the record; without
+  // them a restored row says only that something failed.
+  failed_tx: [
+    'chain_id', 'tx_hash', 'block_hash', 'block_number', 'block_time', 'tx_index', 'diamond',
+    'sender', 'contract', 'function_selector', 'function_name', 'loan_id', 'offer_id',
+    'error_selector', 'error_name', 'error_values', 'found_by', 'mode', 'source', 'explanation',
+    'explanation_cut', 'unavailable', 'gas_used', 'gas_limit', 'used_all_gas', 'not_reproduced',
+    'state_unreachable', 'replaced_at', 'recorded_at',
+  ],
+  failed_tx_cursor: ['chain_id', 'diamond', 'mode', 'block_number', 'block_time', 'watched_share_bps', 'updated_at'],
+  failed_tx_range: [
+    'chain_id', 'kind', 'from_block', 'to_block', 'block_hash', 'reason', 'found', 'missed',
+    'marked', 'replaced_at', 'recorded_at',
+  ],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -257,6 +280,9 @@ const TRUSTED_PRIMARY_KEYS = {
   diag_legal_hold_audit: ['id'],
   loan_orphans: ['id'],
   signed_offers: ['chain_id', 'order_hash'],
+  failed_tx: ['chain_id', 'tx_hash', 'block_hash'],
+  failed_tx_cursor: ['chain_id'],
+  failed_tx_range: ['chain_id', 'kind', 'from_block', 'to_block'],
 };
 
 // Every OTHER uniqueness the schema declares on a born-off-chain table,
@@ -281,6 +307,10 @@ const SIGNATURE_SHAPE = /^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/;
 const TRUSTED_COLUMN_SHAPES = {
   loan_orphans: { move_id: UUID_SHAPE },
   signed_offers: { order_hash: HASH_SHAPE, signer: ADDRESS_SHAPE, signature: SIGNATURE_SHAPE },
+  // The write route (apps/indexer/src/failedTx.ts) stores these lowercased
+  // and in these shapes, and refuses any other.
+  failed_tx: { tx_hash: HASH_SHAPE, block_hash: HASH_SHAPE, diamond: ADDRESS_SHAPE, sender: ADDRESS_SHAPE, contract: ADDRESS_SHAPE },
+  failed_tx_cursor: { diamond: ADDRESS_SHAPE },
 };
 
 /**
@@ -537,11 +567,69 @@ export function tableToBatch(table) {
     if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
     const projection = Object.hasOwn(RESTORE_PROJECTIONS, name) ? RESTORE_PROJECTIONS[name] : null;
     const restored = projection ? projection(row) : row;
-    const values = columns.map((c) => sqlLiteral(restored[c], `table ${name} row ${i} column ${c}`));
-    lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
+    lines.push(...rowStatements(name, columns, colList, pkCols, restored, `table ${name} row ${i}`));
     imported++;
   }
   return { sql: lines.join('\n') + '\n', imported };
+}
+
+/**
+ * D1 refuses a statement over 100,000 bytes, a single large value included
+ * (Cloudflare's import guide, "statement too long"). A row that would not fit
+ * one INSERT is imported in pieces: the INSERT carries each long text value's
+ * first piece, and each further piece is appended by an UPDATE keyed on the
+ * row's primary key, so every statement fits and the value arrives whole
+ * (#3918: a stored explanation may be up to 256 KB). Pieces are cut on code
+ * points, never inside a character. A row without a primary key cannot be
+ * addressed by an UPDATE, so one that does not fit is refused.
+ */
+export const D1_STATEMENT_LIMIT = 100_000;
+const STATEMENT_BUDGET = 90_000;
+const PIECE_BUDGET = 60_000;
+const bytes = (s) => Buffer.byteLength(s, 'utf8');
+
+function splitPieces(value) {
+  const pieces = [];
+  let piece = '';
+  let size = 0;
+  for (const ch of value) {
+    const w = bytes(ch) * (ch === "'" ? 2 : 1);
+    if (size + w > PIECE_BUDGET && piece) {
+      pieces.push(piece);
+      piece = '';
+      size = 0;
+    }
+    piece += ch;
+    size += w;
+  }
+  pieces.push(piece);
+  return pieces;
+}
+
+export function rowStatements(name, columns, colList, pkCols, row, ctx) {
+  const literal = (c, v) => sqlLiteral(v, `${ctx} column ${c}`);
+  const whole = `INSERT INTO "${name}" (${colList}) VALUES (${columns.map((c) => literal(c, row[c])).join(', ')});`;
+  if (bytes(whole) <= STATEMENT_BUDGET) return [whole];
+  if (pkCols.length === 0) fail(`${ctx}: row is over D1's statement limit and the table has no primary key to rebuild it by`);
+  const first = { ...row };
+  const appends = [];
+  for (const c of columns) {
+    const v = row[c];
+    if (typeof v !== 'string' || bytes(literal(c, v)) <= PIECE_BUDGET) continue;
+    if (pkCols.includes(c)) fail(`${ctx}: primary-key column ${c} is over D1's statement limit`);
+    const [head, ...rest] = splitPieces(v);
+    first[c] = head;
+    for (const piece of rest) appends.push([c, piece]);
+  }
+  const where = pkCols.map((c) => `"${c}" = ${literal(c, row[c])}`).join(' AND ');
+  const out = [
+    `INSERT INTO "${name}" (${colList}) VALUES (${columns.map((c) => literal(c, first[c])).join(', ')});`,
+    ...appends.map(([c, piece]) => `UPDATE "${name}" SET "${c}" = "${c}" || ${literal(c, piece)} WHERE ${where};`),
+  ];
+  for (const st of out) {
+    if (bytes(st) > D1_STATEMENT_LIMIT) fail(`${ctx}: a statement is still over D1's ${D1_STATEMENT_LIMIT}-byte limit after splitting`);
+  }
+  return out;
 }
 
 /** Write every archived table's SQL file; returns apply-ordered

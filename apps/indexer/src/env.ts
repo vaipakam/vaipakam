@@ -100,6 +100,11 @@ export interface WorkerEnv {
   RPC_BNB_TESTNET?: SecretBinding;
   RPC_POLYGON_AMOY?: SecretBinding;
   CANCELLED_OFFER_RETENTION_DAYS?: string;
+  // #3918 — the failed-transaction pass's write token for
+  // `POST /internal/failed-tx`, a plain Worker secret
+  // (`wrangler secret put FAILED_TX_WRITER_TOKEN`) shared with that pass's
+  // Worker and nothing else. Unset ⇒ the route refuses every write.
+  FAILED_TX_WRITER_TOKEN?: string;
   // T-086 step 14 — OpenSea Listings API key for the autonomous
   // republish path (`apps/indexer/src/openseaPublish.ts`). The
   // indexer holds its own key (separate from the agent Worker's)

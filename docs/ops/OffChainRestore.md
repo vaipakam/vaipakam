@@ -1467,8 +1467,24 @@ For each table:
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
-   `loan_orphans` (absent from pre-#2197 archives) and `signed_offers`
-   (absent from pre-#1481 archives).
+   `loan_orphans` (absent from pre-#2197 archives), `signed_offers`
+   (absent from pre-#1481 archives), and `failed_tx`, `failed_tx_cursor`
+   and `failed_tx_range` (absent from pre-#3918 archives).
+
+   > **The failed transaction record is restored, not replayed** (#3918).
+   > `failed_tx` holds each failed transaction with its error and the
+   > explanation decoded while the node still had the block's state; no
+   > replay and, for an old block, no node can give that back.
+   > `failed_tx_cursor` and `failed_tx_range` are the pass's position,
+   > checkpoints, gaps, audit windows and replaced ranges: restored with the
+   > records, the pass resumes where the archive left it and checks its
+   > newest checkpoint against the chain before it scans. A record whose
+   > explanation would put its INSERT over D1's 100,000-byte statement limit
+   > is written as an INSERT with the first piece and UPDATEs appending the
+   > rest, each statement under the limit, so it is restored whole. Failures between
+   > the archive and the restore are found again by the pass only if the
+   > node still reaches them; the health route's gap list says what it could
+   > not cover.
 
    > **`recycle_day_backfill` is retired, not imported** (#2937). Archives
    > written between migration 0047 and #2937 carry it, always empty:

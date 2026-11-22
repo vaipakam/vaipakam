@@ -1174,3 +1174,33 @@ test('FK preflight uses collision-free tuple encoding', () => {
   tables.find((t) => t.name === 'notify_state').rowCount = 1;
   assert.throws(() => convertD1({ version: 1, d1: { archive: tables } }, dir), /inconsistent/);
 });
+
+test('a row over D1\'s statement limit is imported in pieces that each fit, and arrives whole (#3918)', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  // ~250 KB of JSON with quotes and multi-byte characters, as a stored explanation can be.
+  const explanation = JSON.stringify({ steps: Array.from({ length: 9000 }, (_, i) => `step ${i}: it's ✓ café`) });
+  assert.ok(Buffer.byteLength(explanation) > 200_000);
+  const table = {
+    name: 'failed_tx_range',
+    schema: [
+      { name: 'chain_id', pk: 1 }, { name: 'kind', pk: 2 }, { name: 'from_block', pk: 3 }, { name: 'to_block', pk: 4 },
+      { name: 'reason' },
+    ],
+    rows: [{ chain_id: 84532, kind: 'gap', from_block: 1, to_block: 2, reason: explanation }],
+  };
+  // The trusted primary key needs every listed column; give the rest too.
+  table.schema.push(...['block_hash', 'found', 'missed', 'marked', 'replaced_at', 'recorded_at'].map((name) => ({ name })));
+  for (const c of ['block_hash', 'found', 'missed', 'marked', 'replaced_at']) table.rows[0][c] = null;
+  table.rows[0].recorded_at = 1;
+  const { sql, imported } = tableToBatch(table);
+  assert.equal(imported, 1);
+  const statements = sql.split('\n').filter((l) => l && !l.startsWith('--'));
+  assert.ok(statements.length > 3, 'the row was split');
+  for (const st of statements) assert.ok(Buffer.byteLength(st) <= 100_000, `statement of ${Buffer.byteLength(st)} bytes`);
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE failed_tx_range (chain_id INTEGER, kind TEXT, from_block INTEGER, to_block INTEGER, reason TEXT,
+    block_hash TEXT, found INTEGER, missed INTEGER, marked INTEGER, replaced_at INTEGER, recorded_at INTEGER,
+    PRIMARY KEY (chain_id, kind, from_block, to_block))`);
+  db.exec(sql);
+  assert.equal(db.prepare('SELECT reason FROM failed_tx_range').get().reason, explanation);
+});
