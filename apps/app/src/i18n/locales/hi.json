@@ -2707,6 +2707,8 @@
         "SwapToRepayIntentForceCancelled": "Swap-to-repay cancelled",
         "SwapToRepayIntentLotPulled": "Swap-to-repay के लिए collateral लिया गया",
         "FallbackCustodyMoved": "Collateral custody अपडेट हुई",
+        "FallbackEndScheduled": "विफल बिक्री के बाद निपटान की तारीख तय हुई",
+        "FallbackFinishedInKind": "निपटान की तारीख पर वस्तु रूप में निपटाया गया",
         "PeriodicInterestSettled": "Interest settled",
         "PeriodicInterestAutoLiquidated": "Interest के लिए auto-liquidated",
         "RepayPartialPeriodAdvanced": "Interest period आगे बढ़ा",

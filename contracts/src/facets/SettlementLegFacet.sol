@@ -449,6 +449,64 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         if (loan.collateralAssetType != LibVaipakam.AssetType.ERC20) arrived = loan.collateralAmount;
     }
 
+    // ─── A fallback's lender slice at its dated end ─────────────────────
+
+    /**
+     * @notice #3865 — the lender slice of a loan left in the fallback state,
+     *         at the dated in-kind finish (`FallbackCustodyFacet.
+     *         finishFallbackInKind`): from the borrower's vault into the vault
+     *         of the loan's stored lender, or, when the token refuses that
+     *         move, left in the borrower's vault under a lien for the lender
+     *         side, so the finish still completes and the lender's claim
+     *         releases the slice once the token moves it.
+     * @dev    The caller has already taken the slice off the custody row and
+     *         the loan's collateral lien, so the vault's withdraw guard lets
+     *         it leave and a park re-liens it under the parked-leg ledger.
+     * @param loanId The FallbackPending loan being finished.
+     * @param amount The lender slice.
+     * @return arrived What reached the lender's vault, or `amount` when parked.
+     * @return parked  Whether the slice was parked.
+     */
+    function moveFallbackSliceOrPark(uint256 loanId, uint256 amount)
+        external
+        returns (uint256 arrived, bool parked)
+    {
+        _onlySelf();
+        if (amount == 0) return (0, false);
+        (bool ok, bytes memory ret) = _attempt(abi.encodeCall(this.fallbackSliceMove, (loanId, amount)));
+        if (ok) return (abi.decode(ret, (uint256)), false);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address borrower = loan.borrower;
+        address c = loan.collateralAsset;
+        // The vault must hold the whole slice: otherwise the failure is not
+        // the token's refusal of the move, and it surfaces as it always did.
+        if (IERC20(c).balanceOf(s.userVaipakamVaults[borrower]) < amount) {
+            LibRevert.bubbleOnFailureTyped(false, ret, VaultDepositFailed.selector);
+        }
+        LibEncumbrance.encumberParkedLeg(borrower, c, amount);
+        _park(s, loanId, borrower, c, LibVaipakam.AssetType.ERC20, 0, amount, false);
+        return (amount, true);
+    }
+
+    /// @notice The move itself, run as the attempt above. Self-only. Out of
+    ///         the borrower's vault behind the move-out exemption, into the
+    ///         stored lender's vault behind the receive-side exemption (#821),
+    ///         measured: a flagged party never blocks it, and the claim names
+    ///         what arrived. VPFI is reserved until the holder claims, as a
+    ///         released leg is (#592), because VPFI has a user-facing exit
+    ///         from the vault.
+    function fallbackSliceMove(uint256 loanId, uint256 amount) external returns (uint256 arrived) {
+        _onlySelf();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address c = loan.collateralAsset;
+        arrived = _moveToStoredLender(
+            s, loan, loanId, loan.borrower, c, LibVaipakam.AssetType.ERC20, 0, amount, OutflowReason.DEFAULT_TRANSFER
+        );
+        if (c == s.vpfiToken) LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, c, arrived);
+    }
+
     // ─── Release ───────────────────────────────────────────────────────
 
     /**

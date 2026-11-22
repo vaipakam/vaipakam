@@ -2707,6 +2707,8 @@
         "SwapToRepayIntentForceCancelled": "Swap-pour-rembourser annulé",
         "SwapToRepayIntentLotPulled": "Garantie prélevée pour swap-pour-rembourser",
         "FallbackCustodyMoved": "Garde de la garantie mise à jour",
+        "FallbackEndScheduled": "Date de règlement fixée après une vente échouée",
+        "FallbackFinishedInKind": "Réglé en nature à sa date de règlement",
         "PeriodicInterestSettled": "Intérêts réglés",
         "PeriodicInterestAutoLiquidated": "Liquidé automatiquement pour intérêts",
         "RepayPartialPeriodAdvanced": "Période d'intérêts avancée",

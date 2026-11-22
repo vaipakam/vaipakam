@@ -19,6 +19,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
+import {LibFallbackEnd} from "../libraries/LibFallbackEnd.sol";
+import {LibPausable, DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 
 /**
  * @title  FallbackCustodyFacet
@@ -85,13 +91,25 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  *         themselves. Every vault movement refreshes the owner's tier record
  *         at the write (#1820), so no entry here stamps the tier itself.
  *
- *         Every mutating entry is Diamond-internal (`msg.sender ==
- *         address(this)`, reached through {LibFacet.crossFacetCall}) and is
+ *         The custody mutators ({enterFallback}, {retryFallbackSwap},
+ *         {disposeFallbackCustody}) are Diamond-internal (`msg.sender ==
+ *         address(this)`, reached through {LibFacet.crossFacetCall}) and are
  *         deliberately NOT `nonReentrant`: every caller (`triggerLiquidation`,
  *         `triggerDefault`, the lender-claim and backstop paths) already holds
  *         the Diamond-wide reentrancy guard, so a guard here would revert every
  *         legitimate call. There is no pause check for the same reason: the
  *         caller's public entry point owns that policy.
+ *
+ *         The dated end (#3865). Each entry records when the loan entered the
+ *         fallback state and the wait in force ({LibFallbackEnd}). Once that
+ *         date has passed, {finishFallbackInKind} lets ANYONE finish the loan
+ *         in kind, exactly as the lender's claim without a route does up to
+ *         the point where it pays the holder: no sale, no internal match, no
+ *         price, and nothing paid to the caller or to any wallet. That entry
+ *         is public, so unlike the mutators above it takes the Diamond guard
+ *         and the pause check itself. It never asks the opening rule
+ *         (`LegalFacet.requireMayOpen`): a closing network (#3864) still lets
+ *         every open position reach its end.
  *
  *         REFRESH TOGETHER: {FallbackCustodyFacet, RiskFacet, DefaultedFacet,
  *         ClaimFacet, AddCollateralFacet, RepayFacet,
@@ -104,9 +122,18 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  *         (internal match) read and move the same custody row through
  *         {LibFallbackCustody}; one of them left on pre-S2b code would pay
  *         Diamond-held custody that no longer exists, or lien the custody a
- *         second time.
+ *         second time. The dated finish moves its lender slice through
+ *         `SettlementLegFacet.moveFallbackSliceOrPark` (a slice the token
+ *         refuses parks there), so a Diamond carrying this facet must route
+ *         that selector too, or the finish alone reverts
+ *         `FunctionDoesNotExist`.
  */
-contract FallbackCustodyFacet is IVaipakamErrors {
+contract FallbackCustodyFacet is
+    IVaipakamErrors,
+    DiamondReentrancyGuard,
+    DiamondPausable,
+    DiamondAccessControl
+{
     using SafeERC20 for IERC20;
 
     // --- Events -----------------------------------------------------------
@@ -148,7 +175,60 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     /// @custom:event-category informational/liquidation
     event LiquidationFallbackOracleUnavailable(uint256 indexed loanId);
 
+    /// @notice #3865 — a loan entered the fallback state and its dated end
+    ///         began counting: after `waitSeconds` from `enteredAt`, plus any
+    ///         time the platform spends paused (and moved past a sequencer
+    ///         outage window it falls in), anyone may finish it in kind.
+    ///         {getFallbackEnd} reports the date as it stands.
+    /// @param loanId      The loan that entered fallback.
+    /// @param enteredAt   The entry time.
+    /// @param waitSeconds The wait recorded for this entry.
+    /// @custom:event-category informational/liquidation
+    event FallbackEndScheduled(uint256 indexed loanId, uint256 enteredAt, uint256 waitSeconds);
+
+    /// @notice #3865 — a loan left in the fallback state past its date was
+    ///         finished in kind by `caller`, who received nothing. The
+    ///         recorded split was applied as it stood: `lenderPart` reached the
+    ///         stored lender's vault (or was parked for the lender side when
+    ///         the token refused it, see `SettlementLegFacet.
+    ///         SettlementLegParked`), `treasuryPart` reached the treasury, and
+    ///         `borrowerPart` stayed in the borrower's vault for the borrower
+    ///         position's claim (with any top-up that did not cure). The loan
+    ///         is Defaulted; each side collects with its ordinary claim. This
+    ///         is NOT a claim by either holder.
+    /// @param loanId       The loan finished.
+    /// @param lenderPart   Collateral held for the lender side.
+    /// @param treasuryPart Collateral that reached the treasury.
+    /// @param borrowerPart The retained borrower slice of the split.
+    /// @param caller       Who ran the step.
+    /// @custom:event-category state-change/loan-mutation
+    event FallbackFinishedInKind(
+        uint256 indexed loanId,
+        uint256 lenderPart,
+        uint256 treasuryPart,
+        uint256 borrowerPart,
+        address indexed caller
+    );
+
+    /// @notice #3865 — the wait after which a loan left in the fallback state
+    ///         may be finished in kind changed. Applies to entries from now
+    ///         on; a date already recorded does not move.
+    /// @custom:event-category informational/config
+    event FallbackEndWaitDaysSet(uint16 waitDays);
+
     // --- Errors -----------------------------------------------------------
+
+    /// @notice #3865 — {setFallbackEndWaitDays} given a wait outside
+    ///         [`LibFallbackEnd.MIN_WAIT_DAYS`, `MAX_WAIT_DAYS`] (0 included).
+    error FallbackEndWaitOutOfRange(uint16 waitDays);
+
+    /// @notice #3865 — the loan has no dated end to finish: it is not in the
+    ///         fallback state under a live snapshot, or no entry was recorded.
+    error FallbackNotFinishable(uint256 loanId);
+
+    /// @notice #3865 — the loan's dated end has not passed yet.
+    /// @param endAt The date as it stands now (it moves later while paused).
+    error FallbackEndNotReached(uint256 loanId, uint256 endAt);
 
     /// @notice The fallback split and the custody row disagree.
     /// @dev    The row is the custody; the snapshot is the split of it. Both
@@ -298,6 +378,10 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         });
         _requireSnapshotMatchesRow(loanId);
 
+        // #3865 - the dated end starts counting at this entry, with the wait
+        // in force now. A previous episode's record is overwritten.
+        uint256 waitSeconds = LibFallbackEnd.record(s, loanId);
+
         // #998 S10 (#1006 / #1132) - capture a confirmed freeze at fallback ENTRY,
         // where the oracle is up (both producers are HF- or grace-gated). Unlike an atomic
         // liquidation, the lender + borrower shares here are distributed LATER inside
@@ -356,6 +440,7 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         emit LiquidationFallback(loanId);
         emit LiquidationFallbackSplit(loanId);
         if (!oracleAvailable) emit LiquidationFallbackOracleUnavailable(loanId);
+        emit FallbackEndScheduled(loanId, block.timestamp, waitSeconds);
     }
 
     // --- Claim-time retry -------------------------------------------------
@@ -494,6 +579,25 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             lenderMove != LibFallbackCustody.Move.ToLender &&
             lenderMove != LibFallbackCustody.Move.ToBackstop
         ) revert FallbackLenderMoveInvalid(lenderMove);
+        (toTreasury, toLenderSlice, retainedForBorrower) =
+            _dispose(loanId, lenderSliceOwner, lenderMove, false);
+    }
+
+    /// @dev The in-kind split, written once for {disposeFallbackCustody} and
+    ///      {finishFallbackInKind}. `parkLender` selects how the lender slice
+    ///      leaves: false = the claim's and the absorb's {_moveOut}
+    ///      vault-to-vault deposit (a refusing token reverts, and the claim
+    ///      can be retried); true = the dated finish, which no one may be
+    ///      held up on, so a slice the token refuses parks in the borrower's
+    ///      vault for the lender side ({_lenderSliceOrPark}). Everything else
+    ///      (the legacy refusal, the row check, the treasury slice, the
+    ///      retained borrower slice) is the same code on both routes.
+    function _dispose(
+        uint256 loanId,
+        address lenderSliceOwner,
+        LibFallbackCustody.Move lenderMove,
+        bool parkLender
+    ) private returns (uint256 toTreasury, uint256 toLenderSlice, uint256 retainedForBorrower) {
         LibFallbackCustody.requireVaultHeld(loanId);
         uint256 held = LibFallbackCustody.held(loanId);
         if (held == 0) return (0, 0, 0);
@@ -521,13 +625,165 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             _moveOut(
                 s, loanId, borrower, c, toTreasury, LibFallbackCustody.Move.ToTreasury, LibTreasury.ofUserVault(borrower)
             );
-        toLenderSlice =
-            _moveOut(s, loanId, borrower, c, toLenderSlice, lenderMove, lenderSliceOwner);
+        toLenderSlice = parkLender
+            ? _lenderSliceOrPark(loanId, toLenderSlice)
+            : _moveOut(s, loanId, borrower, c, toLenderSlice, lenderMove, lenderSliceOwner);
         if (retainedForBorrower > 0) {
             LibFallbackCustody.debit(
                 loanId, retainedForBorrower, LibFallbackCustody.Move.RetainedForBorrower, borrower
             );
         }
+    }
+
+    // --- The dated end (#3865) -------------------------------------------
+
+    /// @notice Finishes in kind a loan left in the fallback state past its
+    ///         date. Anyone may call it; it pays its caller nothing and pays
+    ///         no wallet.
+    /// @dev    Does exactly what the lender's claim without a route does
+    ///         (`ClaimFacet._claimAsLenderImpl` with an empty try-list), up to
+    ///         the point where that claim pays the holder, in this order:
+    ///         1. Registers both holders under the sanctions hold
+    ///            (`EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth`,
+    ///            the claim's `_stampFrozenClaimants`). A flagged holder does
+    ///            NOT block the step: the other side must not be held up, and
+    ///            a flagged lender's part is deposited into its own vault and
+    ///            stays locked until its claim passes the fail-closed screen.
+    ///         2. Applies the recorded split AS IT STANDS (the entry's split,
+    ///            scaled by any part internal match since; never worked out
+    ///            again from a price) through {_dispose}: the treasury slice
+    ///            to the treasury, the lender slice into the stored lender's
+    ///            vault (parked for the lender side when the token refuses it,
+    ///            `SettlementLegFacet.moveFallbackSliceOrPark`), the borrower
+    ///            slice left in place under the lien. A legacy Diamond-held
+    ///            row is refused (`FallbackCustodyNotVaultHeld`). The lender
+    ///            claim row names the slice, as the claim's disposal leaves it
+    ///            (its asset and kind were written at entry).
+    ///         3. Clears the snapshot and the lender's backstop request (it
+    ///            lapses, as on a cure).
+    ///         4. FallbackPending -> Defaulted through
+    ///            `EncumbranceMutateFacet.terminalizeFromAny`, then the reward
+    ///            close (`InteractionRewardsFacet.liquidationRewardClose`), as
+    ///            the claim's forced terminal does.
+    ///         5. Folds the loan's remaining collateral lien (the borrower
+    ///            slice plus any top-up that did not cure) into the borrower
+    ///            claim, with the claim's Defaulted-gated rule.
+    ///         6. Marks both position tokens Loan Defaulted. The claim burns
+    ///            the lender's token because it pays the holder; here no one
+    ///            is paid, so both tokens stay live for their claims, which
+    ///            mark them Loan Closed and burn them as usual.
+    ///         What a part match already holds for the lender
+    ///         (`heldForLender`) is not touched: the lender's claim pays it.
+    ///         No sale, no internal match (so no matcher's share for finishing
+    ///         someone else's loan), no price. The caller is not screened:
+    ///         the step pays it nothing (a Tier-2 close-out). It never asks
+    ///         the opening rule, so it runs on a closing network.
+    /// @param loanId The FallbackPending loan whose date has passed.
+    function finishFallbackInKind(uint256 loanId) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        (,, uint256 endAt) = LibFallbackEnd.dateOf(s, loanId);
+        if (endAt == 0) revert FallbackNotFinishable(loanId);
+        if (block.timestamp < endAt) revert FallbackEndNotReached(loanId, endAt);
+
+        // 1. Both holders under the sanctions hold, as a claim registers them.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector, loanId),
+            bytes4(0)
+        );
+
+        // 2. The recorded split as it stands, the lender slice parkable.
+        (uint256 toTreasury, uint256 toLender, uint256 retained) =
+            _dispose(loanId, loan.lender, LibFallbackCustody.Move.ToLender, true);
+        s.lenderClaims[loanId].amount = toLender;
+
+        // 3. The episode is over; the lender's backstop request lapses.
+        s.fallbackSnapshot[loanId].active = false;
+        delete s.lenderBackstopOptIn[loanId];
+
+        // 4. Terminal, then the reward close the claim's forced terminal runs.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalizeFromAny.selector,
+                loanId,
+                LibVaipakam.LoanStatus.Defaulted
+            ),
+            bytes4(0)
+        );
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(InteractionRewardsFacet.liquidationRewardClose.selector, loanId),
+            RewardHookCallFailed.selector
+        );
+
+        // 5. The claim's Defaulted fold: the collateral still under the loan's
+        //    lien is what the borrower position is owed.
+        {
+            LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
+            LibVaipakam.Encumbrance storage lienRow = s.loanCollateralLien[loanId];
+            uint256 owedCollateral = lienRow.released ? 0 : lienRow.amount;
+            if (owedCollateral > 0 && (bClaim.amount == 0 || bClaim.asset == loan.collateralAsset)) {
+                bClaim.asset = loan.collateralAsset;
+                bClaim.amount = owedCollateral;
+                bClaim.assetType = LibVaipakam.AssetType.ERC20;
+                bClaim.tokenId = 0;
+                bClaim.quantity = 0;
+                bClaim.claimed = false;
+            }
+        }
+
+        // 6. Both tokens read Loan Defaulted until their claims close them.
+        _markDefaulted(loan.lenderTokenId, loanId);
+        _markDefaulted(loan.borrowerTokenId, loanId);
+
+        emit FallbackFinishedInKind(loanId, toLender, toTreasury, retained, msg.sender);
+    }
+
+    /// @notice A loan's dated end, as it stands now.
+    /// @dev    All zero (and not finishable) when the loan is not in the
+    ///         fallback state under a live snapshot, or no entry was recorded
+    ///         for it: a record a cured episode left behind is never reported.
+    ///         `endAt` is computed on the loan clock now, so it moves later
+    ///         while the platform is paused and past a sequencer outage window
+    ///         it falls in; it is what {finishFallbackInKind} compares with.
+    /// @param loanId The loan to read.
+    /// @return enteredAt   When the current fallback episode began (0 = none).
+    /// @return waitSeconds The wait recorded at that entry (0 = none).
+    /// @return endAt       The date after which the loan may be finished (0 = none).
+    /// @return finishable  True iff {finishFallbackInKind} would pass its
+    ///                     date, pause and custody checks now. It does not
+    ///                     foresee a revert inside a hook it calls.
+    function getFallbackEnd(uint256 loanId)
+        external
+        view
+        returns (uint256 enteredAt, uint256 waitSeconds, uint256 endAt, bool finishable)
+    {
+        (enteredAt, waitSeconds, endAt) = LibFallbackEnd.dateOf(LibVaipakam.storageSlot(), loanId);
+        finishable = endAt != 0 && block.timestamp >= endAt && !LibPausable.paused()
+            && !LibFallbackCustody.isLegacy(loanId);
+    }
+
+    /// @notice Sets the wait, in days, after which a loan left in the fallback
+    ///         state may be finished in kind. Applies to entries from now on;
+    ///         a date already recorded never moves.
+    /// @dev    ADMIN_ROLE, which the handover gives to the governance
+    ///         timelock, so a change waits out the governance delay, like the
+    ///         other bounded loan settings. Bounded [14, 90]; 0 is refused,
+    ///         and a Diamond that never set it reads the default (30).
+    function setFallbackEndWaitDays(uint16 waitDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (waitDays < LibFallbackEnd.MIN_WAIT_DAYS || waitDays > LibFallbackEnd.MAX_WAIT_DAYS) {
+            revert FallbackEndWaitOutOfRange(waitDays);
+        }
+        LibVaipakam.storageSlot().fallbackEndWaitDays = waitDays;
+        emit FallbackEndWaitDaysSet(waitDays);
+    }
+
+    /// @notice The wait in force for a new fallback entry, in days: the
+    ///         governed value, or 30 while none is set.
+    function getFallbackEndWaitDays() external view returns (uint256) {
+        return LibFallbackEnd.waitDays(LibVaipakam.storageSlot());
     }
 
     // --- Read -------------------------------------------------------------
@@ -680,6 +936,44 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         } else {
             arrived = LibSanctionedLock.depositLockedFromVault(s, borrower, to, loanId, asset, amount);
         }
+    }
+
+    /// @dev #3865 — the dated finish's lender slice. The same first two
+    ///      steps as {_moveOut} (row debit labelled `ToLender`, lien decrement
+    ///      by the slice), then the move through the refused-leg host, which
+    ///      deposits the slice into the stored lender's vault or parks it in
+    ///      the borrower's vault for the lender side. Returns the figure the
+    ///      lender claim names: what arrived, or the parked slice (its release
+    ///      at the claim rewrites the claim to what then arrives).
+    function _lenderSliceOrPark(uint256 loanId, uint256 amount)
+        private
+        returns (uint256 forLender)
+    {
+        if (amount == 0) return 0;
+        LibFallbackCustody.debit(
+            loanId, amount, LibFallbackCustody.Move.ToLender, LibVaipakam.storageSlot().loans[loanId].lender
+        );
+        LibEncumbrance.decrementCollateralLien(loanId, amount);
+        (forLender,) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(SettlementLegFacet.moveFallbackSliceOrPark, (loanId, amount)),
+                bytes4(0)
+            ),
+            (uint256, bool)
+        );
+    }
+
+    /// @dev Marks one position token Loan Defaulted.
+    function _markDefaulted(uint256 tokenId, uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                tokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanDefaulted
+            ),
+            NFTStatusUpdateFailed.selector
+        );
     }
 
     // --- Internal ---------------------------------------------------------

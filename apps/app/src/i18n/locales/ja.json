@@ -2707,6 +2707,8 @@
         "SwapToRepayIntentForceCancelled": "返済用スワップを取消",
         "SwapToRepayIntentLotPulled": "返済用スワップの担保を引き出し",
         "FallbackCustodyMoved": "担保の保管を更新",
+        "FallbackEndScheduled": "売却失敗後の決済日を設定",
+        "FallbackFinishedInKind": "決済日に現物で決済",
         "PeriodicInterestSettled": "利息決済済み",
         "PeriodicInterestAutoLiquidated": "利息のため自動清算",
         "RepayPartialPeriodAdvanced": "利息期間を進行",

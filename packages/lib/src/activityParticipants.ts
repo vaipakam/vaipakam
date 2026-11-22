@@ -175,6 +175,9 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // ── Deferred sales.
   // Whoever submitted the forced sale that failed and was deferred.
   ['ForcedSaleFallbackDeferred', ['caller']],
+  // Whoever finished a loan left in the fallback state on its date (#3865);
+  // the step pays the caller nothing, it is the actor.
+  ['FallbackFinishedInKind', ['caller']],
   // ── A wallet's own settings and consents.
   ['AutoLendConsentChanged', ['user']],
   ['AutoOptInOnNewLoanChanged', ['user']],

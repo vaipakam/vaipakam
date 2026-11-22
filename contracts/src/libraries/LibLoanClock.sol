@@ -128,6 +128,26 @@ library LibLoanClock {
         return outageMoved(maturity(loan) + LibVaipakam.gracePeriod(loan.durationDays));
     }
 
+    /// @notice #3865 — the date after which anyone may finish a loan left in
+    ///         the fallback state in kind: the entry time plus the wait
+    ///         recorded at entry, plus the paused time since entry (a pause
+    ///         stops this count as it stops every other deadline of a loan),
+    ///         moved to the end of the latest sequencer outage window when it
+    ///         falls inside it, exactly as {graceEnd} is (#3410: a holder who
+    ///         could not send a claim during an outage gets the recovery
+    ///         window to send it).
+    /// @dev    Takes the record's two figures rather than the loan: the count
+    ///         starts at fallback ENTRY, not at the loan's start, so it is not
+    ///         {pauseCredit}. The one place this date is computed; read it
+    ///         through `LibFallbackEnd.dateOf`, never by hand.
+    /// @param enteredAt   When the loan entered the fallback state.
+    /// @param waitSeconds The wait recorded at that entry.
+    function fallbackEnd(uint256 enteredAt, uint256 waitSeconds) internal view returns (uint256) {
+        return outageMoved(
+            enteredAt + waitSeconds + LibPausable.pausedSecondsBetween(enteredAt, block.timestamp)
+        );
+    }
+
     /// @notice #3410 — the time the late fee starts counting from, for a fee
     ///         priced at `asOf`: the effective {maturity}, moved later by the
     ///         part of the latest sequencer outage window that falls between
