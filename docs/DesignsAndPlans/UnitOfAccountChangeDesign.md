@@ -238,7 +238,7 @@ They hold for every replacement of the price guard. G7 to G9 concern a change of
 | G13 | **The settling time.** For a stated time after a replacement (proposed at two hours, the time the hourly checkpoints need), every step that uses a price asks both guards, wherever the old one still vouches for both assets. A step that reads a loan-to-value or a health factor goes ahead only if both readings allow it: a liquidation needs the loan to be liquidatable under both, and a new loan, a collateral withdrawal and a cure need both to permit. A step that prices an amount goes ahead only while the two guards' readings of its pair are within twice the price tolerance of each other, and waits otherwise: the least output of a forced sale (at a default by time and at a sale for interest), the split at a close-out in kind, the collateral handed over on the discounted route, a match between loans, and the backstop's par check. A repayment reads no price and is untouched. A new loan has no version on the old guard, and reads it at its newest (section 5) | Whoever runs the apply choosing the instant and, in the same transaction or the next, liquidating, borrowing or settling on the difference between the guards. In the settling time nothing can be done, and no amount can be sized, that only the replacement made possible |
 | G14 | **Vaults change guard in the same transaction.** The vault code names one price guard and no earlier one, and no vault ever runs a version that names another price guard than the platform's, by any of the four routes of section 5. The step applies the one waiting change of the vault code that retires the guard: it makes the named version current and, in the same call, revokes every live version that names another price guard. The step is refused unless, after it, the current version names the new guard and no live version names another. That change can be applied by this step alone | A vault and the platform reading different guards at any moment, a pinned vault included, and a vault whose own bound holds only against the more lenient of two guards |
 | G15 | **The set of assets closes for the wait.** From the proposal on, an asset may come into use only if the proposed guard also vouches for it, and the rate its two prices imply lies within twice the price tolerance of the rate the network's wrapped coin's two prices imply at that moment. The two prices are never compared unconverted, and the named rate is not the measure, since it may lie up to the drift from the implied rates (G6). With no loan to name a version, the old guard is read at its newest (section 5) | A small loan opened on an asset only the old guard prices, used to block the replacement |
-| G16 | **The second key for older loans.** For a longer stated period after a replacement (a parameter, proposed at 30 days, never shorter than the settling time), a loan that started before the replacement was proposed has a second key on every line at which someone other than its borrower's side may take or sell the collateral by a reading of its health factor or loan-to-value: the liquidation line on every route (the single sale, the split sale, the discounted route and a partial liquidation), the line above it at which a match between loans is allowed, and the loan-to-value line at which the collateral counts as collapsed. While the new guard reads the loan past such a line by no more than the band (twice the price tolerance, as a share of the line's own figure), the old guard must read it past the line too. Beyond the band the new guard's reading decides alone. The key ends early for an asset as stated below the table. A loan that started, was extended or was refinanced after the proposal reads the new guard alone: it was opened with both readings in view. It holds for every replacement, whether or not the unit changes | A borrower liquidated on a small difference between the two guards that appears after the settling time, on a loan they opened under the old one. The band bounds what the lender's side can lose to an old guard that vouches wrongly, at every moment and with no step needed |
+| G16 | **The second key for older loans.** For a longer stated period after a replacement (a parameter, proposed at 30 days, never shorter than the settling time), a loan that started before the replacement was proposed has a second key on every line at which someone other than its borrower's side may take or sell the collateral by a reading of its health factor or loan-to-value: the liquidation line on every route (the single sale, the split sale, the discounted route and a partial liquidation), the line above it at which a match between loans is allowed, and the loan-to-value line at which the collateral counts as collapsed. While the new guard reads the loan past such a line by no more than the band (twice the price tolerance, as a share of the line's own figure), the old guard must read it past the line too. Beyond the band the new guard's reading decides alone. The key ends early for an asset as stated below the table. A loan that started or was refinanced after the proposal, or that both its parties put on the current settings after it (section 5), reads the new guard alone: both readings were in view. An extension one side makes alone changes nothing here. It holds for every replacement, whether or not the unit changes | A borrower liquidated on a small difference between the two guards that appears after the settling time, on a loan they opened under the old one. The band bounds what the lender's side can lose to an old guard that vouches wrongly, at every moment and with no step needed |
 
 **The assets in use** are every asset that a live loan, a lien (an open offer's among them),
 an open offer, an amount set aside to lend, an Auto-lend slot or a standing commitment
@@ -506,11 +506,13 @@ loan's settings writes it: a sync never changes the guard a loan's record names,
 worked out at each read by the rule above. Every loan action runs the sync first, so a move
 written at a borrower's next top-up would erase the version the settling time and the second key
 read the replaced guard at. A sync that moves another part of a loan's settings (its swap routes
-or its marketplace) keeps the price part as the record has it. Only the loan's own parties
-change the guard its record names, by consent or by an in-place extension, which put the loan on
-the current settings. A loan they put there after a proposal reads the new guard alone, as G16
-states for an extended one. Because a guard that has been the platform's is never applied again
-(G1), "its own, if its record names that guard" never meets a guard that came back.
+or its marketplace) keeps the price part as the record has it. Only both of a loan's parties
+together change the guard its record names: by their consent to the current settings, or by an
+extension both agreed to, which says so when it is authorised. An extension one side makes alone
+never moves the price part. A loan both parties put on the current settings after a proposal
+reads the new guard alone, as G16 states. Because a guard that has been the platform's is never
+applied again (G1), "its own, if its record names that guard" never meets a guard that came
+back.
 
 The settling time and every second key read their guard by the same rule. After a replacement of
 a first guard by a second and of the second by a third, a loan opened on the first holds one key
@@ -530,30 +532,45 @@ keeps the unit, one level down. Left on its wait and its announcement alone it w
 cheap way round this design: apply a guard at a version that agrees, then change a setting
 inside it and retire the applied version. So a retirement carries these guards:
 
-- **Only the retirement's own step raises a floor.** A raise of a guard's floor stays a delayed
-  change of the guard, and is executed by the platform's main address alone (section 2), inside
-  the retirement's step. So no version is retired past the checks. The replacement step refuses
-  a proposed guard whose floor names another executor. Only the platform's guard has
-  retirements: a replaced guard's floor is never raised again, and a version of it that stops
-  vouching ends the keys read at it by the record of section 4.
-- **The versions must agree.** The step runs the paged check of section 3 with the same guard on
-  both sides and a rate of one: each retired version that has a source for an asset is read
-  against the named version, over the assets in use, inside the check window. An asset passes
-  when its two prices lie within twice the price tolerance of each other. The named version must
-  vouch for every asset in use that a retired version has a source for (as G4). An asset a
-  retired version has a source for but cannot vouch for fails, unless the proposal named it
-  exempt with the reason (as G5). That is the route for a version whose source has died or is
-  judged wrong, which is what a retirement is mostly for, and it is shown for the whole wait.
-- **A settling time.** The execute moves the loans and does not yet raise the floor. Once the
-  settling time has passed, anyone raises the floor by a second call, and a keeper pass backs
-  it. Until that call the retired versions still answer, and a step on a loan the retirement
-  moved needs both readings, as G13 states, on every asset not exempt. No sync writes the move
-  into a loan before that call. So whoever executes a retirement cannot liquidate, borrow or
-  settle on the difference between two versions in that transaction or the next.
+- **Only the retirement raises a floor.** A raise of a guard's floor stays a delayed change of
+  the guard. It names the retirement it belongs to and the exact floor, which is the named
+  version. It is proposed no later than the retirement, and lapses or is cancelled with it. The
+  platform's main address alone executes it (section 2), in the retirement's last call, and
+  executes no raise but the one its retirement names. So no version is retired past the checks.
+  The replacement step refuses a proposed guard whose floor names another executor. Only the
+  platform's guard has retirements: a replaced guard's floor is never raised again, and a
+  version of it that stops vouching ends the keys read at it by the record of section 4.
+- **The versions must agree.** The execute runs the paged check of section 3 with the same guard
+  on both sides and a rate of one: each retired version that has a source for an asset is read
+  against the named version, over the assets in use, inside the check window. G3 holds as
+  written: the highest and the lowest rate that the assets' two prices imply differ by no more
+  than twice the price tolerance, so no pair's price, and no loan's reading, moves by more than
+  that. A bound on each asset alone would let a collateral and a debt asset move apart by twice
+  as much. As G6 does when the unit stays, the middle of those rates lies within the price
+  tolerance of one. The named version must vouch for every asset in use that a retired version
+  has a source for (as G4). An asset a retired version has a source for but cannot vouch for
+  fails, unless the proposal named it exempt with the reason (as G5). That is the route for a
+  version whose source has died or is judged wrong, which is what a retirement is mostly for,
+  and it is shown for the whole wait.
+- **A settling time, ended by the clock.** The execute moves the loans and does not raise the
+  floor. For the settling time, counted from the execute, a step on a loan the retirement moved
+  needs both readings, as G13 states, on every asset not exempt, and no sync writes the move. It
+  ends at its fixed time and at no call, so nobody chooses the moment the second reading stops.
+  Whoever executes a retirement cannot liquidate, borrow or settle on the difference between two
+  versions in that transaction or the next.
+- **The floor is raised afterwards.** Once the settling time has passed, anyone makes the call
+  that raises the floor, and a keeper pass backs it. The call changes no reading: from the end
+  of the settling time the platform reads a moved loan at the named version alone, and names no
+  retired version to a vault. Until the call the retired versions still answer on the guard, so
+  a vault's own check would not yet refuse one. That is the one thing the call closes. The floor
+  goes to the named version exactly, whatever version is newest by then: a setting changed on
+  the guard in the meantime makes a newer version for new loans and does not lapse the raise.
+  The named version must be the current one at the proposal and at the execute, and not after.
 - **One at a time.** A retirement is not executed inside the settling time of a replacement, nor
-  while the floor of an earlier retirement is still to be raised. A replacement is not applied
-  while the floor of a retirement is still to be raised. So no step reads the guard in force
-  at more than two versions, beside whatever second keys the loan holds.
+  while an earlier retirement's floor is still to be raised. A replacement is not applied while
+  a retirement's floor is still to be raised. So no step reads the guard in force at more than
+  two versions, beside whatever second keys the loan holds. An overdue raise holds up the next
+  retirement and the next replacement, so an alert names it.
 
 A retirement carries **no second key**, and is to that extent weaker than a replacement. A
 second key needs the old reading to stay answerable for the older-loan period. A retired version
@@ -566,7 +583,7 @@ change of feeds that should carry the second key is made as a replacement of the
 **What reaches an open loan with no agreement check.** Two things, both stated in the loan
 settings design. A stop of a secondary source applies to every version at once: a mute only
 refuses more, and a removal loosens the quorum under its own announced wait (#3537). And a move
-by the loan's own parties, by consent or by an in-place extension, is their act. Every other
+to the current settings that both of the loan's parties agreed to is their own act. Every other
 change of the feeds under an open loan is a replacement or a retirement, and carries the check.
 
 ### 6. More than one network
@@ -602,7 +619,8 @@ on every network, named in each proposal with the same earliest and latest time.
   change number the keeper's value-dependent passes stand down and alert. The liquidation pass
   reads both guards for an older loan in the older-loan period, and a pass backs the steps
   that record and confirm the end of the second key for an asset. A pass backs the execute of
-  a due retirement and the call that raises the floor after its settling time. Both sides of
+  a due retirement and the call that raises the floor after its settling time, and an alert
+  names a raise that is overdue. Both sides of
   a loan see its reading at the named version for the whole wait of a retirement.
 
 ### 8. The unit map
@@ -800,14 +818,19 @@ Precondition: the reward ceiling worked out per unit of the network's coin is re
     alone; a retirement between versions that disagree, one with an exempt asset, one
     executed with a liquidation tried in the same transaction and inside its settling
     time, its floor raised by another address and before the settling time has passed,
-    and one tried inside the settling time of a replacement.
+    and one tried inside the settling time of a replacement; a collateral and a debt asset
+    that each move inside the tolerance and apart by more than G3 allows; a liquidation in
+    the transaction that raises a floor, read the same before and after the call; a raise
+    the retirement did not name; a raise made after a newer version became current; an
+    extension made by one side, with the loan's price part unchanged.
 12. A drill before mainnet: a full change of unit on a fork of each testnet, from proposal to
     apply, with the comparison report kept. It is a row of the launch register.
 
 13. The guarded retirement of a price version (section 5): the floor's executor fixed in the
     guard, the paged check between versions with its exemptions, the settling time with both
-    readings, the second call that raises the floor and its keeper pass, and the sync that
-    waits for that call. It is built with the loan settings design's retirement.
+    readings and its fixed end, the raise that names its retirement and its exact floor,
+    the call that makes it with its keeper pass and its alert, and the sync that waits for
+    the settling time. It is built with the loan settings design's retirement.
 
 All of it is contract work for the build after the fresh deploy's batch, in the refactor's
 structure. It needs a fresh deploy: the unit record and the first-unit rule change what
