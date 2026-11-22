@@ -65,7 +65,7 @@ one (section 2).
 **A loan and its guard.** A loan can keep being priced on the price settings it was opened
 under (#3437), and a vault accepts only the guards its code lists: the one new loans use and
 a small number of earlier ones. A replacement of the guard therefore has to say what happens
-to open loans and to vaults. Section 5 does.
+to open loans and to vaults. Section 5 does, and it changes both of those rules.
 
 **Two things the next guard needs.** Neither matters while the feeds are quoted in the unit,
 as they are today. Both are build items below.
@@ -130,8 +130,10 @@ Every replacement of the price guard goes through one step on the Diamond, wheth
 changes or not. A replacement that keeps the unit has a rate of exactly one.
 
 - **The registry's part.** The registry lets only the platform's main address execute a
-  pending price guard. It names that address as one of its own pointers, under its own
-  delay. It reads nothing from a guard that is only proposed, and knows nothing about units.
+  pending price guard. It names that address as one of its own pointers, under a delay no
+  shorter than the price guard's own least delay, so that changing it is never the faster
+  way to a new guard. It reads nothing from a guard that is only proposed, and knows nothing
+  about units.
 - **The Diamond's part.** Its step refuses unless the registry's pending guard is exactly the
   guard the Diamond's record of the replacement names, was proposed on the registry no later
   than that record, and has reached its time. A different guard put in its place on the
@@ -139,10 +141,14 @@ changes or not. A replacement that keeps the unit has a rate of exactly one.
   again, with its full wait. The step then executes the pointer, runs every check below, and
   writes the unit record. If any check fails the whole transaction fails: the old guard
   stays, the old unit stays, and the pending replacement stays pending.
-- **Reading the proposed guard.** Every ordinary price read refuses a guard in another unit,
-  and that stays so. The checks and the previews read the proposed guard through a separate
-  reader with the same fixed read budget. It is the one place where a guard that is not yet
-  the platform's is read on purpose, and no ordinary price read can reach it.
+- **Reading a guard that is not the platform's.** Every ordinary price read refuses a guard
+  in another unit, and that stays so. Two guards are read on purpose although they are not
+  the platform's: the proposed guard before the apply (the checks, the previews, and G15 at
+  the first use of an asset), and the replaced guard after it (the settling time and the
+  second key). Both go through one separate reader with the same fixed read budget, and
+  nothing else can reach it. A figure of the platform is never valued through it: it answers
+  only "does this guard vouch, and at what price". What a failed read does is stated with
+  each guard that uses it.
 
 There is no moment at which a threshold in one unit meets a price in another, and no moment
 at which prices cannot be read.
@@ -209,10 +215,10 @@ They hold for every replacement of the price guard. G7 to G9 concern a change of
 | G10 | The step moves no asset and writes no loan, lien, claim or balance | A direct path from a replacement to a user's funds. What a replacement can still move is stated below the table |
 | G11 | Every stored price carries its change number, and is never compared across numbers | An old price read as a new one |
 | G12 | The proposal, a cancel, each check page and the applied replacement are events. Together they name both units, both guards, the rate, the scale and each asset's two prices | A replacement that cannot be reconstructed from the record |
-| G13 | **The settling time.** For a stated time after a replacement (proposed at two hours, the time the hourly checkpoints need), every step that reads a loan-to-value or a health factor asks both guards, wherever the old one still vouches for both assets, and goes ahead only if both readings allow it. A liquidation needs the loan to be liquidatable under both. A new loan, a collateral withdrawal and a cure need both to permit. A repayment and a default by time read neither and are untouched | Whoever runs the apply choosing the instant and, in the same transaction or the next, liquidating or borrowing on the difference between the guards. In the settling time nothing can be done that only the replacement made possible |
-| G14 | **Vaults are ready first.** The step is refused unless the current version of the vault code lists the new guard, and every version that does not list it is revoked. A version may list the old guard beside it as an earlier one | A vault, pinned or not, refusing a close-out of a loan that is now read on a guard its code does not list |
-| G15 | **The set of assets closes for the wait.** From the proposal on, an asset may come into use only if the proposed guard also vouches for it, within the price tolerance of the old guard's reading | A small loan opened on an asset only the old guard prices, used to block the replacement |
-| G16 | **The second key for older loans.** For a longer stated period after a replacement (a parameter, proposed at 30 days, never shorter than the settling time), a loan that started before it has a second key on every route of liquidation by health factor: the single sale, the split sale, the match, the discounted route and a partial liquidation. While the new guard reads the loan below the line by no more than the band (twice the price tolerance), the old guard must read it below the line too. Below the band the new guard's reading decides alone. The key ends early for an asset as stated below the table. A loan that started, was extended or was refinanced after the replacement reads the new guard alone. It holds for every replacement, whether or not the unit changes | A borrower liquidated on a small difference between the two guards that appears after the settling time, on a loan they opened under the old one. The band keeps an old guard that vouches wrongly from holding a loan that is truly under water out of liquidation |
+| G13 | **The settling time.** For a stated time after a replacement (proposed at two hours, the time the hourly checkpoints need), every step that uses a price asks both guards, wherever the old one still vouches for both assets. A step that reads a loan-to-value or a health factor goes ahead only if both readings allow it: a liquidation needs the loan to be liquidatable under both, and a new loan, a collateral withdrawal and a cure need both to permit. A step that prices an amount goes ahead only while the two guards' readings of its pair are within twice the price tolerance of each other, and waits otherwise: the least output of a forced sale (at a default by time and at a sale for interest), the split at a close-out in kind, the collateral handed over on the discounted route, a match between loans, and the backstop's par check. A repayment reads no price and is untouched | Whoever runs the apply choosing the instant and, in the same transaction or the next, liquidating, borrowing or settling on the difference between the guards. In the settling time nothing can be done, and no amount can be sized, that only the replacement made possible |
+| G14 | **Vaults change guard in the same transaction.** The vault code names one price guard and no earlier one. The step applies the waiting change of the vault code that makes current a version naming the new guard, and is refused unless, after it, the current version names the new guard and no live version names another. That change of the vault code can be applied by this step alone | A vault and the platform reading different guards at any moment, a pinned vault included, and a vault whose own bound holds only against the more lenient of two guards |
+| G15 | **The set of assets closes for the wait.** From the proposal on, an asset may come into use only if the proposed guard also vouches for it, and the rate its two prices imply lies within the price tolerance of the proposal's named rate (one when the unit stays). The two prices are never compared unconverted | A small loan opened on an asset only the old guard prices, used to block the replacement |
+| G16 | **The second key for older loans.** For a longer stated period after a replacement (a parameter, proposed at 30 days, never shorter than the settling time), a loan that started before the replacement was proposed has a second key on every line at which someone other than its borrower's side may take or sell the collateral by a reading of its health factor or loan-to-value: the liquidation line on every route (the single sale, the split sale, the discounted route and a partial liquidation), the line above it at which a match between loans is allowed, and the loan-to-value line at which the collateral counts as collapsed. While the new guard reads the loan past such a line by no more than the band (twice the price tolerance), the old guard must read it past the line too. Beyond the band the new guard's reading decides alone. The key ends early for an asset as stated below the table. A loan that started, was extended or was refinanced after the proposal reads the new guard alone: it was opened with both readings in view. It holds for every replacement, whether or not the unit changes | A borrower liquidated on a small difference between the two guards that appears after the settling time, on a loan they opened under the old one. The band bounds what the lender's side can lose to an old guard that vouches wrongly, at every moment and with no step needed |
 
 **The assets in use** are every asset that a live loan, a lien (an open offer's among them),
 an open offer, an amount set aside to lend, an Auto-lend slot or a standing commitment
@@ -234,9 +240,9 @@ dying. G3 bounds the jump, G13 keeps anyone from acting on it at once, and the p
 it for the whole wait.
 
 A borrower who opened a loan under the old guard had no part in the replacement. So the old
-guard stays a second key on the one step that can take their collateral (G16). The test of
-an older loan is its own start time against the time of the replacement, so it needs no new
-field. Nothing else waits on the old guard after the settling time. A repayment, a default
+guard stays a second key on the steps that can take their collateral (G16). The test of an
+older loan is its own start time against the time the replacement was proposed, so it needs
+no new field. Nothing else waits on the old guard after the settling time. A repayment, a default
 by time and a forced sale for interest never read it.
 
 The second key is bounded three ways, so that it never becomes a way to hold a liquidation
@@ -250,19 +256,45 @@ off:
 - **An end when the old guard cannot vouch.** Anyone may record that the old guard cannot
   vouch for an asset. If it still cannot when a stated time has passed (proposed at two
   hours), the key is over for every loan that names the asset. One stale moment does not
-  end it, and a lender waits no longer than that time on a dead feed.
-- **An end when the two guards part.** Anyone may record that the two guards' prices of an
-  asset differ by more than the band. If they still do when the same stated time has
-  passed, the old guard is unreliable for that asset and the key is over for it.
+  end it, and a lender waits no longer than that time on a dead feed. Where the replaced
+  guard's own controls stop it vouching for an asset, the key ends for it the same way.
+- **An end when the two guards part.** Anyone may record that the rate an asset's two prices
+  imply differs from the rate applied at the replacement by more than the band. If it still
+  does when the same stated time has passed, the old guard is unreliable for that asset and
+  the key is over for it.
 
-A keeper pass backs these steps. While the network's sequencer is down neither guard vouches
-and nothing is recorded.
+A record lives for twice the stated time and then lapses unconfirmed. Anyone may clear it
+before then by a read that shows the opposite: the old guard vouching, or the implied rate
+back inside the band. Neither a record nor the step that confirms it counts while the network's
+sequencer is down or inside the recovery time after an outage. A keeper pass backs these
+steps.
+
+The band, not these ends, is what bounds the lender's side: at no moment can the old guard
+hold a loan out of liquidation that the new guard reads more than the band under water. The
+ends only stop the platform asking a guard that has nothing left to say.
+
+**A key outlives a later replacement.** A second key names its guard and runs for its own
+period. A later replacement inside that period neither ends it nor takes its place: the
+loan then holds one key for each replacement since it started whose period still runs, and
+while the guard in force reads the loan inside the band, every one of those keys must read
+it below the line. Each key has its own ends. Without this, a second replacement by a guard
+that agrees with the first would drop the protection of the loans opened before both. The
+number of keys running at once is bounded by the older-loan period over the shortest wait
+of a replacement.
+
+**Two guards' prices are never compared unconverted.** After a change of unit the two
+guards answer in different units. Wherever a rule here sets one guard's reading of an asset
+beside the other's (G3, G15, the end of the second key, a preview), what is compared is the
+rate the two prices imply against the rate of the replacement, which is one when the unit
+stays. Where a rule compares readings of a pair, or of a loan, each reading is a ratio
+inside one guard and needs no conversion (G13, G16).
 
 **A read that ran out of gas is no answer.** Several guards turn "the guard cannot vouch"
 into a decision: G4, G5, G15 and the two ends of the second key. Every read of the old guard
 and of a proposed guard is handed the fixed read budget, and a read that ran out of it fails
 the whole step by name. It never counts as "cannot vouch", so no caller can fake an outage
-by starving a read.
+by starving a read. A step that reads two guards hands each its own budget, and the least
+gas the step needs is stated with both in it.
 
 **When the old guard is wrong, not dead.** An old guard that still vouches but prices an
 asset wrongly would fail its own replacement at G3. The route is a checked proposal that
@@ -297,7 +329,19 @@ record and the event say it was unchecked.
 **Correcting an unchecked rate.** A rate applied unchecked may be corrected by governance:
 the same unit, the same guard, a new rate, the full unit change wait, published like a
 change, outside the cool-down. A checked rate is never corrected, because it was held within
-its drift when it was applied.
+its drift when it was applied. A change may be corrected more than once, each time with the
+full wait, and the rate as corrected stays inside the range one change may have (G7), so a
+run of corrections cannot rescale the thresholds (G9).
+
+A correction must also put right the reward weights registered under the wrong rate, since
+weights are stored and read raw. So a weight registered under an unchecked rate is marked
+with its change number and summed apart from the others, in each day's total, in the totals
+the reward network keeps and in every message between networks. Those weights and totals
+are read through a factor, which is one until a correction and the applied rate over the
+corrected rate after it. A correction therefore repairs every such weight for every reward
+day not yet closed. A day already closed stays as it was paid, and the correction's event
+names the days it could not reach. No weight registered under a checked rate is marked or
+kept apart.
 
 **In a pause.** The step is governance's configuration and moves nothing, so a pause does
 not refuse it. Dead feeds are a likely reason for both a pause and a replacement.
@@ -315,15 +359,36 @@ not refuse it. Dead feeds are a likely reason for both a pause and a replacement
 | The daily price record | Kept, with its change number |
 | Hourly checkpoints | Count as none until the new guard has written two hours of them. For that time the forced-sale floor is the full configured figure and an offer's price-move guard refuses a fill |
 | An offer's recorded guard prices | Kept. The comparison is a ratio, but its two ends are now read from different guards, so a guarded offer can trip, or pass, on the replacement alone by up to twice the tolerance. The app reports that as the replacement, not as a move of the market |
-| Vaults | Already on a version that lists the new guard (G14). The vault's own checks are ratios and bounds in tokens and hold no figure in the unit |
+| Vaults | Moved to a version that names the new guard, in the same transaction (G14). The vault's own checks are ratios and bounds in tokens and hold no figure in the unit |
 
-**The order for vaults is a condition, not a hope.** Before the step can pass: a version of
-the vault code that lists the new guard, with the old one as an earlier guard, is registered
-and waits the vault code wait; it is made current; every version that does not list the new
-guard is revoked, which moves a vault pinned to one onto the current version. So the wait of
-a replacement is bounded from below by the vault code wait, plus the longest pin delay
-protection sets, plus the time a revoke takes. The unit change wait is stated in the
-parameters table with that bound.
+**Vaults change in the step, not before it and not after.** A vault takes its price guard
+from its own code, so that its bounds hold even if a step of the platform is wrong. If a
+version listed two guards, a vault would accept either, and its bound would hold only
+against the more lenient one. So a version names one price guard. Before the step can pass:
+a version that names the new guard is registered and waits the vault code wait; every other
+live version but the current one is revoked, which moves a vault pinned to one onto the
+current version; and the change that revokes the current version and names the new one as
+its successor is proposed and waits. The step applies that last change itself. A change of
+the vault code that names another price guard than the platform's can be applied by this
+step alone, never by anyone else and never apart from it, so there is no moment at which a
+vault and the platform read different guards. If the step fails, the change stays waiting.
+If the replacement is cancelled or lapses, governance cancels it.
+
+So the wait of a replacement is bounded from below by the vault code wait, plus the longest
+pin delay protection sets, plus the time the revokes take. The unit change wait is stated in
+the parameters table with that bound.
+
+The second key is the platform's own extra condition and never the vault's: a vault reads
+only the guard its code names.
+
+**Two approved vault statements change with this**, and both are the owner's to approve
+with this design: a change of the vault code that has waited is applied by anyone, except
+one that names another price guard, which only the replacement step applies; and the short
+list of earlier price guards a version may carry is no longer used for price guards.
+
+**A loan's guard is worked out, never stored.** No loan and no lien stores the address of a
+guard or a price version. Each is read on the platform's guard of the moment. Only so can
+the step move every open loan while writing none (G10).
 
 ### 6. More than one network
 
@@ -345,8 +410,9 @@ on every network, named in each proposal with the same earliest and latest time.
 - **App.** Every value shows the unit read from the chain, never a fixed sign. A pending
   replacement is shown with its date and its kind. History is shown in the unit of its time,
   or converted at the published rate, and the screen says which.
-  During the wait a borrower sees both guards' readings of each loan. In the older-loan
-  period, an older loan shows both readings and says a liquidation by health factor needs
+  During the wait both sides of a loan see both guards' readings of it. In the older-loan
+  period, an older loan shows both readings to its borrower and to its lender, and says that
+  inside the band a liquidation by health factor needs
   both, and until when.
 - **Wording.** No text of the app, the notices or the Terms names a currency as the
   platform's unit. Each says "the unit of account" and shows the symbol read from the chain,
@@ -372,7 +438,8 @@ A pre-deploy check reads the storage layouts and the code and refuses:
   guard, unless the manifest names its kind;
 - a figure read otherwise than its kind allows (a value read raw, a weight read through the
   scale, a rate multiplied where it must be divided);
-- a figure in the unit on a loan, a lien, a claim or a vault.
+- a figure in the unit on a loan, a lien, a claim or a vault;
+- a guard's address or a price version stored on a loan or a lien.
 
 Two statements are owed to the canonical specification from this: a vault holds no figure in
 the unit, and nothing owed to a party is stored in the unit.
@@ -407,9 +474,11 @@ the unit, and nothing owed to a party is stored in the unit.
 10. **Let only governance or the keeper run the apply, and refuse a liquidation in the same
    transaction.** Rejected: the transaction after it is as good to whoever is watching. The
    settling time (G13) removes the gain instead of the caller.
-11. **Leave vaults to follow by the ordinary vault code change.** Rejected: between the two,
-    a vault and the platform would read different guards, and a pin could hold a vault on a
-    guard that has stopped vouching.
+11. **Leave vaults to follow by the ordinary vault code change, or make a version that lists
+    both guards current beforehand.** Rejected. By the first, a vault and the platform would
+    read different guards between the two, and a pin could hold a vault on a guard that has
+    stopped vouching. By the second, a vault would accept either guard, so its own bound
+    would hold only against the more lenient one, with no date at which the old one goes.
 12. **Leave each open loan on the unit and the guard it was opened under until it closes**
     (the owner's question of 2026-11-22). It would spare an existing borrower any move in
     their readings. Not recommended: the jump would then come at each loan's own later move
@@ -430,8 +499,16 @@ the unit, and nothing owed to a party is stored in the unit.
 ## Recommendation
 
 Build the design above, with one unit for every loan and the second key for older loans.
-The owner's choice between that, older loans staying on the old unit (alternative 12) and
-the settling time alone (alternative 15) is open, and the design is written to the first.
+
+Three points in it are the owner's to decide, and the design is written to the recommended
+answer of each:
+
+- how loans opened before a replacement are priced after it: the second key inside a band
+  (recommended), older loans staying on the old unit (alternative 12), or the settling time
+  alone (alternative 15);
+- that a change of the vault code naming another price guard is applied by the replacement
+  step alone, where an approved vault statement lets anyone apply a change that has waited;
+- that a version of the vault code no longer lists earlier price guards.
 
 When the trouble is only with feeds, prefer a replacement that keeps the unit: it goes
 through the same step and the same guards, and changes no figure a user sees.
@@ -471,9 +548,10 @@ Precondition: the reward ceiling worked out per unit of the network's coin is re
    permitted), since the routes have no room to carry it themselves. The steps that end the
    key for an asset, and their keeper pass. The rule of one price for an asset in one
    transaction (#3987) keys by guard as well as by asset.
-7. The vault condition (G14): vault code that lists the current guard and up to the earlier
-   guards the parameters allow, where it holds one today; and the step's read of the version
-   registry, which must be walkable or be given a list it can prove complete.
+7. The vault condition (G14): the version registry's rule that a change naming another price
+   guard is applied by the replacement step alone, the step's apply of it, and its read of
+   the live versions, which must be walkable or be given a list it can prove complete. The
+   vault code keeps one price guard.
 8. A guard in a second unit for testing, with the peg rule in that unit.
 9. Every message between networks that carries a figure in the unit: first unit and change
    number. A new network's start at the fleet's scale.
@@ -483,12 +561,13 @@ Precondition: the reward ceiling worked out per unit of the network's coin is re
     and a reward share compared before and after; an apply and a liquidation tried in one
     transaction and in the next; an older loan the new guard alone reads below the line,
     tried inside the older-loan period inside and below the band, after the period, after
-    the old guard's feed stops, and after the two guards part; a read starved of gas at
-    each guard that reads; a
-    guard replaced on the registry during the wait; a small loan opened during the wait on
-    an asset the new guard does not price; a same-unit
-    replacement by a guard that disagrees; a change on one network with reward days added up
-    across two; the change without the old guard and its correction.
+    the old guard's feed stops, after the two guards part, and across a second replacement
+    inside the period; an asset brought into use during the wait of a change of unit; a
+    correction with weights registered before it and a reward day closed before it; a read
+    starved of gas at each guard that reads; a guard replaced on the registry during the
+    wait; a small loan opened during the wait on an asset the new guard does not price; a
+    same-unit replacement by a guard that disagrees; a change on one network with reward
+    days added up across two; the change without the old guard and its correction.
 12. A drill before mainnet: a full change of unit on a fork of each testnet, from proposal to
     apply, with the comparison report kept. It is a row of the launch register.
 
