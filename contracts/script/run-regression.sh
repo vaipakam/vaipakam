@@ -145,9 +145,18 @@ run() {  # run(label, glob) -> 0 pass, 1 fail
   esac
   echo ""
   echo "===== $label : forge test --match-path '$glob' ${extra[*]} ====="
-  if "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}"; then
-    return 0
-  fi
+  # The chunk's test counts (#3964: the baseline record carries them) come
+  # from forge's own closing line, "N tests passed, M failed, K skipped";
+  # a chunk that printed none (a compile failure) counts as 0 run.
+  local log rc
+  log=$(mktemp)
+  "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  LAST_PASSED=$(sed -nE 's/.* ([0-9]+) tests passed, ([0-9]+) failed.*/\1/p' "$log" | tail -n 1)
+  LAST_FAILED=$(sed -nE 's/.* ([0-9]+) tests passed, ([0-9]+) failed.*/\2/p' "$log" | tail -n 1)
+  rm -f "$log"
+  LAST_PASSED=${LAST_PASSED:-0}; LAST_FAILED=${LAST_FAILED:-0}
+  (( rc == 0 )) && return 0
   echo "CHUNK FAILED: $label" >&2
   return 1
 }
@@ -343,7 +352,12 @@ for k in "${!PLAN_GLOBS[@]}"; do
   (( k % SHARD_N == SHARD_I - 1 )) || continue
   MINE=$((MINE+1))
   if run "${PLAN_LABELS[$k]}" "${PLAN_GLOBS[$k]}"; then st=pass; else st=fail; FAILED=1; fi
-  [ -n "$MANIFEST" ] && printf '%s\t%s\n' "$st" "${PLAN_GLOBS[$k]}" >> "$MANIFEST"
+  if [ -n "$MANIFEST" ]; then
+    printf '%s\t%s\n' "$st" "${PLAN_GLOBS[$k]}" >> "$MANIFEST"
+    # tests <glob> <run> <passed> — read by the baseline record (#3964);
+    # --verify-shards reads only the pass/fail lines.
+    printf 'tests\t%s\t%s\t%s\n' "${PLAN_GLOBS[$k]}" "$((LAST_PASSED + LAST_FAILED))" "$LAST_PASSED" >> "$MANIFEST"
+  fi
 done
 # Written last, so a manifest without it is a shard that died mid-run.
 [ -n "$MANIFEST" ] && printf 'complete\t%s\n' "$MINE" >> "$MANIFEST"
