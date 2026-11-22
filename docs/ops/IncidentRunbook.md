@@ -894,26 +894,43 @@ transaction on chain, a reproduction against a fork, or a comparison of the
 platform's reading with the market it claims to read. A report or a
 suspicion starts the investigation; it is not the reason.
 
+"Shown" in the second reason means that a reading the platform uses
+disagrees with something anyone can check. Four cases count: the platform's
+price sources disagree with each other past the price guard's own bound; a
+feed is stale or halted; a liquidity reading was moved by a trade in the
+pool with no matching move in the wider market, named by its transaction; or
+a limit taken from an outside reading is shown to be in error. If the
+platform's readings agree with independent sources, the second reason does
+not apply, however fast or far the price moves.
+
 **When it is never used.** Not because the market price moved (a crash or
 thin liquidity on its own is handled by the risk rules and the price guard),
 not for the asset's reputation or its issuer's conduct, and never at
 anyone's request, the asset's own project included.
+The pause does not stop liquidation, default or repayment, so it is never a
+tool against a price move.
 
-**Each use is published, in [`AssetPauseLog.md`](AssetPauseLog.md).**
-Checklist, in this order:
+**Each use is published, in [`AssetPauseLog.md`](AssetPauseLog.md), with
+its reason when the pause is placed.** A notice for the second reason names
+the reading, the discrepancy, and the block or the transaction that shows
+it. A pause for the second reason with no stated discrepancy is outside the
+rule, and it is lifted. Checklist, in this order:
 
 1. Pause (`pauseAsset`) and confirm the `AssetPauseEnabled` event.
 2. Open the log entry straight away, through a commit to `main`: network,
    asset address, time and transaction, the reason number (1 or 2 above) and
-   one sentence, and what the pause stops that day. If the evidence would
-   help someone exploit a fault that is still open, write "Evidence
-   follows." and add it once safe.
+   one sentence, and what the pause stops that day. For the second reason,
+   also the reading, what it disagrees with, and the block or transaction
+   that shows it, all in the first entry and never left for later. For the
+   first reason only, if the evidence would help someone exploit a fault
+   that is still open, write "Evidence follows." and add it once safe.
 3. Correct anything later with a new line under the entry; never rewrite
    one.
 
 The contract's `AssetPauseEnabled` event carries no reason and is not
 changed; the log is where the reason lives. A pause with no entry is a
-defect in the response, and the daily launch check reports it.
+defect in the response, and the daily launch check reports it, as it does
+a second-reason entry with no stated discrepancy.
 
 **Lifting it.** After handover, `unpauseAsset` needs `ADMIN_ROLE` or
 `UNPAUSER_ROLE`, both held by the Timelock, so a lift waits the standard

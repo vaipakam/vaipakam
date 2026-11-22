@@ -162,7 +162,7 @@ hasRole(<any role>, DEPLOYER) == false and hasRole(<any role but the bot roles>,
 |---|---|
 | Deployer renounces before new multisig is active | **Never skip step 6 verify.** If broken, the Diamond has no admin; only recovery is a fresh deploy + migration. |
 | A bad proposal is queued | The governance multisig (proposer) or the independent canceller (pauser multisig) cancels via `cancel(id)` during the delay. |
-| A bot or pauser key is compromised | The governance multisig calls `emergencyRevokeRole(role, key, reason)` — immediate, no timelock. It cannot touch `DEFAULT_ADMIN_ROLE` or the timelock's roles. |
+| A bot or pauser key is compromised | The governance multisig calls `emergencyRevokeRole(role, key, reason)` — immediate, no timelock. It cannot touch `DEFAULT_ADMIN_ROLE` or the timelock's roles. If the key held `PAUSER_ROLE`, revoke at once, then queue one Timelock operation that lifts every per-asset pause whose entry in [`AssetPauseLog.md`](AssetPauseLog.md) does not meet the rule in IncidentRunbook §3.8. |
 | PAUSER_ROLE granted to a single EOA (not multisig) | Do not ship. A single-EOA pauser is a single point of compromise *and* a single point of delay. |
 
 ---
