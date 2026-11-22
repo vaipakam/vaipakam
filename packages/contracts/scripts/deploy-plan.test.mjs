@@ -65,6 +65,8 @@ test('validation refuses the mistakes the file invites', () => {
     [(d) => { d.roles.bots.keeper.roles = ['keeper']; }, /\*_ROLE names/],
     [(d) => { d.records.keeperAddress = 'nobody'; }, /not under roles.bots/],
     [(d) => { d.sanctionsClearance.timelocks = ['bnb-testnet']; }, /sanctionsClearance.timelocks/],
+    [(d) => { delete d.settings[0].source; }, /source must say where the value comes from/],
+    [(d) => { d.network = 'mainnet'; }, /a carried row is refused/],
   ];
   for (const [mutate, re] of cases) {
     const d = real();
@@ -108,7 +110,7 @@ test('the canonical chain closes, finalizes and broadcasts the day before the ar
   const lines = plan().split('\n');
   const at = (re) => lines.findIndex((l) => re.test(l));
   const close = at(/'closeDay\(uint256\)'/);
-  const wait = at(/^clock \+43201$/);
+  const wait = at(/^clock \+14401$/);
   const fin = at(/'finalizeDay\(uint256\)'/);
   const bc = at(/'broadcastGlobal\(uint256\)' "\$P" --value "\$F"/);
   assert.ok(at(/^step base-sepolia launch/) < close && close < wait && wait < fin && fin < bc && bc < at(/^relay /));

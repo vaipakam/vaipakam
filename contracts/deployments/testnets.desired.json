@@ -45,30 +45,44 @@
   "records": {
     "keeperAddress": "keeper"
   },
+  "_settingsSource": "Testnet settings copy the deployment being replaced (design ruling 2026-11-22, item 6b): read from the three live 2026-11-16 Diamonds on 2026-11-22. Settings those Diamonds leave at their defaults (service capacity, its escrow, the arming fee, the capacity curves, the priority-routing perk) stay dark here too. A mainnet desired file may hold no carried row.",
   "settings": [
     {
       "chains": "all",
       "setter": "setPartialFillEnabled(bool)",
       "getter": "getPartialFillEnabled()(bool)",
-      "value": "true"
+      "value": "true",
+      "source": "carried from the deployment being replaced, not an owner decision"
     },
     {
       "chains": "all",
       "setter": "setRiskAccessGateEnabled(bool)",
       "getter": "getRiskAccessGateEnabled()(bool)",
-      "value": "true"
+      "value": "true",
+      "source": "carried from the deployment being replaced, not an owner decision"
     },
     {
       "chains": "all",
       "setter": "setAutoExtendEnabled(bool)",
       "getter": "getAutoExtendEnabled()(bool)",
-      "value": "true"
+      "value": "true",
+      "source": "carried from the deployment being replaced, not an owner decision"
     },
     {
       "chains": "all",
       "setter": "setLenderIntentEnabled(bool)",
       "getter": "isLenderIntentEnabled()(bool)",
-      "value": "true"
+      "value": "true",
+      "source": "carried from the deployment being replaced, not an owner decision"
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setFeeEntitlementEnabled(bool)",
+      "getter": "getFeeEntitlementConfig()(bool,uint256,uint256)",
+      "value": "true",
+      "source": "carried from the deployment being replaced, not an owner decision"
     },
     {
       "chains": [
@@ -76,7 +90,8 @@
       ],
       "setter": "setRewardGraceSeconds(uint64)",
       "getter": "getRewardGraceSeconds()(uint64)",
-      "value": "43200"
+      "value": "14400",
+      "source": "carried from the deployment being replaced, not an owner decision"
     },
     {
       "chains": [
@@ -84,7 +99,8 @@
       ],
       "setter": "setRewardRemittanceKeeper(address)",
       "getter": "getRewardRemittanceKeeper()(address)",
-      "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B"
+      "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B",
+      "source": "carried from the deployment being replaced, not an owner decision"
     }
   ],
   "sanctionsClearance": {

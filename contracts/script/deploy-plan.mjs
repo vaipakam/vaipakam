@@ -46,6 +46,8 @@ export const CHAINS = {
   'polygon-amoy': { chainId: 80002, prefix: 'POLYGON_AMOY', network: 'testnet' },
 };
 
+/** The source of a testnet setting copied from the deployment being replaced (design ruling 2026-11-22, item 6b). */
+export const CARRIED = 'carried from the deployment being replaced, not an owner decision';
 const ROLE_RE = /^[A-Z][A-Z0-9_]*_ROLE$/;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const SIG_RE = /^[a-zA-Z_][a-zA-Z0-9_]*\([a-z0-9,\[\]]*\)$/;
@@ -115,6 +117,8 @@ export function validate(d, { flags, terms }) {
     if (!SIG_RE.test(s.setter ?? '')) p.push(`${where}: setter must be a signature like setX(bool)`);
     if (!GETTER_RE.test(s.getter ?? '')) p.push(`${where}: getter must be a signature with its return, like getX()(bool)`);
     if (typeof s.value !== 'string' || !s.value || /[#'"`$\\\s]/.test(s.value)) p.push(`${where}: value must be one plain word`);
+    if (typeof s.source !== 'string' || s.source.length < 10) p.push(`${where}: source must say where the value comes from (an owner decision, or "${CARRIED}")`);
+    else if (s.source === CARRIED && d.network === 'mainnet') p.push(`${where}: a mainnet value is the owner's to decide; a carried row is refused`);
     const on = s.chains === 'all' ? slugs : s.chains;
     if (!Array.isArray(on) || !on.length || on.some((c) => !slugs.includes(c))) p.push(`${where}: chains must be "all" or a list of the file's chains`);
   }
