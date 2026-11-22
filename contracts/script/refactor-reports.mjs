@@ -648,7 +648,11 @@ export function writeOnlyStorage(units, manifest, ctx = makeContext(units, manif
   for (const { fn } of srcFunctions(units)) {
     if (!scope.has(ctx.contractOf.get(fn.id)?.id)) continue;
     const lv = new Set();
-    walk(fn.body, (n) => {
+    // The code a call of this function runs in its own frame: the body and
+    // the arguments of its modifier invocations (`guard(counter)` reads
+    // counter before the body runs).
+    const code = [fn.body, ...(fn.modifiers ?? []).flatMap((m) => m.arguments ?? [])];
+    for (const c of code) walk(c, (n) => {
       let targets = [];
       if (n.nodeType === 'Assignment') {
         lvalueFields(n.leftHandSide, ctx, targets);
@@ -664,7 +668,7 @@ export function writeOnlyStorage(units, manifest, ctx = makeContext(units, manif
       }
       return undefined;
     });
-    walk(fn.body, (n) => {
+    for (const c of code) walk(c, (n) => {
       if (lv.has(n.id)) return undefined;
       const f = storageField(n, ctx);
       if (f && live.has(fn.id)) bump(reads, f.id);

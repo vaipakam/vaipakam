@@ -914,7 +914,10 @@ export function makeReviewBranches({ clone, unit, slice, pinned, fix, fixBase, s
   // pull request shows exactly the slice's declarations as new code.
   git(['checkout', '-q', '-B', head, base]);
   git(['checkout', reviewed, '--', ...unitPaths]);
-  commit(`Review head for ${unit.name} slice ${slice + 1}: the code as reviewed`);
+  // The head records the slice it was cut for, so `open` describes exactly
+  // these declarations, never a slice derived again from the reviewed tree
+  // (a fix that adds or removes declarations repartitions the unit).
+  commit(`Review head for ${unit.name} slice ${slice + 1}: the code as reviewed\n\n${sliceRecordLine({ unit: unit.name, slice: slice + 1, of: unit.slices.length, limit: unit.limit, members: decls.map((d) => [d.path, d.label]) })}`);
   git(['branch', '-q', '-D', work]);
   const problems = reviewPrProblems({
     base,
@@ -962,6 +965,41 @@ export function sourcesDifferFromTree(clone, ref, root = CONTRACTS_DIR) {
  */
 export function leaseArgs(clone, branches, lsRemote = (b) => run('git', ['ls-remote', 'origin', `refs/heads/${b}`], { cwd: clone })) {
   return branches.map((b) => `--force-with-lease=refs/heads/${b}:${(lsRemote(b).split(/\s/)[0] || '')}`);
+}
+
+const SLICE_RECORD = 'review-slice: ';
+
+/** The line a review head's message carries: the slice it was cut for. */
+export const sliceRecordLine = (record) => `${SLICE_RECORD}${JSON.stringify(record)}`;
+
+/** The slice a review head's message records, or undefined. */
+export function readSliceRecord(message) {
+  const line = message.split('\n').find((l) => l.startsWith(SLICE_RECORD));
+  if (!line) return undefined;
+  const r = JSON.parse(line.slice(SLICE_RECORD.length));
+  if (typeof r?.unit !== 'string' || !Number.isInteger(r.slice) || !Number.isInteger(r.of) || !Array.isArray(r.members)) return undefined;
+  return r;
+}
+
+/**
+ * The unit as a review head recorded it: the recorded slice's declarations,
+ * found by path and label among `decls` (built from the head's own sources).
+ * Throws when the record is for another unit or slice, or a member is
+ * missing or not unique.
+ */
+export function unitFromRecord(record, { unit, slice }, decls) {
+  if (record.unit !== unit || record.slice !== slice) throw new Error(`the head was cut for ${record.unit} slice ${record.slice}, not ${unit} slice ${slice}`);
+  const problems = [];
+  const declarations = record.members.map(([path, label]) => {
+    const found = (decls.byPath.get(path) ?? []).filter((d) => d.label === label);
+    if (found.length !== 1) problems.push(`${path}:${label} (${found.length ? 'not unique' : 'not found'})`);
+    return found[0];
+  });
+  if (problems.length) throw new Error(`the head's recorded slice does not match its sources: ${problems.join('; ')}`);
+  const lines = declarations.reduce((a, d) => a + d.lineEnd - d.lineStart + 1, 0);
+  const slices = Array.from({ length: record.of }, () => undefined);
+  slices[slice - 1] = { lines, declarations, oversize: declarations.length === 1 && record.limit !== undefined && lines > record.limit };
+  return { name: unit, limit: record.limit, slices };
 }
 
 /** The production commit a review copy names in its message, or undefined. */
@@ -1112,12 +1150,12 @@ async function reviewRepoCommand(cmd, rest) {
       if (!existsSync(rulesPath)) throw new Error(`no rules file at ${rulesPath}: a review-only pull request carries the checklist generated from it (pass --rules)`);
       const doc = JSON.parse(readFileSync(rulesPath, 'utf8'));
       const g = await loadGraph();
-      const ledger = readJson(LEDGER_FILE, { entries: {} });
-      const order = readJson(ORDER_FILE, { sharedLibraries: [] });
       const decls = buildDeclarations(g.units, (p) => readFileSync(join(CONTRACTS_DIR, p)));
-      const unit = deriveUnit(f.unit, { ...g, decls, ledger, shared: order.sharedLibraries ?? [], limit: ledger.sizeLimit?.lines ?? DEFAULT_LIMIT });
+      // The slice is the one the head was cut for, as its message records it.
+      const record = readSliceRecord(run('git', ['log', '-1', '--format=%B', f.head], { cwd: f.clone }));
+      if (!record) throw new Error(`${f.head} records no slice: cut it again with \`branches\``);
       const index = Number(f.slice) - 1;
-      if (!(index >= 0 && index < unit.slices.length)) throw new Error(`--slice must be 1..${unit.slices.length}`);
+      const unit = unitFromRecord(record, { unit: f.unit, slice: index + 1 }, decls);
       requireReviewableSlice(unit, index);
       const { entryPoints } = await import('./check-permissionless-steps.mjs');
       const shipped = [...g.manifest.facets, ...g.manifest.standalone];

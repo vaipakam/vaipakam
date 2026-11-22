@@ -50,11 +50,21 @@ contract AFacet {
     uint256 internal readByEntry;
     uint256 internal readOnlyInView;
     uint256 public publicOnly;
+    uint256 internal readByModifierArg;
     IExt internal ext;
 
     // ─── silent-functions ────────────────────────────────────────────────
     function emitsThroughLibrary() external {
         readByEntry = 1;
+        LibLoud.did();
+    }
+
+    modifier atMost(uint256 limit) {
+        _;
+    }
+
+    function readsInModifierArg() external atMost(readByModifierArg) {
+        readByModifierArg = 4;
         LibLoud.did();
     }
 

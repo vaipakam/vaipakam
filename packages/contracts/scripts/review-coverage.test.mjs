@@ -161,6 +161,8 @@ import {
   baseFiles,
   locateInHead,
   makeReviewBranches,
+  readSliceRecord,
+  unitFromRecord,
   copiedFrom,
   requireReviewableSlice,
   sourcesDifferFromTree,
@@ -400,6 +402,22 @@ test('review branches on a history-free copy: the fix is transplanted, the base 
   assert.match(g('diff', `${r.base}...${r.head}`), /\+\s*function add\(/);
   assert.equal(g('show', `${r.head}:contracts/src/Other.sol`), '// other, fixed', 'the fix is in the reviewed tree');
   assert.throws(() => g('show', `${r.head}:.github/workflows/ci.yml`), 'the stripped paths stay stripped');
+  // The head records the slice it was cut for; `open` describes that record.
+  const record = readSliceRecord(g('log', '-1', '--format=%B', r.head));
+  assert.deepEqual(record.members, [[file, 'Original.add(uint256)']]);
+  assert.equal(record.slice, 1);
+});
+
+test('open describes the slice the head recorded, not one derived again from a fixed tree (§3.2)', () => {
+  const list = decls('src/Original.sol').map((d) => ({ ...d, lineStart: 1, lineEnd: 3 }));
+  const byPath = new Map([['src/Original.sol', list]]);
+  const record = { unit: 'Original', slice: 1, of: 2, limit: 6, members: [['src/Original.sol', 'Original.add(uint256)']] };
+  const u = unitFromRecord(record, { unit: 'Original', slice: 1 }, { byPath });
+  assert.equal(u.slices.length, 2);
+  assert.deepEqual(u.slices[0].declarations.map((d) => d.label), ['Original.add(uint256)'], 'exactly the recorded members, whatever a fresh partition would give');
+  assert.throws(() => unitFromRecord(record, { unit: 'Original', slice: 2 }, { byPath }), /cut for Original slice 1/);
+  assert.throws(() => unitFromRecord({ ...record, members: [['src/Original.sol', 'Original.gone()']] }, { unit: 'Original', slice: 1 }, { byPath }), /does not match its sources: .*not found/);
+  assert.equal(readSliceRecord('Review head\n\nno record'), undefined);
 });
 
 test('the size limit holds on the reviewed tree: a slice the fix makes too long is refused (§3.2)', () => {

@@ -84,6 +84,7 @@ test('write-only storage: a field written by an entry and read only by a view, o
   assert.ok(R['write-only-storage'].entries.includes('AFacet.readOnlyInView'));
   assert.ok(R['write-only-storage'].entries.includes('AFacet.publicOnly (public getter)'));
   assert.ok(!R['write-only-storage'].entries.includes('AFacet.readByEntry'), 'silentWrite reads it');
+  assert.ok(!R['write-only-storage'].entries.includes('AFacet.readByModifierArg'), 'a modifier argument is read by the call');
 });
 
 test('compare: a new entry is worse unless the ledger lists it; a gone entry is reported', () => {
