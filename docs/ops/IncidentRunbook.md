@@ -899,19 +899,28 @@ thin liquidity on its own is handled by the risk rules and the price guard),
 not for the asset's reputation or its issuer's conduct, and never at
 anyone's request, the asset's own project included.
 
-**Each use is published.** When the pause lands, post a public note giving
-the asset (address and network), the time and the reason (1 or 2 above),
-with the evidence that showed it and what the pause blocks today. The
-contract's `AssetPauseEnabled` event carries no reason and is not changed;
-the note is where the reason lives. A pause with no note is a defect in the
-response.
+**Each use is published, in [`AssetPauseLog.md`](AssetPauseLog.md).**
+Checklist, in this order:
+
+1. Pause (`pauseAsset`) and confirm the `AssetPauseEnabled` event.
+2. Open the log entry straight away, through a commit to `main`: network,
+   asset address, time and transaction, the reason number (1 or 2 above) and
+   one sentence, and what the pause stops that day. If the evidence would
+   help someone exploit a fault that is still open, write "Evidence
+   follows." and add it once safe.
+3. Correct anything later with a new line under the entry; never rewrite
+   one.
+
+The contract's `AssetPauseEnabled` event carries no reason and is not
+changed; the log is where the reason lives. A pause with no entry is a
+defect in the response, and the daily launch check reports it.
 
 **Lifting it.** After handover, `unpauseAsset` needs `ADMIN_ROLE` or
 `UNPAUSER_ROLE`, both held by the Timelock, so a lift waits the standard
 delay and the Pauser Safe can cancel it; the Pauser Safe cannot lift its own
-pause. Before handover the admin lifts it directly; say so in the note when
-that happens. Post the lift with the same detail as the pause: what changed
-in the asset's code or in the platform's reading.
+pause. Before handover the admin lifts it directly; say so in the lift line
+when that happens. Record the lift as a lift line under the entry, with what
+changed in the asset's code or in the platform's reading.
 
 **Who.** The Pauser Safe (`PAUSER_ROLE`) or the admin.
 
