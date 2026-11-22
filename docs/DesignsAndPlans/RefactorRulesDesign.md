@@ -100,6 +100,7 @@ the tests can only catch the ones they happen to cover.
 **How a move is kept honest:**
 
 1. The tree is tagged before the pass. That build is the reference.
+   Section 3.2 says what "tagged" means and what is published with the tag.
 2. The work goes one user action at a time, end to end, grouped in areas
    along the call paths, in this order, **Default**: the core (storage,
    access, the vault and its outflow policy, the position token);
@@ -136,13 +137,100 @@ build project**, **Default**. Not a long-lived branch.
   Diamond from the tagged build's compiled output and the new Diamond from
   source, so the old source is not compiled a second time.
 - A change that lands on the old tree after an area was moved goes on a
-  **carry list** and is moved with its tests before the switch. The
-  reference tag is cut again after the last such change, and the whole
-  differential run passes against it before the switch.
+  **carry list** and is moved with its tests before the switch. A new
+  reference tag is added after the last such change, with its own record
+  (a tag is never moved, section 3.2), and the whole differential run
+  passes against it before the switch.
 - **The switch is one change:** the exported interface, the deploy scripts
   and every consumer (the indexer, both apps, the keeper, the public bot)
   move to the new tree together, so the interface changes for them once.
   The old tree is deleted in the change that follows, and the tag keeps it.
+
+### 3.2 What "tagged" means: the baseline
+
+Owner decision, 2026-11-22. "Tagged", in this design and in every card that
+cites it, means all of the following, done together. Names marked
+**Default** are this design's choice.
+
+**The tag.** `v0.9-pre-refactor` names one commit on the main branch. It is
+annotated and signed. A repository rule on the series' tag pattern refuses
+every update and every deletion, for every role and with no bypass list, so
+the name can never come to mean another commit. Setting that rule is the
+owner's step, and so is the go-ahead for each tag in the series. The two
+older tags in the repository are outside the series and stay as they are.
+
+**No long-lived branch of the old code.** The tag keeps it. If the old code
+ever needs a fix after the switch, a branch is cut from the tag at that
+moment, for that fix.
+
+**The baseline record.** One generated file, `contracts/baseline/<tag>.json`
+(**Default**), committed in the commit the tag names. That commit changes
+nothing else. The record holds:
+
+- for every deployable contract, the hash of its runtime code, its size in
+  bytes, and the hash of its interface (functions, events and errors). For
+  a contract whose runtime code carries values fixed at construction, the
+  hash is taken with those values blanked, and the record lists each such
+  value by name, so that a deployed copy can be compared with it on any
+  chain ([`CanonicalSpecDesign.md`](CanonicalSpecDesign.md), section 21.5);
+- the storage layout, as the hash of the layout guard's recorded file;
+- the gas figures of report 1 for every measured action;
+- the full regression's manifest: its plan digest, its chunks, and the
+  count of tests run and passed, in the form the shard verifier accepts;
+- the exact versions: the compiler and its settings, the build tool, and
+  the pinned commit of every vendored library;
+- the digest of the source tree it was built from, taken with the baseline
+  records themselves left out.
+
+A file cannot name the commit that contains it, and it cannot carry a hash
+of a tree that contains it either. So the record's digest covers every
+tracked file of the tagged commit except those under `contracts/baseline/`,
+by one written rule: the sorted list of each such file's path and content
+hash, hashed once. The record names that digest, the tag's message carries
+the record's hash, and the tag names the commit. Each binds the other two,
+and the record is bound to the commit through the tag and never through
+itself.
+
+**The baseline check** rebuilds the tagged commit with the recorded versions
+and refuses when a runtime code hash, a size or an interface hash differs
+from the record, or when the tag's message does not match the record's
+hash, or when the digest it computes from the tagged commit by the same
+rule, baseline records left out, differs from the one the record names. Anyone with the repository can reproduce the reference, and no stored
+copy of a build has to be trusted.
+
+**Who reads the record.**
+
+- The differential run of section 3.1 takes its reference from a build of
+  the tag (that build's compiled output, never a second compile inside the
+  new project) and runs the baseline check on it before it starts.
+- Report 1 shows each area's gas beside the record's figure.
+- A statement of what the pass saved or changed cites the record. Old code
+  measured again on a later toolchain is not the baseline.
+
+**The same point in every place.**
+
+- The public keeper bot's repository gets a tag of the same name, on the
+  commit whose interface files were synced from the tagged commit.
+- The private review copy is refreshed to exactly the tagged commit, so the
+  review coverage ledger's hashes and the record describe one tree.
+- The testnet fresh deploy that precedes the pass is made from exactly the
+  tagged commit, and each chain's deployment record names the tag.
+
+**The series.** Every later reference point is a tag of the same kind, with
+its own record, under the same rule. The names are **Default**.
+
+| Tag | Cut when | Read by |
+| --- | --- | --- |
+| `v0.9-pre-refactor` | Before the pass, after the batch is pushed and tested | The differential run and report 1 |
+| `v0.9-pre-refactor.N` | Only when a carried change lands on the old tree after the first tag | The differential run, in place of the tag before it |
+| `v1.0-audit-freeze` | At the end of the pass, with the interface frozen | The auditors, and the review coverage report |
+| `v1.0-audit-fix.N` | After each round of audit fixes | The auditors' re-check of that round |
+| `v1.0-mainnet.N` | At each mainnet deploy and each later change of deployed code | The launch check |
+
+The launch check's comparison of deployed code with reviewed code
+([`CanonicalSpecDesign.md`](CanonicalSpecDesign.md), section 21.5) names a
+tag of this series: the hashes it compares with each deployed address are
+the ones in that tag's record.
 
 ## 4. The five reports
 
@@ -399,6 +487,19 @@ what ships.
 12. Adding a facet needs one line in the manifest, and the deploy script, the
     refresh scripts, the test Diamond and the exported interface all carry
     it with no second edit.
+13. The baseline check passes on a clean build of the tagged commit. It
+    refuses a record with one altered hash, a build made with another
+    compiler version (naming the version), a record whose source-tree digest
+    is not the tagged commit's by the written rule (baseline records left
+    out), and a tag whose message does not carry the record's hash. A
+    record committed in the tagged commit itself passes.
+14. The differential run refuses to start when its reference build fails
+    the baseline check.
+15. The launch check reads the repository's rules and refuses when the
+    series' tag pattern is not protected against update and deletion, or
+    when a role may bypass the rule.
+16. A deploy is refused when the commit it runs from is not the one a tag
+    of the series names, and the chain's deployment record states the tag.
 
 ## 10. Residuals
 
@@ -449,6 +550,22 @@ what ships.
     too large to review. A directory beside the old tree is reviewed in
     small changes and switched in one.
 
+12. **A long-lived branch of the old code beside the tag.** Rejected: a
+    branch moves, invites work that nothing reviews, and makes two places
+    where the old code might be. A tag cannot move, and a branch can be cut
+    from it on the day one is needed.
+13. **A tag with no record.** Rejected: a tag names source, and the
+    differential run and the gas claim compare builds. A later toolchain
+    builds different code from the same source, and nobody could then say
+    whether a difference came from the toolchain or from the pass.
+14. **Keep the compiled output itself as the baseline.** Not recommended as
+    the source of truth: it is a large binary whose origin has to be taken
+    on trust. The record's hashes and a rebuild verify any copy. A cached
+    build may be kept for speed if it passes the baseline check before use.
+15. **A plain tag held by convention.** Rejected: a tag that can be moved
+    or deleted is a name, and the day it matters is the day someone needs
+    it to have stayed where it was.
+
 ## 12. Recommendation
 
 Build the five reports and the catalogue's generator now, beside the batch.
@@ -465,5 +582,7 @@ the interface at its end.
 | Report 1: the gas suite, the budgets file and its check | No | Now |
 | The catalogue generator, its hand-written source and its consumers' read | No | Now |
 | The interface document | No | When the reports exist |
+| The baseline record's generator and check, the tag-series rule, and the launch check's read of both (section 3.2) | No | Before the tag |
+| The tag `v0.9-pre-refactor` with its record, in both repositories | No | After the batch is pushed and tested, on the owner's go-ahead |
 | The pass: #3851, stored lists to events, facet layout, packing, events, errors | Yes | After the batch and its testing |
 | The freeze | No | At the end of the pass |

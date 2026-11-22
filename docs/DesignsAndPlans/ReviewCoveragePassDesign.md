@@ -452,6 +452,93 @@ reading, and runs on every change.
 
 **Order.** Actions that move funds are cross-reviewed first.
 
+### 3.7 Off-chain code that can move or misdirect funds
+
+The rule of section 2 is about contract code. Other code can also move or
+misdirect funds: the keeper sends transactions with a funded key, the apps
+build what a user signs, the agent holds a signing path, and the deploy
+and configuration scripts set every role and address. The owner asked on
+2026-11-22 that it be reviewed the same way.
+
+**In scope: any file that** holds or uses a signing key, builds a
+transaction or a message that a user or a key signs, or sets a role, an
+address or a setting on a chain. Today that is the keeper and the public
+keeper bot, the transaction builders of both apps and of the shared
+library, the agent's signing path, the sanctions services, and the deploy
+and configuration scripts. The review of the deploy scripts is its first
+part.
+
+- **The scope list is generated.** A check finds every file that reaches a
+  signing or transaction-building module, directly or through an import,
+  and refuses one that is on no list. A hand-kept list would miss the new
+  file that signs.
+- **What a signing path reads is in scope with it.** A file that signs
+  takes the address it sends to, the interface it encodes against and the
+  network it uses from somewhere else: the deployment addresses, the
+  interface bundle, the network settings, the code that loads the
+  environment. A change there redirects a signed transaction without
+  touching a file that signs. So the check also follows each in-scope
+  file's own imports downwards, to every module and every data file it
+  reads, and those join the scope. A value read from the environment or
+  from a store joins as a named input of the unit, with where it is set.
+- **A unit's mark covers what it read.** The hash a review mark is taken
+  over includes the unit's files and every file and data file its signing
+  paths read. A change to any of them makes the mark stale for every unit
+  that reads it, and the ledger's check lists those units by name. The
+  deployment addresses change with every deploy, so their part of the
+  hash is taken over the fields a signing path reads and their shape, and
+  a redeploy to new addresses shows as a listed change that the unit's
+  reviewer confirms, not as a silent pass.
+- **The same two layers,** inside the same size limit, with the planted
+  runs, the cross reader and the closing lines of section 8.
+- **Six lenses of its own:** keys and secrets; what is signed and for
+  whom; trust in what the code reads (the indexer, a node's answer, the
+  environment); what a failure and a retry do; the most the key's role
+  allows; and pinned dependencies.
+- **Its own rows in the ledger.** A row is a file, and its hash is of the
+  file's content with comments and spacing removed. The specification
+  mark applies where a canonical statement governs the file, as the keeper
+  operations and app domains become canonical.
+- **A number of its own, off-chain coverage,** reported beside the
+  contracts' coverage and never mixed into it.
+
+It is gated at the audit tag, so the auditors can read what was found.
+
+### 3.8 Proof of the core arithmetic
+
+For the pure rule libraries (the interest ledger, the valuation rule, the
+liens), a symbolic checking tool examines every possible input, not
+samples, for two properties: rounding never favours the wrong party, in
+the direction each fund-movement statement states, and what goes in equals
+what comes out plus what is held. The proof files sit beside the
+libraries, and each names the statement it proves.
+
+**The tool is a scout point, with a default.** Three kinds were
+considered: the compiler's own model checker; a symbolic runner that takes
+property tests written as ordinary tests and runs them over every input;
+and a separate prover with its own specification language, under a
+licence. **Default** the second: the proofs are then tests of the shape
+this repository already has, in the same language, tagged with statement
+ids like any other test. The first is run as a second opinion where it
+finishes. The third costs money and is the owner's choice.
+
+**The limit is stated.** A multiply-then-divide at full width often does
+not finish in a solver. Where it does not, the property is proved over the
+library's separate steps, or at a reduced width. The record keeps three
+lists and never fewer: **proved** in full, **bounded** (proved at a stated
+width or over stated steps), and **not finished** (the tool gave up or ran
+out of its time). A property on the third list is never read as proven.
+Its fallback is a comparison against the reference model over a very large
+number of random inputs, with the mutation run, and it is labelled
+**sampled** wherever it is reported. A bounded property stays covered by
+the unit tests at its limits and by the mutation run. A pilot on the interest ledger fixes the tool, measured by
+which properties it proves inside a stated time.
+
+The scope is the pure libraries only. Such a tool is practical on code
+with no storage and no calls out, and not on a facet. The proofs run on
+the tagged code and after any change to a library they cover, not on
+every pull request. They are gated at a mainnet.
+
 ## 4. The records
 
 | Record | Where | Holds |
@@ -825,6 +912,14 @@ one the launch was judged on.
 34. A declaration larger than the limit is cut into parts inside the
     limit. It is reported as not covered while any part lacks a mark, and
     again after an edit to any one of its members.
+35. A new file that imports a signing module and is on no scope list is
+    refused by the scope check. Off-chain coverage falls when a covered
+    file changes by more than its comments, and the contracts' coverage
+    is unchanged by it.
+36. A proof of a rounding direction fails when the direction is reversed
+    in the library. A property proved only at a reduced width is listed
+    as bounded, and one the tool did not finish is listed as not finished
+    and reported as sampled. Neither is ever listed as proved.
 
 ## 11. Residuals
 
@@ -935,6 +1030,14 @@ one the launch was judged on.
     loop. The reader pass alone is kept for it.
 27. **Leave the stored-value cut to the four checks that exist.** Rejected:
     four figures are guarded and the rest are not, and nothing says which.
+28. **Review all off-chain code, or leave it to the outside audit.** All
+    of it would never finish, and most cannot move funds. An audit of
+    contracts rarely reads the keeper or an app's builders. Only the files
+    that can move or misdirect funds, found by a generated list.
+29. **Prove the facets too, or prove nothing and rely on tests.** A proof
+    is practical only on code with no storage and no calls out. Tests
+    sample, and the arithmetic every loan rests on is small enough to
+    examine in full.
 
 ## 13. Recommendation
 
@@ -965,3 +1068,5 @@ check of section 8.
 | The cross review: the unit tool's cut by action, the fourth mark, the list of declarations on no path | Test tooling builds. Security leads the reading, with a second reader for each unit | After the first reviews of stage 1 |
 | The stored-value table and its check | Test tooling. Design rules on a disputed writer | With the gate check (#3944) |
 | The specification lens: statements in the description, the trace table, the specification mark, the counts in the report | Security reads. Test tooling builds the table's check and the description | With the first approved domain |
+| Off-chain code that can move funds (section 3.7): the scope check, the ledger's file rows, the reading | Test tooling builds the check. Security leads the reading, the deploy scripts first | After the standalone contracts. Before the audit tag |
+| Proof of the core arithmetic (section 3.8): the pilot on the interest ledger, then the proofs | Security | After the mutation run's scope is fixed. Before a mainnet |
