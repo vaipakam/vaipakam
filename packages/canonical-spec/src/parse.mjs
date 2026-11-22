@@ -255,14 +255,14 @@ export function parseFile(file, text) {
   for (let i = 0; i < lines.length; i++) {
     if (fenced[i]) continue;
     if (/^#{1,3} /.test(lines[i].t)) headingAt.push(i);
-    // A statement, mistake or model heading at any level but the third would
-    // otherwise be read as plain prose and its block would vanish unchecked.
-    const off = /^(#{1,2}|#{4,6}) +(?:[A-Z]{2,4}-[MT]?\d+\b|Model:)/.exec(lines[i].t);
-    // An indented heading is still a heading to Markdown; refuse it rather
-    // than read past it.
-    const indented = /^ {1,3}#{1,6} +(?:[A-Z]{2,4}-[MT]?\d+\b|Model:)/.test(lines[i].t);
-    if (indented) out.errors.push({ file, line: lines[i].n, message: 'an indented heading shaped like a statement, mistake or model; these blocks start at the line\'s first column ("### …")' });
-    if (off) out.errors.push({ file, line: lines[i].n, message: `a heading shaped like a statement, mistake or model at level ${off[1].length}; these blocks are level-3 headings ("### …")` });
+    // One rule for every heading shaped like a statement, mistake or model, at
+    // any level, indented or not, however its punctuation slipped: it is read
+    // only in the exact form "### <id> · …" or "### Model: <name>" at the first
+    // column. Anything else so shaped is an error, never prose a block vanishes into.
+    const t = lines[i].t;
+    if (/^ {0,3}#{1,6}[ \t]*(?:[A-Z]{2,4}-[MT]?\d+\b|[Mm]odel\b)/.test(t) && !(MISTAKE_HEADING.test(t) || STATEMENT_SHAPED.test(t) || MODEL_HEADING.test(t))) {
+      out.errors.push({ file, line: lines[i].n, message: `cannot read the heading "${t.trim()}"; a statement, mistake or model is a level-3 heading at the first column ("### VLT-012 · rule", "### VLT-M04 · …", "### Model: a vault")` });
+    }
   }
   headingAt.push(lines.length);
   for (let k = 0; k < headingAt.length - 1; k++) {

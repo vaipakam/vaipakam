@@ -75,6 +75,10 @@ export function main(argv = process.argv.slice(2)) {
   const dirs = [...new Set(opt.paths.map((p) => (statSync(resolve(p)).isDirectory() ? resolve(p) : dirname(resolve(p)))))];
   const complete = new Set();
   for (const d of dirs) for (const c of completeDomains(join(d, 'README.md'))) complete.add(c);
+  if (opt.wording && !existsSync(opt.wording)) {
+    console.error(`canonical-spec check: --wording ${opt.wording} does not exist`);
+    return 2;
+  }
   const wordingPath = opt.wording ?? dirs.map((d) => join(d, 'wording.json')).find((p) => existsSync(p));
   const wording = wordingPath && existsSync(wordingPath) ? JSON.parse(readFileSync(wordingPath, 'utf8')) : null;
   const findings = checkSpec(parsed, { mode: opt.mode, wording, completeDomains: complete });

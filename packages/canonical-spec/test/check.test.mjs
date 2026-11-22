@@ -304,7 +304,7 @@ test('a statement, mistake or model heading at the wrong level is unreadable, ne
   const p = parseFile('vlt.md', `## VLT-012 · rule\n\n**Who:** the owner.\n\n#### VLT-M04 · a slip\n\n# Model: a vault\n`);
   const lines = p.errors.map((e) => e.line);
   assert.deepEqual(lines, [1, 5, 7], JSON.stringify(p.errors));
-  assert.ok(p.errors.every((e) => /level-3 headings/.test(e.message)));
+  assert.ok(p.errors.every((e) => /a level-3 heading at the first column/.test(e.message)));
 });
 
 test('the README is found when files are named, not only when the folder is', () => {
@@ -368,7 +368,7 @@ test('draft mode reads the wording list beside the draft', () => {
 
 test('an indented statement heading is refused, never dropped', () => {
   const p = parseFile('vlt.md', ` ${REFUSAL('VLT-001')}`);
-  assert.ok(p.errors.some((e) => e.line === 1 && /indented heading/.test(e.message)), JSON.stringify(p.errors));
+  assert.ok(p.errors.some((e) => e.line === 1 && /cannot read the heading/.test(e.message)), JSON.stringify(p.errors));
 });
 
 test('a live record entry whose statement is gone is refused; retired and held ids are not', () => {
@@ -395,4 +395,23 @@ test('folder mode: an answered mistake id must be on the list even when its doma
   const answer = [['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', '- **For the mistake:** VLT-M01, refuse.\n- **Tests owed:**')], ['record.md', RECORD([['VLT-012']])]];
   assert.ok(has(run(answer), 'mistake', /answers VLT-M01, which is not on the mistake list/));
   assert.ok(!has(run(answer, { mode: 'draft' }), 'mistake', /not on the mistake list/));
+});
+
+test('a malformed model heading is refused, never dropped', () => {
+  const p = parseFile('vlt.md', MODEL([], []).replace('### Model: a vault', '### Model:a vault'));
+  assert.ok(p.errors.some((e) => /cannot read the heading "### Model:a vault"/.test(e.message)), JSON.stringify(p.errors));
+});
+
+test('a parameter named in a model must be in the parameters table', () => {
+  const params = '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-001 | Limit | 5 |\n';
+  const model = MODEL(['| Not created | Create | Anyone | VLT-012 | Open |', '| Open | Recover | The owner | VLT-012 | Recovered |'], ['| Create | VLT-012 |', '| Recover | VLT-012 |'], '- Not created (start): no vault.\n- Open: a vault holding less than PRM-999.\n- Recovered (end): a recovered vault.');
+  const f = run([['vlt.md', STMT('VLT-012', 'rule', '', 'A vault holds at most PRM-001.') + model], ['params.md', params], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(f, 'parameter', /model "a vault" names PRM-999, which the parameters table lacks/), JSON.stringify(f));
+});
+
+test('a --wording file that does not exist is a usage error', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cs-'));
+  writeFileSync(join(dir, 'vlt.md'), STMT('VLT-012', 'rule'));
+  const quiet = (fn) => { const [l, e] = [console.log, console.error]; console.log = console.error = () => {}; try { return fn(); } finally { console.log = l; console.error = e; } };
+  assert.equal(quiet(() => main(['--draft', '--wording', join(dir, 'missing.json'), dir])), 2);
 });

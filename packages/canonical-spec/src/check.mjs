@@ -263,13 +263,19 @@ export function checkSpec(parsed, opts = {}) {
     else paramAt.set(p.id, p);
     paramIds.add(p.id);
   }
+  // A parameter is named by a statement or by a model's text (a state, a step,
+  // a dimension value); every name must resolve.
+  const namers = [
+    ...statements.map((s) => ({ who: s.id, file: s.file, line: s.line, text: statementText(s) })),
+    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, file: m.file, line: x.line, text: x.text }))),
+  ];
   const used = new Set();
-  for (const s of statements) for (const m of statementText(s).matchAll(PARAM_ID_RE)) used.add(`PRM-${m[1]}`);
-  for (const s of statements) for (const m of statementText(s).matchAll(PARAM_ID_RE)) {
+  for (const n of namers) for (const m of n.text.matchAll(PARAM_ID_RE)) {
     const id = `PRM-${m[1]}`;
-    if (params.length && !paramIds.has(id)) add(s.file, s.line, 'parameter', `${s.id} names ${id}, which the parameters table lacks`);
+    used.add(id);
+    if (params.length && !paramIds.has(id)) add(n.file, n.line, 'parameter', `${n.who} names ${id}, which the parameters table lacks`);
   }
-  for (const p of params) if (!used.has(p.id)) add(p.file, p.line, 'parameter', `${p.id} (${p.name}) is used by no statement`);
+  for (const p of params) if (!used.has(p.id)) add(p.file, p.line, 'parameter', `${p.id} (${p.name}) is used by no statement or model`);
   if (!params.length && used.size) add(parsed[0]?.file ?? '', 1, 'parameter', `statements name ${[...used].join(', ')}, but no parameters table was checked`);
 
   // Items 7 and 8: lifecycle models.
