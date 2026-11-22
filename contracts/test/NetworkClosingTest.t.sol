@@ -409,7 +409,8 @@ contract NetworkClosingTest is SetupTest, NetworkClosingBase {
     }
 
     /// A lender's direct sale brings a new party into the loan: the position
-    /// migration asks the opening rule and refuses it.
+    /// migration asks the opening rule and refuses it, and the sale's preview
+    /// (through the one exit verdict) reports the same refusal.
     function test_DirectSale_Refused() public {
         uint256 loanId = _openLoan();
         address buyer = _provisionFundedActor("closing-buyer", mockERC20, PRINCIPAL * 2);
@@ -425,6 +426,11 @@ contract NetworkClosingTest is SetupTest, NetworkClosingBase {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId);
 
         uint64 since = _close();
+        // The preview says so before signing, with the error the sale raises.
+        (bool accepted, bytes memory refusal,,,) =
+            EarlyWithdrawalDirectFacet(address(diamond)).previewDirectSale(loanId, buyOfferId, lender);
+        assertFalse(accepted, "the preview refuses while closing");
+        assertEq(refusal, abi.encodeWithSelector(LibTerms.NetworkClosing.selector, since), "named closing");
         _expectClosing(since);
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
