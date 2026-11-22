@@ -63,13 +63,16 @@ start_node() {
 source script/lib/rehearsal.sh
 place_marker() {
   cast rpc --rpc-url "$RPC" anvil_setCode "$REHEARSAL_MARKER_ADDRESS" "$REHEARSAL_MARKER_CODE" >/dev/null
+  # As the launcher does: a new block, so no cached view of the node at the
+  # old block hides the marker.
+  cast rpc --rpc-url "$RPC" evm_mine >/dev/null
 }
 
 # probe <sig> [forge flags...] — env comes from the caller. Output in $OUT.
 probe() {
   local sig=$1
   shift
-  OUT=$(env FOUNDRY_BROADCAST="$SCRATCH/broadcast" FOUNDRY_CACHE_PATH="$SCRATCH/cache" \
+  OUT=$(env FOUNDRY_BROADCAST="$SCRATCH/broadcast" FOUNDRY_CACHE_PATH="$SCRATCH/cache" FOUNDRY_NO_STORAGE_CACHING=true \
     forge script "$PROBE" --sig "$sig" --rpc-url "$RPC" "$@" 2>&1)
   return $?
 }

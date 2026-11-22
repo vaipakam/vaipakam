@@ -96,6 +96,7 @@ DEPLOYER_PRIVATE_KEY=0xsecret
 rehearsal_enter http://127.0.0.1:8545 "$WORK/contracts" "$WORK/.env" >/dev/null
 expect_true "every key variable is pinned to zero" '[ "$DEPLOYER_PRIVATE_KEY" = 0 ] && [ "$OTHER_PRIVATE_KEY" = 0 ]'
 expect_true "the flag is exported" '[ "$VAIPAKAM_REHEARSAL" = 1 ]'
+expect_true "forge never reads a cached view of the real chain" '[ "$FOUNDRY_NO_STORAGE_CACHING" = true ]'
 expect_true "records go to the scratch root" '[ "$RECORDS_ROOT" = "$WORK/contracts/deployments/.forge-test/rehearsal/t1" ]'
 expect_true "forge broadcast and cache go to scratch" '[[ "$FOUNDRY_BROADCAST" == "$RECORDS_ROOT"/* && "$FOUNDRY_CACHE_PATH" == "$RECORDS_ROOT"/* ]]'
 expect_true "the scratch cache is seeded from the real index" '[ -f "$FOUNDRY_CACHE_PATH/solidity-files-cache.json" ]'

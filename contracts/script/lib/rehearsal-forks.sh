@@ -101,6 +101,10 @@ rh_fork_start() {
   [ "$(cast chain-id --rpc-url "$url" 2>/dev/null)" = "$chain_id" ] || {
     echo "Error: $slug: the fork did not answer with chain id $chain_id" >&2; return 1; }
   cast rpc --rpc-url "$url" anvil_setCode "$REHEARSAL_MARKER_ADDRESS" "$REHEARSAL_MARKER_CODE" >/dev/null || return 1
+  # Mine past the fork block, so no reader holding a cached view of the real
+  # chain at that block can mistake it for the fork (forge keys its fork
+  # cache by chain id and block number, and the chain id is the real one).
+  cast rpc --rpc-url "$url" evm_mine >/dev/null || return 1
   for a in "$@"; do
     [ -n "$a" ] || continue
     cast rpc --rpc-url "$url" anvil_impersonateAccount "$a" >/dev/null || return 1

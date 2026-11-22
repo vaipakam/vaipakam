@@ -162,6 +162,11 @@ rehearsal_enter() {
   mkdir -p "$RECORDS_ROOT/.forge/broadcast" "$RECORDS_ROOT/.forge/cache"
   BROADCAST_ROOT="$RECORDS_ROOT/.forge/broadcast"
   export FOUNDRY_BROADCAST="$BROADCAST_ROOT"
+  # Forge caches a forked chain's state on disk keyed by chain id and block
+  # number. A fork keeps the real chain id, so a cached reading of the REAL
+  # chain at the same block would stand in for the fork's state (without the
+  # marker, without the run's own transactions). A rehearsal never uses it.
+  export FOUNDRY_NO_STORAGE_CACHING=true
   export FOUNDRY_CACHE_PATH="$RECORDS_ROOT/.forge/cache"
   # Forge keeps a script's run file beside its compile cache, so the cache
   # moves with the broadcast folder. Seed the scratch cache with the real
