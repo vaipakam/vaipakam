@@ -15,6 +15,8 @@
     "e2e:anvil": "pnpm run e2e:anvil:single && pnpm run e2e:anvil:mesh",
     "e2e:anvil:single": "vitest run --config e2e/vitest.config.ts",
     "e2e:anvil:mesh": "vitest run --config e2e/vitest.mesh.config.ts",
+    "rehearsal:offchain": "vitest run --config e2e/vitest.rehearsal.config.ts",
+    "rehearsal:publish-dry": "node e2e/rehearsal/publishDryRuns.mjs",
     "bench:cpu": "tsx bench/passCpu.ts",
     "start:host": "tsx host/main.ts",
     "build:host": "esbuild host/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/keeper-host.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""

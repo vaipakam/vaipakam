@@ -437,6 +437,17 @@ const CHAIN_RPC_BINDINGS = [
 const CHAIN_META_IDS = CHAIN_RPC_BINDINGS.map((c) => c.id);
 
 /**
+ * The RPC binding a chain is scanned through, from the table above, or null
+ * for a chain this build does not know. The deploy rehearsal (#3894) binds
+ * each fork under this name, for the indexer and the keeper alike, and then
+ * checks that each Worker's own chain list resolves exactly that chain.
+ */
+export function rpcBindingFor(chainId: number): { binding: (typeof CHAIN_RPC_BINDINGS)[number]['binding']; name: string } | null {
+  const c = CHAIN_RPC_BINDINGS.find((x) => x.id === chainId);
+  return c ? { binding: c.binding, name: c.name } : null;
+}
+
+/**
  * #2498 — the chains this deployment is CONFIGURED to scan: a deployment
  * artifact exists and the chain's RPC binding is present. Read from the raw
  * env WITHOUT resolving any secret, so a route dispatched before
