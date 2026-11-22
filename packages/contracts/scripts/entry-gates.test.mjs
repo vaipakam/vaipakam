@@ -40,12 +40,13 @@ test('reading: modifiers, calls before the first state change, and where it stop
   assert.ok(carried('viaHelper').calls.has(FLAG), 'an internal helper is read in place');
   assert.equal(carried('branchOnly').calls.get(FLAG).conditional, true);
   assert.match(carried('externalFirst').stoppedAt, /external call \(IOther\.poke\)/);
+  assert.match(carried('externalWithOptionsFirst').stoppedAt, /external call \(IOther\.pay\)/, 'call options {value, gas} do not hide the call');
   assert.match(carried('selfMutateFirst').stoppedAt, /call back into the Diamond \(HostFacet\.mutate\)/);
   assert.ok(carried('viaHost').calls.has('HostFacet.requireTerms'), 'a self-call to a view host is a check, read through');
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'selfMutateFirst', 'viaHost', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'selfMutateFirst', 'viaHost', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);

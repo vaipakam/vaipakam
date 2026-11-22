@@ -27,7 +27,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(HERE, 'fixtures', 'refactor-reports');
 const UNITS = Object.values(JSON.parse(readFileSync(join(FIXTURE, 'ast.json'), 'utf8')).units);
 const MANIFEST = { facets: ['AFacet', 'BFacet'], standalone: [] };
-const CATALOGUE = { errors: { 'Bad()': {} } };
+const CATALOGUE = { errors: { '0x5b9b0f1e': { signature: 'Bad()', name: 'Bad' } } };
 const R = runReports(UNITS, MANIFEST, CATALOGUE, undefined);
 const has = (report, prefix) => R[report].entries.some((e) => e.startsWith(prefix));
 

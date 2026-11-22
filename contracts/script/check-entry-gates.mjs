@@ -195,7 +195,13 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
     if (t === 'FunctionCall') {
       // Arguments are evaluated before the call.
       for (const a of n.arguments ?? []) if (visit(a, conditional, depth, inModifier) === true) return true;
-      const e = n.expression;
+      // `x.f{value: v, gas: g}(...)`: the options are evaluated too, and the
+      // call is classified by the function they wrap.
+      let e = n.expression;
+      while (e?.nodeType === 'FunctionCallOptions') {
+        for (const o of e.options ?? []) if (visit(o, conditional, depth, inModifier) === true) return true;
+        e = e.expression;
+      }
       if (e?.nodeType === 'MemberAccess' && visit(e.expression, conditional, depth, inModifier) === true) return true;
       const routed = routedCallAt(n, ctx);
       const d = ctx.byId.get(e?.referencedDeclaration);

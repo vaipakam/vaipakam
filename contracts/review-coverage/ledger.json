@@ -1,5 +1,5 @@
 {
-  "_readme": "Review coverage ledger (#3936, ReviewCoveragePassDesign §2, §4). Each key is the sha256 of one declaration's code with comments and spacing removed (contracts/script/review-coverage.mjs hashes). Each entry holds marks only: reader and reviewer are opaque review numbers, commit is the commit the hash was taken at, and readerThread / fixThread / recordedAt feed the entry check. Never a finding or a description. Written by the tool, checked in CI: an entry whose hash matches no declaration at its commit is refused.",
+  "_readme": "Review coverage ledger (#3936, ReviewCoveragePassDesign \u00a72, \u00a74). Each key is the sha256 of one declaration's code with comments and spacing removed (contracts/script/review-coverage.mjs hashes). Each entry holds marks only: reader, reviewer, specification and crossReview are opaque review numbers (a declaration is covered only with all four), commit is the commit the hash was taken at, and readerThread / fixThread / crossReviewThread / recordedAt feed the entry check. Never a finding or a description. Written by the tool, checked in CI: an entry whose hash matches no declaration at its commit is refused.",
   "sizeLimit": null,
   "plantedRuns": [],
   "entries": {}

@@ -97,7 +97,8 @@ import { entryPoints, indexNodes } from './check-permissionless-steps.mjs';
 export const REPORTS_DIR = join(CONTRACTS_DIR, 'refactor-reports');
 export const REPORTS = ['silent-functions', 'swallowed-failures', 'ambiguous-errors', 'write-only-storage', 'event-categories'];
 const { lintEvents } = createRequire(import.meta.url)('./lint-event-categories.js');
-const CATALOGUE_FILE = join(CONTRACTS_DIR, 'error-catalogue.json');
+/** The error catalogue the export writes, keyed by selector, each row naming its `signature`. */
+const CATALOGUE_FILE = join(CONTRACTS_DIR, '..', 'packages', 'contracts', 'src', 'errorCatalogue.json');
 
 // ─── AST helpers ─────────────────────────────────────────────────────────
 
@@ -240,7 +241,8 @@ function constantTarget(declId, ctx) {
  */
 export function routedCallAt(n, ctx) {
   if (n.nodeType === 'FunctionCall') {
-    const e = n.expression;
+    let e = n.expression;
+    while (e?.nodeType === 'FunctionCallOptions') e = e.expression; // `this.f{value: v}(...)`
     if (e?.nodeType === 'MemberAccess' && isSelf(e.expression)) {
       const d = ctx.byId.get(e.referencedDeclaration);
       if (d?.nodeType === 'FunctionDefinition' && ['external', 'public'].includes(d.visibility)) return routedTarget(d.id, ctx);
@@ -524,7 +526,8 @@ export function ambiguousErrors(units, manifest, ctx = makeContext(units, manife
       if (d?.nodeType === 'ErrorDefinition') declared.add(errorSig(d));
     }
   }
-  const catalogued = new Set(Object.keys(catalogue?.errors ?? {}));
+  // Rows are keyed by selector; the signature is in the row.
+  const catalogued = new Set(Object.values(catalogue?.errors ?? {}).map((row) => row?.signature).filter(Boolean));
   const uncatalogued = [...declared].filter((s) => !catalogued.has(s));
 
   return {
@@ -719,6 +722,10 @@ export function main(argv = process.argv.slice(2)) {
     return 1;
   }
   const manifest = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));
+  if (!existsSync(CATALOGUE_FILE)) {
+    console.error(`  ✗ the error catalogue ${relative(process.cwd(), CATALOGUE_FILE)} is missing: without it every error would read as uncatalogued`);
+    return 1;
+  }
   const results = runReports(units, manifest, readJson(CATALOGUE_FILE, undefined), outDir);
   const config = readJson(join(REPORTS_DIR, 'config.json'), { blocking: false });
   const ledger = readJson(join(REPORTS_DIR, 'ledger.json'), {});

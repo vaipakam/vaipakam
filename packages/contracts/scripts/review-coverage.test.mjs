@@ -19,12 +19,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(HERE, 'fixtures', 'review-coverage');
 const UNITS = JSON.parse(readFileSync(join(FIXTURE, 'ast.json'), 'utf8')).units;
 const decls = (file) => declarationsOf(file, UNITS[file], readFileSync(join(FIXTURE, file)));
+/** The entry check's own rules, as they will run once the dependency-aware hash (#4007) lands. */
+const lp = (ledger, at) => ledgerProblems(ledger, at, { hashRulePending: null });
 const fn = (file, name) => decls(file).find((d) => d.label.endsWith(`.${name}`));
 
 test('normalize drops comments and spacing but keeps string literals and token boundaries', () => {
   assert.equal(normalize('uint256  a = b + 1; // note\n/* x */ return a;'), 'uint256 a=b+1;return a;');
   assert.equal(normalize('x = "a // b";'), 'x="a // b";');
   assert.equal(normalize("y = 'c /* d */';"), "y='c /* d */';");
+  assert.notEqual(normalize('x = a - --b;'), normalize('x = a-- - b;'));
+  assert.notEqual(normalize('x = a + +b;'), normalize('x = a++b;'));
 });
 
 test('a function moved to another contract and file keeps its hash (design §10.1)', () => {
@@ -53,39 +57,56 @@ test('every kind of declaration is listed, and a contract header is its own entr
   assert.ok(decls('src/Iface.sol').some((d) => d.label === 'LibText.using LibText for uint256'));
 });
 
-test('the report: code covered by both layers over all code, each layer beside it, exclusions with reasons (design §10.6, §10.11)', () => {
+test('the report: code with all four marks over all code, each mark beside it, exclusions with reasons (design §2.1, §10.6, §10.11, §10.21, §10.26)', () => {
   const all = [...decls('src/Original.sol'), ...decls('src/Iface.sol')];
   const add = all.find((d) => d.label === 'Original.add(uint256)');
   const total = all.find((d) => d.label === 'Original.total');
   const head = all.find((d) => d.label === 'Original (header)');
+  const four = { reader: 'R1', reviewer: 'V1', specification: 'S1', crossReview: 'X1', crossReviewThread: 't-x', commit: 'abcdef1' };
   const ledger = {
     entries: {
-      [add.hash]: { reader: 'R1', reviewer: 'V1', commit: 'abcdef1' },
-      [total.hash]: { reviewer: 'V1', commit: 'abcdef1' }, // reviewer only: not covered
-      [head.hash]: { reader: 'R1', commit: 'abcdef1' }, // reader only: not covered
+      [add.hash]: four,
+      [total.hash]: { reader: 'R1', reviewer: 'V1', specification: 'S1', commit: 'abcdef1' }, // no cross review: not covered
+      [head.hash]: { reader: 'R1', reviewer: 'V1', commit: 'abcdef1' }, // no specification mark: not covered
     },
   };
   const r = buildReport(all, ledger, { declarations: {} });
   const counted = all.filter((d) => d.contractKind !== 'interface');
   assert.equal(r.total, counted.reduce((a, d) => a + d.size, 0));
-  assert.equal(r.coveredBoth, add.size);
-  assert.equal(r.coveredReviewer, add.size + total.size);
-  assert.equal(r.coveredReader, add.size + head.size);
-  const unc = r.uncovered.map((u) => u.declaration);
-  assert.ok(unc.includes('src/Original.sol:Original.total'), 'reviewer mark alone is not coverage');
-  assert.ok(unc.includes('src/Original.sol:Original (header)'), 'reader mark alone is not coverage');
-  assert.ok(!unc.includes('src/Original.sol:Original.add(uint256)'));
-  assert.ok(!unc.some((u) => u.includes('IAdder')), 'an interface is excluded, not uncovered');
+  assert.equal(r.covered, add.size);
+  assert.equal(r.coveredReviewer, add.size + total.size + head.size);
+  assert.equal(r.coveredSpecification, add.size + total.size);
+  assert.equal(r.coveredCrossReview, add.size);
+  const unc = Object.fromEntries(r.uncovered.map((u) => [u.declaration, u.marks]));
+  assert.deepEqual(unc['src/Original.sol:Original.total'], { reader: true, reviewer: true, specification: true, crossReview: false }, 'every mark but the cross review is not coverage');
+  assert.equal(unc['src/Original.sol:Original (header)'].specification, false, 'reader and reviewer without the specification mark is not coverage');
+  assert.ok(!unc['src/Original.sol:Original.add(uint256)']);
+  assert.ok(!r.uncovered.some((u) => u.declaration.includes('IAdder')), 'an interface is excluded, not uncovered');
   const iface = r.exclusions.find((x) => x.prefix === '(any interface)');
   assert.ok(iface.declarations >= 2 && iface.reason.length > 20);
   assert.match(r.limit, /not every combination/);
 });
 
-test('the launch-check shape: coveredBoth, total, uncovered[{declaration, ownerAcceptance}]', () => {
+test('until the dependency-aware hash lands (#4007), any ledger entry is refused; an empty ledger passes', () => {
+  const [d] = decls('src/Original.sol');
+  assert.match(ledgerProblems({ entries: { [d.hash]: { reader: 'R1', commit: 'abcdef1' } } }, () => new Set([d.hash]))[0], /#4007/);
+  assert.deepEqual(ledgerProblems({ entries: {} }, () => new Set()), []);
+});
+
+test('a cross-review mark made by the first reader thread, or naming no thread, is refused (§10.27)', () => {
+  const [d] = decls('src/Original.sol');
+  const at = new Set([d.hash]);
+  const e = { reader: 'R1', readerThread: 't-a', crossReview: 'X1', commit: 'abcdef1' };
+  assert.match(lp({ entries: { [d.hash]: { ...e, crossReviewThread: 't-a' } } }, () => at).join(), /cross review was made by the thread that made the first reader pass/);
+  assert.match(lp({ entries: { [d.hash]: e } }, () => at).join(), /names no thread/);
+  assert.deepEqual(lp({ entries: { [d.hash]: { ...e, crossReviewThread: 't-b' } } }, () => at), []);
+});
+
+test('the launch-check shape: covered, total, uncovered[{declaration, ownerAcceptance}]', () => {
   const all = decls('src/Original.sol');
   const key = 'src/Original.sol:Original.total';
   const r = buildReport(all, { entries: {} }, { declarations: { [key]: { reason: 'storage kept as is', owner: 'https://example/decision' } } });
-  assert.equal(typeof r.coveredBoth, 'number');
+  assert.equal(typeof r.covered, 'number');
   assert.equal(typeof r.total, 'number');
   for (const u of r.uncovered) assert.deepEqual(Object.keys(u).filter((k) => ['declaration', 'ownerAcceptance'].includes(k)).sort(), ['declaration', 'ownerAcceptance']);
   assert.deepEqual(r.uncovered.find((u) => u.declaration === key).ownerAcceptance, { reason: 'storage kept as is', owner: 'https://example/decision' });
@@ -96,13 +117,13 @@ test('entry check: a hash that matches no declaration at its commit is refused (
   const at = new Set(decls('src/Original.sol').map((d) => d.hash));
   const good = fn('src/Original.sol', 'add(uint256)').hash;
   const stale = fn('src/Edited.sol', 'add(uint256)').hash;
-  const p = ledgerProblems(
+  const p = lp(
     { entries: { [good]: { reader: 'R1', reviewer: 'V1', commit: 'abcdef1' }, [stale]: { reader: 'R1', reviewer: 'V1', commit: 'abcdef1' } } },
     () => at,
   );
   assert.equal(p.length, 1);
   assert.match(p[0], /matches no declaration at abcdef1/);
-  const unknown = ledgerProblems({ entries: { [good]: { reader: 'R1', commit: 'deadbee' } } }, () => {
+  const unknown = lp({ entries: { [good]: { reader: 'R1', commit: 'deadbee' } } }, () => {
     throw new Error('unknown revision');
   });
   assert.match(unknown[0], /cannot be read/);
@@ -111,7 +132,7 @@ test('entry check: a hash that matches no declaration at its commit is refused (
 test('entry check: a reader mark by the thread that wrote the fix is refused (design §10.11)', () => {
   const good = fn('src/Original.sol', 'add(uint256)').hash;
   const at = new Set([good]);
-  const p = ledgerProblems({ entries: { [good]: { reader: 'R1', readerThread: 't-a', fixThread: 't-a', commit: 'abcdef1' } } }, () => at);
+  const p = lp({ entries: { [good]: { reader: 'R1', readerThread: 't-a', fixThread: 't-a', commit: 'abcdef1' } } }, () => at);
   assert.match(p[0], /thread that wrote the fix/);
 });
 
@@ -122,12 +143,12 @@ test('entry check: a reviewer mark recorded while the latest planted-fault run h
     plantedRuns: [{ id: 'P1', at: '2026-11-22T00:00:00Z', missed: 1 }],
     entries: { [good]: { reviewer: 'V2', commit: 'abcdef1', recordedAt: '2026-11-23T00:00:00Z' } },
   };
-  assert.match(ledgerProblems(ledger, () => at)[0], /planted-fault run \(P1\) has a miss/);
+  assert.match(lp(ledger, () => at)[0], /planted-fault run \(P1\) has a miss/);
 });
 
 test('entry check: the ledger holds marks only, never a finding', () => {
   const good = fn('src/Original.sol', 'add(uint256)').hash;
-  const p = ledgerProblems({ entries: { [good]: { reader: 'R1', commit: 'abcdef1', finding: 'x' } } }, () => new Set([good]));
+  const p = lp({ entries: { [good]: { reader: 'R1', commit: 'abcdef1', finding: 'x' } } }, () => new Set([good]));
   assert.match(p[0], /unknown field finding/);
 });
 
@@ -136,6 +157,9 @@ test('entry check: the ledger holds marks only, never a finding', () => {
 import {
   applyPlantedRun,
   baseFiles,
+  locateInHead,
+  reviewDescription,
+  descriptionProblems,
   buildDeclarations,
   copyProblems,
   strippedCopyProblems,
@@ -215,6 +239,31 @@ test('base files: the head with the unit\'s declarations cut out, nothing else',
   assert.equal(out['f.sol'].toString(), 'aaabbbccc');
 });
 
+test('a merged fix moves offsets: each slice declaration is found again in the head and cut there', () => {
+  const file = 'src/Original.sol';
+  const pinned = readFileSync(join(FIXTURE, file));
+  const slice = decls(file).filter((d) => d.label === 'Original.add(uint256)');
+  // The fix adds lines above the declaration: every offset moves by `k`.
+  const pad = '// a fix above\n// and another line\n';
+  const k = Buffer.byteLength(pad);
+  const shifted = JSON.parse(JSON.stringify(UNITS[file]).replace(/"src":"(\d+):/g, (_, a) => `"src":"${Number(a) + k}:`));
+  const head = Buffer.concat([Buffer.from(pad), pinned]);
+  const [found] = locateInHead(slice, { [file]: head }, () => new Map([[file, shifted]]));
+  assert.equal(found.start, slice[0].start + k);
+  assert.equal(head.subarray(found.start, found.end).toString(), pinned.subarray(slice[0].start, slice[0].end).toString());
+  const cut = baseFiles({ [file]: head }, [found])[file].toString();
+  assert.ok(cut.startsWith(pad) && !cut.includes('function add('), 'the declaration is cut, the fix kept');
+  assert.throws(() => locateInHead([{ ...slice[0], label: 'Original.gone()' }], { [file]: head }, () => new Map([[file, shifted]])), /no longer matches the head/);
+});
+
+test('a review-only description is the generated one: slice then checklist; any other text is refused (§10.19)', () => {
+  const body = reviewDescription('Review unit U, slice 1 of 1', '### Cross-cutting rules (from the rules file)\n\n- **R1**: a rule');
+  assert.match(body, /slice 1 of 1\n\n### Cross-cutting rules/);
+  assert.deepEqual(descriptionProblems(`${body}  \n\n`, body), [], 'trailing spaces aside');
+  assert.match(descriptionProblems(body.replace('a rule', 'no rule'), body)[0], /differs from the generated one at line 5/);
+  assert.match(descriptionProblems('Review unit U, slice 1 of 1', body)[0], /line 2/, 'a description without the checklist is refused');
+});
+
 test('review-only pull requests: recognised by the base name; never against main; head and base checked (design §10.3, §10.9)', () => {
   assert.equal(isReviewOnlyBase('main'), false);
   assert.equal(isReviewOnlyBase('claude/planted-1-base'), false, 'a planted-fault base is not review-only');
@@ -237,7 +286,7 @@ test('ladder: a miss steps down and removes reviewer marks since the last full c
       c: { reviewer: 'V3', commit: 'abcdef1', recordedAt: '2026-11-21T00:00:00Z' },
     },
   };
-  const r = applyPlantedRun(ledger, { id: 'P2', at: '2026-11-22T00:00:00Z', size: 1500, planted: 4, missed: 1 });
+  const r = applyPlantedRun(ledger, { id: 'P2', at: '2026-11-22T00:00:00Z', size: 1500, planted: 4, missed: 1, missingRule: 1 });
   assert.deepEqual(r.ledger.sizeLimit, { lines: 1000, setBy: 'P2' });
   assert.deepEqual(r.reReview, ['V2', 'V3']);
   assert.equal(r.ledger.entries.a.reviewer, 'V1', 'converged before the last full catch: kept');
@@ -246,12 +295,25 @@ test('ladder: a miss steps down and removes reviewer marks since the last full c
   assert.equal(ledger.entries.b.reviewer, 'V2', 'pure: the input is unchanged');
 });
 
-test('ladder: a step up needs a full catch AT the next rung', () => {
+test('ladder: a step up needs two qualifying runs AT the next rung, provisional in between (§2.3, §10.20)', () => {
   const base = { sizeLimit: { lines: 1000, setBy: 'P0' }, plantedRuns: [], entries: {} };
-  assert.equal(applyPlantedRun(base, { id: 'P1', at: 't1', size: 1000, planted: 3, missed: 0 }).ledger.sizeLimit.lines, 1000, 'a full catch at the current size does not step up');
-  assert.equal(applyPlantedRun(base, { id: 'P1', at: 't1', size: 2000, planted: 3, missed: 0 }).ledger.sizeLimit.lines, 1000, 'two rungs up is not the next rung');
-  assert.equal(applyPlantedRun(base, { id: 'P1', at: 't1', size: 1500, planted: 3, missed: 0 }).ledger.sizeLimit.lines, 1500);
-  assert.throws(() => applyPlantedRun(base, { id: 'P1', at: 't1', size: 1500, planted: 2, missed: 3 }));
+  const half = { lenses: ['funds', 'access', 'reentry'], depths: ['single', 'pair'] };
+  const rest = { lenses: ['upgrade', 'offchain'], depths: ['library'] };
+  const r = (l, run) => applyPlantedRun(l, { at: 't', planted: 3, missed: 0, missingRule: 1, ...half, ...run });
+  assert.equal(r(base, { id: 'P1', size: 1000 }).ledger.sizeLimit.lines, 1000, 'a full catch at the current size does not step up');
+  assert.equal(r(base, { id: 'P1', size: 2000 }).ledger.sizeLimit.lines, 1000, 'two rungs up is not the next rung');
+  assert.equal(r(base, { id: 'P1', size: 1500, missingRule: 0 }).ledger.sizeLimit.lines, 1000, 'no missing-rule fault: does not count');
+  const one = r(base, { id: 'P1', size: 1500 }).ledger;
+  assert.deepEqual(one.sizeLimit, { lines: 1500, setBy: 'P1', provisional: true });
+  assert.equal(r(one, { id: 'P2', size: 1500, ...half }).ledger.sizeLimit.provisional, true, 'the two runs do not cover every lens and depth');
+  assert.equal(r(one, { id: 'P2', size: 1500, ...rest, missingRule: 0 }).ledger.sizeLimit.provisional, true, 'the second run needs a missing-rule fault too');
+  assert.deepEqual(r(one, { id: 'P2', size: 1500, ...rest }).ledger.sizeLimit, { lines: 1500, setBy: 'P2', confirmedBy: ['P1', 'P2'] });
+  assert.equal(r(one, { id: 'P2', size: 2000, ...rest }).ledger.sizeLimit.lines, 1500, 'no step from a provisional rung');
+  const miss = applyPlantedRun(one, { id: 'P2', at: 't2', size: 1500, planted: 3, missed: 1, missingRule: 1 }).ledger;
+  assert.deepEqual(miss.sizeLimit, { lines: 1000, setBy: 'P2' }, 'a miss at a provisional rung steps down');
+  assert.throws(() => applyPlantedRun(base, { id: 'P1', at: 't1', size: 1500, planted: 2, missed: 3, missingRule: 0 }));
+  assert.throws(() => applyPlantedRun(base, { id: 'P1', at: 't1', size: 1500, planted: 2, missed: 0 }), /missing-rule/);
+  assert.throws(() => r(base, { id: 'P1', size: 1500, lenses: ['speed'] }), /unknown lens/);
 });
 
 test('the planted-fault run repeats after ten converged units', () => {

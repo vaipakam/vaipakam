@@ -3,9 +3,10 @@
  * review-coverage.mjs — the review coverage record (#3936,
  * ReviewCoveragePassDesign §2, §4).
  *
- * A piece of contract code is COVERED when its present text passed two
- * layers: a reader pass and a converged reviewer loop, each inside a review no
- * larger than the size limit. Coverage is recorded per DECLARATION: each
+ * A piece of contract code is COVERED when its present text carries four
+ * marks: a reader pass and a converged reviewer loop, each inside a review no
+ * larger than the size limit, the specification mark (design §3.5) and the
+ * cross review (§3.6). Coverage is recorded per DECLARATION: each
  * function, modifier, state variable, struct, enum, event, error, `using`
  * directive and contract header under contracts/src, identified by a hash of
  * its code with comments and spacing removed. So:
@@ -18,9 +19,10 @@
  * commit's files (the entry check does).
  *
  * Records, beside the contracts in contracts/review-coverage/:
- *   ledger.json    each hash with its marks: `reader` and `reviewer`, each an
- *                  opaque review number, plus the commit the hash was taken
- *                  at. No finding and no description, ever (design §4).
+ *   ledger.json    each hash with its marks: `reader`, `reviewer`,
+ *                  `specification` and `crossReview`, each an opaque review
+ *                  number, plus the commit the hash was taken at. No finding
+ *                  and no description, ever (design §4).
  *   accepted.json  declarations the owner accepted as uncovered, each with a
  *                  reason and a link to the owner's own words (design §8.5).
  *   exclusions     not a file: the excluded paths are {EXCLUDED} below, each
@@ -36,14 +38,15 @@
  *   node contracts/script/review-coverage.mjs hashes [--file <src path>] [--solc <path>]
  *
  * `report --json <path>` writes the shape the launch check reads (#3937):
- *   { coveredBoth, total, uncovered: [{ declaration, ownerAcceptance }], ... }
- * where `coveredBoth` and `total` are amounts of declaration CODE (bytes of
- * normalized text), so the share is code covered over all code (design §10.6).
- * Extra fields (per-layer shares, counts, exclusions) may be added; those
- * three keep their meaning.
+ *   { covered, total, uncovered: [{ declaration, marks, ownerAcceptance }], ... }
+ * where `covered` (code with all four marks) and `total` are amounts of
+ * declaration CODE (bytes of normalized text), so the share is code covered
+ * over all code (design §10.6). Extra fields (per-mark shares, counts,
+ * exclusions) may be added; those three keep their meaning.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -72,15 +75,19 @@ export const LIMIT_LINE =
 /**
  * The code of `text` with comments removed and spacing reduced to what keeps
  * two tokens apart: whitespace is dropped, except one space where both
- * neighbours are word characters (`uint256 a`, `return x`). String literals
- * are kept exactly, so a changed message is a changed declaration.
+ * neighbours are word characters (`uint256 a`, `return x`) or both are
+ * operator characters (`a - --b` against `a-- - b`, which would otherwise
+ * read the same). String literals are kept exactly, so a changed message is
+ * a changed declaration.
  */
 export function normalize(text) {
   let out = '';
   let pendingSpace = false;
   const isWord = (c) => /[A-Za-z0-9_$]/.test(c);
+  const isOp = (c) => /[-+*/%<>=!&|^~?:.]/.test(c);
   const push = (s) => {
-    if (pendingSpace && out.length && isWord(out[out.length - 1]) && isWord(s[0])) out += ' ';
+    const prev = out[out.length - 1];
+    if (pendingSpace && out.length && ((isWord(prev) && isWord(s[0])) || (isOp(prev) && isOp(s[0])))) out += ' ';
     pendingSpace = false;
     out += s;
   };
@@ -262,9 +269,17 @@ export const areaOf = (path) => {
 };
 
 /**
- * The coverage report. `ledger.entries` maps hash → { reader, reviewer,
- * commit }; `accepted.declarations` maps a declaration's label → { reason,
- * owner }. Pure.
+ * The four marks a declaration needs to be covered (design §2.1): the reader
+ * pass, the reviewer loop, the specification mark (§3.5) and the cross
+ * review (§3.6).
+ */
+export const MARKS = ['reader', 'reviewer', 'specification', 'crossReview'];
+
+/**
+ * The coverage report. `ledger.entries` maps hash → its marks and commit;
+ * `accepted.declarations` maps a declaration's label → { reason, owner }.
+ * A declaration is covered only with all four marks; each mark's share is
+ * reported beside it. Pure.
  */
 export function buildReport(decls, ledger, accepted) {
   const entries = ledger?.entries ?? {};
@@ -276,30 +291,29 @@ export function buildReport(decls, ledger, accepted) {
     if (why) excluded.push(d);
     else counted.push(d);
   }
-  const z = () => ({ total: 0, reader: 0, reviewer: 0, both: 0, declarations: 0, declarationsBoth: 0 });
+  const z = () => ({ total: 0, reader: 0, reviewer: 0, specification: 0, crossReview: 0, all: 0, declarations: 0, declarationsAll: 0 });
   const totals = z();
   const byArea = {};
   const byFile = {};
   const uncovered = [];
   for (const d of counted) {
     const e = entries[d.hash] ?? {};
-    const r = Boolean(e.reader);
-    const v = Boolean(e.reviewer);
+    const marks = Object.fromEntries(MARKS.map((m) => [m, Boolean(e[m])]));
+    const all = MARKS.every((m) => marks[m]);
     for (const t of [totals, (byArea[areaOf(d.path)] ??= z()), (byFile[d.path] ??= z())]) {
       t.total += d.size;
       t.declarations += 1;
-      if (r) t.reader += d.size;
-      if (v) t.reviewer += d.size;
-      if (r && v) {
-        t.both += d.size;
-        t.declarationsBoth += 1;
+      for (const m of MARKS) if (marks[m]) t[m] += d.size;
+      if (all) {
+        t.all += d.size;
+        t.declarationsAll += 1;
       }
     }
-    if (!(r && v)) {
+    if (!all) {
       const key = `${d.path}:${d.label}`;
       uncovered.push({
         declaration: key,
-        layers: { reader: r, reviewer: v },
+        marks,
         ownerAcceptance: acc[key] ?? null,
       });
     }
@@ -318,12 +332,14 @@ export function buildReport(decls, ledger, accepted) {
     limit: LIMIT_LINE,
     sizeLimit: ledger?.sizeLimit ?? null,
     unit: 'bytes of declaration code with comments and spacing removed',
-    coveredBoth: totals.both,
+    covered: totals.all,
     total: totals.total,
     coveredReader: totals.reader,
     coveredReviewer: totals.reviewer,
+    coveredSpecification: totals.specification,
+    coveredCrossReview: totals.crossReview,
     declarations: totals.declarations,
-    declarationsCoveredBoth: totals.declarationsBoth,
+    declarationsCovered: totals.declarationsAll,
     byArea,
     byFile,
     uncovered,
@@ -335,11 +351,12 @@ const pct = (a, b) => (b ? ((100 * a) / b).toFixed(1) : '100.0');
 
 export function printReport(r, log = console.log) {
   log(r.limit);
-  log(`Size limit: ${r.sizeLimit ? `${r.sizeLimit.lines} lines, set by ${r.sizeLimit.setBy}` : 'not yet set by a planted-fault run'}`);
-  log(`Covered by both layers: ${pct(r.coveredBoth, r.total)}% of declaration code (${r.declarationsCoveredBoth}/${r.declarations} declarations); reader pass ${pct(r.coveredReader, r.total)}%, reviewer loop ${pct(r.coveredReviewer, r.total)}%`);
-  log('By area (both / reader / reviewer):');
+  if (HASH_RULE_PENDING) log(`Hash: each declaration's own text for now; the dependency-aware hash of design §2.1 is ${HASH_RULE_PENDING}, and no mark is recorded before it.`);
+  log(`Size limit: ${r.sizeLimit ? `${r.sizeLimit.lines} lines, set by ${r.sizeLimit.setBy}${r.sizeLimit.provisional ? ', PROVISIONAL until a second qualifying run' : ''}` : 'not yet set by a planted-fault run'}`);
+  log(`Covered (all four marks): ${pct(r.covered, r.total)}% of declaration code (${r.declarationsCovered}/${r.declarations} declarations); reader pass ${pct(r.coveredReader, r.total)}%, reviewer loop ${pct(r.coveredReviewer, r.total)}%, specification ${pct(r.coveredSpecification, r.total)}%, cross review ${pct(r.coveredCrossReview, r.total)}%`);
+  log('By area (covered / reader / reviewer / specification / cross review):');
   for (const [a, t] of Object.entries(r.byArea).sort()) {
-    log(`  ${a.padEnd(14)} ${pct(t.both, t.total).padStart(5)}% ${pct(t.reader, t.total).padStart(5)}% ${pct(t.reviewer, t.total).padStart(5)}%  (${t.declarations} declarations)`);
+    log(`  ${a.padEnd(14)} ${[t.all, ...MARKS.map((m) => t[m])].map((x) => `${pct(x, t.total).padStart(5)}%`).join(' ')}  (${t.declarations} declarations)`);
   }
   log('Excluded:');
   for (const x of r.exclusions) log(`  ${x.prefix} (${x.declarations} declarations): ${x.reason}`);
@@ -357,9 +374,20 @@ export function printReport(r, log = console.log) {
  * wrote the fix under review is refused, and so is a reviewer mark recorded
  * while the latest planted-fault run has a miss.
  */
-export function ledgerProblems(ledger, declsAt) {
+/**
+ * The hash is still each declaration's own text. Design §2.1 asks for the
+ * dependency-aware hash (what its unqualified names resolve to, per deployed
+ * contract), which is #4007. Until it lands no mark is recorded, so none has
+ * to be redone when the hash changes.
+ */
+export const HASH_RULE_PENDING = '#4007';
+
+export function ledgerProblems(ledger, declsAt, { hashRulePending = HASH_RULE_PENDING } = {}) {
   const problems = [];
   const entries = ledger?.entries ?? {};
+  if (hashRulePending && Object.keys(entries).length) {
+    problems.push(`the ledger holds ${Object.keys(entries).length} entr${Object.keys(entries).length === 1 ? 'y' : 'ies'}, but the dependency-aware hash of design §2.1 is not built yet (${hashRulePending}): no mark is recorded on the text-only hash`);
+  }
   const cache = new Map();
   const planted = ledger?.plantedRuns ?? [];
   const latestMiss = planted.length && planted[planted.length - 1].missed > 0 ? planted[planted.length - 1] : null;
@@ -369,8 +397,12 @@ export function ledgerProblems(ledger, declsAt) {
       problems.push(`entry ${hash.slice(0, 12)}: names no commit`);
       continue;
     }
-    if (!e.reader && !e.reviewer) problems.push(`entry ${hash.slice(0, 12)}: carries no mark`);
-    for (const k of Object.keys(e)) if (!['reader', 'reviewer', 'commit', 'readerThread', 'fixThread', 'recordedAt'].includes(k)) problems.push(`entry ${hash.slice(0, 12)}: unknown field ${k} (the ledger holds marks only)`);
+    if (!MARKS.some((m) => e[m])) problems.push(`entry ${hash.slice(0, 12)}: carries no mark`);
+    for (const k of Object.keys(e)) if (![...MARKS, 'commit', 'readerThread', 'fixThread', 'crossReviewThread', 'recordedAt'].includes(k)) problems.push(`entry ${hash.slice(0, 12)}: unknown field ${k} (the ledger holds marks only)`);
+    if (e.crossReview && !e.crossReviewThread) problems.push(`entry ${hash.slice(0, 12)}: a cross-review mark names no thread`);
+    if (e.crossReview && e.crossReviewThread && e.crossReviewThread === e.readerThread) {
+      problems.push(`entry ${hash.slice(0, 12)}: the cross review was made by the thread that made the first reader pass`);
+    }
     if (e.reader && e.readerThread && e.fixThread && e.readerThread === e.fixThread) {
       problems.push(`entry ${hash.slice(0, 12)}: the reader pass was made by the thread that wrote the fix under review`);
     }
@@ -394,6 +426,14 @@ export function ledgerProblems(ledger, declsAt) {
 
 /** The declaration hashes of contracts/src at `commit`, read through git. */
 export function hashesAtCommit(commit, solc) {
+  // A shallow checkout (CI's) may not hold the commit an entry names: fetch
+  // that one commit before reading it, so an old entry is checked, never
+  // refused for the checkout's depth.
+  const have = spawnSync('git', ['cat-file', '-e', `${commit}^{commit}`], { cwd: CONTRACTS_DIR });
+  if (have.status !== 0) {
+    const f = spawnSync('git', ['fetch', '--quiet', '--no-tags', '--depth=1', 'origin', commit], { cwd: CONTRACTS_DIR, encoding: 'utf8' });
+    if (f.status !== 0) throw new Error(`commit ${commit} is not in this checkout and could not be fetched (${(f.stderr || '').trim().split('\n')[0]})`);
+  }
   const ls = spawnSync('git', ['ls-tree', '-r', '--name-only', commit, '--', 'src'], { cwd: CONTRACTS_DIR, encoding: 'utf8' });
   if (ls.status !== 0) throw new Error(ls.stderr.trim() || `git ls-tree ${commit} failed`);
   const paths = ls.stdout.split('\n').filter((p) => p.endsWith('.sol'));
@@ -510,7 +550,9 @@ export function deriveUnit(name, { ctx, reachFn, walk, decls, ledger, shared = [
       const { functions } = reachFn(m, c, ctx, undefined, { selfCalls: false });
       for (const id of functions) {
         const owner = ctx.contractOf.get(id);
-        if (owner?.contractKind !== 'library' || sharedSet.has(owner.name)) continue;
+        // A library's own functions are already among `own`; listing them
+        // again would put one declaration in two slices.
+        if (owner?.contractKind !== 'library' || sharedSet.has(owner.name) || ownIds.has(id)) continue;
         const node = ctx.byId.get(id);
         const d = decls.byKey.get(`${ctx.pathOf(owner.id)}:${startOf(node)}`);
         if (d && !excludedReason(d)) reachedLib.set(d.path + ':' + d.start, { d, id });
@@ -606,23 +648,42 @@ export function describeSlice(unit, index, { ctx, walk, decls }) {
 export const RUNGS = [1000, 1500, 2000];
 export const PLANTED_INTERVAL = 10;
 
+/** The five lenses of the review policy and the three depths of a planted fault (design §2.3, §7.1). */
+export const LENSES = ['funds', 'access', 'reentry', 'upgrade', 'offchain'];
+export const DEPTHS = ['single', 'pair', 'library'];
+
 /**
- * Apply one planted-fault run to the ledger. Pure: returns
- * `{ ledger, changed: string[], reReview: string[] }`.
+ * Apply one planted-fault run to the ledger (design §2.3). Pure: returns
+ * `{ ledger, changed: string[], reReview: string[] }`. A run records its
+ * size, how many faults were planted and missed, how many were of the
+ * missing-rule kind, and the lenses and depths its faults covered.
  * - A miss at any size steps the limit down one rung (not below the first),
  *   and every reviewer mark recorded since the last run caught in full is
- *   removed: those units are reviewed again at the smaller size.
- * - A full catch at the next rung steps the limit up to it. A step up is
- *   never taken any other way.
+ *   removed: those units, including any converged at a provisional size,
+ *   are reviewed again at the smaller size.
+ * - A run qualifies toward a step up only when it is caught in full and
+ *   carries at least one missing-rule fault (§10.20).
+ * - The first qualifying run at the next rung makes that rung the limit,
+ *   PROVISIONAL. A second qualifying run at the same rung confirms it, when
+ *   the two runs' faults between them cover all five lenses and all three
+ *   depths. A step up is never taken any other way.
  */
 export function applyPlantedRun(ledger, run) {
+  const lenses = run?.lenses ?? [];
+  const depths = run?.depths ?? [];
   if (!run?.id || !run.at || !(run.size > 0) || !(run.planted > 0) || !(run.missed >= 0) || run.missed > run.planted) {
     throw new Error('a planted-fault run needs id, at, size, planted > 0 and 0 <= missed <= planted');
   }
+  if (!(Number.isInteger(run.missingRule) && run.missingRule >= 0 && run.missingRule <= run.planted)) {
+    throw new Error('a planted-fault run states how many of its faults were of the missing-rule kind (0..planted)');
+  }
+  const unknown = [...lenses.filter((l) => !LENSES.includes(l)), ...depths.filter((d) => !DEPTHS.includes(d))];
+  if (unknown.length) throw new Error(`unknown lens or depth: ${unknown.join(', ')} (lenses ${LENSES.join('/')}, depths ${DEPTHS.join('/')})`);
   const next = structuredClone(ledger);
-  next.plantedRuns = [...(next.plantedRuns ?? []), { id: run.id, at: run.at, size: run.size, planted: run.planted, missed: run.missed }];
-  const current = next.sizeLimit?.lines ?? RUNGS[0];
-  const idx = Math.max(0, RUNGS.indexOf(current));
+  const record = { id: run.id, at: run.at, size: run.size, planted: run.planted, missed: run.missed, missingRule: run.missingRule, lenses: [...new Set(lenses)].sort(), depths: [...new Set(depths)].sort() };
+  next.plantedRuns = [...(next.plantedRuns ?? []), record];
+  const limit = next.sizeLimit ?? { lines: RUNGS[0], setBy: null };
+  const idx = Math.max(0, RUNGS.indexOf(limit.lines));
   const changed = [];
   const reReview = [];
   if (run.missed > 0) {
@@ -632,18 +693,33 @@ export function applyPlantedRun(ledger, run) {
       if (e.reviewer && (!lastFull || !e.recordedAt || e.recordedAt > lastFull.at)) {
         reReview.push(e.reviewer);
         delete e.reviewer;
-        if (!e.reader) delete next.entries[hash];
+        if (!e.reader && !e.specification && !e.crossReview) delete next.entries[hash];
       }
     }
     next.sizeLimit = { lines: lower, setBy: run.id };
     changed.push(`a miss in ${run.id}: the limit is ${lower} lines`);
-  } else if (RUNGS[idx + 1] !== undefined && run.size === RUNGS[idx + 1]) {
-    next.sizeLimit = { lines: run.size, setBy: run.id };
-    changed.push(`a full catch at ${run.size} lines in ${run.id}: the limit steps up`);
-  } else if (!next.sizeLimit) {
-    next.sizeLimit = { lines: current, setBy: run.id };
+    return { ledger: next, changed, reReview: [...new Set(reReview)].sort() };
   }
-  return { ledger: next, changed, reReview: [...new Set(reReview)].sort() };
+  const qualifies = run.missingRule > 0;
+  if (!qualifies) changed.push(`${run.id} carried no missing-rule fault: it does not count toward a step up`);
+  if (qualifies && limit.provisional && run.size === limit.lines) {
+    const first = (ledger.plantedRuns ?? []).find((r) => r.id === limit.setBy);
+    const covered = (key) => new Set([...(first?.[key] ?? []), ...record[key]]);
+    const missingLenses = LENSES.filter((l) => !covered('lenses').has(l));
+    const missingDepths = DEPTHS.filter((d) => !covered('depths').has(d));
+    if (!missingLenses.length && !missingDepths.length) {
+      next.sizeLimit = { lines: run.size, setBy: run.id, confirmedBy: [limit.setBy, run.id] };
+      changed.push(`a second qualifying run at ${run.size} lines (${limit.setBy}, ${run.id}): the limit is confirmed`);
+    } else {
+      changed.push(`${run.id} and ${limit.setBy} do not yet cover ${[...missingLenses, ...missingDepths].join(', ')}: the limit stays provisional`);
+    }
+  } else if (qualifies && !limit.provisional && RUNGS[idx + 1] !== undefined && run.size === RUNGS[idx + 1]) {
+    next.sizeLimit = { lines: run.size, setBy: run.id, provisional: true };
+    changed.push(`a qualifying run at ${run.size} lines in ${run.id}: the limit steps up, provisional until a second`);
+  } else if (!next.sizeLimit) {
+    next.sizeLimit = { lines: limit.lines, setBy: run.id };
+  }
+  return { ledger: next, changed, reReview };
 }
 
 /** Whether a planted-fault run is due: ten units have converged since the last one. */
@@ -754,6 +830,8 @@ const run = (cmd, args, opts = {}) => {
   return r.stdout.trim();
 };
 const gh = (args) => JSON.parse(run('gh', ['api', ...args]) || 'null');
+/** Every page of a list endpoint as one array: `--paginate` alone prints one JSON array per page. */
+const ghList = (path) => (JSON.parse(run('gh', ['api', '--paginate', '--slurp', path]) || '[]')).flat();
 const gitDiffNames = (clone) => (a, b) => run('git', ['diff', '--name-only', a, b], { cwd: clone }).split('\n').filter(Boolean);
 
 /**
@@ -763,7 +841,7 @@ const gitDiffNames = (clone) => (a, b) => run('git', ['diff', '--name-only', a, 
  * declarations removed. Checked against {reviewPrProblems} before anything
  * is pushed.
  */
-export function makeReviewBranches({ clone, unit, slice, pinned, fix }) {
+export function makeReviewBranches({ clone, unit, slice, pinned, fix, solc }) {
   const tag = `${unit.name.toLowerCase()}-${slice + 1}`;
   const head = `${REVIEW_PREFIX}${tag}-head`;
   const base = `${REVIEW_PREFIX}${tag}-base`;
@@ -773,9 +851,12 @@ export function makeReviewBranches({ clone, unit, slice, pinned, fix }) {
     run('git', ['merge', '-q', '--no-edit', fix], { cwd: clone });
     fixPaths = gitDiffNames(clone)(pinned, head);
   }
-  const decls = unit.slices[slice].declarations;
   const files = {};
-  for (const d of decls) files[d.path] ??= readFileSync(join(clone, 'contracts', d.path));
+  for (const d of unit.slices[slice].declarations) files[d.path] ??= readFileSync(join(clone, 'contracts', d.path));
+  // The slice's spans were taken from the tree the unit was derived from. A
+  // merged fix moves offsets, so each declaration is found again, by file
+  // and label, in the head as it now stands, and cut there.
+  const decls = locateInHead(unit.slices[slice].declarations, files, (fs) => parseSources(fs, solc));
   const cut = baseFiles(files, decls);
   run('git', ['checkout', '-q', '-B', base, head], { cwd: clone });
   for (const [path, buf] of Object.entries(cut)) writeFileSync(join(clone, 'contracts', path), buf);
@@ -792,6 +873,45 @@ export function makeReviewBranches({ clone, unit, slice, pinned, fix }) {
     diff: gitDiffNames(clone),
   });
   return { head, base, problems };
+}
+
+/**
+ * Each of `decls` found again in `files` (path → Buffer of the head), by
+ * path and label, with the head's spans. Throws when a declaration is
+ * missing from the head or its label is not unique there: the slice must be
+ * derived again from the head rather than cut at stale offsets.
+ */
+export function locateInHead(decls, files, parse) {
+  const asts = parse(files);
+  const byPath = new Map(Object.keys(files).map((p) => [p, declarationsOf(p, asts.get(p), files[p])]));
+  const missing = [];
+  const out = decls.map((d) => {
+    const found = (byPath.get(d.path) ?? []).filter((x) => x.label === d.label);
+    if (found.length !== 1) {
+      missing.push(`${d.path}:${d.label} (${found.length ? 'not unique' : 'not found'} in the head)`);
+      return d;
+    }
+    return { ...d, start: found[0].start, end: found[0].end, hash: found[0].hash };
+  });
+  if (missing.length) throw new Error(`the slice no longer matches the head: ${missing.join('; ')}. Derive the unit again from the head`);
+  return out;
+}
+
+/** A review-only pull request's description: the slice, then the rules checklist. */
+export const reviewDescription = (slice, checklistText) => `${slice}\n\n${checklistText}\n`;
+
+/**
+ * Refusals for a hand-supplied description (design §10.19): it must be
+ * exactly what the slice and the rules file generate, trailing spaces aside.
+ */
+export function descriptionProblems(given, expected) {
+  const norm = (t) => t.replace(/[ \t]+$/gm, '').trimEnd();
+  if (norm(given) === norm(expected)) return [];
+  const g = norm(given).split('\n');
+  const e = norm(expected).split('\n');
+  let i = 0;
+  while (i < g.length && i < e.length && g[i] === e[i]) i++;
+  return [`the description differs from the generated one at line ${i + 1}: expected ${JSON.stringify(e[i] ?? '(end)')}, found ${JSON.stringify(g[i] ?? '(end)')}`];
 }
 
 /** Branches under the review prefixes that no open pull request uses (design §7.1, §10.14). */
@@ -817,10 +937,12 @@ function flags(rest) {
 
 /**
  * The commands that act on the review repository or the ladder:
- *   planted record --id <id> --size <lines> --planted <n> --missed <n> [--at <iso>]
+ *   planted record --id <id> --size <lines> --planted <n> --missed <n> --missing-rule <n>
+ *                  --lenses <a,b,..> --depths <a,b,..> [--at <iso>]
  *   planted due
  *   branches <Unit> --slice <n> --clone <dir> --pinned <sha> [--fix <ref>] [--push]
- *   open --repo <owner/name> --base <branch> --head <branch> --title <text> --body-file <path>
+ *   open --repo <owner/name> --base <branch> --head <branch> --title <text> --unit <Contract> --slice <n>
+ *        [--rules <file>] [--body-file <path>]   (the description is generated; a body file must equal it)
  *   close --repo <owner/name> --pr <n>          (closes, then deletes both branches)
  *   strays --repo <owner/name>                  (review branches with no open pull request)
  *   copy --repo <owner/name> --commit <sha> --clone <dir>
@@ -843,6 +965,9 @@ async function reviewRepoCommand(cmd, rest) {
         size: Number(f.size),
         planted: Number(f.planted),
         missed: Number(f.missed),
+        missingRule: Number(f['missing-rule']),
+        lenses: typeof f.lenses === 'string' ? f.lenses.split(',').filter(Boolean) : [],
+        depths: typeof f.depths === 'string' ? f.depths.split(',').filter(Boolean) : [],
       });
       writeFileSync(LEDGER_FILE, `${JSON.stringify(r.ledger, null, 2)}\n`);
       for (const c of r.changed) console.log(`  · ${c}`);
@@ -856,7 +981,9 @@ async function reviewRepoCommand(cmd, rest) {
       const order = readJson(ORDER_FILE, { sharedLibraries: [] });
       const decls = buildDeclarations(g.units, (p) => readFileSync(join(CONTRACTS_DIR, p)));
       const unit = deriveUnit(f._[0], { ...g, decls, ledger, shared: order.sharedLibraries ?? [], limit: ledger.sizeLimit?.lines ?? DEFAULT_LIMIT });
-      const { head, base, problems } = makeReviewBranches({ clone: f.clone, unit, slice: Number(f.slice) - 1, pinned: f.pinned, fix: f.fix });
+      const solc = f.solc || findSolc();
+      if (!solc) throw new Error('no solc 0.8.29 found (run forge build once, or pass --solc)');
+      const { head, base, problems } = makeReviewBranches({ clone: f.clone, unit, slice: Number(f.slice) - 1, pinned: f.pinned, fix: f.fix, solc });
       for (const p of problems) console.error(`  ✗ ${p}`);
       if (problems.length) return 1;
       if (f.push) run('git', ['push', '-q', 'origin', head, base], { cwd: f.clone });
@@ -865,7 +992,32 @@ async function reviewRepoCommand(cmd, rest) {
     }
     if (cmd === 'open') {
       if (!isReviewOnlyBase(f.base) || f.repo === 'vaipakam/vaipakam') throw new Error(`refusing: a review-only pull request needs a ${REVIEW_PREFIX} base, in the review repository`);
-      const pr = gh(['-X', 'POST', `repos/${f.repo}/pulls`, '-f', `title=${f.title}`, '-f', `head=${f.head}`, '-f', `base=${f.base}`, '-F', `body=@${f['body-file']}`]);
+      if (!f.unit || !f.slice) throw new Error('open needs --unit <Contract> --slice <n>: the description is generated, never written by hand');
+      // The description: the slice and the cross-cutting rules checklist,
+      // generated from the rules file (design §3.4, §10.19).
+      const gates = await import('./check-entry-gates.mjs');
+      const rulesPath = typeof f.rules === 'string' ? f.rules : gates.RULES_FILE;
+      if (!existsSync(rulesPath)) throw new Error(`no rules file at ${rulesPath}: a review-only pull request carries the checklist generated from it (pass --rules)`);
+      const doc = JSON.parse(readFileSync(rulesPath, 'utf8'));
+      const g = await loadGraph();
+      const ledger = readJson(LEDGER_FILE, { entries: {} });
+      const order = readJson(ORDER_FILE, { sharedLibraries: [] });
+      const decls = buildDeclarations(g.units, (p) => readFileSync(join(CONTRACTS_DIR, p)));
+      const unit = deriveUnit(f.unit, { ...g, decls, ledger, shared: order.sharedLibraries ?? [], limit: ledger.sizeLimit?.lines ?? DEFAULT_LIMIT });
+      const index = Number(f.slice) - 1;
+      if (!(index >= 0 && index < unit.slices.length)) throw new Error(`--slice must be 1..${unit.slices.length}`);
+      const { entryPoints } = await import('./check-permissionless-steps.mjs');
+      const shipped = [...g.manifest.facets, ...g.manifest.standalone];
+      const entries = entryPoints(g.units, shipped, g.ctx.byId).entries.filter((e) => e.contract === unit.name);
+      const body = reviewDescription(describeSlice(unit, index, { ...g, decls }), gates.checklist(doc, entries, { shipped, ctx: g.ctx }));
+      if (typeof f['body-file'] === 'string') {
+        const problems = descriptionProblems(readFileSync(f['body-file'], 'utf8'), body);
+        for (const p of problems) console.error(`  ✗ ${p}`);
+        if (problems.length) return 1;
+      }
+      const bodyFile = join(mkdtempSync(join(tmpdir(), 'review-pr-')), 'body.md');
+      writeFileSync(bodyFile, body);
+      const pr = gh(['-X', 'POST', `repos/${f.repo}/pulls`, '-f', `title=${f.title}`, '-f', `head=${f.head}`, '-f', `base=${f.base}`, '-F', `body=@${bodyFile}`]);
       console.log(`  ✓ opened ${pr.html_url}`);
       return 0;
     }
@@ -878,8 +1030,8 @@ async function reviewRepoCommand(cmd, rest) {
       return 0;
     }
     if (cmd === 'strays') {
-      const branches = gh(['--paginate', `repos/${f.repo}/branches?per_page=100`]).map((b) => b.name);
-      const open = gh(['--paginate', `repos/${f.repo}/pulls?state=open&per_page=100`]).map((p) => ({ base: p.base.ref, head: p.head.ref }));
+      const branches = ghList(`repos/${f.repo}/branches?per_page=100`).map((b) => b.name);
+      const open = ghList(`repos/${f.repo}/pulls?state=open&per_page=100`).map((p) => ({ base: p.base.ref, head: p.head.ref }));
       const stray = strayBranches(branches, open);
       for (const b of stray) console.log(`  ⚠ ${b}: no open pull request`);
       if (!stray.length) console.log('  ✓ every review branch belongs to an open pull request');
@@ -935,7 +1087,7 @@ async function loadGraph() {
   const pathOfContract = new Map();
   for (const u of units) for (const n of u.nodes ?? []) if (n.nodeType === 'ContractDefinition') pathOfContract.set(n.id, u.absolutePath);
   ctx.pathOf = (id) => pathOfContract.get(id);
-  return { units, ctx, reachFn: rr.reach, walk: rr.walk };
+  return { units, ctx, manifest, reachFn: rr.reach, walk: rr.walk };
 }
 
 export async function main(argv = process.argv.slice(2)) {

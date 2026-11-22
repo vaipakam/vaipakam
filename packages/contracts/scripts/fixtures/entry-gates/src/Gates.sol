@@ -49,6 +49,8 @@ abstract contract Guarded {
 
 interface IOther {
     function poke() external;
+
+    function pay() external payable;
 }
 
 contract HostFacet {
@@ -98,6 +100,11 @@ contract GFacet is Guarded {
 
     function externalFirst() external nonReentrant {
         other.poke();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function externalWithOptionsFirst() external payable nonReentrant {
+        other.pay{value: msg.value, gas: 50_000}();
         LibGate.requireNotFlagged(msg.sender);
     }
 
