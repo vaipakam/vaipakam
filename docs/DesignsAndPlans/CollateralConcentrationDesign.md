@@ -1,6 +1,6 @@
 # Collateral concentration: a graded response per asset — design
 
-**Status:** owner approved this shape on 2026-11-15, before the feature freeze. Card #3685. Design for review before build. **Amended 2026-11-22 (owner decision):** a third threshold on the same measure, the exposure limit, refuses new exposure, and collateral with no tier backs a loan on the most conservative terms. Both are in `LiquidityTiersAndExposureDesign.md` (sections 6 and 5).
+**Status:** owner approved this shape on 2026-11-15, before the feature freeze. Card #3685. Design for review before build. **Amended 2026-11-22 (owner decision):** a third threshold on the same measure, the exposure limit, refuses new exposure, and collateral with no tier backs a loan on the most conservative terms. Both are in `LiquidityTiersAndExposureDesign.md` (sections 6 and 5). **Amended again that day (owner decision on the risk figures):** no setting gives one asset thresholds of its own, the level a loan records is measured against the size the exposure limit uses, a release is never refused for the pledged amount, and the cap at High is stated for both states of the tier-cap switch and for collateral with no tier. These are in `RiskFiguresDesign.md` (sections 4, 8 and 11), which replaces sections 2 and 3 below wherever they differ.
 **Related:** the liquidity tiers and the loan-opening loan-to-value cap, `ShortfallReserveDesign.md` (#3641), `RatePricedCollateralDesign.md` (#3683), `LoanSettingsSnapshotDesign.md` (#3437).
 
 ## 1. Why
@@ -31,7 +31,7 @@ Two governed thresholds, bounded and changed only behind the Timelock delay:
 | Caution | 5 times the depth reference | 2 to 20 |
 | High | 10 times the depth reference | above caution, up to 50 |
 
-Governance may set tighter multiples for a single asset, within the same bounds and behind the same delay; a rate-priced token (`RatePricedCollateralDesign.md`) starts one step tighter than the platform values. An asset with no override uses the platform values.
+Every asset uses the platform values. No setting gives a single asset multiples of its own (`RiskFiguresDesign.md`, section 11); the earlier per-asset override, and the tighter start it gave a rate-priced token, go with it.
 
 The multiples are above one because only part of the pledged collateral is ever sold in one fall: loans open at different prices with different cushions.
 
@@ -43,18 +43,17 @@ All three apply to **new loans only**, judged when the loan opens. An open loan 
 2. **At or above caution: no reserve eligibility.** A loan opened while its collateral asset is at or above caution is not eligible for the shortfall reserve, whatever its tiers. This is recorded on the loan at opening with the tiers the reserve design already records.
 3. **At or above high: a lower loan-to-value cap.** The loan-opening cap for that collateral is the cap of the next lower liquidity tier. For an asset already in the lowest liquid tier, that tier's cap is reduced by a governed step. Borrowing against the asset stays possible with more cushion.
 
-**How rule 3 applies in each loan-to-value regime (design decision 2026-11-16).** At High the cap is the lower of the regime's own cap and the lowered tier cap, in both regimes, and the health-factor floor is not changed:
+**How rule 3 applies in each state of the tier-cap switch (design decision 2026-11-16, restated 2026-11-22).** A tier's cap holds whether the tier caps are on or off (`RiskFiguresDesign.md`, section 4), so at High the next lower tier's cap replaces it in both states, and no health floor is changed:
 
-- *Depth-tiered regime:* the regime's cap is the lower of the asset's own ceiling and its tier's cap. At High the next lower tier's cap replaces the tier cap.
-- *Untiered regime:* the loan-opening check enforces the asset's own ceiling and the health-factor floor. The loan-to-value that floor allows is the tier's liquidation loan-to-value divided by the floor. The lowered tier cap applies on top; where it is not below what the floor already allows (for example a tier-3 asset: the next tier's 60% against 90% / 1.5 = 60%), it lowers nothing.
+- *Where the lowered cap does not bind:* with the caps off a loan is also held to the higher health floor, and the loan-to-value that floor allows is the tier's liquidation line divided by the floor. Where the lowered cap is not below what the loan is held to already, it lowers nothing.
 - *The lowest liquid tier:* its cap less the step, 10 percentage points to start, bounded 5 to 25.
-- *Collateral with no tier* (liquid by the floor test alone) backs a loan on terms no better than the most conservative tier's (`LiquidityTiersAndExposureDesign.md`, section 5), and its concentration is measured against the floor size. What High lowers for it is still to be stated with the risk figures.
+- *Collateral with no tier* (liquid by the floor test alone) backs a loan on the figures of `RiskFiguresDesign.md`, section 6, and its concentration is measured against the floor size. At High its cap is the cap already given less the step once more, and never below the least cap.
 
 The per-asset view and the loan-opening cap read both say whether the lowered cap actually binds. The app's High warning must not claim a lower cap where it does not bind; at High with no binding cap it says only that much of the asset is pledged.
 
-**Rule 2's record.** The shortfall reserve (#3641) is not built yet, so each loan records the concentration level (normal, caution, high) its collateral had when the loan opened. The reserve reads that record; caution or high means not eligible.
+**Rule 2's record.** The shortfall reserve (#3641) is not built yet, so each loan records the concentration level (normal, caution, high) its collateral had when the loan opened. The reserve reads that record; caution or high means not eligible. The level a loan records is measured against the size the exposure limit uses (the lower of the asset's measured tier and its proven tier), which does not lapse, so no loan is marked for its life because the keeper was silent.
 
-**Thresholds are stored in hundredths of a multiple** (500 = 5x), so a per-asset override can be set between whole multiples.
+**Thresholds are stored in hundredths of a multiple** (500 = 5x), so a threshold can be set between whole multiples.
 
 The two thresholds above refuse nothing. A third threshold on the same measure, the exposure limit, refuses new exposure past it (owner decision 2026-11-22). It reads the lower of the asset's measured tier and its proven tier, it never refuses a top-up, a cure or a repayment, and it never changes an open loan. Its rule is in `LiquidityTiersAndExposureDesign.md`, section 6.
 
@@ -66,6 +65,7 @@ Auto-lend and matches need no special rule: the cap in 3 is applied by the one l
 - **Price and tier at the moment of opening.** The ratio uses the price and tier the loan-opening check already reads, under the loan's settings (#3437). The thresholds are platform settings read live for new loans; they are not part of a loan's stamped settings because they never apply to a loan after it opens.
 - **Pushing the ratio.** A borrower cannot lower the ratio except by removing real collateral. Someone could raise it by opening large loans against the asset, which costs them the initiation fee and only makes later borrowers post more cushion; it moves no funds.
 - **Fallback custody.** Collateral held under a failed sale's fallback still counts as pledged until it is claimed or sold.
+- **The pledged amount and a release.** The amount always equals the sum of the live collateral liens, through the one writer of liens. No release of collateral, and no close-out that makes one, is refused because of the amount: where it is less than a release takes it stops at zero, an event names the asset and what was short, and new loans on that asset have the response of High until governance has set the amount right (`RiskFiguresDesign.md`, section 8).
 - **Illiquid collateral** has no tier and no ratio; it is already lent against only by explicit consent.
 - **Disclosure.** The asset page shows the pledged amount, the ratio and the thresholds for every collateral asset, at all times, not only when a threshold is crossed.
 
@@ -113,7 +113,7 @@ Decided with the design thread on 2026-11-16 (recorded in section 3):
 - Thresholds are stored in hundredths of a multiple.
 - The level is recorded per loan at opening, for the reserve to read.
 
-Built later, not here: a rate-priced token's one-step-tighter start (#3683) and the reserve itself (#3641). Until #3437 stamps loan settings, the check reads the live price and tier the loan-opening check already reads.
+Built later, not here: the reserve itself (#3641). A rate-priced token's one-step-tighter start (#3683) is dropped with the per-asset thresholds; whether that class has a tighter threshold by a rule of its own is an open item of `RiskFiguresDesign.md`. Until #3437 stamps loan settings, the check reads the live price and tier the loan-opening check already reads.
 
 A refinance's carried-over collateral is still in the pledged total when the replacement loan is judged, because the old lien moves to the new loan inside the same transaction. The replacement therefore sees its own collateral counted once. This is conservative and is left as is.
 

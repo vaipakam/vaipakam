@@ -16,6 +16,12 @@ priced or unpriced for its whole life, a retirement of a price version names
 a replacement that need not be the current one, a dropped source pins a
 version, and what the vault never does. Sections 4 and 7 carry them.
 
+Amended a third time that day for the owner's approval of the risk figures:
+one rule classes every figure of risk as recorded at a loan's opening or read
+live, and a loan records its health floor with its other figures. Sections 3
+and 9 carry the pointers, and the rule is in `RiskFiguresDesign.md`
+(section 7).
+
 ## 1. Why
 
 Owner decision of 2026-11-09: a lender and a borrower agree to a loan under
@@ -101,7 +107,9 @@ current set. A sale of the lender position, a part sale and an obligation
 handover keep the loan and so keep its set; the buyer's preview states the
 set. An in-place extension or renewal is a fresh agreement by both parties,
 so it moves the loan to the current set, and a pre-authorised rollover says
-so when it is authorised.
+so when it is authorised. The figures of risk a loan recorded at its opening
+are no part of a set and do not move with it: no extension changes them
+(`RiskFiguresDesign.md`, section 7).
 
 ## 4. Prices
 
@@ -474,6 +482,18 @@ fallback custody or past default cannot be moved.
   minimum output use the loan's own set.
 - **Numeric risk thresholds already stamped per loan** (the treasury fee at
   origination, for example) are unchanged by this design.
+- **The figures of risk follow one rule** (`RiskFiguresDesign.md`,
+  section 7). A figure that decides who is owed what, or at which reading the
+  other side may act, is recorded at the loan's opening: its standing, its
+  tier or that it had none, its liquidation line, the cap and the health
+  floor it opened under, its discount and its level of concentration. A
+  figure that describes the market is read live. Three settings that say how
+  the market is read at a sale are live too, for every loan: the calm bound,
+  the coverage and the tight floor of each tier. A change of anything read
+  live never moves a figure the loan recorded.
+- **Writing a checkpoint stays open in a pause.** It moves no funds, and with
+  no slot written then every sale would have the full floor once the pause
+  ends. A slot is never written twice.
 
 ## 10. App, indexer and keeper
 

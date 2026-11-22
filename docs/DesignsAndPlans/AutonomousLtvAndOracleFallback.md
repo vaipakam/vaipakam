@@ -8,6 +8,17 @@ the autonomy stack below); this doc covers the **tier-LTV mapping**
 (Layer 2) and the **failed-swap fallback** (a separate but adjacent
 borrower-protection upgrade).
 
+**Amended 2026-11-22 (owner decision on the risk figures).**
+`RiskFiguresDesign.md` (section 4) is the design of record for the peer
+reading of a tier's cap. It replaces these points wherever §4 and §5 below
+state them: a reference asset's value is the lowest of the platforms that
+agree, not their median; a reading is stored as found, however low, and is
+cut only to the tier's ceiling when a loan reads it; a reading that stops
+being usable leaves the lower of it and the default, so an old reading never
+raises a cap by falling away; a refresh stays open in a pause; and being
+named as a reference gives an asset no tier, no standing and no figure of its
+own.
+
 ## 1. Goal
 
 Vaipakam runs as an autonomous P2P lending protocol — no continuous

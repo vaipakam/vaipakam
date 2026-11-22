@@ -116,4 +116,4 @@ Add the rate-priced source kind to the price guard with the safeguards in sectio
 ## 11. Open items for the builder to raise, not decide silently
 
 - Settled with the builder on 2026-11-15: the build admits no token (each comes later as a governance proposal with its checklist answers; testnets get one mock token); both source kinds ship, with one reader for the standard vault conversion function to start.
-- Rate-priced tokens start with concentration thresholds one step tighter, set per token in the concentration settings (`CollateralConcentrationDesign.md`, #3685), not in the guard.
+- Rate-priced tokens start with concentration thresholds one step tighter, set per token in the concentration settings (`CollateralConcentrationDesign.md`, #3685), not in the guard. *Amended 2026-11-22: no setting gives one asset thresholds of its own, so the per-token setting is dropped (`RiskFiguresDesign.md`, section 11). Whether the class has a tighter threshold by a rule of its own is an open item of that design.*
