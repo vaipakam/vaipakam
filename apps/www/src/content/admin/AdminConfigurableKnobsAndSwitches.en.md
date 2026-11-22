@@ -1336,7 +1336,7 @@ deploy never exposes the path before the per-chain audit + risk-
 committee sign-off. Independent of `depthTieredLtvEnabled` —
 governance can flip each one per chain (e.g. enable the discount
 path on Base while autonomous-LTV still bakes on Polygon).
-ADMIN_ROLE pre-handover; TimelockController-gated (48h) post-handover.
+ADMIN_ROLE pre-handover; TimelockController-gated (the 7-day standard wait) post-handover.
 Setter: `ConfigFacet.setDiscountPathEnabled(bool)`.
 
 ### Per-tier liquidator discount (BPS)

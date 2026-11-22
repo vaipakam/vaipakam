@@ -193,7 +193,11 @@ contract LaunchMockRegistry is LaunchFollowsOwner {
 
 /// @dev A Timelock stand-in: the reads `Launch` makes, nothing scheduled.
 contract LaunchMockTimelock {
-    function getMinDelay() external pure returns (uint256) {
+    function requiredDelay(bytes32, address[] calldata, uint256[] calldata, bytes[] calldata)
+        external
+        pure
+        returns (uint256)
+    {
         return 2 days;
     }
 
@@ -896,7 +900,41 @@ contract LaunchTest is Test {
         proposers[0] = PROPOSER;
         address[] memory executors = new address[](1);
         executors[0] = address(0);
-        tl = new VaipakamTimelock(2 days, proposers, executors, new address[](0));
+        tl = new VaipakamTimelock(2 days, 2 days, address(0), proposers, executors, new address[](0), new address[](0));
+    }
+
+    /// @dev The launch proposal is scheduled with the delay the Timelock
+    ///      requires of THAT operation (Codex #3829 r1): with the restart
+    ///      delay shorter than the standard one, the printed delay is the
+    ///      standard delay, the restart delay is refused, and the standard
+    ///      one schedules.
+    function test_Production_LaunchProposalUsesTheStandardDelay() public {
+        vm.chainId(8453);
+        _configure();
+        address registry = _registryWithLane();
+        address[] memory proposers = new address[](1);
+        proposers[0] = PROPOSER;
+        address[] memory executors = new address[](1);
+        executors[0] = address(0);
+        VaipakamTimelock tl =
+            new VaipakamTimelock(2 days, 7 days, address(0), proposers, executors, new address[](0), new address[](0));
+        _handOverUnpause(address(tl));
+        launcher.launch(diamond, _d(registry), address(tl), admin, 0);
+        uint64 epoch = _epoch();
+        uint256 delay = launcher.launchScheduleDelay(diamond, _d(registry), _h(), epoch, address(tl));
+        assertEq(delay, 7 days, "launch waits the standard delay");
+        assertTrue(delay != tl.getMinDelay(), "not the restart delay");
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        bytes32 id = tl.hashOperationBatch(targets, values, payloads, bytes32(0), salt);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.DelayBelowRequired.selector, id, 2 days, 7 days));
+        vm.prank(PROPOSER);
+        tl.scheduleBatch(targets, values, payloads, bytes32(0), salt, 2 days);
+        vm.prank(PROPOSER);
+        tl.scheduleBatch(targets, values, payloads, bytes32(0), salt, delay);
+        assertTrue(tl.isOperationPending(id));
     }
 
     function _schedule(VaipakamTimelock tl, address registry, uint64 epoch) internal {
@@ -2516,7 +2554,8 @@ contract LaunchTest is Test {
         targets[0] = address(tl);
         targets[1] = address(tl);
         bytes[] memory payloads = new bytes[](2);
-        payloads[0] = abi.encodeCall(tl.updateDelay, (2 days));
+        // The standard wait rises first: the restart wait may never exceed it.
+        payloads[0] = abi.encodeCall(tl.updateStandardDelay, (3 days));
         payloads[1] = abi.encodeCall(tl.updateDelay, (3 days));
         vm.prank(PROPOSER);
         tl.scheduleBatch(targets, new uint256[](2), payloads, bytes32(0), bytes32("two"), 2 days);

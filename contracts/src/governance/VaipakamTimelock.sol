@@ -34,6 +34,27 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
  *         operation queued AFTER the removal has run is beyond the veto,
  *         and that one waits a second full delay.
  *
+ *         Two waits (owner decision 2026-11-19, option A). Every operation
+ *         waits the STANDARD delay ({standardDelay}, never below
+ *         {STANDARD_DELAY_FLOOR}, 7 days on a mainnet). Two kinds wait only
+ *         the RESTART delay ({getMinDelay}, never below {MIN_DELAY_FLOOR},
+ *         48 hours on a mainnet):
+ *         - an operation whose every call is on the fixed restart list
+ *           ({isRestartCall}): (target, selector) pairs, the target being
+ *           the Diamond fixed at deploy ({RESTART_TARGET}) and the
+ *           selectors fixed in code ({restartSelectors}). Each lifts a pause
+ *           in a fixed direction, so the selector alone shows what the call
+ *           does; a setter taking the new value as an argument can never be
+ *           on the list. No operation can add to it;
+ *         - an urgent fix: an operation whose exact id an urgent approver
+ *           (the pause multisig) approved before it was scheduled
+ *           ({approveUrgent}). The approval is spent by that scheduling. An
+ *           urgent approver can never be a proposer, so a short wait always
+ *           needs two independent parties.
+ *         Anything else scheduled below the standard delay is refused
+ *         ({DelayBelowRequired}). A lower delay is never the default: the
+ *         restart list is closed, and an urgent approval names one id.
+ *
  *         One OZ behaviour is kept and stated here rather than changed:
  *         an operation has no expiry. Once ready it stays executable by
  *         any executor (anyone, with the open executor) until it is run
@@ -99,6 +120,95 @@ contract VaipakamTimelock is TimelockController {
     /// @dev {updateDelay} asked for less than {MIN_DELAY_FLOOR}.
     error DelayBelowFloor(uint256 requested, uint256 floor);
 
+    /// @notice The role that may approve one exact operation as an urgent fix
+    ///         ({approveUrgent}). Held by the pause multisig; never by a
+    ///         proposer.
+    bytes32 public constant URGENT_APPROVER_ROLE = keccak256("URGENT_APPROVER_ROLE");
+
+    /// @notice The lowest {standardDelay} may ever be: the standard delay
+    ///         this timelock was deployed with.
+    uint256 public immutable STANDARD_DELAY_FLOOR;
+
+    /// @notice The one contract a restart call may target: the Diamond.
+    ///         Fixed at deploy; `address(0)` means no call is a restart.
+    address public immutable RESTART_TARGET;
+
+    /// @dev The wait every operation not on the restart list and not
+    ///      approved as urgent must have. Never below {STANDARD_DELAY_FLOOR}
+    ///      and never below {getMinDelay}.
+    uint256 private _standardDelay;
+
+    /// @notice The highest {standardDelay} may ever be. A cap keeps
+    ///         `block.timestamp + delay` from overflowing, which would make
+    ///         every operation but a restart impossible to schedule.
+    uint256 public constant MAX_STANDARD_DELAY = 30 days;
+
+    /// @notice How long an urgent approval stays usable after it is given.
+    ///         An urgent fix is scheduled promptly; an approval left unused
+    ///         past this window lapses, so no approval waits in the dark to
+    ///         be used long after the situation it was given for.
+    uint256 public constant URGENT_APPROVAL_WINDOW = 3 days;
+
+    /// @dev One unspent urgent approval: who gave it and when.
+    struct UrgentApproval {
+        address approver;
+        uint64 approvedAt;
+        /// @dev The approver's grant count when it approved: an approval
+        ///      counts only while it still holds the SAME grant, so a revoke
+        ///      followed by a fresh grant voids what it approved before.
+        uint32 grant;
+    }
+
+    /// @dev How many times each account has been granted
+    ///      {URGENT_APPROVER_ROLE}. Bumped on every new grant.
+    mapping(address => uint32) private _approverGrant;
+
+    /// @dev Operation ids an urgent approver approved and nobody has
+    ///      scheduled yet. An approval counts only while its approver still
+    ///      holds {URGENT_APPROVER_ROLE} and for {URGENT_APPROVAL_WINDOW}
+    ///      after it was given ({isUrgentApproved}), so revoking a rotated or
+    ///      compromised approver voids every approval it left behind.
+    mapping(bytes32 => UrgentApproval) private _urgentApproved;
+
+    /// @notice The standard delay changed.
+    event StandardDelayChange(uint256 oldDuration, uint256 newDuration);
+
+    /// @notice `approver` approved operation `id` as an urgent fix.
+    event UrgentApproved(bytes32 indexed id, address indexed approver);
+
+    /// @notice `approver` withdrew the urgent approval of operation `id`
+    ///         before it was scheduled.
+    event UrgentApprovalWithdrawn(bytes32 indexed id, address indexed approver);
+
+    /// @notice Operation `id` was scheduled at the restart delay on an urgent
+    ///         approval, which it spent.
+    event UrgentApprovalSpent(bytes32 indexed id);
+
+    /// @dev An operation was scheduled below the delay it needs.
+    error DelayBelowRequired(bytes32 id, uint256 requested, uint256 required);
+
+    /// @dev {updateStandardDelay} asked for less than
+    ///      {STANDARD_DELAY_FLOOR} or less than {getMinDelay}.
+    error StandardDelayOutOfRange(uint256 requested, uint256 floor);
+
+    /// @dev A standard delay above {MAX_STANDARD_DELAY}.
+    error StandardDelayAboveMax(uint256 requested, uint256 max);
+
+    /// @dev {updateDelay} asked for more than {standardDelay}: the restart
+    ///      delay is never the longer one.
+    error RestartDelayAboveStandard(uint256 requested, uint256 standard);
+
+    /// @dev One account would hold both PROPOSER_ROLE and
+    ///      URGENT_APPROVER_ROLE, so one party alone could shorten a wait.
+    error ProposerCannotApproveUrgent(address account);
+
+    /// @dev The approval named is not pending.
+    error UrgentApprovalNotPending(bytes32 id);
+
+    /// @dev The operation was already scheduled, so an approval could never
+    ///      apply to it.
+    error UrgentApprovalForScheduledOperation(bytes32 id);
+
     /// @notice For each queued single-call operation that revokes
     ///         CANCELLER_ROLE on this timelock, the account it removes. That
     ///         account may not cancel it unless it is also a proposer (see
@@ -139,8 +249,15 @@ contract VaipakamTimelock is TimelockController {
     error ZeroCanceller();
 
     /**
-     * @param minDelay   Initial minimum delay, and permanently the floor for
-     *                   {updateDelay} ({MIN_DELAY_FLOOR}).
+     * @param minDelay   The restart delay ({getMinDelay}), and permanently
+     *                   the floor for {updateDelay} ({MIN_DELAY_FLOOR}).
+     * @param standardDelay_ The standard delay ({standardDelay}), and
+     *                   permanently its floor ({STANDARD_DELAY_FLOOR}). Not
+     *                   below `minDelay`.
+     * @param restartTarget_ The one contract whose restart calls may use the
+     *                   restart delay: the Diamond ({RESTART_TARGET}).
+     *                   `address(0)` leaves the restart list empty, so only
+     *                   an approved urgent fix can use the restart delay.
      * @param proposers  Proposers. OZ also makes each a canceller.
      * @param executors  Executors; `address(0)` means anyone may execute a
      *                   ready operation.
@@ -150,6 +267,10 @@ contract VaipakamTimelock is TimelockController {
      *                   one, a malicious operation's only defence is that
      *                   someone notices and exits. May be empty (testnets);
      *                   the mainnet deploy requires one.
+     * @param urgentApprovers Holders of {URGENT_APPROVER_ROLE} (the pause
+     *                   multisig). None may be a proposer. May be empty: then
+     *                   no urgent fix can be approved until one is granted,
+     *                   which waits the standard delay.
      * @dev The OZ `admin` argument is fixed to `address(0)`: the timelock
      *      administers itself, so changing proposers, cancellers or the
      *      delay goes through its own queue. A non-zero admin could
@@ -157,15 +278,171 @@ contract VaipakamTimelock is TimelockController {
      */
     constructor(
         uint256 minDelay,
+        uint256 standardDelay_,
+        address restartTarget_,
         address[] memory proposers,
         address[] memory executors,
-        address[] memory cancellers
+        address[] memory cancellers,
+        address[] memory urgentApprovers
     ) TimelockController(minDelay, proposers, executors, address(0)) {
+        if (standardDelay_ < minDelay) revert StandardDelayOutOfRange(standardDelay_, minDelay);
+        if (standardDelay_ > MAX_STANDARD_DELAY) revert StandardDelayAboveMax(standardDelay_, MAX_STANDARD_DELAY);
         MIN_DELAY_FLOOR = minDelay;
+        STANDARD_DELAY_FLOOR = standardDelay_;
+        RESTART_TARGET = restartTarget_;
+        _standardDelay = standardDelay_;
+        emit StandardDelayChange(0, standardDelay_);
         for (uint256 i = 0; i < cancellers.length; ++i) {
             if (cancellers[i] == address(0)) revert ZeroCanceller();
             _grantRole(CANCELLER_ROLE, cancellers[i]);
         }
+        _setRoleAdmin(URGENT_APPROVER_ROLE, DEFAULT_ADMIN_ROLE);
+        for (uint256 i = 0; i < urgentApprovers.length; ++i) {
+            if (urgentApprovers[i] == address(0)) revert ZeroCanceller();
+            _grantRole(URGENT_APPROVER_ROLE, urgentApprovers[i]);
+        }
+    }
+
+    // ─── The two waits ───────────────────────────────────────────────────
+
+    /// @notice The wait every operation needs unless it is a restart or an
+    ///         approved urgent fix. {getMinDelay} is the restart delay, the
+    ///         shortest wait any operation may have.
+    function standardDelay() public view returns (uint256) {
+        return _standardDelay;
+    }
+
+    /// @notice Change the standard delay. Only the timelock itself, so the
+    ///         change is its own queued operation (and waits the standard
+    ///         delay). Never below {STANDARD_DELAY_FLOOR} or {getMinDelay},
+    ///         never above {MAX_STANDARD_DELAY}.
+    function updateStandardDelay(uint256 newDelay) external {
+        address sender = _msgSender();
+        if (sender != address(this)) revert TimelockUnauthorizedCaller(sender);
+        uint256 floor = STANDARD_DELAY_FLOOR > getMinDelay() ? STANDARD_DELAY_FLOOR : getMinDelay();
+        if (newDelay < floor) revert StandardDelayOutOfRange(newDelay, floor);
+        if (newDelay > MAX_STANDARD_DELAY) revert StandardDelayAboveMax(newDelay, MAX_STANDARD_DELAY);
+        emit StandardDelayChange(_standardDelay, newDelay);
+        _standardDelay = newDelay;
+    }
+
+    /// @notice Approve the exact operation `id` as an urgent fix, so it may
+    ///         be scheduled at the restart delay. Only an urgent approver,
+    ///         and only before the operation is scheduled; scheduling spends
+    ///         the approval. `id` is {hashOperation} or {hashOperationBatch}
+    ///         of the operation, salt included, so it names one change.
+    ///         The approval is bound to its approver and lapses after
+    ///         {URGENT_APPROVAL_WINDOW}; approving again restarts the window.
+    function approveUrgent(bytes32 id) external onlyRole(URGENT_APPROVER_ROLE) {
+        if (isOperation(id)) revert UrgentApprovalForScheduledOperation(id);
+        address approver = _msgSender();
+        _urgentApproved[id] =
+            UrgentApproval({approver: approver, approvedAt: uint64(block.timestamp), grant: _approverGrant[approver]});
+        emit UrgentApproved(id, approver);
+    }
+
+    /// @notice Withdraw an urgent approval nobody has used yet, lapsed or
+    ///         not. Any urgent approver may withdraw one.
+    function withdrawUrgentApproval(bytes32 id) external onlyRole(URGENT_APPROVER_ROLE) {
+        if (_urgentApproved[id].approver == address(0)) revert UrgentApprovalNotPending(id);
+        delete _urgentApproved[id];
+        emit UrgentApprovalWithdrawn(id, _msgSender());
+    }
+
+    /// @notice Whether operation `id` holds an urgent approval that would let
+    ///         it be scheduled now: unspent, given by an account that still
+    ///         holds {URGENT_APPROVER_ROLE} under the same grant, and within
+    ///         {URGENT_APPROVAL_WINDOW} of when it was given.
+    function isUrgentApproved(bytes32 id) public view returns (bool) {
+        UrgentApproval memory a = _urgentApproved[id];
+        if (a.approver == address(0)) return false;
+        if (!hasRole(URGENT_APPROVER_ROLE, a.approver)) return false;
+        // Revoked and granted again since: the approval belongs to the old
+        // grant, so a rotation never revives it.
+        if (a.grant != _approverGrant[a.approver]) return false;
+        return block.timestamp <= uint256(a.approvedAt) + URGENT_APPROVAL_WINDOW;
+    }
+
+    /// @notice Who gave operation `id`'s unspent approval and when; zero
+    ///         when none is recorded. Read {isUrgentApproved} for whether it
+    ///         still counts.
+    function urgentApproval(bytes32 id) external view returns (address approver, uint64 approvedAt) {
+        UrgentApproval memory a = _urgentApproved[id];
+        return (a.approver, a.approvedAt);
+    }
+
+    /// @notice The selectors on the restart list, each called on
+    ///         {RESTART_TARGET}. Fixed in code: the whole-platform unpause
+    ///         (`unpause()`, `unpauseIfPauseEpoch(uint64)`) and the per-asset
+    ///         unpause (`unpauseAsset(address)`). Each lifts a pause and only
+    ///         that, whatever its argument. The deploy refuses a Diamond that
+    ///         does not route every one of them.
+    function restartSelectors() external pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](3);
+        sels[0] = SEL_UNPAUSE;
+        sels[1] = SEL_UNPAUSE_ASSET;
+        sels[2] = SEL_UNPAUSE_IF_EPOCH;
+    }
+
+    /// @notice Whether one call is on the fixed restart list: a restart
+    ///         selector ({restartSelectors}) called on {RESTART_TARGET}, with
+    ///         the exact calldata length and no value, so a padded or
+    ///         value-carrying call is not a restart.
+    function isRestartCall(address target, uint256 value, bytes calldata data) public view returns (bool) {
+        if (target == address(0) || target != RESTART_TARGET) return false;
+        if (value != 0 || data.length < 4) return false;
+        bytes4 sel = bytes4(data[:4]);
+        if (data.length == 4) return sel == SEL_UNPAUSE;
+        if (data.length == 36) return sel == SEL_UNPAUSE_ASSET || sel == SEL_UNPAUSE_IF_EPOCH;
+        return false;
+    }
+
+    /// @notice The wait operation `id` needs, given its calls: the restart
+    ///         delay when every call is a restart or `id` holds an urgent
+    ///         approval, else the standard delay.
+    function requiredDelay(
+        bytes32 id,
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata payloads
+    ) public view returns (uint256) {
+        if (isUrgentApproved(id)) return getMinDelay();
+        uint256 n = targets.length;
+        if (n == 0 || n != values.length || n != payloads.length) return _standardDelay;
+        for (uint256 i = 0; i < n; ++i) {
+            if (!isRestartCall(targets[i], values[i], payloads[i])) return _standardDelay;
+        }
+        return getMinDelay();
+    }
+
+    bytes4 private constant SEL_UNPAUSE = bytes4(keccak256("unpause()"));
+    bytes4 private constant SEL_UNPAUSE_ASSET = bytes4(keccak256("unpauseAsset(address)"));
+    bytes4 private constant SEL_UNPAUSE_IF_EPOCH = bytes4(keccak256("unpauseIfPauseEpoch(uint64)"));
+
+    /// @dev Refuses `delay` below what `id` needs, and spends any urgent
+    ///      approval recorded for `id` (a lapsed one is cleared too: the
+    ///      operation is now scheduled, so it could never apply again).
+    function _requireDelay(bytes32 id, uint256 delay, uint256 required) private {
+        if (delay < required) revert DelayBelowRequired(id, delay, required);
+        if (_urgentApproved[id].approver != address(0)) {
+            bool live = isUrgentApproved(id);
+            delete _urgentApproved[id];
+            if (live) emit UrgentApprovalSpent(id);
+        }
+    }
+
+    /// @dev Keeps the proposer and the urgent approver apart: one party alone
+    ///      must never be able to schedule a change at the restart delay.
+    function _grantRole(bytes32 role, address account) internal virtual override returns (bool) {
+        if (role == PROPOSER_ROLE && hasRole(URGENT_APPROVER_ROLE, account)) {
+            revert ProposerCannotApproveUrgent(account);
+        }
+        if (role == URGENT_APPROVER_ROLE && hasRole(PROPOSER_ROLE, account)) {
+            revert ProposerCannotApproveUrgent(account);
+        }
+        bool granted = super._grantRole(role, account);
+        if (granted && role == URGENT_APPROVER_ROLE) ++_approverGrant[account];
+        return granted;
     }
 
     /// @inheritdoc TimelockController
@@ -173,6 +450,7 @@ contract VaipakamTimelock is TimelockController {
     ///      the timelock itself may call it — is kept by `super`.
     function updateDelay(uint256 newDelay) public virtual override {
         if (newDelay < MIN_DELAY_FLOOR) revert DelayBelowFloor(newDelay, MIN_DELAY_FLOOR);
+        if (newDelay > _standardDelay) revert RestartDelayAboveStandard(newDelay, _standardDelay);
         super.updateDelay(newDelay);
     }
 
@@ -190,8 +468,13 @@ contract VaipakamTimelock is TimelockController {
         bytes32 salt,
         uint256 delay
     ) public virtual override {
-        super.schedule(target, value, data, predecessor, salt, delay);
         bytes32 id = hashOperation(target, value, data, predecessor, salt);
+        _requireDelay(
+            id,
+            delay,
+            isUrgentApproved(id) || isRestartCall(target, value, data) ? getMinDelay() : _standardDelay
+        );
+        super.schedule(target, value, data, predecessor, salt, delay);
         _addActive(id);
         address removed = _cancellerRemoved(target, value, data);
         if (removed != address(0)) _cancellerRemovalTarget[id] = removed;
@@ -211,8 +494,9 @@ contract VaipakamTimelock is TimelockController {
         bytes32 salt,
         uint256 delay
     ) public virtual override {
-        super.scheduleBatch(targets, values, payloads, predecessor, salt, delay);
         bytes32 id = hashOperationBatch(targets, values, payloads, predecessor, salt);
+        _requireDelay(id, delay, requiredDelay(id, targets, values, payloads));
+        super.scheduleBatch(targets, values, payloads, predecessor, salt, delay);
         _addActive(id);
     }
 

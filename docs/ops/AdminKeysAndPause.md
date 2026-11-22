@@ -43,15 +43,18 @@ gives up the root.
 |---|---|---|
 | **Governance multisig** | The timelock's proposer. On the Diamond it holds **only** `EMERGENCY_REVOKER_ROLE` (D1, #934) — it cannot grant a role, move ownership or upgrade anything directly; every such action is a timelock operation. | 4-of-7, geographically separated |
 | **Admin timelock** (`VaipakamTimelock`) | ERC-173 Diamond owner and `DEFAULT_ADMIN_ROLE`, plus `ADMIN_ROLE`, `UNPAUSER_ROLE`, `KYC_ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`. Queues every admin-impacting change with a delay. Self-administered (no external admin). | Proposer: governance multisig. Executor: open (after delay). Independent canceller: the pauser multisig. |
-| **Pauser multisig** | Holds `PAUSER_ROLE` (pause, per-asset pause — not unpause) and is the timelock's independent canceller. No other role. | 2-of-5, fast-response on-call signers |
+| **Pauser multisig** | Holds `PAUSER_ROLE` (pause, per-asset pause — not unpause), is the timelock's independent canceller, and holds the timelock's `URGENT_APPROVER_ROLE` (approves one named urgent fix so it may run at the restart wait; it can never propose). No other role. | 2-of-5, fast-response on-call signers |
 | **Deployer hot key** | Used for initial deploy + role transfer. **Revoked** within 24h. | 1 EOA, rotated per deploy |
 
 ### Timelock delay
 
-- Default: **48 hours** for production; `DeployTimelock` refuses less on a Phase-1 mainnet.
-- Floor: the delay can never be lowered below the value the timelock was deployed with (`MIN_DELAY_FLOOR`, #938). Raising it is an ordinary queued operation. A lower delay needs a new timelock and a governed handover to it.
+- Two waits. **Standard: 7 days** for every operation (`standardDelay`, floor `STANDARD_DELAY_FLOOR`); `DeployTimelock` and the handover refuse less on a production chain. **Restart: 48 hours** (`getMinDelay`, floor `MIN_DELAY_FLOOR`) only for a fixed list of calls matched exactly: `unpause()`, `unpauseAsset(address)`, `unpauseIfPauseEpoch(uint64)`, each with no value; a batch qualifies only if every call does.
+- Urgent fix: an operation the Pauser Safe approved by its id (`approveUrgent`) before it was queued may use the restart wait. The approval is spent when that operation is scheduled and shortens nothing else; it can be withdrawn while unspent, and an already-queued operation cannot be approved. It counts only while the account that gave it still holds `URGENT_APPROVER_ROLE` and for `URGENT_APPROVAL_WINDOW` (3 days) after it was given, so revoking a rotated or compromised approver voids every approval it left. Granting the role back to the same account does not revive them: an approval belongs to the grant it was given under. Still, before rotating the approver, withdraw its open approvals (`withdrawUrgentApproval`) so the record shows none outstanding. The proposer and the urgent approver can never be the same account.
+- Ceiling: the standard wait can never exceed `MAX_STANDARD_DELAY` (30 days), so no queued change can raise it to a value that makes scheduling impossible.
+- **Known two-party trust.** The Pauser Safe holds both the veto (canceller) and the urgent approval. So the Pauser Safe and the governance Safe acting together can run a change after 48 hours, and no third party can stop it. That is the design: one Safe alone never gets the short wait. It holds only while the two Safes' signers are independent of each other, which no contract can check. Keep the signer sets disjoint, and say so wherever the governance setup is published.
+- Floors: neither wait can be lowered below its deploy-time value (#938), and the restart wait can never rise above the standard one. Raising either is an ordinary queued operation. A lower wait needs a new timelock and a governed handover to it.
 - No expiry: a ready operation stays executable by anyone until it runs or is cancelled. Cancel anything that will not be executed, and watch `getPendingProposals` for stale entries.
-- Emergency override: **no override via timelock.** Emergencies go through `PAUSER_ROLE` (no delay). If an admin-only change is needed under emergency, unpause only after the timelock's delay — or queue the change immediately and pause until it lands.
+- Emergency path: pause first through `PAUSER_ROLE` (no delay). A fix then needs both Safes: the Pauser Safe approves its operation id, the governance Safe queues it at the 48-hour restart wait, and the platform stays paused until it lands. Nothing runs faster than 48 hours.
 
 ### Why pauser is separate
 

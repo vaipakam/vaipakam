@@ -23,10 +23,12 @@ contract DeployTimelockGuardTest is Test {
     function _config() internal pure returns (DeployTimelock.Config memory c) {
         c.deployerKey = 0x1;
         c.minDelay = 172800;
+        c.standardDelay = 604800;
         c.proposer = GOVERNANCE_SAFE;
         c.executor = address(0);
         c.canceller = PAUSER_SAFE;
         c.revoker = GOVERNANCE_SAFE;
+        c.diamond = address(0xD1A);
     }
 
     /// @dev On a Phase-1 mainnet chain id, a 1h min delay passes the >=1h floor
@@ -38,6 +40,27 @@ contract DeployTimelockGuardTest is Test {
 
         vm.chainId(1); // Ethereum mainnet → 48h gate active
         vm.expectRevert(bytes("DeployTimelock: mainnet min delay < 48h"));
+        s.runWith(c);
+    }
+
+    /// @dev On a Phase-1 mainnet the standard delay must be at least 7 days
+    ///      (owner decision 2026-11-19, option A), even with a 48h restart
+    ///      delay.
+    function testMainnetStandardDelayBelow7DaysReverts() public {
+        DeployTimelock s = new DeployTimelock();
+        DeployTimelock.Config memory c = _config();
+        c.standardDelay = 6 days;
+        vm.chainId(1);
+        vm.expectRevert(bytes("DeployTimelock: mainnet standard delay < 7 days"));
+        s.runWith(c);
+    }
+
+    /// @dev The standard delay is never the shorter one.
+    function testStandardBelowRestartReverts() public {
+        DeployTimelock s = new DeployTimelock();
+        DeployTimelock.Config memory c = _config();
+        c.standardDelay = c.minDelay - 1;
+        vm.expectRevert(bytes("DeployTimelock: standard delay < restart delay"));
         s.runWith(c);
     }
 
@@ -65,6 +88,16 @@ contract DeployTimelockGuardTest is Test {
         c.canceller = address(0);
         vm.chainId(84532); // Base Sepolia: a known testnet
         vm.expectRevert(bytes("DeployTimelock: PAUSER_ADDRESS (the canceller) required"));
+        s.runWith(c);
+    }
+
+    /// @dev The restart list's target must be a deployed Diamond: without one
+    ///      the 48-hour route would name nothing the handover governs.
+    function testDiamondRequired() public {
+        DeployTimelock s = new DeployTimelock();
+        DeployTimelock.Config memory c = _config();
+        vm.chainId(84532);
+        vm.expectRevert(bytes("DeployTimelock: no Diamond deployed at .diamond (the restart target)"));
         s.runWith(c);
     }
 }

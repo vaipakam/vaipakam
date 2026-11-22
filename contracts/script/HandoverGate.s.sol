@@ -254,8 +254,8 @@ contract HandoverGate is Script {
     }
 
     function _checkTimelock(Inputs memory inp, LogEntry[] memory logs) internal {
-        bytes32[] memory roles = new bytes32[](4);
-        address[][] memory expected = new address[][](4);
+        bytes32[] memory roles = new bytes32[](5);
+        address[][] memory expected = new address[][](5);
         roles[0] = HandoverPlan.DEFAULT_ADMIN_ROLE;
         expected[0] = _one(inp.timelock);
         roles[1] = HandoverPlan.PROPOSER_ROLE;
@@ -268,6 +268,10 @@ contract HandoverGate is Script {
         expected[2][1] = inp.pauserSafe;
         roles[3] = HandoverPlan.EXECUTOR_ROLE;
         expected[3] = _one(inp.executor);
+        // The Pauser Safe alone may approve an urgent fix at the restart
+        // delay; the proposer never may (the timelock refuses that pairing).
+        roles[4] = HandoverPlan.URGENT_APPROVER_ROLE;
+        expected[4] = _one(inp.pauserSafe);
 
         // Completeness, as for the Diamond: the constructor is the only place
         // the delay changes from zero (the floor, checked below, is > 0).
@@ -281,10 +285,18 @@ contract HandoverGate is Script {
         ITimelockRead tl = ITimelockRead(inp.timelock);
         uint256 delay = tl.getMinDelay();
         uint256 floor = tl.MIN_DELAY_FLOOR();
+        uint256 standard = tl.standardDelay();
+        uint256 standardFloor = tl.STANDARD_DELAY_FLOOR();
         if (floor == 0) _fail("Timelock MIN_DELAY_FLOOR is zero (a pass-through)");
+        string memory restartProblem = HandoverPlan.restartListProblem(inp.timelock, inp.diamond);
+        if (bytes(restartProblem).length != 0) _fail(string.concat("Timelock restart list: ", restartProblem));
         if (inp.production) {
-            if (delay < 48 hours) _fail(string.concat("Timelock delay ", vm.toString(delay), "s < 48h on a production chain"));
+            if (delay < 48 hours) _fail(string.concat("Timelock restart delay ", vm.toString(delay), "s < 48h on a production chain"));
             if (floor < 48 hours) _fail(string.concat("Timelock MIN_DELAY_FLOOR ", vm.toString(floor), "s < 48h on a production chain"));
+            if (standard < 7 days) _fail(string.concat("Timelock standard delay ", vm.toString(standard), "s < 7 days on a production chain"));
+            if (standardFloor < 7 days) {
+                _fail(string.concat("Timelock STANDARD_DELAY_FLOOR ", vm.toString(standardFloor), "s < 7 days on a production chain"));
+            }
         }
     }
 
@@ -798,6 +810,7 @@ contract HandoverGate is Script {
         if (role == HandoverPlan.PROPOSER_ROLE) return "PROPOSER_ROLE";
         if (role == HandoverPlan.EXECUTOR_ROLE) return "EXECUTOR_ROLE";
         if (role == HandoverPlan.CANCELLER_ROLE) return "CANCELLER_ROLE";
+        if (role == HandoverPlan.URGENT_APPROVER_ROLE) return "URGENT_APPROVER_ROLE";
         return vm.toString(role);
     }
 
@@ -833,4 +846,6 @@ interface IOwnerRead {
 interface ITimelockRead {
     function getMinDelay() external view returns (uint256);
     function MIN_DELAY_FLOOR() external view returns (uint256);
+    function standardDelay() external view returns (uint256);
+    function STANDARD_DELAY_FLOOR() external view returns (uint256);
 }

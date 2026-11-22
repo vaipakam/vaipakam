@@ -51,7 +51,7 @@ Three things must already be true before you touch a chain:
 2. **Governance has flipped the on-chain kill-switch** —
    `ConfigFacet.setDiscountPathEnabled(true)` has been executed
    on the target chain's diamond. ADMIN_ROLE pre-handover;
-   TimelockController-gated (48h delay) post-handover. Until this
+   TimelockController-gated (the 7-day standard wait) post-handover. Until this
    lands, every `triggerLiquidationDiscounted` reverts
    `DiscountPathDisabled` no matter what the keeper does.
 3. **Keeper EOA gas funds** on the chain. Flash-loan txs cost
@@ -559,8 +559,9 @@ order of preference (least to most disruptive):
    `ConfigFacet.setDiscountPathEnabled(false)`. Disables for
    EVERY caller (us + external liquidators). Use when an
    exploit-class issue surfaces, not for routine disable. Post-
-   handover this needs a Timelock-scheduled 48h-delayed
-   transaction — slow path.
+   handover this needs a Timelock-scheduled transaction on the 7-day
+   standard wait (48h only as an urgent fix the Pauser Safe approves)
+   — slow path.
 
 Order matters: items 1 and 2 affect only our bot. Item 3 affects
 the whole open market and should only fire on a real incident.
@@ -570,7 +571,8 @@ differ before and after the admin handover. **Pre-handover**,
 `ConfigFacet.setDiscountPathEnabled(false)` is a direct `ADMIN_ROLE`
 call with no delay: it disables the discounted path immediately and
 only that path, so reach for it rather than the global pause.
-**Post-handover** it carries the Timelock's 48h delay, which makes it
+**Post-handover** it carries the Timelock's standard wait (7 days, or 48h
+as an urgent fix the Pauser Safe approves), which makes it
 the eventual targeted control; the immediate on-chain stop is then the
 global protocol pause in [`IncidentRunbook.md`](IncidentRunbook.md) §3.
 `AdminFacet.pauseAsset` is **not** a lever here: it blocks new exposure

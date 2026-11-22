@@ -56,6 +56,8 @@ export const GOVERNANCE_TIMELOCK_READ_ABI = parseAbi([
   'function getPendingProposals(uint32 offset, uint32 limit) view returns ((bytes32 id, uint256 eta, bool ready)[] page)',
   'function getMinDelay() view returns (uint256)',
   'function MIN_DELAY_FLOOR() view returns (uint256)',
+  'function standardDelay() view returns (uint256)',
+  'function STANDARD_DELAY_FLOOR() view returns (uint256)',
   'function isOperationDone(bytes32 id) view returns (bool)',
 ]);
 
@@ -117,8 +119,11 @@ export interface GovernanceQueue {
   timelock: Address;
   /** The block every value here was read at. */
   block: { number: bigint; timestamp: bigint };
-  /** The timelock's current minimum delay, in seconds. */
+  /** The timelock's current minimum delay, in seconds: the wait of a call
+   *  on its restart list (#3828). */
   minDelay: bigint;
+  /** The wait every other change needs, in seconds (#3828). */
+  standardDelay: bigint;
   operations: QueuedOperation[];
 }
 
@@ -128,7 +133,8 @@ export interface ReadGovernanceQueueOptions {
   maxLogRange: number;
   /** The first block worth searching: the timelock's deploy block. */
   fromBlock: bigint;
-  /** How many log windows one operation may cost, beyond a hint, when its
+  /** How many log windows one operation may cost per wait (the timelock
+   *  has two, #3828), beyond a hint and the exact candidates, when its
    *  schedule block has to be searched for. Default 8. */
   maxWindowsPerOperation?: number;
   /** Blocks the caller already believes each operation was scheduled in. */
@@ -266,12 +272,23 @@ async function tryWindow(
   return { found: true, details: null };
 }
 
+/** The waits an operation may have been scheduled with (#3828). The
+ *  timelock has two: the restart delay (`getMinDelay`, never below
+ *  `MIN_DELAY_FLOOR`) for a call on its restart list or an urgent fix, and
+ *  the standard delay (never below `STANDARD_DELAY_FLOOR`) for everything
+ *  else. Each wait has its current value and the floor it was deployed
+ *  with. */
+interface TimelockDelays {
+  restart: { current: bigint; floor: bigint };
+  standard: { current: bigint; floor: bigint };
+}
+
 /** Find and prove what one queued operation will do. */
 async function detailsFor(
   client: Pick<PublicClient, 'getBlock' | 'getLogs'>,
   timelock: Address,
   op: { id: Hex; eta: bigint },
-  delays: { current: bigint; floor: bigint },
+  delays: TimelockDelays,
   head: bigint,
   opts: ReadGovernanceQueueOptions,
 ): Promise<QueuedOperationDetails> {
@@ -301,22 +318,29 @@ async function detailsFor(
       if (d) return d;
     }
     // An operation was scheduled at exactly `eta - delay`, where the delay
-    // is at least the minimum in force then, and never below the floor the
-    // timelock was deployed with. The two exact candidates are the current
-    // minimum (how governance normally schedules) and the floor (the minimum
-    // until it is raised, so an operation queued before a raise). Any longer
-    // delay puts the schedule earlier than the floor's candidate, so the
-    // bounded walk goes back from there.
+    // is at least the wait its calls needed then, and never below that
+    // wait's floor. The timelock has two waits (#3828), so the exact
+    // candidates are each wait's current value (how governance normally
+    // schedules) and its floor (the value until it is raised, so an
+    // operation queued before a raise). Any longer delay puts the schedule
+    // earlier than its wait's floor candidate, so a bounded walk goes back
+    // from each floor: the restart floor covers every operation, the
+    // standard floor reaches the long waits within the same budget.
     const at = (delay: bigint) => firstBlockAtOrAfter(client, op.eta > delay ? op.eta - delay : 0n, opts.fromBlock, head);
-    const d1 = await attempt(clip(await at(delays.current)));
-    if (d1) return d1;
-    let start = await at(delays.floor);
-    const windows = opts.maxWindowsPerOperation ?? 8;
-    for (let i = 0; i < windows; i++) {
-      const d = await attempt(clip(start));
+    const waits = [delays.standard, delays.restart];
+    for (const w of waits) {
+      const d = await attempt(clip(await at(w.current)));
       if (d) return d;
-      if (start <= opts.fromBlock) break;
-      start = start - range;
+    }
+    const windows = opts.maxWindowsPerOperation ?? 8;
+    for (const w of waits) {
+      let start = await at(w.floor);
+      for (let i = 0; i < windows; i++) {
+        const d = await attempt(clip(start));
+        if (d) return d;
+        if (start <= opts.fromBlock) break;
+        start = start - range;
+      }
     }
   } catch {
     return { kind: 'unknown', reason: 'read-failed', searched };
@@ -335,16 +359,28 @@ export async function readGovernanceQueue(
   const blockNumber = latest.number;
   if (blockNumber === null) throw new Error('governance queue: the latest block has no number');
   const read = <T>(
-    functionName: 'getPendingProposalsCount' | 'getMinDelay' | 'MIN_DELAY_FLOOR' | 'getPendingProposals' | 'isOperationDone',
+    functionName:
+      | 'getPendingProposalsCount'
+      | 'getMinDelay'
+      | 'MIN_DELAY_FLOOR'
+      | 'standardDelay'
+      | 'STANDARD_DELAY_FLOOR'
+      | 'getPendingProposals'
+      | 'isOperationDone',
     args?: readonly unknown[],
   ) =>
     client.readContract({ address: timelock, abi: GOVERNANCE_TIMELOCK_READ_ABI, functionName, args, blockNumber } as never) as Promise<T>;
 
-  const [count, minDelay, floor] = await Promise.all([
+  // Both waits (#3828) are read like every other value: a failed read fails
+  // the whole read, which the caller states, never a guessed wait.
+  const [count, minDelay, floor, standardDelay, standardFloor] = await Promise.all([
     read<bigint>('getPendingProposalsCount'),
     read<bigint>('getMinDelay'),
     read<bigint>('MIN_DELAY_FLOOR'),
+    read<bigint>('standardDelay'),
+    read<bigint>('STANDARD_DELAY_FLOOR'),
   ]);
+  const standard = { current: standardDelay, floor: standardFloor };
   const pageSize = opts.pageSize ?? 50;
   const pending: { id: Hex; eta: bigint; ready: boolean }[] = [];
   for (let offset = 0; BigInt(offset) < count; offset += pageSize) {
@@ -355,7 +391,7 @@ export async function readGovernanceQueue(
 
   const operations: QueuedOperation[] = [];
   for (const op of pending) {
-    const details = await detailsFor(client, timelock, op, { current: minDelay, floor }, blockNumber, opts);
+    const details = await detailsFor(client, timelock, op, { restart: { current: minDelay, floor }, standard }, blockNumber, opts);
     // The timelock runs an operation only after its predecessor has run, so
     // an elapsed delay alone does not make it runnable.
     if (details.kind === 'proved' && details.predecessor !== ZERO32) {
@@ -365,7 +401,13 @@ export async function readGovernanceQueue(
   }
   // Soonest first: the change that can run next leads.
   operations.sort((a, b) => (a.eta < b.eta ? -1 : a.eta > b.eta ? 1 : 0));
-  return { timelock, block: { number: blockNumber, timestamp: latest.timestamp }, minDelay, operations };
+  return {
+    timelock,
+    block: { number: blockNumber, timestamp: latest.timestamp },
+    minDelay,
+    standardDelay,
+    operations,
+  };
 }
 
 // ─── Describing a call ───────────────────────────────────────────────────

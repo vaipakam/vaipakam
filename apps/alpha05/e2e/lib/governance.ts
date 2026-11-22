@@ -79,6 +79,12 @@ export async function deployGovernanceFixture(opts: {
   const canceller = privateKeyToAccount(generatePrivateKey()).address;
 
   fs.rmSync(`${REPO_ROOT}/contracts/${ARTIFACT_ROOT}`, { recursive: true, force: true });
+  // The script reads the chain's Diamond from the artifact (#3828): it is the
+  // only target of the timelock's restart list, and the deploy refuses a
+  // Diamond that does not route every restart call to its pause facet.
+  const artifactPath = `${REPO_ROOT}/contracts/${ARTIFACT}`;
+  fs.mkdirSync(artifactPath.slice(0, artifactPath.lastIndexOf('/')), { recursive: true });
+  fs.writeFileSync(artifactPath, `${JSON.stringify({ diamond }, null, 2)}\n`);
   compileScript(TIMELOCK_SCRIPT);
   runForgeScript(TIMELOCK_SCRIPT, url, {
     E2E_ARTIFACT_ROOT: ARTIFACT_ROOT,

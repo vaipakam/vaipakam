@@ -34,7 +34,7 @@ const NOW = 1_900_000_000;
 const id = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as Hex;
 
 function queue(operations: QueuedOperation[]): GovernanceQueue {
-  return { timelock: TIMELOCK, block: { number: 123_456n, timestamp: BigInt(NOW) }, minDelay: 172_800n, operations };
+  return { timelock: TIMELOCK, block: { number: 123_456n, timestamp: BigInt(NOW) }, minDelay: 172_800n, standardDelay: 604_800n, operations };
 }
 const ready = (q: GovernanceQueue, error: string | null = null) => ({ data: q, state: 'ready' as const, error, refetch: () => {} });
 const html = (props: Partial<Parameters<typeof GovernanceView>[0]> & Pick<Parameters<typeof GovernanceView>[0], 'queue'>) =>
@@ -68,7 +68,9 @@ describe('GovernanceView', () => {
     const out = html({ queue: ready(queue([])) });
     expect(out).toContain('Nothing is queued on Base Sepolia.');
     expect(out).toContain('Read at block 123456');
-    expect(out).toContain('A change queued now must wait at least 2 days; each change below shows its own wait.');
+    expect(out).toContain(
+      'A change queued now waits at least 7 days. Each change below shows its own wait. Only lifting a pause, or an urgent fix the pause wallet approved by id, may wait 2 days instead.',
+    );
   });
 
   it('marks the last answer as old when a re-read failed', () => {
