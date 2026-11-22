@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 /**
- * Fixtures for `board-label-sync.mjs`: the planner, the board pagination, the
- * mutation document, the rate-limit rule of the transport, and the summary.
- * No network and no token: the planner is pure, the board listing and the
- * transport take injected functions, and the rate-limit classification runs
- * the REAL `gh-trace-ratelimit-wait.sh` against fixture traces.
+ * Fixtures for `board-label-sync.mjs`: the planner, the REST value parsing,
+ * the issue-field definition pagination, the write requests, the rate-limit
+ * rule of the transport, and the summary. No network and no token: the
+ * planner is pure, the field listing and the transport take injected
+ * functions, and the rate-limit classification runs the REAL
+ * `gh-trace-ratelimit-wait.sh` against fixture traces.
  *
  * Run: `node .github/scripts/board-label-sync.selftest.mjs`
  */
 import {
-  classifyTrace, listBoard, makeGhTransport, mutationFor, planWrites, renderSummary, traceEvidence,
+  classifyTrace, listIssueFields, makeGhTransport, planWrites, renderSummary, requestsFor, traceEvidence, valuesFromRest,
+  FIELD_VALUES_API_VERSION,
 } from './board-label-sync.mjs';
 
 let failures = 0;
@@ -21,170 +23,170 @@ function check(name, cond, detail = '') {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 const REPO = 'vaipakam/vaipakam';
-const url = (n, repo = REPO) => `https://github.com/${repo}/issues/${n}`;
 
+// The live shape (read 2026-11-22): Thread is TEXT, Priority and Stage are
+// single selects, and Stage's options are capitalised.
 const FIELDS = [
-  { id: 'F_status', name: 'Status', dataType: 'SINGLE_SELECT', options: [{ id: 'S_done', name: 'Done' }] },
-  { id: 'F_thread', name: 'Thread', dataType: 'SINGLE_SELECT', options: [
-    { id: 'T_plan', name: 'issues-plan' }, { id: 'T_keeper', name: 'keeper' }, { id: 'T_legacy', name: 'legacy' },
+  { dbId: 10, name: 'Thread', dataType: 'TEXT' },
+  { dbId: 20, name: 'priority', dataType: 'SINGLE_SELECT', options: [
+    { name: 'P1' }, { name: 'P2' }, { name: 'P3' }, { name: 'P4' }, { name: 'P5' },
   ] },
-  { id: 'F_prio', name: 'priority', dataType: 'SINGLE_SELECT', options: [
-    { id: 'P_1', name: 'P1' }, { id: 'P_2', name: 'P2 – loan path' }, { id: 'P_3', name: 'P3' },
-    { id: 'P_4', name: 'P4' }, { id: 'P_5', name: 'P5' }, { id: 'P_10', name: 'P10' },
+  { dbId: 30, name: 'Stage', dataType: 'SINGLE_SELECT', options: [
+    { name: 'Building' }, { name: 'Held-for-Batch' }, { name: 'Queued' }, { name: 'Blocked' },
   ] },
-  { id: 'F_stage', name: 'Stage', dataType: 'SINGLE_SELECT', options: [
-    { id: 'G_building', name: 'building' }, { id: 'G_queued', name: 'queued' }, { id: 'G_other', name: 'blocked' },
-  ] },
-  { id: 'F_text', name: 'Notes', dataType: 'TEXT' },
+  { dbId: 40, name: 'Effort', dataType: 'SINGLE_SELECT', options: [{ name: 'Large' }] },
 ];
-const CTX = { repo: REPO, threadValues: ['issues-plan', 'keeper', 'app-fixes'] };
-const item = (n, values = {}, extra = {}) => ({
-  id: `I_${n}`, type: 'Issue', url: url(n), repo: REPO, state: 'OPEN', number: n, values, ...extra,
-});
-const v = (optionId, name) => ({ optionId, name });
+const CTX = { threadValues: ['issues-plan', 'keeper', 'app-fixes'] };
+const val = (fieldId, text) => ({ fieldId, fieldName: '', text });
+const iss = (number, labels, values = [], extra = {}) => ({ number, state: 'open', labels, values, ...extra });
 const writesFor = (plan, n) => plan.writes.filter((w) => w.issue === n);
 
 console.log('planner');
 {
   const issues = [
-    { number: 1, url: url(1), labels: ['priority:p1', 'stage:building', 'thread:keeper', 'bug'] },
-    { number: 2, url: url(2), labels: ['priority:p2', 'stage:queued', 'thread:issues-plan'] },
-    { number: 3, url: url(3), labels: ['enhancement'] },
-    { number: 4, url: url(4), labels: ['priority:p1', 'priority:p3'] },
-    { number: 5, url: url(5), labels: ['stage:waiting-on-owner', 'thread:app-fixes'] },
-    { number: 6, url: url(6), labels: ['priority:p9', 'stage:nonsense'] },
-    { number: 7, url: url(7), labels: ['priority:p4'] },
-    { number: 9, url: url(9), labels: ['priority:p5'] },
-    { number: 11, url: url(11), labels: ['PRIORITY:P5'] },
+    iss(1, ['priority:p1', 'stage:building', 'thread:keeper', 'bug']),
+    iss(2, ['priority:p2', 'stage:queued', 'thread:issues-plan'], [val(20, 'P1'), val(30, 'Queued'), val(10, 'issues-plan')]),
+    iss(3, ['enhancement'], [val(20, 'P3'), val(30, 'Blocked'), val(10, 'legacy'), val(40, 'Large')]),
+    iss(4, ['priority:p1', 'priority:p3'], [val(20, 'P2')]),
+    iss(5, ['stage:waiting-on-owner', 'thread:app-fixes']),
+    iss(6, ['priority:p9', 'stage:nonsense'], [val(20, 'P4')]),
+    iss(8, ['priority:p1'], [], { state: 'closed' }),
+    iss(11, ['PRIORITY:P5'], [val(20, 'P5')]),
+    iss(12, ['stage:held-for-batch', 'thread:Keeper-Desk'], [val(30, 'building')]),
+    iss(13, [], [val(30, 'held-for-batch'), val(10, 'KEEPER')]),
+    iss(14, ['thread:keeper'], [val(10, 'Keeper')]),
   ];
-  const board = [
-    item(1),
-    item(2, { F_prio: v('P_1', 'P1'), F_stage: v('G_queued', 'queued'), F_thread: v('T_plan', 'issues-plan') }),
-    item(3, { F_prio: v('P_3', 'P3'), F_stage: v('G_other', 'blocked'), F_thread: v('T_legacy', 'legacy'), F_status: v('S_done', 'Done') }),
-    item(4, { F_prio: v('P_2', 'P2 – loan path') }),
-    item(5),
-    item(6, { F_prio: v('P_4', 'P4') }),
-    // #7 is in another repository with the SAME number: never touched.
-    { ...item(7, { F_prio: v('P_1', 'P1') }), id: 'I_other7', url: url(7, 'vaipakam/keeper-bot'), repo: 'vaipakam/keeper-bot' },
-    // #8 is closed: not in the open list; its stale values stay.
-    item(8, { F_prio: v('P_1', 'P1'), F_stage: v('G_building', 'building') }, { state: 'CLOSED' }),
-    // #9 is open in the issue list but closed on the board (a race).
-    item(9, {}, { state: 'CLOSED' }),
-    { id: 'I_draft', type: 'DraftIssue', values: { F_prio: v('P_1', 'P1') } },
-    { id: 'I_pr', type: 'PullRequest', url: `https://github.com/${REPO}/pull/10`, repo: REPO, values: {} },
-    item(11, { F_prio: v('P_5', 'P5') }),
-  ];
-  const plan = planWrites(issues, board, FIELDS, CTX);
+  const plan = planWrites(issues, FIELDS, CTX);
 
-  check('labels added: three sets on an empty card', same(
-    writesFor(plan, 1).map((w) => [w.action, w.field, w.optionId]),
-    [['set', 'Priority', 'P_1'], ['set', 'Stage', 'G_building'], ['set', 'Thread', 'T_keeper']],
+  check('labels added: three sets on an issue with no values', same(
+    writesFor(plan, 1).map((w) => [w.action, w.field, w.fieldId, w.value]),
+    [['set', 'Priority', 20, 'P1'], ['set', 'Stage', 30, 'Building'], ['set', 'Thread', 10, 'keeper']],
   ), JSON.stringify(writesFor(plan, 1)));
-  check('label changed: P1 → the option whose name starts with P2', same(
-    writesFor(plan, 2).map((w) => [w.action, w.field, w.optionId, w.from]),
-    [['set', 'Priority', 'P_2', 'P1']],
+  check('label changed: P1 → P2, and only that field', same(
+    writesFor(plan, 2).map((w) => [w.action, w.field, w.value, w.from]),
+    [['set', 'Priority', 'P2', 'P1']],
   ), JSON.stringify(writesFor(plan, 2)));
-  check('field already matching is not rewritten', !writesFor(plan, 2).some((w) => w.field !== 'Priority'));
   check('labels removed: a known Priority value is cleared', writesFor(plan, 3).some(
-    (w) => w.action === 'clear' && w.field === 'Priority' && w.from === 'P3'));
+    (w) => w.action === 'clear' && w.field === 'Priority' && w.from === 'P3' && w.fieldId === 20));
   check('labels removed: a Stage value the sync never writes is left alone',
     !writesFor(plan, 3).some((w) => w.field === 'Stage'));
-  check('labels removed: a Thread value with no thread: label is left alone',
+  check('labels removed: a Thread value that is no thread: label is left alone',
     !writesFor(plan, 3).some((w) => w.field === 'Thread'));
-  check('a field the sync does not own (Status) is never written', !plan.writes.some((w) => w.fieldId === 'F_status'));
+  check('a field the sync does not own (Effort) is never written', !plan.writes.some((w) => w.fieldId === 40));
   check('two labels of one family: no write for that family', writesFor(plan, 4).length === 0,
     JSON.stringify(writesFor(plan, 4)));
   check('two labels of one family: the conflict is reported', same(plan.conflicts,
     [{ issue: 4, family: 'priority', labels: ['priority:p1', 'priority:p3'] }]), JSON.stringify(plan.conflicts));
-  check('missing option: no write, and the option is listed to add', writesFor(plan, 5).length === 0 &&
-    same(plan.missingOptions, { Stage: ['waiting-on-owner'], Thread: ['app-fixes'] }), JSON.stringify(plan.missingOptions));
+  check('missing option: no Stage write, and the option is listed to add; Thread is text and needs none',
+    same(writesFor(plan, 5).map((w) => [w.field, w.value]), [['Thread', 'app-fixes']]) &&
+    same(plan.missingOptions, { Stage: ['waiting-on-owner'] }), JSON.stringify([writesFor(plan, 5), plan.missingOptions]));
   check('unrecognised labels are reported and ignored', same(
     plan.unrecognised.map((u) => u.label), ['priority:p9', 'stage:nonsense']));
-  check('an unrecognised priority label does not clear the field either way',
-    writesFor(plan, 6).every((w) => w.field !== 'Priority' || w.action === 'clear'));
-  check('another repository\'s issue with the same number is never written',
-    !plan.writes.some((w) => w.itemId === 'I_other7'));
-  check('an open issue whose card is in another repository counts as not on the board', plan.notOnBoard.includes(7));
-  check('drafts, pull requests and other repositories are counted as foreign', plan.foreignItems === 3,
-    String(plan.foreignItems));
-  check('a closed issue is never written', !plan.writes.some((w) => w.issue === 8));
-  check('an issue the board shows closed is skipped and reported', same(plan.closedOnBoard, [9]));
-  check('P5 does not match P10, and case is ignored in labels', writesFor(plan, 11).length === 0,
+  check('an unrecognised priority label does not set the field', !writesFor(plan, 6).some((w) => w.action === 'set'));
+  check('a closed issue is never written, and is reported', !plan.writes.some((w) => w.issue === 8) && same(plan.notOpen, [8]));
+  check('case is ignored in labels: PRIORITY:P5 matches the value P5', writesFor(plan, 11).length === 0,
     JSON.stringify(writesFor(plan, 11)));
+  check('options match case-insensitively: stage:held-for-batch writes the option name Held-for-Batch, over `building`',
+    same(writesFor(plan, 12).filter((w) => w.field === 'Stage').map((w) => [w.action, w.value, w.from]),
+      [['set', 'Held-for-Batch', 'building']]), JSON.stringify(writesFor(plan, 12)));
+  check('a thread suffix is written as the label has it', same(
+    writesFor(plan, 12).filter((w) => w.field === 'Thread').map((w) => w.value), ['Keeper-Desk']));
+  check('an owned value in another case is still recognised for clearing', same(
+    writesFor(plan, 13).map((w) => [w.action, w.field]), [['clear', 'Stage'], ['clear', 'Thread']]),
+  JSON.stringify(writesFor(plan, 13)));
+  check('a Thread value in another case than the label is rewritten as-is', same(
+    writesFor(plan, 14).map((w) => [w.action, w.value, w.from]), [['set', 'keeper', 'Keeper']]));
 }
 
 {
   const plan = planWrites(
-    [{ number: 1, url: url(1), labels: ['priority:p1', 'stage:queued', 'thread:keeper'] }],
-    [item(1)],
-    FIELDS.filter((f) => f.id !== 'F_stage' && f.id !== 'F_thread').concat([{ id: 'F_tt', name: 'Thread', dataType: 'TEXT' }]),
+    [iss(1, ['priority:p1', 'stage:queued', 'thread:keeper'])],
+    FIELDS.filter((f) => f.name !== 'Stage' && f.name !== 'Thread')
+      .concat([{ dbId: 11, name: 'Thread', dataType: 'SINGLE_SELECT', options: [{ name: 'keeper' }] }]),
     CTX,
   );
-  check('missing field: listed, its writes skipped, the run carries on', same(plan.missingFields, ['Stage', 'Thread']) &&
+  check('missing field (or wrong type): listed, its writes skipped, the run carries on', same(
+    plan.missingFields.map((f) => f.field), ['Stage', 'Thread']) &&
     same(plan.writes.map((w) => w.field), ['Priority']), JSON.stringify(plan));
 }
 {
-  const plan = planWrites([{ number: 1, url: url(1), labels: [] }], [item(1, { F_thread: v('T_keeper', 'keeper') })], FIELDS,
-    { repo: REPO });
+  const plan = planWrites([iss(1, [], [val(10, 'keeper')])], FIELDS, {});
   check('without the repository\'s thread list, no Thread value is cleared', plan.writes.length === 0);
 }
 {
-  const plan = planWrites([{ number: 1, url: url(1), labels: ['thread:keeper'] }], [item(1, { F_thread: v('T_keeper', 'keeper') })],
-    FIELDS, CTX);
-  check('a card already in sync gets no writes', plan.writes.length === 0);
+  const plan = planWrites([iss(1, ['thread:keeper', 'priority:p2'], [val(10, 'keeper'), val(20, 'P2')])], FIELDS, CTX);
+  check('an issue already in sync gets no writes', plan.writes.length === 0);
+}
+{
+  const plan = planWrites([iss(1, ['priority:p2'], [{ fieldId: null, fieldName: 'Priority', text: 'P2' }])], FIELDS, CTX);
+  check('a value with no field id is matched by field name', plan.writes.length === 0, JSON.stringify(plan.writes));
 }
 
-console.log('pagination');
+console.log('REST values');
+{
+  const parsed = valuesFromRest([
+    { issue_field_id: 10, issue_field_name: 'Thread', data_type: 'text', value: 'keeper' },
+    { issue_field_id: 20, issue_field_name: 'Priority', data_type: 'single_select', value: 7, single_select_option: { id: 7, name: 'P2', color: 'GRAY' } },
+  ], 1);
+  check('a text value is its string; a single select is its option NAME, not the id in `value`', same(parsed,
+    [{ fieldId: 10, fieldName: 'Thread', text: 'keeper' }, { fieldId: 20, fieldName: 'Priority', text: 'P2' }]), JSON.stringify(parsed));
+  let threw = '';
+  try { valuesFromRest(undefined, 42); } catch (e) { threw = e.message; }
+  check('an issue read without issue_field_values aborts instead of planning from "none"', /#42/.test(threw), threw);
+}
+
+console.log('field definitions');
 {
   const pages = [
-    { cursor: 'c1', next: true, nodes: [1, 2] },
-    { cursor: 'c2', next: true, nodes: [3] },
-    { cursor: 'c3', next: false, nodes: [4, 5] },
+    { cursor: 'c1', next: true, nodes: [{}, { name: 'Thread', dataType: 'TEXT', fullDatabaseId: '50243880' }] },
+    { cursor: 'c2', next: false, nodes: [{ name: 'Stage', dataType: 'SINGLE_SELECT', fullDatabaseId: '50243938', options: [{ name: 'Queued' }] }] },
   ];
   const seen = [];
-  const node = (n) => ({
-    id: `I_${n}`,
-    content: { __typename: 'Issue', number: n, url: url(n), state: 'OPEN', repository: { nameWithOwner: REPO } },
-    fieldValues: { nodes: [{}, { optionId: 'P_1', name: 'P1', field: { id: 'F_prio' } }] },
-  });
   const gql = async (_q, vars) => {
     seen.push(vars);
     const p = pages[seen.length - 1];
-    return { data: { user: { projectV2: {
-      ...(vars.first ? { id: 'PROJ', fields: { nodes: [{}, ...FIELDS] } } : {}),
-      items: { totalCount: 5, pageInfo: { hasNextPage: p.next, endCursor: p.cursor }, nodes: p.nodes.map(node) },
-    } } } };
+    return { data: { repository: { issueFields: { pageInfo: { hasNextPage: p.next, endCursor: p.cursor }, nodes: p.nodes } } } };
   };
-  const board = await listBoard(gql, 'vaipakam', 1);
-  check('every page is read, in order', board.pages === 3 && same(board.items.map((i) => i.number), [1, 2, 3, 4, 5]));
-  check('each page after the first asks after the previous cursor', same(seen.map((s) => s.after), [null, 'c1', 'c2']));
-  check('fields and project id are requested on the first page only', same(seen.map((s) => s.first), [true, false, false]) &&
-    board.projectId === 'PROJ' && board.fields.length === FIELDS.length);
-  check('single-select values are keyed by field id', same(board.items[0].values, { F_prio: { optionId: 'P_1', name: 'P1' } }));
-
-  const short = async (_q, vars) => ({ data: { user: { projectV2: {
-    ...(vars.first ? { id: 'PROJ', fields: { nodes: FIELDS } } : {}),
-    items: { totalCount: 9, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node(1)] },
-  } } } });
+  const { fields, pages: n } = await listIssueFields(gql, REPO);
+  check('every page is read, in order, for the right repository', n === 2 && same(seen.map((s) => [s.owner, s.name, s.after]),
+    [['vaipakam', 'vaipakam', null], ['vaipakam', 'vaipakam', 'c1']]), JSON.stringify(seen));
+  check('fullDatabaseId becomes the numeric field id; empty nodes are dropped', same(fields, [
+    { dbId: 50243880, name: 'Thread', dataType: 'TEXT' },
+    { dbId: 50243938, name: 'Stage', dataType: 'SINGLE_SELECT', options: [{ name: 'Queued' }] },
+  ]), JSON.stringify(fields));
   let threw = '';
-  try { await listBoard(short, 'vaipakam', 1); } catch (e) { threw = e.message; }
-  check('a short read aborts instead of planning from part of the board', /returned 1 of 9/.test(threw), threw);
-
-  let threw2 = '';
-  try { await listBoard(async () => ({ data: { user: null } }), 'vaipakam', 1); } catch (e) { threw2 = e.message; }
-  check('an unreadable board aborts', /not readable/.test(threw2), threw2);
+  try { await listIssueFields(async () => ({ data: { repository: null }, errors: [{ message: 'Resource not accessible by integration' }] }), REPO); }
+  catch (e) { threw = e.message; }
+  check('an unreadable definition list aborts, naming the error', /not readable: Resource not accessible/.test(threw), threw);
 }
 
-console.log('mutation document');
+console.log('write requests');
 {
-  const { query, variables } = mutationFor('PROJ', [
-    { action: 'set', itemId: 'I_1', fieldId: 'F_prio', optionId: 'P_1' },
-    { action: 'clear', itemId: 'I_2', fieldId: 'F_stage', optionId: null },
+  const reqs = requestsFor(REPO, 7, [
+    { action: 'set', fieldId: 20, value: 'P1' },
+    { action: 'clear', fieldId: 30, value: null },
+    { action: 'set', fieldId: 10, value: 'keeper' },
   ]);
-  check('one aliased document, set then clear', /w0: updateProjectV2ItemFieldValue/.test(query) &&
-    /w1: clearProjectV2ItemFieldValue/.test(query));
-  check('values travel as variables, not in the document text', !query.includes('I_1') && !query.includes('P_1') &&
-    same(variables, { p: 'PROJ', i0: 'I_1', f0: 'F_prio', o0: 'P_1', i1: 'I_2', f1: 'F_stage' }));
+  check('all sets for an issue go in ONE add request, values in the body', same(reqs[0], {
+    method: 'POST', path: `repos/${REPO}/issues/7/issue-field-values`,
+    body: { issue_field_values: [{ field_id: 20, value: 'P1' }, { field_id: 10, value: 'keeper' }] }, writes: 2,
+  }), JSON.stringify(reqs[0]));
+  check('each clear is a DELETE of that field id, never a PUT', same(reqs.slice(1), [
+    { method: 'DELETE', path: `repos/${REPO}/issues/7/issue-field-values/30`, body: null, writes: 1 },
+  ]) && !reqs.some((r) => r.method === 'PUT'));
+}
+{
+  const calls = [];
+  const t = makeGhTransport({
+    run: (args, input) => { calls.push([args, input]); return { status: 0, stdout: '' }; },
+    classify: () => ({ rc: 1, stdout: '' }), sleep: async () => {}, log: () => {},
+  });
+  const r = await t.rest('DELETE', `repos/${REPO}/issues/7/issue-field-values/30`, null);
+  await t.rest('POST', `repos/${REPO}/issues/7/issue-field-values`, { issue_field_values: [] });
+  check('an empty 204 body reads as null, not a parse error', r === null);
+  check('the REST call pins the documented API version and sends a body only when there is one', same(calls[0][0],
+    ['api', '--method', 'DELETE', `repos/${REPO}/issues/7/issue-field-values/30`, '-H', `X-GitHub-Api-Version: ${FIELD_VALUES_API_VERSION}`]) &&
+    calls[0][1] === undefined && calls[1][0].includes('--input') && calls[1][1] === '{"issue_field_values":[]}', JSON.stringify(calls));
 }
 
 console.log('rate-limit rule');
@@ -196,18 +198,26 @@ console.log('rate-limit rule');
     '< X-Ratelimit-Remaining: 0',
     `< X-Ratelimit-Reset: ${reset}`,
     '< Authorization: token ghp_abcdefghijklmnopqrstuvwxyz',
-    '{"data":{"title":"secret draft title"},"message":"API rate limit already exceeded for user ID 1."}',
+    '{"data":{"title":"secret issue title"},"message":"API rate limit already exceeded for user ID 1."}',
   ].join('\n');
   const c = classifyTrace(limited(now + 120));
   const secs = Number(c.stdout.split('\t')[0]);
-  check('the real parser recognises the observed shape', c.rc === 0 && secs >= 115 && secs <= 120, JSON.stringify(c));
+  check('the real parser recognises the observed GraphQL shape', c.rc === 0 && secs >= 115 && secs <= 120, JSON.stringify(c));
+  const restLimited = [
+    '> POST /repos/vaipakam/vaipakam/issues/7/issue-field-values HTTP/1.1',
+    '< HTTP/2.0 403 Forbidden',
+    '< X-Ratelimit-Remaining: 0',
+    `< X-Ratelimit-Reset: ${now + 60}`,
+    '{"message":"API rate limit exceeded for installation ID 1.","documentation_url":"https://docs.github.com/rest"}',
+  ].join('\n');
+  check('the real parser recognises the REST primary-limit shape', classifyTrace(restLimited).rc === 0);
   check('the real parser refuses a 401', classifyTrace('< HTTP/2.0 401 Unauthorized\n{"message":"Bad credentials"}').rc === 1);
   check('the real parser reports an unreadable trace', classifyTrace('no status line here').rc === 2);
 
   const ev = traceEvidence(limited(now + 60));
   check('evidence keeps the status, headers and message', /HTTP\/2.0 200/.test(ev) && /X-Ratelimit-Remaining: 0/.test(ev) &&
     /API rate limit already exceeded/.test(ev));
-  check('evidence drops response bodies and redacts tokens', !ev.includes('secret draft title') && !ev.includes('ghp_abc'));
+  check('evidence drops response bodies and redacts tokens', !ev.includes('secret issue title') && !ev.includes('ghp_abc'));
 
   // A scripted transport: each entry is one `gh` outcome.
   const drive = async (script, opts = {}) => {
@@ -223,7 +233,10 @@ console.log('rate-limit rule');
     }, { waitCap: 900, margin: 5, ...opts });
     const results = [];
     for (let k = 0; k < (opts.requests ?? 1); k += 1) {
-      try { await t.gql('q', {}); results.push('ok'); } catch (e) { results.push(e.message); }
+      try {
+        if (k % 2 === 0) await t.gql('q', {}); else await t.rest('POST', 'repos/o/r/issues/1/issue-field-values', {});
+        results.push('ok');
+      } catch (e) { results.push(e.message); }
     }
     return { results, sleeps, calls: t.stats.calls };
   };
@@ -236,8 +249,9 @@ console.log('rate-limit rule');
   r = await drive([fail('60'), fail('60')]);
   check('limited again on the retry: the run stops', /rate limited again/.test(r.results[0]) && same(r.sleeps, [65]), JSON.stringify(r));
   r = await drive([fail('60'), ok, fail('30')], { requests: 2 });
-  check('one wait per run: a second limit later is not waited out', r.results[0] === 'ok' &&
-    /already spent its one wait/.test(r.results[1]) && same(r.sleeps, [65]), JSON.stringify(r));
+  check('one wait per run, across GraphQL and REST: a second limit later is not waited out', r.results[0] === 'ok' &&
+    /^POST issues\/1\/issue-field-values rate limited .*already spent its one wait/.test(r.results[1]) && same(r.sleeps, [65]),
+  JSON.stringify(r));
   r = await drive([fail('896')]);
   check('a wait over the cap (margin included) is reported and not taken', /over the 900s cap/.test(r.results[0]) &&
     r.sleeps.length === 0, JSON.stringify(r));
@@ -250,15 +264,15 @@ console.log('rate-limit rule');
 console.log('summary');
 {
   const plan = planWrites(
-    [{ number: 5, url: url(5), labels: ['stage:waiting-on-owner', 'priority:p1', 'priority:p2'] }, { number: 6, url: url(6), labels: [] }],
-    [item(5)], FIELDS.filter((f) => f.id !== 'F_thread'), CTX,
+    [iss(5, ['stage:waiting-on-owner', 'priority:p1', 'priority:p2']), iss(6, [], [], { state: 'closed' })],
+    FIELDS.filter((f) => f.name !== 'Thread'), CTX,
   );
-  const md = renderSummary(plan, { mode: 'scheduled reconcile', dryRun: false, issues: 2, boardItems: 1, written: 0, failed: 0,
+  const md = renderSummary(plan, { mode: 'scheduled reconcile', dryRun: false, issues: 2, written: 0, failed: 0,
     deferred: 0, calls: 1, waits: 0 });
-  check('a missing field becomes an instruction to add it', /Add the single-select field \*\*Thread\*\*/.test(md));
-  check('a missing option becomes an instruction to add it', /Add the option \*\*waiting-on-owner\*\* to the \*\*Stage\*\* field/.test(md));
+  check('a missing field becomes an instruction to add it', /Add the issue field \*\*Thread\*\* \(text\)/.test(md), md);
+  check('a missing option becomes an instruction to add it', /Add the option \*\*waiting-on-owner\*\* to the \*\*Stage\*\* issue field/.test(md));
   check('a conflict names both labels', /#5: `priority:p1` and `priority:p2`/.test(md));
-  check('an issue not on the board is named', /#6/.test(md));
+  check('an issue read as not open is named', /not open, skipped: #6/.test(md));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
