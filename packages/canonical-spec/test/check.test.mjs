@@ -390,3 +390,9 @@ test('every warn-only answer in a part needs its own reason', () => {
   assert.ok(has(mk('VLT-M01, refuse; VLT-M02, warn only.'), 'mistake', /warn-only answer needs its reason/));
   assert.ok(!has(mk('VLT-M01, refuse; VLT-M02, warn only: a contract calling directly gets no prompt.'), 'mistake', /warn-only/));
 });
+
+test('folder mode: an answered mistake id must be on the list even when its domain has no mistakes left', () => {
+  const answer = [['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', '- **For the mistake:** VLT-M01, refuse.\n- **Tests owed:**')], ['record.md', RECORD([['VLT-012']])]];
+  assert.ok(has(run(answer), 'mistake', /answers VLT-M01, which is not on the mistake list/));
+  assert.ok(!has(run(answer, { mode: 'draft' }), 'mistake', /not on the mistake list/));
+});

@@ -384,9 +384,12 @@ export function checkSpec(parsed, opts = {}) {
     if (!a.length) add(mk.file, mk.line, 'mistake', `${mk.id} (${mk.title}) has no answering statement`);
     else if (a.length > 1) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${a.length} statements (${a.join(', ')}); a mistake has exactly one answer`);
   }
-  if (mistakes.length) {
-    for (const [id, by] of answers) {
-      if (!mistakeIds.has(id) && mistakes.some((x) => x.code === id.slice(0, 3))) add(byId.get(by[0]).file, byId.get(by[0]).line, 'mistake', `${by.join(', ')} answer${by.length > 1 ? '' : 's'} ${id}, which is not on the mistake list`);
+  // In the folder every answered id must be on the checked mistake list, even
+  // when no mistake of its domain is left. A draft may be checked without its
+  // mistake list, so there only a domain whose list is present is checked.
+  for (const [id, by] of answers) {
+    if (!mistakeIds.has(id) && (mode !== 'draft' || mistakes.some((x) => x.code === id.slice(0, 3)))) {
+      add(byId.get(by[0]).file, byId.get(by[0]).line, 'mistake', `${by.join(', ')} answer${by.length > 1 ? '' : 's'} ${id}, which is not on the mistake list`);
     }
   }
 
