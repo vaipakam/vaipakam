@@ -345,6 +345,15 @@ const CALL_TRACER = { tracer: 'callTracer', tracerConfig: { onlyTopCall: false }
 // facetAddresses() — any Diamond answers it; any other address returns empty.
 const FACET_ADDRESSES = '0x52ef6b2c';
 
+/**
+ * Megabytes a block scan of `blocks` blocks reads, at the sample's mean cost
+ * per block: the full block plus the receipts of its watched transactions
+ * (the receipt-per-transaction strategy the mode is chosen on).
+ */
+export function scanCost({ fullBytes, receiptBytes, sampleBlocks, blocks }) {
+  return ((fullBytes + receiptBytes) / sampleBlocks) * blocks / 1024 / 1024;
+}
+
 export async function checkNetwork(net, env = process.env) {
   const variable = env[net.env] ? net.env : net.alt && env[net.alt] ? net.alt : net.env;
   const url = env[variable];
@@ -466,7 +475,11 @@ export async function checkNetwork(net, env = process.env) {
 
   // 6. What a block scan costs: one full block read per block, then either
   //    one receipts request per block or one receipt per watched transaction.
+  //    The mode is chosen on the receipt-per-transaction strategy, so the
+  //    sample also reads each watched transaction's receipt and counts its
+  //    bytes: a receipt-heavy contract can cost more than its blocks.
   let fullBytes = 0;
+  let receiptBytes = 0;
   let watchedTx = 0;
   let txs = 0;
   const watchedSet = new Set(watched);
@@ -475,21 +488,26 @@ export async function checkNetwork(net, env = process.env) {
     fullBytes += bytes;
     for (const t of result?.transactions ?? []) {
       txs += 1;
-      if (t.to && watchedSet.has(t.to.toLowerCase())) watchedTx += 1;
+      if (t.to && watchedSet.has(t.to.toLowerCase())) {
+        watchedTx += 1;
+        receiptBytes += (await rpc.call('eth_getTransactionReceipt', [t.hash])).bytes;
+      }
     }
   }
   const perBlockWatched = watchedTx / SCAN_SAMPLE;
+  const cost = scanCost({ fullBytes, receiptBytes, sampleBlocks: SCAN_SAMPLE, blocks: blocksPerDay });
   const blockScan = {
     blocksPerDay,
     sampleBlocks: SCAN_SAMPLE,
     transactionsPerBlock: +(txs / SCAN_SAMPLE).toFixed(2),
     watchedTransactionsPerBlock: +perBlockWatched.toFixed(3),
     fullBlockKilobytes: +(fullBytes / SCAN_SAMPLE / 1024).toFixed(1),
+    receiptKilobytesPerWatchedTransaction: watchedTx ? +(receiptBytes / watchedTx / 1024).toFixed(1) : null,
     requestsPerDay: {
       withBlockReceipts: blockReceipts.answered ? blocksPerDay * 2 : null,
       withReceiptPerTransaction: Math.round(blocksPerDay * (1 + perBlockWatched)),
     },
-    megabytesPerDay: Math.round((fullBytes / SCAN_SAMPLE) * blocksPerDay / 1024 / 1024),
+    megabytesPerDay: Math.round(cost),
   };
 
   // 7. The explorer's list of transactions sent to a contract, which the
@@ -503,7 +521,7 @@ export async function checkNetwork(net, env = process.env) {
     windowMinutes: AUDIT_WINDOW_SECONDS / 60,
     windowBlocks,
     requestsPerDay: Math.round(windowBlocks * (1 + perBlockWatched)),
-    megabytesPerDay: +((fullBytes / SCAN_SAMPLE) * windowBlocks / 1024 / 1024).toFixed(1),
+    megabytesPerDay: +scanCost({ fullBytes, receiptBytes, sampleBlocks: SCAN_SAMPLE, blocks: windowBlocks }).toFixed(1),
     // The audit decodes a failure by a replay at its block, so the node must
     // keep state for the age of the oldest block it may sample (a day).
     replayCovered: (callAt.reachDays ?? 0) >= 1,

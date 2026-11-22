@@ -1,7 +1,7 @@
 // node --test ops/node-capability/check.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrub, watchedAddresses, checkNetwork, NETWORKS } from './check.mjs';
+import { scrub, watchedAddresses, checkNetwork, scanCost, NETWORKS } from './check.mjs';
 
 test('scrub removes the endpoint, its host and key-like runs', () => {
   const url = 'https://node.example.invalid/v2/abcdefghijklmnopqrstuvwxyz0123456789';
@@ -40,4 +40,13 @@ test('a network with no node configured is reported, not skipped', async () => {
   const r = await checkNetwork(NETWORKS[0], {});
   assert.equal(r.status, 'no node configured');
   assert.equal(r.network, NETWORKS[0].slug);
+});
+
+test('the scan cost counts the watched receipts, not only the blocks', () => {
+  // 12-second blocks, one watched transaction each: ~13 KB block, ~30 KB receipt.
+  const blocks = 86400 / 12;
+  const blocksOnly = scanCost({ fullBytes: 13 * 1024, receiptBytes: 0, sampleBlocks: 1, blocks });
+  const withReceipts = scanCost({ fullBytes: 13 * 1024, receiptBytes: 30 * 1024, sampleBlocks: 1, blocks });
+  assert.ok(blocksOnly < 200, `blocks alone fit: ${blocksOnly}`);
+  assert.ok(withReceipts > 200, `with receipts over the 200 MB ceiling: ${withReceipts}`);
 });
