@@ -185,7 +185,7 @@ contract GasSuiteTest is GasSuiteBase {
         uint256 loanId = _openLoan();
         // Collateral at $0.50: 2,000 units are worth $1,000 against a $1,000
         // debt, so the health factor is below 1 at any threshold under 100%.
-        mockOraclePrice(mockCollateralERC20, 0.5e8, 8);
+        _priceOnGuard(mockCollateralERC20, int256(0.5e8));
         uint256 quote = liquidationQuote(address(diamond), loanId);
         _measure(
             "close_liquidation_hf",

@@ -108,7 +108,10 @@ export function guardReadCost(ib, rig) {
 
 /** An instant-borrow figure with every guard read at its measured mainnet-shaped worst cost. */
 export function fullGas(ib, m) {
-  return m.gas + (m.guardReads ?? 0) * (ib.guardReadCost ?? 0);
+  // Only the calls that price an asset run the guard's sources; its other
+  // views (the numeraire symbol, WETH, the price version) are already in
+  // the measured gas, on the real guard.
+  return m.gas + (m.guardPriceReads ?? m.guardReads ?? 0) * (ib.guardReadCost ?? 0);
 }
 
 /** The read budget the transaction must still hold for its last read, once. */

@@ -11,32 +11,32 @@
       "reason": "the lender claims a repaid loan into the vault; measured at the first build, plus 10%"
     },
     "close_default_time_based": {
-      "gas": 1734000,
-      "reason": "a liquid loan past grace defaulted, its collateral sold to the lender; measured at the first build, plus 10%"
+      "gas": 1877000,
+      "reason": "a liquid loan past grace defaulted, its collateral sold to the lender; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "close_fallback_entry": {
-      "gas": 1409000,
-      "reason": "a default whose every swap route fails, entering the in-kind fallback; measured at the first build, plus 10%"
+      "gas": 1538000,
+      "reason": "a default whose every swap route fails, entering the in-kind fallback; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "close_liquidation_hf": {
-      "gas": 1499000,
-      "reason": "a loan below health factor 1 liquidated by a third party through the swap route; measured at the first build, plus 10%"
+      "gas": 1583000,
+      "reason": "a loan below health factor 1 liquidated by a third party through the swap route; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "collateral_add": {
-      "gas": 363000,
-      "reason": "collateral added to an open loan by its borrower; measured at the first build, plus 10%"
+      "gas": 462000,
+      "reason": "collateral added to an open loan by its borrower; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "collateral_withdraw_surplus": {
-      "gas": 405000,
-      "reason": "surplus collateral withdrawn from an open loan; measured at the first build, plus 10%"
+      "gas": 462000,
+      "reason": "surplus collateral withdrawn from an open loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "exit_preclose": {
       "gas": 819000,
       "reason": "the borrower closes a loan early; measured at the first build, plus 10%"
     },
     "exit_sale_direct": {
-      "gas": 1627000,
-      "reason": "the lender sells the loan into a standing lender offer in one transaction; measured at the first build, plus 10%"
+      "gas": 1663000,
+      "reason": "the lender sells the loan into a standing lender offer in one transaction; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "exit_sale_listing": {
       "gas": 1605000,
@@ -55,16 +55,16 @@
       "reason": "instant borrow with one source skipped (refused late: at loan creation) before one fill; measured at the first build, plus 10%"
     },
     "instant_borrow_2": {
-      "gas": 12296000,
-      "reason": "instant borrow taking 2 Auto-lend slots, each its own loan; measured at the first build, plus 10%"
+      "gas": 12621000,
+      "reason": "instant borrow taking 2 Auto-lend slots, each its own loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "instant_borrow_4": {
-      "gas": 22790000,
-      "reason": "instant borrow taking 4 Auto-lend slots, each its own loan; measured at the first build, plus 10%"
+      "gas": 23649000,
+      "reason": "instant borrow taking 4 Auto-lend slots, each its own loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "instant_borrow_8": {
-      "gas": 43787000,
-      "reason": "instant borrow taking 8 Auto-lend slots, each its own loan; measured at the first build, plus 10%"
+      "gas": 45714000,
+      "reason": "instant borrow taking 8 Auto-lend slots, each its own loan; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "instruction_reserve_fund": {
       "gas": 210000,
@@ -79,8 +79,8 @@
       "reason": "an interest payment run from the payment reserve; measured at the first build, plus 10%"
     },
     "instruction_run_topup": {
-      "gas": 329000,
-      "reason": "a collateral top-up run from the reserve when health falls under the trigger; measured at the first build, plus 10%"
+      "gas": 431000,
+      "reason": "a collateral top-up run from the reserve when health falls under the trigger; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "instruction_set": {
       "gas": 177000,
@@ -123,8 +123,8 @@
       "reason": "an open ERC-20 loan repaid in full by its borrower; measured at the first build, plus 10%"
     },
     "repay_partial": {
-      "gas": 862000,
-      "reason": "part of an open ERC-20 loan repaid by its borrower; measured at the first build, plus 10%"
+      "gas": 939000,
+      "reason": "part of an open ERC-20 loan repaid by its borrower; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "slot_cancel": {
       "gas": 137000,
@@ -139,8 +139,8 @@
       "reason": "a borrower offer filled from an Auto-lend slot by a keeper; measured at the first build, plus 10%"
     },
     "slot_set": {
-      "gas": 679000,
-      "reason": "an Auto-lend slot set by its owner; measured at the first build, plus 10%"
+      "gas": 714000,
+      "reason": "an Auto-lend slot set by its owner; measured at the first build, plus 10%; raised 2026-11-22 when prices moved from mocks onto the real guard path (#3915): each price read now runs the guard's own code"
     },
     "vault_deposit": {
       "gas": 288000,

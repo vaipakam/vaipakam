@@ -7,6 +7,32 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
+import {IPriceGuard} from "../../src/interfaces/IPriceGuard.sol";
+import {IFeedRegistryPairBase} from "../../src/interfaces/IFeedRegistryPairBase.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
+
+/// @dev A price feed that is always fresh: the gas suite moves time across a
+///      loan's term, and a feed stamped once would go stale under it.
+contract GasSuiteFeed {
+    int256 public answer;
+
+    constructor(int256 a) {
+        answer = a;
+    }
+
+    function setAnswer(int256 a) external {
+        answer = a;
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (1, answer, block.timestamp, block.timestamp, 1);
+    }
+}
 
 /**
  * @title  GasSuiteBase
@@ -28,10 +54,17 @@ import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
  *         - `facetCalls`: calls the Diamond makes to itself (each one a
  *           routed call between facets through the fallback);
  *         - `events`: logs emitted;
- *         - `guardReads`: calls the Diamond makes to the price guard. The
- *           guard is answered by mocks here, so the check adds the guard's
- *           full read budget for each one where a rule counts it
- *           (instant borrow's source bound).
+ *         - `guardReads`: calls the Diamond makes to the price guard, a
+ *           real guard here whose feed registry and feeds are mocks, so
+ *           each call runs the guard's own code;
+ *         - `guardDistinctCalls`: of those, the distinct calls (selector
+ *           and arguments);
+ *         - `guardPriceReads` / `guardPriceAssets`: the calls that price an
+ *           asset, and the distinct assets they price. With one price per
+ *           asset per transaction (#3987) the price reads would fall to
+ *           about `guardPriceAssets` per guard and price version.
+ *           The check adds the measured mainnet-shaped read cost for each
+ *           read where a rule counts it (instant borrow's source bound).
  *
  *         One file per action is written to `out-gas-suite/<action>.json`,
  *         so tests running in parallel never write the same file.
@@ -39,10 +72,11 @@ import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
  *         `contracts/gas-suite/budgets.json`.
  *
  * @dev    What the figures do NOT include, stated so a reader does not take
- *         them for more: the shared test Diamond answers oracle prices and
- *         liquidity tiers through `vm.mockCall` (SetupTest), so a price
- *         read costs almost nothing here, and the swap venue is a mock. An
- *         action that reads prices measures LOW by the cost of those reads.
+ *         them for more: liquidity tiers are answered through `vm.mockCall`
+ *         (SetupTest), prices come from the real guard reading mocked feeds
+ *         (one feed per asset, no sequencer, Pyth or secondary sources), and
+ *         the swap venue is a mock. An action that reads prices measures LOW
+ *         by what a mainnet guard's sources add to each read.
  *         The figures are for comparing one tree with the next, not a
  *         network gas quote.
  *
@@ -77,9 +111,46 @@ abstract contract GasSuiteBase is SetupTest {
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOracleLiquidity(mockIlliquidERC20, LibVaipakam.LiquidityStatus.Illiquid);
-        mockOraclePrice(mockERC20, 1e8, 8);
-        mockOraclePrice(mockCollateralERC20, 1e8, 8);
-        mockOraclePrice(mockIlliquidERC20, 1e8, 8);
+        _priceOnGuard(mockERC20, 1e8);
+        _priceOnGuard(mockCollateralERC20, 1e8);
+        _priceOnGuard(mockIlliquidERC20, 1e8);
+    }
+
+    /// @dev Each asset's price feed on the real guard, by asset.
+    mapping(address => GasSuiteFeed) internal feedOf;
+
+    /// @dev The feed registry the suite's guard reads: an address with code,
+    ///      answered by mocks. Mocks downstream of the guard are fine: the
+    ///      check counts the Diamond's calls into the guard, which are real.
+    address internal constant SUITE_FEED_REGISTRY = address(uint160(uint256(keccak256("gas-suite.feed-registry"))));
+
+    /// @dev Prices `asset` at `price` (8 decimals, numeraire) through the
+    ///      real guard: the guard's feed registry names a feed for the asset
+    ///      against the numeraire, so every price read the Diamond makes runs
+    ///      the guard's own code and is counted. A mock on the guard would
+    ///      answer before the guard ran and, succeeding, would be left out of
+    ///      the state diff. The registry mocks are set on every call because
+    ///      {_clearRiskMocks} clears every mock first.
+    function _priceOnGuard(address asset, int256 price) internal {
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        if (SUITE_FEED_REGISTRY.code.length == 0) vm.etch(SUITE_FEED_REGISTRY, hex"00");
+        if (PriceGuard(guard).feedRegistry() != SUITE_FEED_REGISTRY) {
+            LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.FeedRegistry, SUITE_FEED_REGISTRY);
+        }
+        GasSuiteFeed f = feedOf[asset];
+        if (address(f) == address(0)) {
+            f = new GasSuiteFeed(price);
+            feedOf[asset] = f;
+        } else {
+            f.setAnswer(price);
+        }
+        vm.mockCall(SUITE_FEED_REGISTRY, abi.encodeWithSignature("epoch()"), abi.encode(uint64(0)));
+        vm.mockCall(SUITE_FEED_REGISTRY, abi.encodeWithSelector(IFeedRegistryPairBase.pairBase.selector), abi.encode(bytes32("SYM")));
+        vm.mockCall(
+            SUITE_FEED_REGISTRY,
+            abi.encodeWithSignature("getFeed(address,address)", asset, LibTestPriceGuard.USD),
+            abi.encode(address(f))
+        );
     }
 
     struct Measured {
@@ -89,6 +160,10 @@ abstract contract GasSuiteBase is SetupTest {
         uint256 facetCalls;
         uint256 events;
         uint256 guardReads;
+        uint256 guardDistinctCalls;
+        uint256 guardPriceReads;
+        string guardBySelector;
+        uint256 guardPriceAssets;
     }
 
     /// @dev Calls `data` on the Diamond as `actor`, requires success, and
@@ -115,7 +190,8 @@ abstract contract GasSuiteBase is SetupTest {
         m.gas = vm.lastCallGas().gasTotalUsed;
         m.events = logs.length;
         (m.slotsWritten, m.slotsRead, m.facetCalls) = _count(acc);
-        m.guardReads = _guardReads(acc);
+        (m.guardReads, m.guardDistinctCalls, m.guardPriceReads, m.guardPriceAssets) = _guardReads(acc);
+        m.guardBySelector = _guardSelectors(acc);
         _write(action, m);
     }
 
@@ -153,15 +229,69 @@ abstract contract GasSuiteBase is SetupTest {
         for (uint256 i; i < nr; i++) if (!_has(wKeys, nw, rKeys[i])) readOnly++;
     }
 
-    /// @dev Calls from the Diamond to the price guard, mocked or not.
-    function _guardReads(VmSafe.AccountAccess[] memory acc) internal view returns (uint256 n) {
+    /// @dev Calls from the Diamond to the price guard: every call, the
+    ///      distinct calls (same calldata), and the distinct assets among the
+    ///      calls that price an asset. The last is what a rule of one price
+    ///      per asset per transaction (#3987) would leave of the price reads.
+    /// @dev The Diamond's calls into the guard by selector, as
+    ///      `0x<selector>:<count>` joined by commas, in first-seen order.
+    function _guardSelectors(VmSafe.AccountAccess[] memory acc) internal view returns (string memory out) {
         address guard = LibTestPriceGuard.guardOf(address(diamond));
+        bytes4[] memory sels = new bytes4[](acc.length);
+        uint256[] memory counts = new uint256[](acc.length);
+        uint256 k;
         for (uint256 i; i < acc.length; i++) {
             VmSafe.AccountAccess memory a = acc[i];
             if (
-                a.account == guard && a.accessor == address(diamond)
-                    && (a.kind == VmSafe.AccountAccessKind.Call || a.kind == VmSafe.AccountAccessKind.StaticCall)
-            ) n++;
+                a.account != guard || a.accessor != address(diamond) || a.data.length < 4
+                    || (a.kind != VmSafe.AccountAccessKind.Call && a.kind != VmSafe.AccountAccessKind.StaticCall)
+            ) continue;
+            bytes4 sel = bytes4(a.data);
+            uint256 j;
+            while (j < k && sels[j] != sel) j++;
+            if (j == k) sels[k++] = sel;
+            counts[j]++;
+        }
+        for (uint256 j; j < k; j++) {
+            out = string.concat(out, j == 0 ? "" : ",", vm.toString(abi.encodePacked(sels[j])), ":", vm.toString(counts[j]));
+        }
+    }
+
+    function _guardReads(VmSafe.AccountAccess[] memory acc)
+        internal
+        view
+        returns (uint256 n, uint256 distinctCalls, uint256 priceReads, uint256 priceAssets)
+    {
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        bytes32[] memory calls = new bytes32[](acc.length);
+        bytes32[] memory assets = new bytes32[](acc.length);
+        for (uint256 i; i < acc.length; i++) {
+            VmSafe.AccountAccess memory a = acc[i];
+            if (
+                a.account != guard || a.accessor != address(diamond)
+                    || (a.kind != VmSafe.AccountAccessKind.Call && a.kind != VmSafe.AccountAccessKind.StaticCall)
+            ) continue;
+            n++;
+            bytes32 k = keccak256(a.data);
+            if (!_has(calls, distinctCalls, k)) calls[distinctCalls++] = k;
+            if (a.data.length >= 36 && _pricesAnAsset(bytes4(a.data))) {
+                priceReads++;
+                bytes32 asset = bytes32(_word(a.data, 4));
+                if (!_has(assets, priceAssets, asset)) assets[priceAssets++] = asset;
+            }
+        }
+    }
+
+    function _pricesAnAsset(bytes4 sel) private pure returns (bool) {
+        return sel == IPriceGuard.getAssetPrice.selector || sel == IPriceGuard.getAssetPriceStatus.selector
+            || sel == IPriceGuard.tryGetAssetPrice.selector || sel == IPriceGuard.countLiveSecondaryOracleFeeds.selector
+            || sel == IPriceGuard.getAssetPriceAt.selector || sel == IPriceGuard.getAssetPriceStatusAt.selector
+            || sel == IPriceGuard.tryGetAssetPriceAt.selector;
+    }
+
+    function _word(bytes memory b, uint256 at) private pure returns (uint256 w) {
+        assembly ("memory-safe") {
+            w := mload(add(add(b, 0x20), at))
         }
     }
 
@@ -178,6 +308,10 @@ abstract contract GasSuiteBase is SetupTest {
         vm.serializeUint(o, "slotsRead", m.slotsRead);
         vm.serializeUint(o, "facetCalls", m.facetCalls);
         vm.serializeUint(o, "guardReads", m.guardReads);
+        vm.serializeUint(o, "guardDistinctCalls", m.guardDistinctCalls);
+        vm.serializeUint(o, "guardPriceReads", m.guardPriceReads);
+        vm.serializeString(o, "guardBySelector", m.guardBySelector);
+        vm.serializeUint(o, "guardPriceAssets", m.guardPriceAssets);
         string memory json = vm.serializeUint(o, "events", m.events);
         // The folder is removed before a full run (predeploy-check), and
         // writeJson creates no folder.

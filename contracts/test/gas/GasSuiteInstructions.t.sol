@@ -33,8 +33,8 @@ contract GasSuiteInstructionsTest is GasSuiteBase {
         NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
         vm.prank(owner);
         ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
-        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
-        mockOraclePrice(mockCollateralERC20, 1_000 * 1e8, 8);
+        _priceOnGuard(mockERC20, int256(1_000 * 1e8));
+        _priceOnGuard(mockCollateralERC20, int256(1_000 * 1e8));
         runner = makeAddr("gasRunner");
         LibVaipakam.CreateOfferParams memory p = _params(LibVaipakam.OfferType.Lender);
         p.interestRateBps = 1200;
@@ -74,7 +74,7 @@ contract GasSuiteInstructionsTest is GasSuiteBase {
         _set(1.3e18, 1.6e18, false, false, 0);
         // Collateral at 28% of the principal asset's price: the health factor
         // falls from 4.25 to about 1.19, under the 1.3 trigger.
-        mockOraclePrice(mockCollateralERC20, 280 * 1e8, 8);
+        _priceOnGuard(mockCollateralERC20, int256(280 * 1e8));
         _measure("instruction_run_topup", runner, abi.encodeCall(StandingInstructionFacet.runCollateralTopUp, (loanId)));
     }
 

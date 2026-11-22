@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareBudgets, guardReadCost, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost } from '../../../contracts/script/check-gas-budgets.mjs';
+import { compareBudgets, fullGas, guardReadCost, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost } from '../../../contracts/script/check-gas-budgets.mjs';
 
 const R = 'the measured figure on the first suite run, with mocked oracles';
 const budgets = (actions, extra = {}) => ({ blocking: false, lowerAt: 0.8, actions, ...extra });
@@ -119,4 +119,10 @@ test('the code bounds file is read beside the measurements and is not an action'
   const r = readMeasurements(dir);
   assert.deepEqual(Object.keys(r), ['a']);
   assert.deepEqual(r.__instantConfig, { defaultBound: 8, topBound: 16, maxSources: 16 });
+});
+
+test('the source rule counts the calls that price an asset, not the guard\'s other views', () => {
+  const ib = { guardReadCost: 1_000 };
+  assert.equal(fullGas(ib, { gas: 10_000, guardReads: 9, guardPriceReads: 2 }), 12_000);
+  assert.equal(fullGas(ib, { gas: 10_000, guardReads: 9 }), 19_000, 'an older measurement without the split counts every call');
 });
