@@ -1105,6 +1105,9 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
            chain_id INTEGER NOT NULL,
            source_chain_id INTEGER NOT NULL,
            reported_cumulative TEXT NOT NULL DEFAULT '0',
+           -- #3921 B2 (0130): a later migration than the one this window
+           -- is about; the scan runs only once every migration is applied.
+           last_event_block INTEGER, last_event_tx_index INTEGER, last_event_log_index INTEGER,
            PRIMARY KEY (chain_id, source_chain_id))`,
       )
       .run();
@@ -1148,6 +1151,36 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
     expect(day(body, 1).scheduleFloor).toBe('100');
   });
 
+  it('each ledger row names the latest event folded into it (#3921 B2)', async () => {
+    const { h, env } = makeHarness();
+    const at = (sql: string, ...binds: number[]) =>
+      Object.values(h.db.prepare(sql).get(...binds) as object);
+    await scanPass(
+      [
+        { ...log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 4n }, 200n), transactionIndex: 2, logIndex: 7 },
+        {
+          ...log(
+            'ChainRecycledReported',
+            { sourceChainId: MIRROR, dayId: 4n, cumulative: 50n, forDayReported: 50n, dayCreditAccepted: 50n },
+            201n,
+          ),
+          transactionIndex: 0,
+          logIndex: 3,
+        },
+        { ...log('VpfiRecycledPreLaunch', { source: 1, refId: 2n, amount: 9n }, 202n), transactionIndex: 1, logIndex: 1 },
+      ],
+      env,
+      CHAIN,
+    );
+    const cols = 'last_event_block, last_event_tx_index, last_event_log_index';
+    // The day row took the local credit, then the mirror credit: it names the later.
+    expect(at(`SELECT ${cols} FROM recycle_day_pool WHERE chain_id = ? AND day_id = 4`, CHAIN)).toEqual([201, 0, 3]);
+    expect(at(`SELECT ${cols} FROM recycle_chain_reported WHERE chain_id = ? AND source_chain_id = ?`, CHAIN, MIRROR)).toEqual([
+      201, 0, 3,
+    ]);
+    expect(at(`SELECT ${cols} FROM recycle_prelaunch WHERE chain_id = ?`, CHAIN)).toEqual([202, 1, 1]);
+  });
+
   it('keeps scanning when 0047 has not applied yet (write path)', async () => {
     // The read path was made tolerant a round earlier; the rebuild and the
     // live write were not, so a scan in the rollout window aborted before
@@ -1160,6 +1193,9 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
            chain_id INTEGER NOT NULL,
            source_chain_id INTEGER NOT NULL,
            reported_cumulative TEXT NOT NULL DEFAULT '0',
+           -- #3921 B2 (0130): a later migration than the one this window
+           -- is about; the scan runs only once every migration is applied.
+           last_event_block INTEGER, last_event_tx_index INTEGER, last_event_log_index INTEGER,
            PRIMARY KEY (chain_id, source_chain_id))`,
       )
       .run();
@@ -1282,6 +1318,9 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
            chain_id INTEGER NOT NULL,
            source_chain_id INTEGER NOT NULL,
            reported_cumulative TEXT NOT NULL DEFAULT '0',
+           -- #3921 B2 (0130): a later migration than the one this window
+           -- is about; the scan runs only once every migration is applied.
+           last_event_block INTEGER, last_event_tx_index INTEGER, last_event_log_index INTEGER,
            PRIMARY KEY (chain_id, source_chain_id))`,
       )
       .run();

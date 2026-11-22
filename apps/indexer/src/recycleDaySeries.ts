@@ -26,12 +26,21 @@
  */
 
 import type { Env } from './env';
+import {
+  LAST_EVENT_SET,
+  LAST_EVENT_UPSERT_SET,
+  eventPosition,
+  lastEventBinds,
+  type RowPosition,
+} from './lastEvent';
 
 export interface RecycleSeriesLog {
   eventName: string;
   args: Record<string, unknown>;
   blockNumber: bigint;
   transactionHash: string;
+  /** Optional: an event replayed from `activity_events` does not carry it. */
+  transactionIndex?: number | null;
   logIndex: number;
 }
 
@@ -61,9 +70,12 @@ function argBig(v: unknown): bigint {
  * absorption is an ordinary state, not a gap.
  */
 function ensureRow(env: Env, chainId: number, dayId: number) {
+  // #3921 B2 — born with no event named: the UPDATE that follows it in the
+  // same batch names the event it applies.
   return env.DB.prepare(
-    `INSERT INTO recycle_day_pool (chain_id, day_id)
-     VALUES (?, ?)
+    `INSERT INTO recycle_day_pool
+       (chain_id, day_id, last_event_block, last_event_tx_index, last_event_log_index)
+     VALUES (?, ?, NULL, NULL, NULL)
      ON CONFLICT (chain_id, day_id) DO NOTHING`,
   ).bind(chainId, dayId);
 }
@@ -78,6 +90,10 @@ async function applyOne(
   log: RecycleSeriesLog,
 ): Promise<boolean> {
   const blockNumber = Number(log.blockNumber);
+  // #3921 B2 — every row this event changes names it. The rows accumulate
+  // many events, and the columns move forward only, so each names the latest
+  // event folded into it.
+  const at: RowPosition = eventPosition(log);
   // A pre-launch credit carries NO dayId — deliberately, so that a field
   // that always reads zero cannot re-create the day-0 attribution (#1504).
   // Recorded as -1 in the audit table so it can never be mistaken for day 0.
@@ -150,7 +166,8 @@ async function applyOne(
                 a_bar = ?,
                 margin_bps = ?,
                 fresh_drawdown = ?,
-                armed = ?
+                armed = ?,
+                ${LAST_EVENT_SET}
           WHERE chain_id = ? AND day_id = ?`,
       ).bind(
         argBig(log.args.scheduleFloor).toString(),
@@ -159,6 +176,7 @@ async function applyOne(
         Number(argBig(log.args.marginBps)),
         argBig(log.args.freshDrawdown).toString(),
         log.args.armed === true ? 1 : 0,
+        ...lastEventBinds(at),
         chainId,
         dayId,
       ),
@@ -181,9 +199,11 @@ async function applyOne(
     await env.DB.batch([
       record,
       env.DB.prepare(
-        `INSERT INTO recycle_prelaunch (chain_id, absorbed) VALUES (?, ?)
-         ON CONFLICT (chain_id) DO UPDATE SET absorbed = excluded.absorbed`,
-      ).bind(chainId, (big(row?.absorbed) + amount).toString()),
+        `INSERT INTO recycle_prelaunch
+           (chain_id, absorbed, last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (chain_id) DO UPDATE SET absorbed = excluded.absorbed, ${LAST_EVENT_UPSERT_SET}`,
+      ).bind(chainId, (big(row?.absorbed) + amount).toString(), ...lastEventBinds(at)),
     ]);
     return true;
   }
@@ -200,9 +220,9 @@ async function applyOne(
       record,
       ensureRow(env, chainId, dayId),
       env.DB.prepare(
-        `UPDATE recycle_day_pool SET absorbed_local = ?
+        `UPDATE recycle_day_pool SET absorbed_local = ?, ${LAST_EVENT_SET}
           WHERE chain_id = ? AND day_id = ?`,
-      ).bind((big(row?.absorbed_local) + amount).toString(), chainId, dayId),
+      ).bind((big(row?.absorbed_local) + amount).toString(), ...lastEventBinds(at), chainId, dayId),
     ];
 
     await env.DB.batch(writes);
@@ -259,11 +279,13 @@ async function applyOne(
   const reportedWrite = withAttribution
     ? env.DB.prepare(
         `INSERT INTO recycle_chain_reported
-           (chain_id, source_chain_id, reported_cumulative, attributed_cumulative)
-         VALUES (?, ?, ?, ?)
+           (chain_id, source_chain_id, reported_cumulative, attributed_cumulative,
+            last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (chain_id, source_chain_id)
          DO UPDATE SET reported_cumulative = excluded.reported_cumulative,
-                       attributed_cumulative = excluded.attributed_cumulative`,
+                       attributed_cumulative = excluded.attributed_cumulative,
+                       ${LAST_EVENT_UPSERT_SET}`,
       ).bind(
         chainId,
         sourceChainId,
@@ -272,14 +294,16 @@ async function applyOne(
           big(prevReported?.attributed_cumulative) +
           (sourceChainId === chainId ? 0n : accepted)
         ).toString(),
+        ...lastEventBinds(at),
       )
     : env.DB.prepare(
         `INSERT INTO recycle_chain_reported
-           (chain_id, source_chain_id, reported_cumulative)
-         VALUES (?, ?, ?)
+           (chain_id, source_chain_id, reported_cumulative,
+            last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (chain_id, source_chain_id)
-         DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
-      ).bind(chainId, sourceChainId, nextReported);
+         DO UPDATE SET reported_cumulative = excluded.reported_cumulative, ${LAST_EVENT_UPSERT_SET}`,
+      ).bind(chainId, sourceChainId, nextReported, ...lastEventBinds(at));
   if (sourceChainId === chainId || accepted === 0n) {
     // Still recorded, so a replay cannot re-evaluate the filter — and the
     // reporting chain's lifetime cumulative is kept either way, since a
@@ -299,9 +323,9 @@ async function applyOne(
     reportedWrite,
     ensureRow(env, chainId, dayId),
     env.DB.prepare(
-      `UPDATE recycle_day_pool SET absorbed_mirror = ?
+      `UPDATE recycle_day_pool SET absorbed_mirror = ?, ${LAST_EVENT_SET}
         WHERE chain_id = ? AND day_id = ?`,
-    ).bind((big(row?.absorbed_mirror) + accepted).toString(), chainId, dayId),
+    ).bind((big(row?.absorbed_mirror) + accepted).toString(), ...lastEventBinds(at), chainId, dayId),
   ]);
   return true;
 }
@@ -451,15 +475,18 @@ export async function ensureReportedCumulativeProjection(
   const withAttribution = await attributionColumnPresent(env);
 
   const rows = await env.DB.prepare(
-    `SELECT args_json FROM activity_events
+    `SELECT block_number, log_index, args_json FROM activity_events
       WHERE chain_id = ? AND kind = 'ChainRecycledReported'
       ORDER BY block_number ASC, log_index ASC`,
   )
     .bind(chainId)
-    .all<{ args_json: string }>();
+    .all<{ block_number: number; log_index: number; args_json: string }>();
 
   const maxBySource = new Map<number, bigint>();
   const attributedBySource = new Map<number, bigint>();
+  // #3921 B2 — the latest report folded in per source (rows come in chain
+  // order). The feed keeps no transaction position, so that stays unknown.
+  const lastBySource = new Map<number, RowPosition>();
   for (const row of rows.results ?? []) {
     let args: Record<string, unknown>;
     try {
@@ -468,6 +495,7 @@ export async function ensureReportedCumulativeProjection(
       continue;
     }
     const src = Number(argBig(args.sourceChainId));
+    lastBySource.set(src, { block: row.block_number, txIndex: null, logIndex: row.log_index });
     const cum = argBig(args.cumulative);
     if (cum > (maxBySource.get(src) ?? 0n)) maxBySource.set(src, cum);
     if (src !== chainId) {
@@ -499,22 +527,26 @@ export async function ensureReportedCumulativeProjection(
     ) {
       continue;
     }
+    const at = lastEventBinds(lastBySource.get(src)!);
     await (withAttribution
       ? env.DB.prepare(
           `INSERT INTO recycle_chain_reported
-             (chain_id, source_chain_id, reported_cumulative, attributed_cumulative)
-           VALUES (?, ?, ?, ?)
+             (chain_id, source_chain_id, reported_cumulative, attributed_cumulative,
+              last_event_block, last_event_tx_index, last_event_log_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (chain_id, source_chain_id)
            DO UPDATE SET reported_cumulative = excluded.reported_cumulative,
-                         attributed_cumulative = excluded.attributed_cumulative`,
-        ).bind(chainId, src, nextCum.toString(), nextAttr.toString())
+                         attributed_cumulative = excluded.attributed_cumulative,
+                         ${LAST_EVENT_UPSERT_SET}`,
+        ).bind(chainId, src, nextCum.toString(), nextAttr.toString(), ...at)
       : env.DB.prepare(
           `INSERT INTO recycle_chain_reported
-             (chain_id, source_chain_id, reported_cumulative)
-           VALUES (?, ?, ?)
+             (chain_id, source_chain_id, reported_cumulative,
+              last_event_block, last_event_tx_index, last_event_log_index)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT (chain_id, source_chain_id)
-           DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
-        ).bind(chainId, src, nextCum.toString())
+           DO UPDATE SET reported_cumulative = excluded.reported_cumulative, ${LAST_EVENT_UPSERT_SET}`,
+        ).bind(chainId, src, nextCum.toString(), ...at)
     ).run();
   }
 

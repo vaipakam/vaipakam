@@ -2917,8 +2917,9 @@ async function runChainPass(
       if (!Number.isFinite(mirrorChainId) || mirrorChainId <= 0) continue;
       await env.DB.prepare(
         `INSERT OR IGNORE INTO keeper_commitment_reconciled
-           (base_chain_id, base_diamond, day_id, mirror_chain_id, reconciled_at)
-         VALUES (?, ?, ?, ?, ?)`,
+           (base_chain_id, base_diamond, day_id, mirror_chain_id, reconciled_at,
+            last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -2926,6 +2927,8 @@ async function runChainPass(
           dayId,
           mirrorChainId,
           Math.floor(Date.now() / 1000),
+          // #3921 B2 — the row is the reconcile event's record: it names it.
+          ...lastEventBinds(eventPosition(log)),
         )
         .run();
     }
