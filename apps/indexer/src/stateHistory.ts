@@ -368,19 +368,29 @@ export const KEYED_SETTINGS_EVENTS: Readonly<Record<string, string>> = {
 
 /**
  * The settings events that say a setting changed without carrying its new
- * value (a count, or one entry of a list): the event layer records the
- * change, and the value is only in the end-of-block read.
+ * value (a count, one entry of a list, or a version), each with the
+ * zero-argument getter that answers the value: the event layer records the
+ * change, and the end-of-block read reads that getter at the block, so the
+ * history can still say what the setting became (Codex #4016 r4).
  */
-export const VALUE_NOT_CARRIED_EVENTS: ReadonlySet<string> = new Set([
-  'SwapAdapterAdded',
-  'SwapAdapterRemoved',
-  'TreasuryConvertTargetsSet',
-  'PaaAssetsSet',
+export const VALUE_NOT_CARRIED_GETTERS: Readonly<Record<string, string>> = {
+  SwapAdapterAdded: 'getSwapAdapters',
+  SwapAdapterRemoved: 'getSwapAdapters',
+  TreasuryConvertTargetsSet: 'getTreasuryConvertConfig',
+  PaaAssetsSet: 'getPaaAssets',
   // Carries only the bucket count, not the thresholds or grace periods.
-  'GraceBucketsUpdated',
-  // Carries only the new version number, not the tier table.
-  'TierTableVersionBumped',
-]);
+  GraceBucketsUpdated: 'getGraceBuckets',
+  // Carries only the new version number; the table itself arrives in
+  // VpfiTierThresholdsSet / VpfiTierDiscountsSet, which carry their values.
+  TierTableVersionBumped: 'getTierTableVersion',
+};
+
+export const VALUE_NOT_CARRIED_EVENTS: ReadonlySet<string> = new Set(Object.keys(VALUE_NOT_CARRIED_GETTERS));
+
+/** The getters the end-of-block read adds for those events, once each. */
+export const VALUE_NOT_CARRIED_GETTER_NAMES: readonly string[] = [
+  ...new Set(Object.values(VALUE_NOT_CARRIED_GETTERS)),
+];
 
 /** One setting as the events up to a point describe it. */
 export interface EventSetting {

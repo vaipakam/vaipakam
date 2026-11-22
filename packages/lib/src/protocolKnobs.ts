@@ -357,7 +357,7 @@ function isChainAnswer(error: unknown): boolean {
 }
 
 /** Whether any multicall result failed for a reason other than the chain's answer. */
-function anyTransportFailure(results: readonly { status: string; error?: unknown }[]): boolean {
+export function anyTransportFailure(results: readonly { status: string; error?: unknown }[]): boolean {
   return results.some((r) => r.status === 'failure' && !isChainAnswer(r.error));
 }
 

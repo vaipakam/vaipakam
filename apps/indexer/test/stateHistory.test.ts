@@ -15,6 +15,7 @@ import {
   historyStatements,
   settingsAt,
   VALUE_NOT_CARRIED_EVENTS,
+  VALUE_NOT_CARRIED_GETTERS,
   type HistoryDb,
   type RawLog,
 } from '../src/stateHistory';
@@ -254,6 +255,17 @@ describe('the event history (#3921)', () => {
       .map((e) => e.name!)
       .filter((n) => !VALUE_NOT_CARRIED_EVENTS.has(n));
     expect(missing).toEqual([]);
+  });
+
+  it('every event that does not carry its value names a zero-argument getter the Diamond ABI has', () => {
+    const views = new Set(
+      (DIAMOND_ABI_VIEM as readonly { type: string; name?: string; inputs?: readonly unknown[]; stateMutability?: string }[])
+        .filter((f) => f.type === 'function' && f.stateMutability === 'view' && (f.inputs ?? []).length === 0)
+        .map((f) => f.name),
+    );
+    for (const [event, getter] of Object.entries(VALUE_NOT_CARRIED_GETTERS)) {
+      expect([event, views.has(getter)]).toEqual([event, true]);
+    }
   });
 
   it('states where the history begins', async () => {

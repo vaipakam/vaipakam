@@ -27,12 +27,15 @@ import {
   PROTOCOL_KNOB_SETTER_EVENTS,
   abiDescribesGetterAt,
   abiOutputNames as abiOutputNamesOf,
+  anyTransportFailure,
   readProtocolConfigBundle,
   readProtocolKnobGetters,
   type ProtocolBundleRead,
   type ProtocolKnobRead,
 } from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { MULTICALL3_ADDRESS } from '@vaipakam/lib/multicall';
+import { VALUE_NOT_CARRIED_GETTER_NAMES } from './stateHistory';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A call that reached a Diamond without the getter: the decoded name, the
@@ -793,6 +796,39 @@ export function isSettingsHistoryEvent(name: string): boolean {
 }
 
 /**
+ * The values the settings events that do not carry them stand for
+ * (`VALUE_NOT_CARRIED_GETTERS`), read at the block in one multicall.
+ * Each getter's answer is `{ value }`, or `{ notAnswered }` when the chain
+ * refused it at this block (a Diamond without the getter); a node failure
+ * throws, so the block is retried rather than recorded without the value.
+ */
+export async function readEventValueGetters(opts: {
+  client: PublicClient;
+  diamond: Address;
+  blockNumber: bigint;
+}): Promise<Record<string, { value: unknown } | { notAnswered: string }>> {
+  const results = await opts.client.multicall({
+    contracts: VALUE_NOT_CARRIED_GETTER_NAMES.map((functionName) => ({
+      address: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName,
+    })) as never,
+    allowFailure: true,
+    blockNumber: opts.blockNumber,
+    multicallAddress: MULTICALL3_ADDRESS,
+  });
+  if (anyTransportFailure(results as readonly { status: string; error?: unknown }[])) {
+    throw new Error('the event-value multicall failed at the node');
+  }
+  const out: Record<string, { value: unknown } | { notAnswered: string }> = {};
+  VALUE_NOT_CARRIED_GETTER_NAMES.forEach((name, i) => {
+    const r = results[i] as { status: string; result?: unknown; error?: unknown };
+    out[name] = r.status === 'success' ? { value: r.result } : { notAnswered: describeFailure(r.error) };
+  });
+  return out;
+}
+
+/**
  * #3921 — the protocol's settings as read at the end of one block, for the
  * settings history: the config bundle (labelled with this build's output
  * names, or the reason it could not be decoded), the single-output and
@@ -808,7 +844,7 @@ export async function readSettingsAt(opts: {
   chainId: number;
   blockNumber: bigint;
 }): Promise<Record<string, unknown>> {
-  const [bundle, bundleAbiBound, knobs, graceBuckets, pauseLog] = await Promise.all([
+  const [bundle, bundleAbiBound, knobs, eventValues, pauseLog] = await Promise.all([
     readProtocolConfigBundle({
       client: opts.client,
       diamond: opts.diamond,
@@ -824,20 +860,7 @@ export async function readSettingsAt(opts: {
       blockNumber: opts.blockNumber,
       facets: getDeployment(opts.chainId)?.facets,
     }),
-    (
-      opts.client.readContract({
-        address: opts.diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getGraceBuckets',
-        blockNumber: opts.blockNumber,
-      }) as Promise<readonly { maxDurationDays: bigint; graceSeconds: bigint }[]>
-    ).catch((err: unknown) => {
-      const raw = (err as { data?: unknown })?.data;
-      if (MISSING_SELECTOR.test(typeof raw === 'string' ? raw : '') || MISSING_SELECTOR.test(String(err))) {
-        return [] as const;
-      }
-      throw err;
-    }),
+    readEventValueGetters(opts),
     readPauseLog({ client: opts.client, diamond: opts.diamond, blockNumber: opts.blockNumber }).then(pauseLogToJson),
   ]);
   // A setting the node failed to answer is not a setting the chain did not
@@ -855,7 +878,7 @@ export async function readSettingsAt(opts: {
           : { positional: bundle.positional }
         : { unreadable: bundle.reason },
     knobs: { values: knobs.values, unreported: knobs.unreported },
-    graceBuckets,
+    eventValues,
     pauseLog,
   };
 }
