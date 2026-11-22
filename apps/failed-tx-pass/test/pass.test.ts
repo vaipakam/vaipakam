@@ -402,6 +402,17 @@ describe('the failed transaction pass', () => {
     expect(r2.audited!.from).toBe(r.audited!.to + 1);
   });
 
+  it('counts as covered a failure the same run’s list found in the audit window, before it is stored', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const windowStart = DEPLOY + 86_400;
+    chain.txs.push({ hash: txHash(27), block: windowStart + 3, to: DIAMOND, input: repay(27n), status: 0, revert: REVERT, trace: 'ok' });
+    const ix = realIndexer();
+    const r = await runChain(wide(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain))));
+    expect(r.audited).toMatchObject({ from: windowStart, found: 1, missed: 0 });
+    expect(r.findings.some((f) => f.key.startsWith('audit-missed-'))).toBe(false);
+    expect(ix.rows('SELECT tx_hash, found_by FROM failed_tx')).toEqual([{ tx_hash: txHash(27), found_by: 'explorer-list' }]);
+  });
+
   it('does not count as misses the finds in a window the list was never asked about', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const windowStart = DEPLOY + 86_400;

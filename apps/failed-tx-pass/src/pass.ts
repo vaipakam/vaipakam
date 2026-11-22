@@ -443,7 +443,9 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
           if (doneTo >= next) {
             // Coverage by the other sources only: a slice read again after an
             // interrupted run must not count the audit's own earlier finds.
-            const recorded = new Set((await indexer.state(chainId, { from: next, to: doneTo })).recordedByOthers ?? []);
+            // This run's own discoveries are not stored yet (they travel with
+            // the cursor write below), so they count as coverage here too.
+            const recorded = new Set([...((await indexer.state(chainId, { from: next, to: doneTo })).recordedByOthers ?? []), ...kept.map((r) => r.txHash)]);
             const missed = failures.filter((x) => !recorded.has(x.hash));
             const audited: FailedTxRecord[] = [];
             for (const m of missed) {

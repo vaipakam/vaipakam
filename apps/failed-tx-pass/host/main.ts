@@ -26,8 +26,8 @@ import { codeNamesFromDeployment } from '@vaipakam/lib/txExplainer';
 import { planFor, type CapabilityResult } from '../src/chains';
 import { txlistExplorer } from '../src/explorer';
 import { indexerClient } from '../src/indexer';
-import { delivered, dueAlerts, parseAlertState } from '../src/alerts';
-import { alertBatches, defaultSettings, runChain, type Finding, type RunResult } from '../src/pass';
+import { alertMessages, delivered, dueAlerts, parseAlertState } from '../src/alerts';
+import { defaultSettings, runChain, type Finding, type RunResult } from '../src/pass';
 import { jsonRpc } from '../src/rpc';
 
 const env = (k: string): string | undefined => {
@@ -59,12 +59,7 @@ async function sendAlerts(findings: Finding[], now: number): Promise<void> {
     // many messages as they need, and an alert leaves the pending list only
     // once the message carrying it was accepted. A refused message stops the
     // rest, which stay pending for the next run.
-    let first = true;
-    for (const batch of alertBatches(due)) {
-      const lines = ['Failed transaction pass'];
-      const reportDropped = first && state.dropped > 0;
-      if (reportDropped) lines.push(`• ${state.dropped} earlier alert(s) could not be kept while the operator chat was unreachable; read the unit journal.`);
-      const text = [...lines, ...batch.map((a) => `• ${a.text}`)].join('\n');
+    for (const { text, batch, reportsDropped } of alertMessages(due, state.dropped)) {
       try {
         const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
@@ -76,8 +71,7 @@ async function sendAlerts(findings: Finding[], now: number): Promise<void> {
           process.stdout.write(`the operator chat refused the alert (HTTP ${res.status})\n`);
           break;
         }
-        state = delivered(state, batch, now, reportDropped);
-        first = false;
+        state = delivered(state, batch, now, reportsDropped);
       } catch (e) {
         process.stdout.write(`the operator chat did not answer (${e instanceof Error ? e.name : 'error'})\n`);
         break;

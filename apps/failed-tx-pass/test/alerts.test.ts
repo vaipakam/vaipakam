@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { delivered, dueAlerts, MAX_PENDING, parseAlertState, REPEAT_SECONDS } from '../src/alerts';
+import { alertMessages, delivered, dueAlerts, MAX_PENDING, parseAlertState, REPEAT_SECONDS } from '../src/alerts';
+import { ALERT_MESSAGE_CHARS } from '../src/pass';
 import type { Finding } from '../src/pass';
 
 const alert = (key: string, text = key): Finding => ({ chainId: 84532, level: 'alert', key, text });
@@ -42,5 +43,15 @@ describe('operator alert state', () => {
     const s = parseAlertState(JSON.stringify({ '84532:behind': 100 }));
     expect(s).toEqual({ sent: { '84532:behind': 100 }, pending: [], dropped: 0 });
     expect(parseAlertState('not json')).toEqual({ sent: {}, pending: [], dropped: 0 });
+  });
+
+  it('sizes messages with the dropped-alert report counted, so none exceeds the chat limit', () => {
+    const due = [alert('a', 'a'.repeat(3500)), alert('b', 'b'.repeat(470))];
+    const msgs = alertMessages(due, 7);
+    expect(msgs[0]!.reportsDropped).toBe(true);
+    expect(msgs[0]!.text).toContain('7 earlier alert(s)');
+    for (const m of msgs) expect(m.text.length).toBeLessThanOrEqual(ALERT_MESSAGE_CHARS);
+    expect(msgs.flatMap((m) => m.batch.map((a) => a.key))).toEqual(['a', 'b']);
+    expect(msgs.slice(1).every((m) => !m.reportsDropped && !m.text.includes('earlier alert'))).toBe(true);
   });
 });

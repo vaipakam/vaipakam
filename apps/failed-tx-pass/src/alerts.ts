@@ -8,7 +8,7 @@
  * if the operator chat was down at the time, only this record keeps it. A
  * pending alert stays until the chat accepts the message carrying it.
  */
-import type { Finding } from './pass';
+import { alertBatches, type Finding } from './pass';
 
 /** An alert is sent again only after this long, while its condition lasts. */
 export const REPEAT_SECONDS = 6 * 3600;
@@ -86,4 +86,20 @@ export function delivered(state: AlertState, batch: Finding[], now: number, repo
   const sent = { ...state.sent };
   for (const k of done) sent[k] = now;
   return { sent, pending: state.pending.filter((p) => !done.has(id(p))), dropped: reportedDropped ? 0 : state.dropped };
+}
+
+const HEADING = 'Failed transaction pass';
+
+/**
+ * The messages that carry `due`, in order. A dropped count, when there is one,
+ * is reported in the first message's heading, and every message is sized with
+ * that heading counted, so none exceeds the chat's limit.
+ */
+export function alertMessages(due: Finding[], dropped: number): Array<{ text: string; batch: Finding[]; reportsDropped: boolean }> {
+  const droppedLine = dropped > 0 ? `• ${dropped} earlier alert(s) could not be kept while the operator chat was unreachable; read the unit journal.` : undefined;
+  const heading = droppedLine ? `${HEADING}\n${droppedLine}` : HEADING;
+  return alertBatches(due, heading).map((batch, i) => {
+    const reportsDropped = i === 0 && droppedLine !== undefined;
+    return { text: [reportsDropped ? heading : HEADING, ...batch.map((a) => `• ${a.text}`)].join('\n'), batch, reportsDropped };
+  });
 }
