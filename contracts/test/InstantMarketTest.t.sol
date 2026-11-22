@@ -31,7 +31,7 @@ abstract contract InstantMarketBase is SetupTest {
     uint32 internal constant TERM = 30;
     uint256 internal constant MIN_FILL = 100 ether;
 
-    function setUp() public {
+    function setUp() public virtual {
         setupHelper();
         vm.prank(owner);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);

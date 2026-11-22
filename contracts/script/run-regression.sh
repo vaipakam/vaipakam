@@ -111,7 +111,7 @@ note() { if [ "$MODE" = run ]; then echo "$@"; else echo "$@" >&2; fi; }
 # Subdirectories that hold *.t.sol (excluding invariants, which run separately).
 # A new such subdir must be added here; the exhaustiveness guard fails loudly
 # if one appears that isn't covered.
-SUBDIRS=(scenarios deploy fork seaport token)
+SUBDIRS=(scenarios deploy fork seaport token gas)
 
 # ── Top-level suites, chunked ────────────────────────────────────────────────
 # `test/*.t.sol` recurses under globset (its `*` crosses `/`), so we CANNOT use

@@ -65,6 +65,9 @@ fs_permissions = [
   # (`broadcast/<module>.s.sol/<chain>/stage-latest.json`) to confirm every
   # transaction of a stage succeeded before the next stage runs. Read-only.
   { access = "read", path = "./broadcast/" },
+  # #3915 — the gas suite (test/gas/) writes one measured row per user action
+  # here; script/check-gas-budgets.mjs compares them with gas-suite/budgets.json.
+  { access = "read-write", path = "./out-gas-suite/" },
 ]
 
 [profile.coverage]
@@ -301,6 +304,9 @@ skip = [
   "test/invariants/**",
   "test/fork/**",
   "test/token/**",
+  # #3915 — the gas suite measures every user action on the full Diamond;
+  # it runs in the full regression (run-regression.sh SUBDIRS), not per PR.
+  "test/gas/**",
 ]
 fs_permissions = [
   { access = "read-write", path = "./deployments/" },

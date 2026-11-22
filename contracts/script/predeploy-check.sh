@@ -421,6 +421,9 @@ if [ "$MODE_FULL" -eq 1 ]; then
   # and every OTHER step runs in full, so each shard is a complete preflight
   # over 1/N of the regression. A green shard is not a green regression:
   # `run-regression.sh --verify-shards` over every shard's `--manifest` is.
+  # The gas suite (test/gas/, #3915) writes its measurements during this run;
+  # a leftover from an earlier run must not stand in for one this run skipped.
+  (( ${#REGRESSION_ARGS[@]} )) || rm -rf "$CONTRACTS_DIR/out-gas-suite"
   if bash "$SCRIPT_DIR/run-regression.sh" ${REGRESSION_ARGS[@]+"${REGRESSION_ARGS[@]}"}; then
     if (( ${#REGRESSION_ARGS[@]} )); then
       echo "  ✓ this shard of the full regression passes (verify every shard before relying on it)"
@@ -429,6 +432,21 @@ if [ "$MODE_FULL" -eq 1 ]; then
     fi
   else
     echo "  ✗ regression failed — do not deploy red contracts" >&2
+    FAIL=1
+  fi
+
+  echo
+  echo "[predeploy 2a/4] gas budgets per user action (#3915)"
+  # A warning until the refactor pass ends (gas-suite/budgets.json
+  # "blocking": false); a raised budget with an unchanged reason fails always.
+  # A shard holds only some of the suite's chunks, so a sharded run cannot
+  # say whether every action is within budget: it says so and checks nothing.
+  if (( ${#REGRESSION_ARGS[@]} )); then
+    echo "  · sharded run: the gas budgets are checked by an unsharded --full run"
+  elif node "$SCRIPT_DIR/check-gas-budgets.mjs" --dir "$CONTRACTS_DIR/out-gas-suite"; then
+    :
+  else
+    echo "  ✗ gas budget check failed" >&2
     FAIL=1
   fi
 else
