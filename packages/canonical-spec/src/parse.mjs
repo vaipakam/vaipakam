@@ -190,6 +190,9 @@ function parseModel(file, lines, start, end) {
       const want = { Steps: ['From', 'Step', 'Who', 'Guarded by', 'To'], 'Refusals out of state': ['Step', 'Refused by'], Dimensions: ['Dimension', 'Values', 'Named by'] }[section];
       if (want.join('|') !== table.header.join('|')) err(n, `the ${section} table's columns must be ${want.join(' | ')}`);
       for (const r of table.rows) {
+        // A row with more or fewer cells than the header would drop or shift
+        // text silently; it is unreadable instead.
+        if (r.cells.length !== want.length) err(r.line, `a ${section} row has ${r.cells.length} cells; the table has ${want.length} columns`);
         const row = Object.fromEntries(want.map((k, j) => [k, r.cells[j] ?? '']));
         row.line = r.line;
         // The cells a figure could hide in; citation cells hold ids only.

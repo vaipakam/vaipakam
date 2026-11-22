@@ -70,12 +70,12 @@ export function main(argv = process.argv.slice(2)) {
   }
   const files = [...opt.paths, ...opt.held].flatMap((p) => mdFiles(resolve(p)));
   const parsed = files.map((f) => parseFile(relative(process.cwd(), f) || f, readFileSync(f, 'utf8')));
-  // The folder's README and wording list: in a folder given, or given
-  // themselves among the files, or beside a file given, whichever is first.
+  // The folder's README and wording list, in both modes: in a folder given,
+  // or given themselves among the files, or beside a file given, whichever is first.
   const dirs = [...new Set(opt.paths.map((p) => (statSync(resolve(p)).isDirectory() ? resolve(p) : dirname(resolve(p)))))];
   const complete = new Set();
   for (const d of dirs) for (const c of completeDomains(join(d, 'README.md'))) complete.add(c);
-  const wordingPath = opt.wording ?? (opt.mode === 'folder' ? dirs.map((d) => join(d, 'wording.json')).find((p) => existsSync(p)) : null);
+  const wordingPath = opt.wording ?? dirs.map((d) => join(d, 'wording.json')).find((p) => existsSync(p));
   const wording = wordingPath && existsSync(wordingPath) ? JSON.parse(readFileSync(wordingPath, 'utf8')) : null;
   const findings = checkSpec(parsed, { mode: opt.mode, wording, completeDomains: complete });
 

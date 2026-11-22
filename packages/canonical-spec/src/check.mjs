@@ -352,6 +352,12 @@ export function checkSpec(parsed, opts = {}) {
     }
   }
   const mistakeIds = new Set(mistakes.map((x) => x.id));
+  const mistakeAt = new Map();
+  for (const mk of mistakes) {
+    const first = mistakeAt.get(mk.id);
+    if (first) add(mk.file, mk.line, 'duplicate', `${mk.id} is used twice (also ${first.file}:${first.line}); a mistake id names one mistake`);
+    else mistakeAt.set(mk.id, mk);
+  }
   for (const mk of mistakes) {
     const a = answers.get(mk.id) ?? [];
     // `**Waits for:** <section>`: a draft mistake whose answer belongs to a

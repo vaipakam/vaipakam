@@ -344,3 +344,24 @@ test('a fenced code region is an example: no heading or table in it is read', ()
   const after = parseFile('vlt.md', `${example}\n${REFUSAL('VLT-012')}`);
   assert.deepEqual(after.statements.map((s) => s.id), ['VLT-012']);
 });
+
+test('a model row with more cells than its header is unreadable, not truncated', () => {
+  const p = parseFile('vlt.md', MODEL(['| Not created | Create | Anyone | VLT-013 | Open | The balance is at least 25. |'], ['| Create | VLT-012 |']));
+  assert.ok(p.errors.some((e) => /a Steps row has 6 cells; the table has 5 columns/.test(e.message)), JSON.stringify(p.errors));
+});
+
+test('two mistakes sharing an id are refused', () => {
+  const mistakes = '### VLT-M01 · A zero amount\n\n**Who:** the owner.\n\n### VLT-M01 · Sending the wrong asset\n\n**Who:** the owner.\n';
+  const answer = STMT('VLT-012', 'refusal', '- **Refused as:** a zero amount.\n- **For the mistake:** VLT-M01, refuse.\n');
+  const f = run([['vlt.md', answer], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(f, 'duplicate', /VLT-M01 is used twice/), JSON.stringify(f));
+});
+
+test('draft mode reads the wording list beside the draft', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cs-'));
+  writeFileSync(join(dir, 'vlt.md'), STMT('VLT-012', 'rule', '', 'The pool pays the owner.'));
+  writeFileSync(join(dir, 'record.md'), RECORD([['VLT-012']]));
+  writeFileSync(join(dir, 'wording.json'), JSON.stringify({ salt: 's', refused: { '*': [hashWord('s', 'pool')] } }));
+  const quiet = (fn) => { const [l, e] = [console.log, console.error]; console.log = console.error = () => {}; try { return fn(); } finally { console.log = l; console.error = e; } };
+  assert.equal(quiet(() => main(['--draft', dir])), 1);
+});
