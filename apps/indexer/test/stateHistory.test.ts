@@ -15,6 +15,7 @@ import {
   historyStartStatement,
   historyStatements,
   settingsAt,
+  VALUE_NOT_CARRIED_EVENTS,
   type HistoryDb,
   type RawLog,
 } from '../src/stateHistory';
@@ -244,6 +245,16 @@ describe('the event history (#3921)', () => {
   it('keyed settings events fold per key, and an event without its value says so', () => {
     expect(eventSettingKey('KeeperTierSet', { asset: '0xAbC' })).toBe('KeeperTierSet(0xabc)');
     expect(eventSettingKey('BackstopEnabledSet', { enabled: true })).toBe('BackstopEnabledSet');
+  });
+
+  it('every settings event that carries only a count, index or version is marked as not carrying its value', () => {
+    const countLike = /^(count|.*Count|index|newVersion)$/;
+    const missing = (DIAMOND_ABI_VIEM as readonly { type: string; name?: string; inputs?: readonly { name: string }[] }[])
+      .filter((e) => e.type === 'event' && e.name && isSettingsHistoryEvent(e.name))
+      .filter((e) => (e.inputs ?? []).filter((i) => !countLike.test(i.name) && i.name !== 'adapter').length === 0)
+      .map((e) => e.name!)
+      .filter((n) => !VALUE_NOT_CARRIED_EVENTS.has(n));
+    expect(missing).toEqual([]);
   });
 
   it('states where the history begins', async () => {

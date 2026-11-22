@@ -388,6 +388,10 @@ export const VALUE_NOT_CARRIED_EVENTS: ReadonlySet<string> = new Set([
   'SwapAdapterRemoved',
   'TreasuryConvertTargetsSet',
   'PaaAssetsSet',
+  // Carries only the bucket count, not the thresholds or grace periods.
+  'GraceBucketsUpdated',
+  // Carries only the new version number, not the tier table.
+  'TierTableVersionBumped',
 ]);
 
 /** One setting as the events up to a point describe it. */
