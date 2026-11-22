@@ -5,7 +5,11 @@ open points (see Recommendation). Amended the same day for the last review point
 again for the owner's answers of that day on the price rules: what "vouches" means when a feed
 publishes once a day, that only silence ends a second key, and the assets in use defined by
 their purpose. The same change states those price rules in `OraclePolicy.md`,
-`PriceGuardDesign.md` and `RatePricedCollateralDesign.md`. Nothing here is built.
+`PriceGuardDesign.md` and `RatePricedCollateralDesign.md`. Amended once more that day for the
+owner's answers on the points the reads of the price rules raised: both readings in the settling
+time, the second key's test by agreement, the assets in use as those held as priced, the proof a
+record of silence needs, the fee record kept as weights are, one correction rate for every
+network, and the figures fixed in code. Nothing here is built.
 
 ## Why
 
@@ -100,23 +104,36 @@ through it:
 
 | Kind | Stored as | Read for use as | Examples |
 | --- | --- | --- | --- |
-| A value | First unit | Stored times the scale | Every threshold, its compiled default and its range. The sizes of the liquidity test. The fee record, when shown |
+| A value | First unit | Stored times the scale | Every threshold, its compiled default and its range. The sizes of the liquidity test |
 | A rate per unit | Per first unit | Stored divided by the scale | The Full tariff's figure in VPFI per unit per year |
-| A weight | First unit, at the rates as first applied | Stored, through its sum's factor, which is one unless a rate was corrected (section 4). Never through the scale | Reward weights and their totals. They are divided by one another, so both must be read the same way. Converted only to be shown |
+| A weight | First unit, at the rates as first applied | Stored, through its sum's factor, which is one unless a rate was corrected (section 4). Never through the scale | Reward weights and their totals. They are divided by one another, so both must be read the same way. Converted only to be shown. The fee record and its total, which are measured as they arrive |
 | A price | The unit of its time, with its change number | Only with a price of the same number, or with its number | The daily price record, hourly checkpoints, an offer's recorded prices |
 | A ratio | No unit | As stored | Loan-to-value, health factor, every figure in basis points |
 
 A setter is given its figure in the unit in force, and converts it before it is
-range-checked and stored. So a change of unit converts every threshold, default, range, rate
-and total at once and exactly alike, by changing one stored number. Nothing is looped over,
+range-checked and stored. So a change of unit converts every threshold, default, range and
+rate at once and exactly alike, by changing one stored number. Nothing is looped over,
 and a figure added next year is covered by construction, provided it has a kind. The unit
 map (section 8) is what holds that proviso, and it is built with the rule, not after it.
 
 **Rounding is stated per figure.** A floor a user must clear never reads below the figure
 governance gave, and a cap never reads above it: the setter rounds the stored figure the way
 that keeps this true, and its event reports both the figure given and the figure stored. A
-floor below which something is treated as dust rounds down. A reward weight rounds down when
-stored.
+floor below which something is treated as dust rounds down. A rate per unit rounds down, so a
+charge never reads above the rate governance gave. A reward weight rounds down when stored. The
+same rounding holds for a read through the scale as for the stored figure.
+
+**A change of a figure that waits is converted when it is proposed.** The proposal publishes both
+the figure given and the figure stored, and a change of unit during the wait leaves its worth as
+proposed.
+
+**The kind follows from where a figure comes from.** A figure governance sets is a value. A
+figure measured over time is kept as a weight is: at the rates as first applied, as one sum per
+change of unit, read through its sum's factor (section 4). A figure observed at a moment is a
+price. The fee record is measured: each fee is valued when it arrives and added to the sum of its
+change of unit. Kept as a value, the fees recorded under an unchecked rate would read wrongly by
+the size of its correction. Where a measured sum is shown, or set against a value, it is read
+through its factor and then the scale.
 
 **Reward weights.** A loan side's interest per day is valued in the unit in force and divided,
 when it is registered, by the product of the rates of every change as each was first applied.
@@ -237,18 +254,21 @@ They hold for every replacement of the price guard. G7 to G9 concern a change of
 | G5 | An asset the old guard has a source for but cannot vouch for at that moment fails a checked replacement, unless the proposal named it exempt. An exemption lifts G3 and G5 for that asset and nothing else | A stale moment, or an outage of the network's sequencer, used to pass an unchecked price |
 | G6 | The rate governance named must lie within the proposal's stated drift (at most the rate drift cap, proposed at 5%) of the middle of the implied rates, as read in the final call. When the unit stays, the middle must lie within the price tolerance of one | A mistyped or inverted rate, a rate gone stale during the wait, and a guard that reports the old unit while pricing in another |
 | G7 | The rate of one change, and the scale after it, lie inside fixed ranges | A figure overflowing or rounding to nothing |
-| G8 | A further change of unit inside the cool-down (a parameter, proposed at 180 days) is not refused: it waits twice the unit change wait | Churn, and a pair of changes used to walk a figure, without closing the way out if the second unit fails early |
+| G8 | A further change of unit inside the cool-down (a parameter, proposed at 180 days) is not refused: it waits twice the unit change wait. A change that is also without the old guard waits twice, and not four times | Churn, and a pair of changes used to walk a figure, without closing the way out if the second unit fails early |
 | G9 | A change converts and never sets. No threshold is given a new figure by a change. Changing one stays its own governed step with its own range | A policy change carried inside a unit change |
 | G10 | The step moves no asset and writes no loan, lien, claim or balance | A direct path from a replacement to a user's funds. What a replacement can still move is stated below the table |
 | G11 | Every stored price carries its change number, and is never compared across numbers | An old price read as a new one |
 | G12 | The proposal, a cancel, each check page and the applied replacement are events. Together they name both units, both guards, the rate, the scale and each asset's two prices | A replacement that cannot be reconstructed from the record |
-| G13 | **The settling time.** For a stated time after a replacement (proposed at two hours, the time the hourly checkpoints need), every step that uses a price asks both guards, wherever the old one still vouches for both assets. The time is counted as a loan's deadlines are: time in a pause, or while the network's sequencer is down or inside its recovery time, does not count (#668, #3410), so it is never spent while nobody could act. A step that reads a loan-to-value or a health factor goes ahead only if both readings allow it: a liquidation needs the loan to be liquidatable under both, and a new loan, a collateral withdrawal and a cure need both to permit. A step that prices an amount goes ahead only while the two guards' readings of its pair are within twice the price tolerance of each other, and waits otherwise: the least output of a forced sale (at a default by time and at a sale for interest), the split at a close-out in kind, the collateral handed over on the discounted route, a match between loans, and the backstop's par check. A repayment reads no price and is untouched. A new loan has no version on the old guard, and reads it at its newest (section 5) | Whoever runs the apply choosing the instant and, in the same transaction or the next, liquidating, borrowing or settling on the difference between the guards. In the settling time nothing can be done, and no amount can be sized, that only the replacement made possible |
+| G13 | **The settling time.** For a stated time after a replacement (proposed at two hours, the time the hourly checkpoints need), every step that uses a price asks both guards, on every asset the proposal did not name exempt. Where the old guard cannot vouch, the step waits, so a caller cannot leave the old guard out by leaving out a reading it needs. The one way out is silence: where the old guard's silence for an asset is recorded and confirmed after the silence time (below the table), the new guard acts alone for that asset, and a dead source holds a step for that time at most. The time is counted as a loan's deadlines are: time in a pause, or while the network's sequencer is down or inside its recovery time, does not count (#668, #3410), so it is never spent while nobody could act. A step that reads a loan-to-value or a health factor goes ahead only if both readings allow it: a liquidation needs the loan to be liquidatable under both, and a new loan, a collateral withdrawal and a cure need both to permit. A step that prices an amount goes ahead only while the two guards' readings of its pair are within twice the price tolerance of each other, and waits otherwise: the least output of a forced sale (at a default by time and at a sale for interest), the split at a close-out in kind, the collateral handed over on the discounted route, a match between loans, and the backstop's par check. A repayment reads no price and is untouched. A new loan has no version on the old guard, and reads it at its newest (section 5) | Whoever runs the apply choosing the instant and, in the same transaction or the next, liquidating, borrowing or settling on the difference between the guards. In the settling time nothing can be done, and no amount can be sized, that only the replacement made possible |
 | G14 | **Vaults change guard in the same transaction.** The vault code names one price guard and no earlier one, and no vault ever runs a version that names another price guard than the platform's, by any of the four routes of section 5. The step applies the one waiting change of the vault code that retires the guard: it makes the named version current and, in the same call, revokes every live version that names another price guard. The step is refused unless, after it, the current version names the new guard and no live version names another. That change can be applied by this step alone | A vault and the platform reading different guards at any moment, a pinned vault included, and a vault whose own bound holds only against the more lenient of two guards |
 | G15 | **The set of assets closes for the wait.** From the proposal on, an asset may come into use only if the proposed guard also vouches for it, and the rate its two prices imply lies within twice the price tolerance of the rate the network's wrapped coin's two prices imply at that moment. The two prices are never compared unconverted, and the named rate is not the measure, since it may lie up to the drift from the implied rates (G6). With no loan to name a version, the old guard is read at its newest (section 5) | A small loan opened on an asset only the old guard prices, used to block the replacement |
-| G16 | **The second key for older loans.** For a longer stated period after a replacement (a parameter, proposed at 30 days, never shorter than the settling time), a loan that started before the replacement was proposed has a second key on every line at which someone other than its borrower's side may take or sell the collateral by a reading of its health factor or loan-to-value: the liquidation line on every route (the single sale, the split sale, the discounted route and a partial liquidation), the line above it at which a match between loans is allowed, and the loan-to-value line at which the collateral counts as collapsed. While the new guard reads the loan past such a line by no more than the band (twice the price tolerance, as a share of the line's own figure), the old guard must read it past the line too. Beyond the band the new guard's reading decides alone. The key ends early for an asset as stated below the table. A loan that started or was refinanced after the proposal reads the new guard alone, since both readings were in view. So does a loan extended after the proposal, or moved to the current settings by both parties' consent after the apply: both holders put it on the settings of that time, and both are told beforehand (section 5). It holds for every replacement, whether or not the unit changes | A borrower liquidated on a small difference between the two guards that appears after the settling time, on a loan they opened under the old one. The band bounds what the lender's side can lose to an old guard that vouches wrongly, at every moment and with no step needed |
+| G16 | **The second key for older loans.** For a longer stated period after a replacement (a parameter, proposed at 30 days, never shorter than the settling time), a loan that took its settings before the replacement was proposed has a second key on every line at which someone other than its borrower's side may take or sell the collateral by a reading of its health factor or loan-to-value: the liquidation line on every route (the single sale, the split sale, the discounted route and a partial liquidation), the line above it at which a match between loans is allowed, and the loan-to-value line at which the collateral counts as collapsed. While the new guard reads the loan past such a line by no more than the band (twice the price tolerance, as a share of the line's own figure), the old guard must read it past the line too. Beyond the band the new guard's reading decides alone. The key ends early for an asset as stated below the table. A loan that started or was refinanced after the proposal reads the new guard alone, since both readings were in view. So does a loan extended after the proposal, or moved to the current settings by both parties' consent after the apply: both holders put it on the settings of that time, and both are told beforehand (section 5). It holds for every replacement, whether or not the unit changes | A borrower liquidated on a small difference between the two guards that appears after the settling time, on a loan they opened under the old one. The band bounds what the lender's side can lose to an old guard that vouches wrongly, at every moment and with no step needed |
 
 **The assets in use** are every asset that a later step will value without a first use of it.
-The set is defined by that purpose, not by a list. Among them is every asset that a live loan,
+The set is defined by that purpose, not by a list. An asset counts only where some record holds
+it as priced: an asset held as unpriced is never valued (`LoanSettingsSnapshotDesign.md`, section
+4), so a first use of an asset as unpriced is never refused by a replacement. Among them is
+every asset that a live loan,
 a lien (an open offer's and a standing instruction's reserve among them), an open offer (a
 refinance request among them), an amount set aside to lend, an Auto-lend slot or a standing
 commitment names. Any other record that a later step values counts as well: a due-date plan
@@ -275,11 +295,11 @@ it for the whole wait.
 
 A borrower who opened a loan under the old guard had no part in the replacement. So the old
 guard stays a second key on the steps that can take their collateral (G16). The test of an older
-loan needs no new field: its record names a guard from before the replacement, and its own start
-time lies before the time the replacement was proposed. An extension resets the start, and a
-move by both parties' consent after the apply changes the guard the record names (section 5).
-The test is by the start on purpose: whatever step writes a loan's start puts the loan on the
-settings of that time, and from then it holds no key.
+loan is by agreement: the loan took its settings before the replacement was proposed. An
+extension, and a move by both parties' consent after the apply, are fresh agreements. Each puts
+the loan on the settings of that time, and from then it holds no key (section 5). A step that
+both parties did not agree keeps the loan's settings, whatever else it writes, and neither gives
+a key nor ends one.
 Nothing else waits on the old guard after the settling time. A repayment, a default by time and
 a forced sale for interest never read it.
 
@@ -311,10 +331,21 @@ not ended, the key is not met: inside the band the step waits. What that can cos
 side is bounded by the band, as stated below, and the route for an old guard that vouches
 wrongly is the exemption, not its controls.
 
-A record lives for twice the stated time and then lapses unconfirmed. Anyone may clear it before
-then by a read that shows the old guard is not silent. Neither a record nor the step that
-confirms it counts while the network's sequencer is down or inside the recovery time after an
-outage. A read that ran out of gas is never silence (below). Nor is a read that fails for want
+A record serves each of its uses by that use's own time, and lapses unconfirmed for a use at
+twice that time. Anyone may clear it before then by a read that shows the old guard is not
+silent. Neither a record nor the step that confirms it counts while the platform is paused, or
+while the network's sequencer is down or inside the recovery time after an outage.
+
+**A record is confirmed only on proof that the silence was unbroken.** A record made in one
+silent moment and confirmed in another, with an answer between them, would end a key, and in a
+settling time it would let the new guard act alone (G13). So the confirmation is refused where
+the guard gives an accepted price for the asset at that moment, where the source's own latest
+answer is dated after the record, and in the record's own block. A source that states no time
+for its answers gives a weaker proof, and which assets rest on such a source is published for
+each asset. The same proof is required of the last resort for a source that has ended, without
+exception. Its other rules are still to be designed (loan settings design, section 3).
+
+A read that ran out of gas is never silence (below). Nor is a read that fails for want
 of a signed reading the caller should bring: a record of silence made without that reading is
 refused, so nobody ends a key by leaving a reading out. A keeper pass backs these steps.
 
@@ -441,7 +472,7 @@ not refuse it. Dead feeds are a likely reason for both a pause and a replacement
 | A threshold, its default and its range | Same worth, shown in the new unit |
 | A rate per unit | Same charge for the same worth |
 | Reward weights | Unchanged in the first unit. New loans are weighed through the rates as first applied, and start a new sum when the unit changes |
-| The fee record and its total | Unchanged in store. Shown in the new unit at the change's rate |
+| The fee record and its total | Kept as weights are: unchanged in store, one sum per change of unit. Shown in the new unit through each sum's factor and then the scale |
 | The daily price record | Kept, with its change number |
 | Hourly checkpoints | Count as none until the new guard has written two hours of them. For that time the forced-sale floor is the full configured figure and an offer's price-move guard refuses a fill |
 | An offer's recorded guard prices | Kept. The comparison is a ratio, but its two ends are now read from different guards, so a guarded offer can trip, or pass, on the replacement alone by up to twice the tolerance. The app reports that as the replacement, not as a move of the market |
@@ -616,9 +647,13 @@ inside it and retire the applied version. So a retirement carries these guards:
   plain clock and lies well after the settling time. A pause or an outage shorter than the
   difference (22 hours at the proposed figures) leaves the whole settling time to run after it.
   A longer one spends what is left of it. That is accepted and stated (alternative 19).
-- **The floor is the named version exactly.** The named version must be the current one at the
-  proposal and at the execute. A setting changed on the guard after the execute makes a
-  newer version for new loans. It changes neither the floor nor the version the loans moved to.
+- **The floor is the named version exactly.** The named version is one that is not retired and
+  is newer than every version the retirement retires, at the proposal and at the execute. It
+  need not be the current one (owner decision 2026-11-22): anyone may carry out a due change of
+  the guard, and each makes a new current version, so a retirement that had to name the current
+  one could be made to lapse by anyone. A setting changed on the guard during the notice or
+  after the execute makes a newer version for new loans. It changes neither the floor nor the
+  version the loans moved to.
 - **One at a time.** A retirement is not executed inside the settling time of a replacement, or
   before the floor of an earlier retirement has taken effect. A replacement is not applied
   before the floor of a retirement has taken effect. So no step reads the guard in force at more
@@ -629,10 +664,12 @@ inside it and retire the applied version. So a retirement carries these guards:
   feed registry, that would make one more is not executed until a retirement has brought the
   count down. So the check of a retirement and the check of a replacement have a known most
   pages, and neither can outgrow its window. At the most, no setting changes until a retirement
-  has been executed, and a retirement names the current version. So if the current version is
-  the one at fault, room for its correction is made only by moving loans onto it first. One
-  place is therefore kept free: an alert fires when a guard reaches one below the most, and
-  older versions are retired then.
+  has been executed. A retirement names any version that is not retired and is newer than those
+  it retires. So where the current version is the one at fault, room for its correction is made
+  by moving the oldest loans to a sound version below it, never onto the faulty one. One place
+  is still kept free, for a change carried out by the owner of the setting itself (loan settings
+  design, section 3): an alert fires when a guard reaches one below the most, and older
+  versions are retired then.
 - **What waits on no step of the platform.** The guard's immediate levers stay its own: a mute
   of a secondary source reaches every version at once. And a retirement's execute stays open
   while the platform is paused, as the replacement step does. A dead source is a likely reason
@@ -666,6 +703,12 @@ on every network, named in each proposal with the same earliest and latest time.
   completes the change there or changes back everywhere. The latest time of the proposal
   bounds how long this can last without a new decision.
 - A network added after a change starts at the fleet's scale and change number, not at one.
+- A correction of an unchecked rate names one rate for every network that applied the change
+  unchecked. A network that applied it checked is never corrected.
+- A figure that travels carries the sender's scale beside its change number, so two networks
+  that hold one change number with different scales are told apart. The cross-network check
+  reports a difference of scale, and a corrected rate that lies further than the drift from a
+  rate another network applied checked.
 
 ### 7. Outside the contracts
 
@@ -683,7 +726,10 @@ on every network, named in each proposal with the same earliest and latest time.
   without a reset.
 - **Keeper and agent.** Thresholds and alert texts read the unit record. An alert fires when a
   guard's unretired versions reach one below the most (section 5). On an unknown change number
-  the keeper's value-dependent passes stand down and alert. The liquidation pass reads both
+  only a pass that compares against a figure of the keeper's own configuration stands down and
+  alerts. The liquidation, default and periodic settlement passes act on ratios and on figures
+  read on the chain in the unit in force, and never stand down for a change of unit. The
+  liquidation pass reads both
   guards for an older loan in the older-loan period, and a pass backs the steps that record and
   confirm an old guard's silence for an asset. The passes for the check, the apply and a
   liquidation bring the signed reading a guard may need ("What vouches means", section 4). A
@@ -696,7 +742,8 @@ The fact that nothing owed is kept in the unit, and the proviso in section 1, ar
 check and not by care. A manifest lists every stored figure that is a value, a rate per
 unit, a weight, a price or a ratio, with its kind. It covers every contract of the platform
 and not only the Diamond: the backstop's vault, the treasury's vault and its limits, and
-every message between networks.
+every message between networks. No vault of any kind holds a figure in the unit, the treasury's
+among them: their checks and limits are ratios, amounts of tokens or shares of a balance.
 
 A pre-deploy check reads the storage layouts and the code and refuses:
 
@@ -815,6 +862,13 @@ through the same step and the same guards, and changes no figure a user sees.
 - The values of the parameters (the waits, the two tolerances, the cool-down, the settling time,
   the floor's wait, the older-loan period, the ranges) are proposals. They are fixed in the
   canonical parameters table.
+- The figures that guard a step of governance are fixed in code and are no setting (owner
+  decision 2026-11-22): the wait of a removal of a source, the settling time, the price
+  tolerance, the check window, the waits of a replacement and of a change of unit, the rate
+  drift cap, the older-loan period, the silence time, the range of one change's rate and of the
+  scale, the cool-down, and the band of a registry entry's implied price, beside the notice of a
+  retirement, the most unretired versions and the floor's wait. A figure governance could change
+  under its own delay would be a weaker guard. Each proposal states the figures it runs under.
 - The peg rule for a guard whose feeds are quoted in another unit is designed with the first
   such guard.
 - The canonical statements (price and authority domains) are written from this design, now

@@ -11,6 +11,11 @@ approved that day (#3989). A replacement of the price guard is one guarded
 step that moves every open loan, and a retirement of a price version carries
 guards of its own. Sections 2, 4, 7, 10, 11, 13 and 14 carry the changes.
 
+Amended again that day for the owner's answers on the price rules: a loan is
+priced or unpriced for its whole life, a retirement of a price version names
+a replacement that need not be the current one, a dropped source pins a
+version, and what the vault never does. Sections 4 and 7 carry them.
+
 ## 1. Why
 
 Owner decision of 2026-11-09: a lender and a borrower agree to a loan under
@@ -112,7 +117,8 @@ as of an epoch:
   registry. The two counters move independently, so a price version is the
   pair (guard epoch, registry epoch). The guard reports the pair in one
   view, every "as of" read takes the pair, and the settings set carries the pair. A feed rebinding alone therefore
-  makes a new set.
+  makes a new set. One proposal of the registry makes one epoch, however
+  many entries it carries (`FeedRegistryDesign.md`, section 4).
 
 The guard keeps every price entry point it has today and adds an "as of
 epoch" form of each. The current form is the "as of the newest epoch" form,
@@ -141,6 +147,12 @@ What is not versioned, on purpose:
   source, and a dead source that keeps refusing would block every close-out
   that needs a price. The removal proposal is announced to both parties of
   every open loan the same way a retirement is (section 7).
+  A muted source still counts as a source that has a reading. An answer that
+  needed a confirming reading still needs one, so a mute never turns a
+  refused answer into an accepted one.
+- **The guardian's stop of one asset's price** (`PriceGuardDesign.md`, "Trust
+  model"). It applies to every epoch at once, gives no price and changes no
+  setting.
 - **The sequencer check and the peg constants.** They are code, not config.
 
 A source that an epoch did not name is never consulted for a loan on that
@@ -159,6 +171,35 @@ price takes the lender-first in-kind path, and a distrusted price refuses.
 The cure for a price version whose source has died is an announced
 retirement (section 7).
 
+**Priced or unpriced for the loan's life** (owner decision 2026-11-22). A
+loan holds each of its assets as priced or as unpriced, as the asset stood
+when the loan opened, and that holds for the loan's whole life. No price
+version, retirement, replacement of the guard, move by consent or extension
+changes it, in either direction. A loan opened on an asset with no price
+never becomes one that a price can liquidate, since nobody agreed to that,
+and a loan opened as priced never takes the route for an asset with no
+price. A new loan is the way to change either. Three things follow:
+
+- an offer, a signed offer, a refinance request and an Auto-lend slot are
+  agreed before the loan opens. Each carries the standing every asset had
+  when it was made, and a fill is refused where an asset's standing then
+  differs. The maker posts again;
+- a move by consent or an extension that would put a priced asset on a
+  version with no source for it is refused, and both holders are told ahead
+  when an extension they planned will be refused for that reason;
+- the vault holds the same line by its own check (below).
+
+**The last resort is decided in principle only.** For a priced asset whose
+source has ended for good, the owner has decided that a guarded last resort
+exists (2026-11-22). Its rules are not part of this design. Who may start
+it, what proof of an ended source it needs, how long it waits, what it lets
+a loan settle and what a vault then allows all belong to the close-out
+rules, and are still to be designed. Until they are, nothing here relies on
+it: no step moves a priced asset onto the route for an asset with no price,
+the vault refuses that without exception, and the ways out for such a loan
+are the ones this design does give, a repayment and a later price version
+that gives the asset a source again.
+
 ### Retired price versions are refused by the guard itself
 
 Retiring a price version (section 7) is an act on the guard: the guard keeps
@@ -171,7 +212,23 @@ Beside it the Diamond records only what a retirement named as its
 replacement and when its settling time ends. A new
 guard has its own versions and its own floor, so versions are never compared
 across guards. A guard never has more unretired versions than a stated most:
-a setting change that would make one more waits for a retirement.
+a setting change that would make one more waits for a retirement. The last
+free place is kept for a change carried out by the owner of the setting
+itself. Anyone may carry out the changes before it, so the changes that
+anyone can carry out never fill the versions, and a correction always has
+room.
+
+**A dropped source pins a version.** Once a loan holds an asset as priced,
+no retirement can name a version without a source for that asset, and no
+guard without one can replace the guard. The floor is one line, so no
+version above the pinned one is retired either. After a change that drops
+such a source, the guard has only the places left of its most, and then
+makes no further version until those loans end.
+The way out is a later version that gives the asset a source again, by the
+place kept for the owner. New use of an asset is stopped by its pause, never
+by dropping its source. The preview of a change of the guard or its registry
+names every loan the change would pin, and the daily check reports a pinned
+version and the places the guard has left.
 
 A price version has two parts, the guard's own epoch and its feed
 registry's epoch, and the guard can be pointed at a new registry whose epochs
@@ -194,6 +251,14 @@ accepts them only when:
   vault version is announced under the code delay;
 - the guard answers the read, which it does only for a version that exists
   and is not below its floor.
+
+A vault never treats an asset its lien holds as priced as having no price,
+whatever version the platform names. The vault's bound holds against the
+most lenient version the guard still answers, and one of those may be from
+before the asset's source was added. At such a version the vault's read is a
+refusal, never the route for an asset with no price. The lien carries that
+one standing, written when the lien is made and never changed. It is not a
+stamp of settings, and it names no guard and no version.
 
 The vault does not order versions and holds no per-lien stamp. An earlier
 draft had the vault stamp settings into the lien row and restamp on a move;
@@ -290,10 +355,16 @@ not retired here: it is replaced by the guarded step of
   new value current through the ordinary delayed change, then retires the
   old one. A guard is the exception: its replacement makes the new guard
   current and ends the old one in one step.
-- A retirement **names its replacement**, and the replacement must be the
-  current value both when it is proposed and when it is executed. If the
-  current value changes in between, the retirement lapses and needs a fresh
-  proposal and a fresh wait.
+- A retirement **names its replacement**. For a route set and a marketplace
+  the replacement must be the current value both when it is proposed and
+  when it is executed. If the current value changes in between, the
+  retirement lapses and needs a fresh proposal and a fresh wait.
+- For a price version the replacement is a version that is not retired and
+  is newer than every version the retirement retires. It need not be the
+  current one, and a newer version made during the notice changes nothing.
+  Anyone may carry out a due change of the guard, and each makes a new
+  current version, so a retirement that lapsed on a new current version
+  could be made to lapse by anyone, at the cost of a fresh notice each time.
 - A loan holding a retired part is **moved** to the named replacement, not
   to whatever is current when the move happens, and its other parts stay. If
   the named replacement has itself been retired by then, the loan moves on
@@ -318,11 +389,13 @@ not retired here: it is replaced by the guarded step of
   (`UnitOfAccountChangeDesign.md`, section 5), since a version can differ in
   feeds and bindings:
   - its execute step runs the agreement check between each retired version
-    and the named one over the assets in use, in pages. The highest and the
+    and the named one over the assets in use (every asset that some record
+    holds as priced), in pages. The highest and the
     lowest rate that the assets' two prices imply differ by no more than
     twice the price tolerance, and the middle of them lies within the
     tolerance of one. The named version must vouch for every asset in use
-    that a retired version has a source for. An asset a retired version
+    that a retired version has a source for, and no exemption lifts that.
+    An asset a retired version
     cannot vouch for fails unless the proposal named it exempt, with the
     reason;
   - the raise of the floor names its retirement and the exact floor, which
@@ -447,8 +520,10 @@ fallback custody or past default cannot be moved.
   vault validates the same named settings.
 - A live listing is cancelled and cleaned up through its original executor
   and conduit after a marketplace move.
-- A retirement whose named replacement stops being current before execution
-  lapses; a loan moved late lands on the named replacement, not a newer one.
+- A retirement of a route set or a marketplace whose named replacement stops
+  being current before execution lapses. A retirement of a price version
+  does not lapse when a newer version is made during its notice. A loan
+  moved late lands on the named replacement, not a newer one.
 - Consent: both sides, exact set number, refused in fallback custody and
   after default; every holder on a divided loan.
 - Try-list indexes stay stable for a loan across a reorder.
