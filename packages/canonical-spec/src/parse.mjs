@@ -233,7 +233,13 @@ export function parseFile(file, text) {
   const lines = linesOf(text);
   const out = { file, lines, statements: [], models: [], mistakes: [], tables: [], errors: [] };
   const headingAt = [];
-  for (let i = 0; i < lines.length; i++) if (/^#{1,3} /.test(lines[i].t)) headingAt.push(i);
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#{1,3} /.test(lines[i].t)) headingAt.push(i);
+    // A statement, mistake or model heading at any level but the third would
+    // otherwise be read as plain prose and its block would vanish unchecked.
+    const off = /^(#{1,2}|#{4,6}) +(?:[A-Z]{2,4}-[MT]?\d+\b|Model:)/.exec(lines[i].t);
+    if (off) out.errors.push({ file, line: lines[i].n, message: `a heading shaped like a statement, mistake or model at level ${off[1].length}; these blocks are level-3 headings ("### …")` });
+  }
   headingAt.push(lines.length);
   for (let k = 0; k < headingAt.length - 1; k++) {
     const i = headingAt[k];

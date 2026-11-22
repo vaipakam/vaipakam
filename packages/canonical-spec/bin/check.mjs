@@ -12,7 +12,7 @@
  * Exit 0 when nothing is refused, 1 on any finding, 2 on a usage error.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from '../src/parse.mjs';
 import { approvalHash, checkSpec, neighbours } from '../src/check.mjs';
@@ -70,9 +70,14 @@ export function main(argv = process.argv.slice(2)) {
   }
   const files = [...opt.paths, ...opt.held].flatMap((p) => mdFiles(resolve(p)));
   const parsed = files.map((f) => parseFile(relative(process.cwd(), f) || f, readFileSync(f, 'utf8')));
-  const wordingPath = opt.wording ?? (opt.mode === 'folder' ? join(resolve(opt.paths[0]), 'wording.json') : null);
+  // The folder's README and wording list: in a folder given, or given
+  // themselves among the files, or beside a file given, whichever is first.
+  const dirs = [...new Set(opt.paths.map((p) => (statSync(resolve(p)).isDirectory() ? resolve(p) : dirname(resolve(p)))))];
+  const complete = new Set();
+  for (const d of dirs) for (const c of completeDomains(join(d, 'README.md'))) complete.add(c);
+  const wordingPath = opt.wording ?? (opt.mode === 'folder' ? dirs.map((d) => join(d, 'wording.json')).find((p) => existsSync(p)) : null);
   const wording = wordingPath && existsSync(wordingPath) ? JSON.parse(readFileSync(wordingPath, 'utf8')) : null;
-  const findings = checkSpec(parsed, { mode: opt.mode, wording, completeDomains: completeDomains(join(resolve(opt.paths[0]), 'README.md')) });
+  const findings = checkSpec(parsed, { mode: opt.mode, wording, completeDomains: complete });
 
   const statements = parsed.flatMap((p) => p.statements);
   if (opt.hashes) for (const s of statements) console.log(`${s.id}\t${approvalHash(s)}`);

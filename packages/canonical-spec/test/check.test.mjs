@@ -3,6 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseFile } from '../src/parse.mjs';
 import { approvalHash, checkSpec, hashWord, neighbours } from '../src/check.mjs';
+import { main } from '../bin/check.mjs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const STMT = (id, kind, extra = '', body = 'The withdrawal is refused, and nothing moves.') => `### ${id} · ${kind}
 
@@ -294,4 +298,22 @@ test('test 42: a held statement sits in the held range; the public check reports
   assert.deepEqual(f.filter((x) => x.rule === 'held'), []);
   const wrong = checkSpec([parseFile('held.md', STMT('VLT-050', 'rule · held')), parseFile('record.md', RECORD([['VLT-050']]))]);
   assert.ok(has(wrong, 'held', /outside the held range/));
+});
+
+test('a statement, mistake or model heading at the wrong level is unreadable, never dropped', () => {
+  const p = parseFile('vlt.md', `## VLT-012 · rule\n\n**Who:** the owner.\n\n#### VLT-M04 · a slip\n\n# Model: a vault\n`);
+  const lines = p.errors.map((e) => e.line);
+  assert.deepEqual(lines, [1, 5, 7], JSON.stringify(p.errors));
+  assert.ok(p.errors.every((e) => /level-3 headings/.test(e.message)));
+});
+
+test('the README is found when files are named, not only when the folder is', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cs-'));
+  const owed = STMT('VLT-012', 'rule', '', 'The rest is held as (DPL owed: where the treasury is).');
+  writeFileSync(join(dir, 'vlt.md'), owed);
+  writeFileSync(join(dir, 'record.md'), RECORD([['VLT-012']], '\n| Owed | Cited by |\n| --- | --- |\n| DPL owed: where the treasury is | VLT-012 |\n'));
+  writeFileSync(join(dir, 'README.md'), '| Code | Domain | Status |\n| --- | --- | --- |\n| DPL | Deploy | complete |\n');
+  const quiet = (fn) => { const [l, e] = [console.log, console.error]; console.log = console.error = () => {}; try { return fn(); } finally { console.log = l; console.error = e; } };
+  assert.equal(quiet(() => main(['--draft', dir])), 1);
+  assert.equal(quiet(() => main(['--draft', join(dir, 'vlt.md'), join(dir, 'record.md'), join(dir, 'README.md')])), 1, 'the same files, named one by one');
 });
