@@ -14,7 +14,8 @@ Read in the code at main `bb16284219`.
 
 - There is no listing step. A token's standing is read on chain: `OracleFacet.getAssetPriceStatus` says whether it has a usable price (priced, no price available, or a price its sources disagree on), `getLiquidityTier` gives the depth tier measured now (0 to 3), `ConfigFacet.getKeeperTier` gives the tier the keeper relay has confirmed, and `getEffectiveLiquidityTier` gives the lower of the two, which is what a new loan uses. A newly priced asset opens at tier 1 until the relay confirms more, and the relay can only lower a tier.
 - No read says which pool test held a token at its tier. The depth test and the two price-agreement tests run inside one private function and only the tier comes out.
-- An asset with no usable price is valued at zero. It can be used only in a hand-made offer, where each party has raised its own access level and holds a standing consent for that exact pair, past a wait (`ProgressiveRiskAccessDesign.md`). Auto-lend slots and the instant market refuse it.
+- Three reads decide three things. `checkLiquidity` decides valuation, the tier decides a tiered asset's opening limit, and the access level decides which vaults may use an asset. A liquid asset can sit at tier 0: it is valued at its price, its opening limit comes from its own ceiling and the health factor floor, and it needs the custom access level. A numeraire asset and the wrapped native asset are open to every vault at any tier.
+- An asset that is not liquid (no usable price, or no pool past the liquidity floor) is valued at zero. It can be used only in a hand-made offer, where each party has raised its own access level and holds a standing consent for that exact pair, past a wait (`ProgressiveRiskAccessDesign.md`). Auto-lend slots and the instant market refuse it.
 - `AdminFacet.isAssetPaused`, `CollateralConcentrationFacet.getConcentration` and the opening limit of a tier (`getEffectiveTierMaxInitLtvBps`) are public reads.
 - The app already has the parts of a facts display: the trust line from the public rankings (`shared/offers/trust.ts`, matched by address, with the possible-copy rule), the issuer powers line (`IssuerPowersLine.tsx`), the label cleaner (`@vaipakam/lib/tokenLabel`), the NFT standard read (`shared/nft/useStandard.ts`) and a transfer probe.
 
@@ -54,7 +55,7 @@ Four pages on the public site, written and translated like the user guides.
 
 | Page | What it covers |
 | --- | --- |
-| How the platform treats any token | There is no listing. How standing is read (price, depth tier, the relay's confirmation). What an asset with no usable price can and cannot do. What the platform never does for a project. |
+| How the platform treats any token | There is no listing. How standing is read (price, depth tier, the relay's confirmation). How an asset is valued, what limit a loan against it opens at and which vaults may use it, as three separate reads. What an asset that is not liquid can and cannot do. What the platform never does for a project. |
 | Your token | What a project can do today as an ordinary user: lend another asset against its token so holders can borrow, lend its token out, and link its users to a pre-filled form. What it takes for a token to have a usable price and a tier, stated as facts about feeds and depth. A link to the check page. |
 | Your collection today | The rental track for a collection that exists (section 7). |
 | Building a collection that rents well | The rental track for a new collection (section 7). |
@@ -75,15 +76,19 @@ A public page of the app where anyone enters a network and an address and sees w
 | --- | --- | --- |
 | The asset | Its name and symbol as its own code states them, cleaned, marked as the token's own claim | The token |
 | Price | Has a usable price, has none, or has one its sources disagree on | `getAssetPriceStatus` |
+| Counts as liquid | Liquid: it is valued at its price in a loan's checks. Not liquid: it is valued at zero, a loan with it needs each party's standing consent, and Auto-lend slots and the instant market do not take it | `checkLiquidity` |
 | Tier now | The tier measured on chain, the tier the relay has confirmed, and the tier a new loan uses, which is the lower | `getLiquidityTier`, `getKeeperTier`, `getEffectiveLiquidityTier` |
-| What holds it there | One of: no usable price; no pool passed the platform's depth and price tests; the relay has not confirmed a higher tier; nothing, it is at the top tier | Worked out from the two rows above |
-| What that tier allows | The opening limit for the tier. For tier 0: valued at zero, usable only in a hand-made offer under each party's standing consent, refused by Auto-lend slots and the instant market | `getEffectiveTierMaxInitLtvBps`, fixed text |
+| What holds it there | One of: no usable price; not liquid, because no pool passed the liquidity floor; liquid, but no pool passed the first tier's depth test; the relay has not confirmed a higher tier; nothing, it is at the top tier | Worked out from the three rows above |
+| Opening limit | The most a new loan may borrow against it now, and whether that comes from its tier or, for a liquid asset with no tier, from the asset's own ceiling and the health factor floor. Not shown for an asset that is not liquid | `getConcentration` (the cap in force and the regime cap) |
+| Access category | Which access setting a vault needs to use it: every vault, the broad setting, or the custom setting. A liquid asset at tier 0 needs the custom setting. A numeraire asset and the wrapped native asset are open to every vault at any tier | `pairRequiredRiskLevel`, asked for the asset against the wrapped native asset |
 | New positions | Open, or paused for this asset (every close-out stays open; a sale waits for the pause to lift) | `isAssetPaused` |
 | Share already pledged | The concentration reading and whether it lowers the opening limit now | `getConcentration` |
 | Issuer powers | Each check as found, not found or could not be told | The shared check (#3433), run in the reader's browser |
 | Public lists | Each list's rank for this address and the time of the list, or "not ranked", with the existing possible-copy line | The index's rankings read |
 
-The "what holds it there" row says only what the reads support. Where the tier is 0 with a usable price, the row says that no pool passed and that the platform's read does not say which test failed.
+Three different reads decide three different things, and the page keeps them apart: liquidity decides how the asset is valued, the tier decides the opening limit of a tiered asset, and the access category decides which vaults may use it. A tier of 0 alone does not say an asset is valued at zero, because a liquid asset can sit at tier 0. No statement on the page is drawn from the tier where another read decides it.
+
+The "what holds it there" row says only what the reads support. Where the tier is 0 with a usable price, the row says which of the two cases the liquidity read shows, and that the platform's read does not say which pool or which test failed.
 
 **For a collection**
 
@@ -94,7 +99,8 @@ The "what holds it there" row says only what the reads support. Where the tier i
 | How a rental is recorded | "Carries a user role: a rental sets the user on the item, and the owner's vault records it too", or "No user role: recorded by the owner's vault only", or for ERC-1155 "Recorded by the owner's vault, one record per rental" | ERC-165, fixed text |
 | As collateral | Valued at zero. A loan against it needs each party's standing consent | Fixed text |
 | Issuer powers | The checks that apply to this standard | The shared check |
-| One item (optional token id) | Its owner now. If the owner is a vault of the platform: whose vault it is, the user recorded, until when, and for ERC-1155 the units rented out | The collection, `getVaultOwner`, the vault's reads |
+| One ERC-721 item (optional token id) | Its owner now. If the owner is a vault of the platform: whose vault it is, the user recorded and until when | The collection's owner read, `getVaultOwner`, the vault's reads |
+| One ERC-1155 item (optional token id) | An ERC-1155 item has no single owner, so nothing is read from the collection alone. The page lists the active rentals of that item from the rental routes of section 12: each owner's vault, the user, the units and the end time, with the block. With an optional holder address in the link, it also reads that holder's vault on chain: the units rented out and the earliest end time | The rental feed, and for a named holder `getVaultOwner` and the vault's reads |
 
 **Rules for the page**
 
@@ -190,8 +196,8 @@ The kit invites more unfamiliar assets, so these go with it.
 
 One module in `@vaipakam/lib`, `assetFacts`, of pure functions over a read client:
 
-- `readTokenFacts(client, diamond, asset)`: the reads of section 4's token table, made at one block, returning each row as a value or as `notRead` with the reason. The "what holds it there" row is a pure function of the price status and the three tiers, with its own table of cases in the tests.
-- `readCollectionFacts(client, diamond, collection, tokenId?)`: the standard and the user role through ERC-165 (`0xad092b5c` for the user role), and for a token id the owner, `getVaultOwner` and the vault's three reads.
+- `readTokenFacts(client, diamond, asset)`: the reads of section 4's token table, made at one block, returning each row as a value or as `notRead` with the reason. The "what holds it there" row is a pure function of the price status, the liquidity read and the three tiers, with its own table of cases in the tests. The valuation statement is a function of the liquidity read only, the opening limit of the concentration read only, and the access category of the access read only.
+- `readCollectionFacts(client, diamond, collection, tokenId?, holder?)`: the standard and the user role through ERC-165 (`0xad092b5c` for the user role). For an ERC-721 token id: the owner, `getVaultOwner` and the vault's reads. For an ERC-1155 token id the module reads nothing from the collection, because that standard has no owner read for an item. With a `holder`, it reads that holder's vault for the item's rented units and earliest end time. The list of an ERC-1155 item's active rentals comes from the rental feed and is passed in by the page, like the rankings read.
 - The issuer powers rows come from the shared check functions of #3433 (`issuerPowerChecks`), called with the same client and block. This module does not copy them.
 - Nothing in the module writes, stores or calls the index. The rankings read stays where it is and is passed in.
 
@@ -199,7 +205,7 @@ The app's existing trust line, issuer powers line and NFT standard read stay as 
 
 ## 10. The app
 
-- **A page `/check`** in the app the kit's links open, reading `?chain=<id>&address=<0x…>` and an optional `&tokenId=`. It asks for no wallet and reads through the app's read-only client. An address that is not a contract, or a network the app does not serve, is answered by name.
+- **A page `/check`** in the app the kit's links open, reading `?chain=<id>&address=<0x…>`, an optional `&tokenId=`, and for an ERC-1155 item an optional `&holder=<0x…>`. It asks for no wallet and reads through the app's read-only client. An address that is not a contract, or a network the app does not serve, is answered by name.
 - **The `AssetFacts` panel** renders the rows of section 4 from the library. The check page shows it whole. The consent steps of guard 4 show the same panel, collapsed to its headline rows with the rest one tap away.
 - **No result leaves the page.** No request that writes, no storage of a reading, no share button, static page metadata, and the app's frame policy unchanged (`frame-ancestors` lists the app itself and the wallet app origins of `safeOrigins.ts`, nothing else), pinned by a test.
 - **The stored reading** is read from the index's issuer powers route where the index holds one, and compared check by check.
@@ -252,8 +258,8 @@ What the governance thread found on main, and what is done with each:
 
 ## 15. Tests
 
-1. The facts library: each row for a priced token at each tier, a token with no usable price, a token whose sources disagree, a paused asset, and a failed read of each row (the row says "not read", the others still render). The "what holds it there" table case by case.
-2. Collection facts: ERC-721 with and without the user role, ERC-1155, a contract that answers ERC-165 falsely or reverts, an item in a platform vault with a live rental, with an expired one, and an item in a plain wallet.
+1. The facts library: each row for a priced token at each tier, a liquid token at tier 0 (valued at its price, opening limit from the regime cap, custom access), a numeraire asset at tier 0 (open to every vault), a token with no usable price, a token whose sources disagree, a paused asset, and a failed read of each row (the row says "not read", the others still render). The "what holds it there" table case by case.
+2. Collection facts: ERC-721 with and without the user role, ERC-1155 with no holder given (no owner read is attempted), with a holder given, and with the rental feed unavailable (the list says "not read"), a contract that answers ERC-165 falsely or reverts, an item in a platform vault with a live rental, with an expired one, and an item in a plain wallet.
 3. The check page: opens with no wallet; a second open of the same link reads again; no request writes; no finding in the page metadata; the frame policy lists no origin beyond today's; the stored reading's block and a differing check are shown.
 4. The four steps of guard 4 render the same panel from the same reads.
 5. The kit: the two new link forms round-trip through the builder and the parser; a link with an unknown field is refused by name; the field-coverage test covers the new fields; the share rule table has a row for every action.
