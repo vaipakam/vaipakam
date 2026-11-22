@@ -1,0 +1,151 @@
+name: Mirror labels onto @vaipakam-labs fields
+
+# WHY THIS EXISTS. Labels are the source of truth for an issue's priority,
+# stage and owning thread (owner decision 2026-11-22): project agents can set a
+# label, and the board's fields have no API they can write. This job makes the
+# board follow: `priority:p1`…`priority:p5` → the `Priority` field,
+# `stage:<name>` → `Stage`, `thread:<name>` → `Thread`. The direction is one
+# way; nothing here ever reads a field to change a label.
+#
+# The rules — fields and options matched BY NAME at run time, never by id; a
+# missing field or option reported in the job summary as something to add and
+# its writes skipped; two labels of one family picking neither; an absent label
+# clearing only a value this job would itself have written; only this
+# repository's issue cards ever touched — live in
+# `.github/scripts/board-label-sync.mjs` (`planWrites`) and are pinned by
+# `board-label-sync.selftest.mjs`, which runs in `board-reconcile-fixtures.yml`.
+#
+# A SEPARATE `Stage` FIELD, NOT `Status`. The board's own automations move a
+# closed card to Done through Status, and `project-board-reconcile.yml` repairs
+# the ones they miss. Writing stages into Status would fight both.
+#
+# WHAT IT COSTS, AND WHY THAT MATTERS HERE. The PAT's GraphQL bucket (5,000
+# points an hour) is shared with every tool that authenticates as its owner,
+# and it has been exhausted before: 28% of `add-to-project.yml`'s runs once
+# failed on it (see the header of `project-board-reconcile.yml`). So:
+#
+#   - every issue and label READ is REST on the Actions token (`issues: read`),
+#     which has its own per-repository budget and spends nothing of the PAT's;
+#   - the board is paged ONCE per scheduled run — 100 items a request, no
+#     titles or bodies — at about one point a page;
+#   - only fields that differ are written, up to 20 writes per mutation
+#     document and at most MAX_WRITES a run, so a first run over a large
+#     backlog spreads across several hours instead of spending the bucket in
+#     one go (or tripping the secondary limit on mutations);
+#   - a failed request is classified from its OWN trace by
+#     `gh-trace-ratelimit-wait.sh`, the reconcile job's parser, run as-is: a
+#     recognised limit is waited out (bounded by RETRY_WAIT_CAP_SECONDS) and
+#     tried once more, and a run spends at most ONE such wait. Anything else
+#     fails the run with the allow-listed evidence (status, rate-limit
+#     headers, message) — never the trace, which carries board contents.
+#
+# NO WATERMARK, unlike the reconcile job, and none is needed: each scheduled
+# run compares the WHOLE current state (every open issue's labels against
+# every card), so a failed or skipped run loses nothing — the next one sees the
+# same difference. Writes are idempotent.
+#
+# THE LABEL EVENT — included, and bounded. `issues: labeled/unlabeled` runs a
+# one-issue pass so a label shows on the board in seconds rather than up to an
+# hour. It is admitted only because its cost is fixed and small: two REST reads
+# on the Actions token, then ONE GraphQL read (the issue's card and the board's
+# fields in one document — the board is never paged) and at most ONE mutation
+# document. It runs only for a label in one of the three families (the job's
+# `if:`), so other labelling costs nothing. It shares this workflow's
+# concurrency group with the scheduled run, for two reasons: a sweep and an
+# event pass must not interleave reads and writes on the same card, and a burst
+# of relabelling collapses — GitHub keeps one run in progress and one pending
+# and cancels the older pending one, so twenty label changes cost a handful of
+# runs, not twenty. A cancelled run loses nothing: the hourly sweep settles
+# every card whatever the events did. The one cost of sharing: an event that
+# arrives while a scheduled run is still pending replaces it, and that hour's
+# sweep is skipped. The next hour's runs as normal.
+#
+# OWNER SETUP (once, on the board — this job never creates fields or options,
+# because the only public API for that, `updateProjectV2Field`, replaces a
+# field's whole option list): the single-select fields `Thread` (one option
+# per `thread:` suffix), `Priority` (P1…P5) and `Stage` (building,
+# held-for-batch, queued, waiting-on-owner, built-not-closed). Until they
+# exist, every run lists what is missing in its summary and carries on.
+
+on:
+  schedule:
+    - cron: '47 * * * *' # hourly, off the reconcile job's :23 and the deploy-lag check's :41
+  issues:
+    types: [labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Plan and report only; write nothing to the board.'
+        type: boolean
+        required: false
+        default: false
+
+# The PAT does every project read and write; the workflow's own token stays
+# read-only and is used for the issue and label reads.
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: board-label-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Mirror priority, stage and thread labels
+    # An `issues` event always runs main's copy of this file, so the ref check
+    # holds for every real run. For a label event, only the three mirrored
+    # families start a run.
+    if: >-
+      github.ref == 'refs/heads/main' && (
+        github.event_name != 'issues' ||
+        startsWith(github.event.label.name, 'priority:') ||
+        startsWith(github.event.label.name, 'stage:') ||
+        startsWith(github.event.label.name, 'thread:')
+      )
+    # #3541: this job reads secrets. They live in the `main-only` environment,
+    # whose deployment-branch rule admits only main, so a run of a pushed
+    # branch's copy of this file receives none of them; the ref check says the
+    # same thing in the file, for a reader.
+    environment: main-only
+    runs-on: ubuntu-latest
+    # Paging and writing take a minute or two; the rest is the one permitted
+    # rate-limit wait (RETRY_WAIT_CAP_SECONDS) with margin.
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+      REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PROJECT_OWNER: vaipakam
+      PROJECT_NUMBER: '1'
+      ISSUE_REPO: ${{ github.repository }}
+      DRY_RUN: ${{ inputs.dry_run == true }}
+      # At 20 writes per document and a 4-second pause between documents,
+      # 300 writes take about a minute and stay under the secondary limit on
+      # mutations. A backlog larger than this finishes on later runs, and the
+      # summary says how many writes were left.
+      MAX_WRITES: '300'
+      # The same bounds the reconcile job's board listing uses, for the same
+      # measured refill times (#2129, #2134).
+      RETRY_WAIT_CAP_SECONDS: '900'
+      RETRY_MARGIN_SECONDS: '5'
+      EVENT_ISSUE: ${{ github.event.issue.number }}
+    steps:
+      # The script and the rate-limit parser it runs — a sparse checkout of
+      # one directory, no credentials persisted.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Mirror labels onto the board
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "issues" ]; then
+            node .github/scripts/board-label-sync.mjs --issue "$EVENT_ISSUE"
+          else
+            node .github/scripts/board-label-sync.mjs
+          fi
