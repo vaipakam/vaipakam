@@ -53,6 +53,10 @@ interface IOther {
     function pay() external payable;
 }
 
+contract Child {
+    uint256 public made = 1;
+}
+
 contract HostFacet {
     function requireTerms(address) external view {}
 
@@ -61,6 +65,7 @@ contract HostFacet {
 
 contract GFacet is Guarded {
     IOther internal other;
+    Child internal child;
 
     function good() external nonReentrant whenNotPaused {
         LibGate.requireNotFlagged(msg.sender);
@@ -174,6 +179,41 @@ contract GFacet is Guarded {
 
     function _writeX() internal {
         LibGate.s().x = 14;
+    }
+
+    struct Hooks {
+        function() internal run;
+    }
+
+    function createsFirst() external nonReentrant {
+        new Child();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function viaMemberPointer() external nonReentrant {
+        Hooks memory h = Hooks(_writeX);
+        h.run();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function viaIndexedPointer() external nonReentrant {
+        function() internal[1] memory fs = [_writeX];
+        fs[0]();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function readsGetterFirst() external nonReentrant {
+        if (child.made() == 0) revert();
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 15;
+    }
+
+    function pureBuiltinsFirst() external nonReentrant {
+        bytes memory b = abi.encode(msg.sender, keccak256(new bytes(1)));
+        uint256[] memory xs = new uint256[](1);
+        b = bytes.concat(b, abi.encodePacked(xs[0], bytes4(0)));
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = b.length;
     }
 
     function deepWriteFirst() external nonReentrant {

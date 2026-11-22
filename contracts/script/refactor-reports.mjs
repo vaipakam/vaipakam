@@ -275,18 +275,25 @@ export function reach(rootFn, rootContract, ctx, visitNode, { selfCalls = true }
   const functions = new Set();
   const unknown = [];
   const queue = [{ fn: rootFn, lineage: rootContract?.linearizedBaseContracts }];
+  // A visit is keyed by the function AND the contract it is dispatched in: an
+  // inherited helper reached from two facets resolves its virtual calls
+  // differently in each, so it is walked once per lineage. The returned set
+  // stays one entry per declaration.
+  const visitKey = (id, lineage) => `${id}@${lineage?.[0] ?? 'lib'}`;
   while (queue.length) {
     const { fn, lineage } = queue.shift();
-    if (!fn || seen.has(fn.id)) continue;
-    seen.add(fn.id);
+    if (!fn || seen.has(visitKey(fn.id, lineage))) continue;
+    seen.add(visitKey(fn.id, lineage));
     functions.add(fn.id);
     const bodies = [fn.body];
     for (const m of fn.modifiers ?? []) {
+      // The arguments are this function's code, walked every time.
+      bodies.push(m.arguments ?? []);
       const md = ctx.byId.get(m.modifierName?.referencedDeclaration);
       if (md?.nodeType === 'ModifierDefinition') {
         const derived = mostDerived(md, lineage, ctx);
-        if (!seen.has(derived.id)) {
-          seen.add(derived.id);
+        if (!seen.has(visitKey(derived.id, lineage))) {
+          seen.add(visitKey(derived.id, lineage));
           functions.add(derived.id);
           bodies.push(derived.body);
         }

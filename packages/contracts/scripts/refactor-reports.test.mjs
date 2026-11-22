@@ -20,6 +20,8 @@ import {
   runReports,
   abiType,
   errorAbiSig,
+  makeContext,
+  reach,
 } from '../../../contracts/script/refactor-reports.mjs';
 
 const require = createRequire(import.meta.url);
@@ -138,4 +140,26 @@ test('an error is compared with the catalogue by its ABI signature: enum uint8, 
   ] } };
   assert.equal(errorAbiSig(err, byId), 'E(address,uint8,address,(uint256,uint8),uint64,uint8[3])');
   assert.equal(abiType(undefined, byId), '?');
+});
+
+const reachedErrors = (contractName, fnName) => {
+  const ctx = makeContext(UNITS, ['LeftFacet', 'RightFacet', 'EntryFacet']);
+  const c = ctx.contracts.get(contractName);
+  const fn = c.nodes.find((n) => n.nodeType === 'FunctionDefinition' && n.name === fnName);
+  const names = new Set();
+  const r = reach(fn, c, ctx, (n) => {
+    if (n.nodeType === 'RevertStatement') names.add(n.errorCall?.expression?.name);
+  });
+  return { names, functions: r.functions, ctx };
+};
+
+test('reach: one shared helper reached through two facets is walked once per facet, so each override is seen', () => {
+  const { names } = reachedErrors('EntryFacet', 'go');
+  assert.ok(names.has('LeftHook'), 'LeftFacet.hook reached through DispatchBase.common');
+  assert.ok(names.has('RightHook'), 'RightFacet.hook reached through the same DispatchBase.common');
+});
+
+test('reach: a call in a modifier argument is code the entry runs', () => {
+  const { names } = reachedErrors('EntryFacet', 'guarded');
+  assert.ok(names.has('Prepared'), 'LibArg.prepare runs before the body');
 });

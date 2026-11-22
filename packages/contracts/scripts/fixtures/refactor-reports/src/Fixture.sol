@@ -169,3 +169,57 @@ contract AFacet {
         }
     }
 }
+
+// ─── reach: dispatch lineage and modifier arguments ────────────────────────
+abstract contract DispatchBase {
+    function hook() internal virtual;
+
+    function common() internal {
+        hook();
+    }
+}
+
+contract LeftFacet is DispatchBase {
+    error LeftHook();
+
+    function hook() internal pure override {
+        revert LeftHook();
+    }
+
+    function left() external {
+        common();
+    }
+}
+
+contract RightFacet is DispatchBase {
+    error RightHook();
+
+    function hook() internal pure override {
+        revert RightHook();
+    }
+
+    function right() external {
+        common();
+    }
+}
+
+library LibArg {
+    error Prepared();
+
+    function prepare() internal pure returns (uint256) {
+        revert Prepared();
+    }
+}
+
+contract EntryFacet {
+    modifier guard(uint256 x) {
+        _;
+    }
+
+    function go() external {
+        LeftFacet(address(this)).left();
+        RightFacet(address(this)).right();
+    }
+
+    function guarded() external guard(LibArg.prepare()) {}
+}

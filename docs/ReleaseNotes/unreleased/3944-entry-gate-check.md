@@ -6,7 +6,7 @@ The check reads the compiler's syntax tree. For each state-changing entry point 
 
 The same file produces the checklist each review-only pull request carries in the review coverage pass, with the unit's entry points listed against each rule.
 
-The check is bounded and says so. It does not see a check reached only through a function pointer, an assembly block or a call deeper than eight levels. A helper it cannot read (deeper than that, or called through a function pointer) counts as a possible state change, so no check after it is credited. It does not judge whether a check is correct. The review does that.
+The check is bounded and says so. It does not see a check reached only through a function pointer, an assembly block or a call deeper than eight levels. Any call it cannot read counts as a possible state change, so no check after it is credited: a helper deeper than that, a call through a function pointer (held in a variable, a struct field or an array), and a contract creation, whose constructor runs. Only calls it can name as harmless are passed: conversions, pure built-ins such as hashing and encoding, and public getters on other contracts. It does not judge whether a check is correct. The review does that.
 
 Until the check reports nothing, the rules file and its output stay in the private review repository, and the tool takes the file as an argument. After that the file moves into this repository and the pre-deploy gate blocks on it, so a new entry point is refused until it carries each check its kind requires. Until then the gate step says no rules file is present and passes.
 

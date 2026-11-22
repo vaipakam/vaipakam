@@ -45,7 +45,13 @@
  *     reference), or an `sstore` in assembly;
  *   - an external call that is not a view, including a low-level call; a call
  *     back into the Diamond counts as a state change unless its target is a
- *     view or is itself named as a check by some rule.
+ *     view or is itself named as a check by some rule;
+ *   - a contract creation (`new C()` runs a constructor), or a selfdestruct;
+ *   - any call the walk cannot name: a function pointer held in a variable,
+ *     a struct member or an array. Only a conversion, a struct literal, an
+ *     event or error value, a pure built-in (`keccak256`, `abi.encode…`,
+ *     `bytes.concat`, a new memory array) and a public getter on another
+ *     contract are passed without reading.
  * A modifier's own writes before its `_` (the re-entry lock) do not stop the
  * reading: a modifier is the entry's preamble.
  *
@@ -81,6 +87,10 @@ import { entryPoints } from './check-permissionless-steps.mjs';
 import { makeContext, mostDerived, reach, routedCallAt } from './refactor-reports.mjs';
 
 export const RULES_FILE = join(CONTRACTS_DIR, 'entry-gate-rules.json');
+// Built-in members that change no state: `abi.encode…`, `abi.decode`,
+// `bytes.concat`, `string.concat`, a user-defined value type's `wrap` /
+// `unwrap`, and the read-only low-level `staticcall`.
+const PURE_MEMBERS = new Set(['encode', 'encodePacked', 'encodeWithSelector', 'encodeWithSignature', 'encodeCall', 'decode', 'concat', 'wrap', 'unwrap', 'staticcall']);
 const MAX_DEPTH = 8;
 const MIN_REASON = 20;
 const RULE_FIELDS = new Set(['id', 'statement', 'appliesTo', 'check', 'exempt']);
@@ -284,7 +294,8 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         seen.delete(target.id);
         return r;
       }
-      if (!inModifier && e?.nodeType === 'MemberAccess' && ['push', 'pop'].includes(e.memberName) && isStorageType(e.expression)) {
+      if (e?.nodeType === 'MemberAccess' && ['push', 'pop'].includes(e.memberName) && !(e.referencedDeclaration >= 0)) {
+        if (inModifier || !isStorageType(e.expression)) return false;
         stoppedAt = `a storage ${e.memberName}`;
         return true;
       }
@@ -292,14 +303,37 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         stoppedAt = `a low-level ${e.memberName}`;
         return true;
       }
-      // A built-in (`revert`, `require`, `keccak256`) has a negative reference;
-      // a function pointer refers to a variable of function type.
-      if (typeString.startsWith('function') && e?.nodeType === 'Identifier' && (e.referencedDeclaration ?? -1) >= 0 && (!d || d.nodeType === 'VariableDeclaration')) {
-        unseen.push('a call through a function pointer');
-        stoppedAt = 'a call through a function pointer (not read)';
-        return true;
+      // Everything above is a call the walk knows. What is left is classified
+      // by what it can be, and anything it cannot name stops the walk: a call
+      // the walk does not read may change state, so nothing after it is
+      // credited. Only a conversion, a struct literal, an event or error
+      // value, a pure built-in, or a new memory array is passed.
+      if (n.kind === 'typeConversion' || n.kind === 'structConstructorCall') return false;
+      if (d?.nodeType === 'EventDefinition' || d?.nodeType === 'ErrorDefinition') return false;
+      if (e?.nodeType === 'NewExpression') {
+        if ((n.typeDescriptions?.typeString ?? '').startsWith('contract ')) {
+          stoppedAt = 'a contract creation';
+          return true;
+        }
+        return false; // `new bytes(n)`, `new uint256[](n)`: memory only
       }
-      return false;
+      if (e?.nodeType === 'Identifier' && (e.referencedDeclaration ?? 0) < 0) {
+        if (e.name === 'selfdestruct') {
+          stoppedAt = 'a selfdestruct';
+          return true;
+        }
+        return false; // `require`, `revert`, `keccak256`, `ecrecover`, `gasleft`
+      }
+      if (e?.nodeType === 'MemberAccess' && PURE_MEMBERS.has(e.memberName) && !(e.referencedDeclaration >= 0)) return false;
+      // A public state variable's getter on another contract: an external
+      // view by construction.
+      if (e?.nodeType === 'MemberAccess' && d?.nodeType === 'VariableDeclaration' && d.stateVariable && /\bexternal\b/.test(typeString)) {
+        note(label(d, ctx), conditional);
+        return false;
+      }
+      unseen.push('a call through a function pointer');
+      stoppedAt = 'a call through a function pointer (not read)';
+      return true;
     }
     if (t === 'Block' || t === 'UncheckedBlock') return visitAll(n.statements, conditional, depth, inModifier);
     for (const c of children(n)) {

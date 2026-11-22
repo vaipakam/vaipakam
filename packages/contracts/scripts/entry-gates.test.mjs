@@ -59,11 +59,20 @@ test('reading: modifiers, calls before the first state change, and where it stop
   assert.ok(!deep.calls.has(FLAG));
   assert.match(carried('viaPointer').stoppedAt, /function pointer/, 'a call through a function pointer is a possible state change');
   assert.equal(carried('good').stoppedAt, 'a storage write', 'a built-in such as revert is not a pointer');
+  assert.equal(carried('createsFirst').stoppedAt, 'a contract creation', 'creating a contract runs its constructor');
+  assert.match(carried('viaMemberPointer').stoppedAt, /function pointer/, 'a pointer held in a struct member is a possible state change');
+  assert.match(carried('viaIndexedPointer').stoppedAt, /function pointer/, 'a pointer read from an array is a possible state change');
+  const pure = carried('pureBuiltinsFirst');
+  assert.equal(pure.calls.get(FLAG)?.conditional, false, 'abi.encode, keccak256, new memory arrays, bytes.concat and conversions are not boundaries');
+  assert.equal(pure.stoppedAt, 'a storage write');
+  const getter = carried('readsGetterFirst');
+  assert.equal(getter.calls.get(FLAG)?.conditional, false, 'a public state variable getter on another contract is an external view');
+  assert.ok(getter.calls.has('Child.made'));
   assert.equal(carried('viaMaybeHelper').calls.get(FLAG).conditional, true, 'a modifier that may skip its placeholder makes the helper body conditional');
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'deepWriteFirst', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaMaybeHelper', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'createsFirst', 'deepWriteFirst', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaIndexedPointer', 'viaMaybeHelper', 'viaMemberPointer', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);
