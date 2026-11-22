@@ -164,6 +164,9 @@ import {
   copiedFrom,
   requireReviewableSlice,
   sourcesDifferFromTree,
+  leaseArgs,
+  fileLevelOwner,
+  fileLevelDeclarations,
   reviewDescription,
   descriptionProblems,
   buildDeclarations,
@@ -416,6 +419,34 @@ test('open: the workspace\'s sources are compared with the head, changed, missin
   assert.deepEqual(sourcesDifferFromTree(dir, 'main', ws), ['src/New.sol', 'src/Other.sol']);
   assert.deepEqual(sourcesDifferFromTree(dir, 'fix', ws).includes('src/Original.sol'), false);
   void g;
+});
+
+test('a re-cut slice replaces its pushed branches, but only over the tips seen now (§3.3 step 4)', () => {
+  const { dir, file, copy, slice } = historyFreeCopy();
+  const remote = mkdtempSync(join(tmpdir(), 'rc-remote-'));
+  execFileSync('git', ['init', '-q', '--bare'], { cwd: remote });
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: dir });
+  const unit = { name: 'Original', slices: [{ declarations: slice }] };
+  const push = (r) => execFileSync('git', ['push', '-q', ...leaseArgs(dir, [r.head, r.base]), 'origin', r.head, r.base], { cwd: dir, stdio: 'pipe' });
+  push(makeReviewBranches({ clone: dir, unit, slice: 0, pinned: copy, parse: () => new Map([[file, UNITS[file]]]) }));
+  const again = makeReviewBranches({ clone: dir, unit, slice: 0, pinned: copy, fix: 'fix', parse: () => new Map([[file, UNITS[file]]]) });
+  assert.doesNotThrow(() => push(again), 'the re-cut branches replace the old ones');
+  assert.deepEqual(leaseArgs(dir, ['x'], () => ''), ['--force-with-lease=refs/heads/x:'], 'a branch not yet pushed must not exist');
+});
+
+test('file-level declarations go with the first non-interface contract in their file, or make the file a unit of its own', () => {
+  const list = [
+    { path: 'src/A.sol', kind: 'StructDefinition', contract: null, label: 'S', start: 0 },
+    { path: 'src/A.sol', kind: 'ContractDefinition', contract: null, contractKind: 'interface', label: 'IA (header)', start: 10 },
+    { path: 'src/A.sol', kind: 'ContractDefinition', contract: null, contractKind: 'library', label: 'LibA (header)', start: 20 },
+    { path: 'src/T.sol', kind: 'StructDefinition', contract: null, label: 'T', start: 0 },
+  ];
+  const decls = { byPath: new Map([['src/A.sol', list.slice(0, 3)], ['src/T.sol', list.slice(3)]]) };
+  assert.equal(fileLevelOwner(decls, 'src/A.sol'), 'LibA');
+  assert.equal(fileLevelOwner(decls, 'src/T.sol'), undefined);
+  assert.deepEqual(fileLevelDeclarations(decls, 'src/A.sol').map((d) => d.label), ['S']);
+  const g = graph();
+  assert.throws(() => deriveUnit('src/Nope.sol', { ...g, ledger: { entries: {} } }), /no source file/);
 });
 
 test('a slice of one declaration over the limit is refused, never reviewed whole (§3.2)', () => {

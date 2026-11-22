@@ -166,6 +166,32 @@ contract GFacet is Guarded {
         LibGate.requireNotFlagged(msg.sender);
     }
 
+    function viaPointer() external nonReentrant {
+        function() internal fp = _writeX;
+        fp();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function _writeX() internal {
+        LibGate.s().x = 14;
+    }
+
+    function deepWriteFirst() external nonReentrant {
+        _d1();
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    function _d1() internal { _d2(); }
+    function _d2() internal { _d3(); }
+    function _d3() internal { _d4(); }
+    function _d4() internal { _d5(); }
+    function _d5() internal { _d6(); }
+    function _d6() internal { _d7(); }
+    function _d7() internal { _d8(); }
+    function _d8() internal { _d9(); }
+    function _d9() internal { _d10(); }
+    function _d10() internal { LibGate.s().x = 13; }
+
     modifier pokesAfter() {
         _;
         other.poke();

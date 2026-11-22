@@ -520,14 +520,23 @@ function directCallees(fn, ctx, walk) {
  * `ctx` comes from refactor-reports' makeContext; `reachFn` is its reach.
  */
 export function deriveUnit(name, { ctx, reachFn, walk, decls, ledger, shared = [], limit = DEFAULT_LIMIT }) {
-  const c = ctx.contracts.get(name);
-  if (!c) throw new Error(`no contract ${name} in the build`);
+  // A source file is a unit of its own when its file-level declarations
+  // (types, constants, free functions) have no contract to go with.
+  const asFile = name.endsWith('.sol');
+  const c = asFile ? undefined : ctx.contracts.get(name);
+  if (asFile) {
+    if (!decls.byPath.has(name)) throw new Error(`no source file ${name} in the build`);
+    const owner = fileLevelOwner(decls, name);
+    if (owner) throw new Error(`the file-level declarations of ${name} are reviewed with ${owner}: derive that unit`);
+  } else if (!c) throw new Error(`no contract ${name} in the build`);
   const entries = ledger?.entries ?? {};
   const covered = (d) => Boolean(entries[d.hash]?.reader && entries[d.hash]?.reviewer);
   const sharedSet = new Set(shared);
   const own = [];
   const ownIds = new Set();
-  const bases = (c.linearizedBaseContracts ?? [c.id]).map((id) => ctx.byId.get(id)).filter(Boolean);
+  const bases = asFile ? [] : (c.linearizedBaseContracts ?? [c.id]).map((id) => ctx.byId.get(id)).filter(Boolean);
+  if (asFile) own.push(...fileLevelDeclarations(decls, name));
+  else if (fileLevelOwner(decls, ctx.pathOf(c.id)) === c.name) own.push(...fileLevelDeclarations(decls, ctx.pathOf(c.id)));
   for (const b of bases) {
     if (b.contractKind === 'interface' || (b.contractKind === 'library' && b.id !== c.id)) continue;
     const header = decls.byKey.get(`${ctx.pathOf(b.id)}:${startOf(b)}`);
@@ -564,7 +573,7 @@ export function deriveUnit(name, { ctx, reachFn, walk, decls, ledger, shared = [
   let members = all.filter((d) => !covered(d));
   // A library's storage structs and enums are read first, as their own
   // slice, because every later slice depends on them (design §3.2).
-  if (c.contractKind === 'library') {
+  if (c?.contractKind === 'library') {
     const types = members.filter((d) => d.kind === 'StructDefinition' || d.kind === 'EnumDefinition');
     if (types.length) members = [...types, ...members.filter((d) => !types.includes(d))];
   }
@@ -572,7 +581,7 @@ export function deriveUnit(name, { ctx, reachFn, walk, decls, ledger, shared = [
   const slices = [];
   let cur = [];
   let size = 0;
-  const typeSlice = c.contractKind === 'library';
+  const typeSlice = c?.contractKind === 'library';
   for (const d of members) {
     const isType = d.kind === 'StructDefinition' || d.kind === 'EnumDefinition';
     const endTypes = typeSlice && cur.length && !isType && (cur[cur.length - 1].kind === 'StructDefinition' || cur[cur.length - 1].kind === 'EnumDefinition');
@@ -593,6 +602,19 @@ export function deriveUnit(name, { ctx, reachFn, walk, decls, ledger, shared = [
     slices: slices.map((s) => ({ lines: s.reduce((a, d) => a + lines(d), 0), declarations: s, oversize: s.length === 1 && lines(s[0]) > limit })),
     sharedSkipped: [...sharedSet],
   };
+}
+
+/** A file's file-level declarations (not inside any contract). */
+export const fileLevelDeclarations = (decls, path) => (decls.byPath.get(path) ?? []).filter((d) => d.contract === null && d.kind !== 'ContractDefinition');
+
+/**
+ * The contract a file's file-level declarations are reviewed with: the first
+ * non-interface contract in the file, or undefined when it has none (the file
+ * is then a unit of its own, named by its path).
+ */
+export function fileLevelOwner(decls, path) {
+  const list = decls.byPath.get(path) ?? [];
+  return list.filter((d) => d.kind === 'ContractDefinition' && d.contractKind !== 'interface').sort((a, b) => a.start - b.start)[0]?.label.replace(/ \(header\)$/, '');
 }
 
 /** The pull request description for one slice (design §3.2). */
@@ -932,6 +954,16 @@ export function sourcesDifferFromTree(clone, ref, root = CONTRACTS_DIR) {
   return [...out, ...tree.keys()].sort();
 }
 
+/**
+ * Push arguments that let a re-cut slice replace its branches (each is made
+ * fresh from the pinned tree, so it never extends the old tip), but only
+ * over the tip seen now: `--force-with-lease=<ref>:<that tip>`, or an empty
+ * expected value when the branch does not exist yet.
+ */
+export function leaseArgs(clone, branches, lsRemote = (b) => run('git', ['ls-remote', 'origin', `refs/heads/${b}`], { cwd: clone })) {
+  return branches.map((b) => `--force-with-lease=refs/heads/${b}:${(lsRemote(b).split(/\s/)[0] || '')}`);
+}
+
 /** The production commit a review copy names in its message, or undefined. */
 export const copiedFrom = (message) => message.match(/^Review copy of ([0-9a-f]{7,40})\b/m)?.[1];
 
@@ -1061,7 +1093,7 @@ async function reviewRepoCommand(cmd, rest) {
       const { head, base, problems } = makeReviewBranches({ clone: f.clone, unit, slice: Number(f.slice) - 1, pinned: f.pinned, fix: f.fix, fixBase: f['fix-base'], solc });
       for (const p of problems) console.error(`  ✗ ${p}`);
       if (problems.length) return 1;
-      if (f.push) run('git', ['push', '-q', 'origin', head, base], { cwd: f.clone });
+      if (f.push) run('git', ['push', '-q', ...leaseArgs(f.clone, [head, base]), 'origin', head, base], { cwd: f.clone });
       console.log(`  ✓ ${base} and ${head}${f.push ? ' pushed' : ' made (not pushed)'}`);
       return 0;
     }
@@ -1155,7 +1187,7 @@ async function reviewRepoCommand(cmd, rest) {
 }
 
 /** The full build's units and a context for the call graph (unit tool only). */
-async function loadGraph() {
+export async function loadGraph() {
   const { loadBuild } = await import('./storage-layout-guard.mjs');
   const { BUILD_OUT_DIR } = await import('./check-measured-delivery.mjs');
   const rr = await import('./refactor-reports.mjs');

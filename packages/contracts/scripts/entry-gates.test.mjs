@@ -54,11 +54,16 @@ test('reading: modifiers, calls before the first state change, and where it stop
   const post = carried('viaPostambleHelper');
   assert.match(post.stoppedAt, /external call \(IOther\.poke\)/, 'a helper modifier\'s code after the placeholder runs before the caller resumes');
   assert.ok(!post.calls.has(FLAG));
+  const deep = carried('deepWriteFirst');
+  assert.match(deep.stoppedAt, /a helper not read/, 'a helper past the bound is a possible state change');
+  assert.ok(!deep.calls.has(FLAG));
+  assert.match(carried('viaPointer').stoppedAt, /function pointer/, 'a call through a function pointer is a possible state change');
+  assert.equal(carried('good').stoppedAt, 'a storage write', 'a built-in such as revert is not a pointer');
   assert.equal(carried('viaMaybeHelper').calls.get(FLAG).conditional, true, 'a modifier that may skip its placeholder makes the helper body conditional');
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaMaybeHelper', 'viaModifiedHelper', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'deepWriteFirst', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaMaybeHelper', 'viaModifiedHelper', 'viaPointer', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);

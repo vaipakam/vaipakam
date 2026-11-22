@@ -51,7 +51,9 @@
  *
  * Bounded, not a proof: a check reached only through a function pointer, an
  * assembly block or a call deeper than the bound is not seen (reported, not
- * passed), and a state change inside assembly other than `sstore` is not seen
+ * passed). A helper deeper than the bound, or a call through a function
+ * pointer, is treated as a state change the walk could not rule out, so no
+ * check after it is credited. And a state change inside assembly other than `sstore` is not seen
  * (a check placed after it would be passed). The rules say WHICH checks; the
  * review reads whether each one is correct.
  *
@@ -268,8 +270,11 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         note(label(target, ctx), conditional);
         if (!target.body) return false;
         if (depth >= MAX_DEPTH) {
+          // Code the walk does not read may change state: nothing after it
+          // is credited.
           unseen.push(`${label(target, ctx)} (deeper than ${MAX_DEPTH})`);
-          return false;
+          stoppedAt = `a helper not read (${label(target, ctx)}, deeper than ${MAX_DEPTH})`;
+          return true;
         }
         if (seen.has(target.id)) return false;
         seen.add(target.id);
@@ -287,7 +292,13 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         stoppedAt = `a low-level ${e.memberName}`;
         return true;
       }
-      if (typeString.startsWith('function') && !d && e?.nodeType === 'Identifier') unseen.push('a call through a function pointer');
+      // A built-in (`revert`, `require`, `keccak256`) has a negative reference;
+      // a function pointer refers to a variable of function type.
+      if (typeString.startsWith('function') && e?.nodeType === 'Identifier' && (e.referencedDeclaration ?? -1) >= 0 && (!d || d.nodeType === 'VariableDeclaration')) {
+        unseen.push('a call through a function pointer');
+        stoppedAt = 'a call through a function pointer (not read)';
+        return true;
+      }
       return false;
     }
     if (t === 'Block' || t === 'UncheckedBlock') return visitAll(n.statements, conditional, depth, inModifier);
