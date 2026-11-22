@@ -344,7 +344,16 @@ const TRUSTED_COLUMN_SHAPES = {
  *     `active` / `0` comes out of the replay in its true state.
  */
 export const RESTORE_PROJECTIONS = {
-  signed_offers: (row) => ({ ...row, status: 'active', filled_amount: '0' }),
+  // #3921 B2 — the row's last-event columns are part of the projection too:
+  // the replay names the event that next changes it.
+  signed_offers: (row) => ({
+    ...row,
+    status: 'active',
+    filled_amount: '0',
+    last_event_block: null,
+    last_event_tx_index: null,
+    last_event_log_index: null,
+  }),
 };
 
 // Whole-row checks the writer's own invariants allow, run before any SQL is

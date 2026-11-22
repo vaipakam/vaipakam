@@ -131,8 +131,6 @@ const CLASSIFICATION: Record<string, Classification> = {
  * handler group's change adds its migration and removes its tables here.
  */
 const PENDING = new Set<string>([
-  // The signed offer book.
-  'signed_offers',
   // The reward and recycling ledgers.
   'keeper_commitment_reconciled',
   'recycle_chain_reported',

@@ -856,6 +856,7 @@ export async function handleSignedOfferPost(
          amount, amount_max, collateral_amount, collateral_amount_max,
          fill_mode, expires_at, deadline, nonce,
          status, filled_amount, created_at, updated_at, offer_set)
+       /* last-event: unchanged — born off chain, so the three columns take their NULL default (unknown): no event has changed the order yet, and a filled amount taken at ingest is a read at the head, whose block is not named. Not named here, so this POST still works on the schema before migration 0129 */
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
     )
       .bind(

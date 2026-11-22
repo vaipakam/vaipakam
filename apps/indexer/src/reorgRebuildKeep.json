@@ -9,7 +9,10 @@
       "reason": "the user's signed orders: the order and signature were posted by the user and no replay can recreate them; their fill and cancel state is the chain's, so it restarts as unfilled and the replay re-applies every fill, cancel and nonce burn. Until the replay passes the height the chain was indexed to before the rebuild (`pendingThrough`), the order is not listed, so an order already filled or cancelled is never shown as live; the scan clears the mark and bumps `touch` when it gets there",
       "set": {
         "status": "active",
-        "filled_amount": "0"
+        "filled_amount": "0",
+        "last_event_block": null,
+        "last_event_tx_index": null,
+        "last_event_log_index": null
       },
       "pendingThrough": "replay_pending_through",
       "touch": "updated_at"

@@ -101,7 +101,7 @@ export const KEEP_ON_REBUILD: Readonly<Record<string, string>> = rebuildKeep.kee
  * the chain as it now is.
  */
 export const PROJECT_ON_REBUILD: Readonly<
-  Record<string, { reason: string; set: Record<string, string>; pendingThrough: string; touch: string }>
+  Record<string, { reason: string; set: Record<string, string | null>; pendingThrough: string; touch: string }>
 > = rebuildKeep.project;
 
 /**

@@ -76,3 +76,40 @@ describe('SignedOfferCancelFloorRaised (#3327)', () => {
     });
   });
 });
+
+describe('a signed offer names the event that last changed it (#3921 B2)', () => {
+  const at = (db: ReturnType<typeof createSqliteD1>['db'], orderHash: string) =>
+    Object.values(
+      db
+        .prepare(
+          'SELECT last_event_block, last_event_tx_index, last_event_log_index FROM signed_offers WHERE order_hash = ?',
+        )
+        .get(orderHash) as object,
+    );
+  const DIAMOND = '0x0000000000000000000000000000000000000001';
+
+  it('a cancel or a floor names the event; a match names the read at its block', async () => {
+    const { db, d1 } = createSqliteD1(ALL);
+    const env = { DB: d1 } as unknown as Env;
+    insert(db, '0xc1', SIGNER, '5');
+    insert(db, '0xf1', OTHER, '1');
+    insert(db, '0xm1', SIGNER, '7');
+    db.prepare("UPDATE signed_offers SET amount = '1', amount_max = '10' WHERE order_hash = '0xm1'").run();
+    expect(at(db, '0xc1')).toEqual([null, null, null]); // born off chain: no event yet
+    const client = { readContract: async () => 4n } as unknown as PublicClient;
+    await processSignedOfferLogs(
+      [
+        { eventName: 'SignedOfferCancelled', args: { orderHash: '0xc1' }, blockNumber: 20n, transactionHash: '0xt', transactionIndex: 3, logIndex: 8 },
+        { ...floorLog(OTHER, 5n), blockNumber: 21n, transactionIndex: 0, logIndex: 1 },
+        { eventName: 'SignedOfferMatched', args: { orderHash: '0xm1', fillAmount: 4n }, blockNumber: 22n, transactionHash: '0xt', transactionIndex: 2, logIndex: 5 },
+      ],
+      env,
+      84532,
+      client,
+      DIAMOND,
+    );
+    expect(at(db, '0xc1')).toEqual([20, 3, 8]);
+    expect(at(db, '0xf1')).toEqual([21, 0, 1]);
+    expect(at(db, '0xm1')).toEqual([22, null, null]);
+  });
+});
