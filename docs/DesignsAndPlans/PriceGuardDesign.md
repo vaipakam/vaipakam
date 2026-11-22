@@ -86,6 +86,10 @@ and EIP-170 room comes back to `OracleFacet`.
   in the guard and thresholds in the Diamond, a live switch would be a race
   between two contracts. The feeds behind the identity stay replaceable under
   the delay, so a Chainlink deprecation is a delayed replace, not a new guard.
+  The owner replaced this decision on 2026-11-22: a change of unit on a live
+  deployment is designed in
+  [`UnitOfAccountChangeDesign.md`](UnitOfAccountChangeDesign.md). Until that
+  is built, the rule here is the one in force.
 
 ## Where the deploy builds it
 
