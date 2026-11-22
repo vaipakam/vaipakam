@@ -2631,7 +2631,10 @@ live in `docs/procedures/`.
   (defined for the repository's owner; the values live on the issue and
   the board views group by them): `.github/workflows/board-label-sync.yml`
   mirrors them hourly and on every label change with the workflow's own
-  token, so set the label, never the field. The project's other fields
+  token, so set the label, never the field. The same job fills the DATE
+  issue fields `Start Date` (when work began) and `Target Date` (the close
+  day; never invented for an open item) on every issue and pull request, by
+  the rules in `.github/LABELS.md`. The project's other fields
   (`Module`, `Size`, `Estimate`, `Iteration`) are still set by hand.
 - Issue Templates ([`.github/ISSUE_TEMPLATE/bug.yml`](.github/ISSUE_TEMPLATE/bug.yml)
   + [`.github/ISSUE_TEMPLATE/feature_request.yml`](.github/ISSUE_TEMPLATE/feature_request.yml))

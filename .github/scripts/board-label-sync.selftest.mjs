@@ -10,8 +10,9 @@
  * Run: `node .github/scripts/board-label-sync.selftest.mjs`
  */
 import {
-  classifyTrace, listIssueFields, makeGhTransport, planWrites, renderSummary, requestsFor, traceEvidence, valuesFromRest,
-  FIELD_VALUES_API_VERSION,
+  chooseStartDate, classifyTrace, isCloseDay, itemFromRow, listIssueFields, makeGhTransport, planWrites, readTimelines,
+  renderSummary, requestsFor, selectWrites, timelineFacts, timelineQueue, timelineReason, traceEvidence, valuesFromRest,
+  FIELD_VALUES_API_VERSION, TIMELINE_PAGE_CAP,
 } from './board-label-sync.mjs';
 
 let failures = 0;
@@ -106,7 +107,7 @@ console.log('planner');
     CTX,
   );
   check('missing field (or wrong type): listed, its writes skipped, the run carries on', same(
-    plan.missingFields.map((f) => f.field), ['Stage', 'Thread']) &&
+    plan.missingFields.map((f) => f.field), ['Stage', 'Thread', 'Start date', 'Target date']) &&
     same(plan.writes.map((w) => w.field), ['Priority']), JSON.stringify(plan));
 }
 {
@@ -133,6 +134,185 @@ console.log('REST values');
   let threw = '';
   try { valuesFromRest(undefined, 42); } catch (e) { threw = e.message; }
   check('an issue read without issue_field_values aborts instead of planning from "none"', /#42/.test(threw), threw);
+}
+
+console.log('dates');
+{
+  // Fixed clock: 2026-11-22 12:00 UTC.
+  const NOW = Date.parse('2026-11-22T12:00:00Z');
+  const DF = [...FIELDS, { dbId: 60, name: 'Start date', dataType: 'DATE' }, { dbId: 70, name: 'target date', dataType: 'DATE' }];
+  const C = { ...CTX, now: NOW, recheckHours: 2 };
+  const OLD = '2026-10-01T00:00:00Z'; // updated long ago: outside the recheck window
+  const item = (number, extra = {}) => ({ number, state: 'open', isPr: false, labels: [], values: [],
+    createdAt: '2026-11-01T10:00:00Z', closedAt: null, updatedAt: OLD, ...extra });
+  const xref = (num, created, at = '2026-11-15T00:00:00Z') => ({ event: 'cross-referenced', created_at: at,
+    source: { type: 'issue', issue: { number: num, created_at: created, pull_request: { url: 'x' } } } });
+  const labeled = (name, at) => ({ event: 'labeled', created_at: at, label: { name } });
+  const dw = (plan, n) => plan.writes.filter((w) => w.issue === n && w.date).map((w) => [w.action, w.field, w.value]);
+
+  // Start date: which source wins.
+  const fPr = timelineFacts([labeled('enhancement', '2026-11-01T10:00:01Z'), xref(90, '2026-11-05T09:00:00Z'),
+    labeled('stage:building', '2026-11-07T00:00:00Z'), xref(91, '2026-11-03T23:59:59Z', '2026-11-20T00:00:00Z')]);
+  check('start: the earliest linked PR wins, by the PR\'s own created_at (a PR mentioning the issue later still counts)',
+    chooseStartDate(item(1), fPr) === '2026-11-03', JSON.stringify(fPr));
+  const fLabel = timelineFacts([labeled('stage:building', '2026-11-02T00:30:00Z'), xref(92, '2026-11-04T00:00:00Z'),
+    labeled('stage:building', '2026-11-06T00:00:00Z')]);
+  check('start: a first stage:building before any PR wins, and only its FIRST application counts',
+    chooseStartDate(item(2), fLabel) === '2026-11-02', JSON.stringify(fLabel));
+  const fNone = timelineFacts([labeled('stage:queued', '2026-11-02T00:00:00Z'), { event: 'cross-referenced', created_at: '2026-11-03T00:00:00Z',
+    source: { type: 'issue', issue: { number: 5, created_at: '2026-11-03T00:00:00Z' } } }, { event: 'referenced', created_at: '2026-11-04T00:00:00Z' }]);
+  check('start: neither (an issue cross-reference and a commit reference do not count) → the issue\'s created_at',
+    chooseStartDate(item(3), fNone) === '2026-11-01', JSON.stringify(fNone));
+  check('start: a pull request is its own created_at, with no timeline',
+    chooseStartDate(item(4, { isPr: true, createdAt: '2026-11-09T23:30:00-02:00' }), null) === '2026-11-10');
+  check('start: an issue with no facts has no Start date to give', chooseStartDate(item(5), null) === null);
+
+  // Planning dates.
+  const pr = item(10, { isPr: true, state: 'closed', createdAt: '2026-11-03T05:00:00Z', closedAt: '2026-11-04T06:00:00Z',
+    labels: ['priority:p1'] });
+  const closedRead = item(11, { state: 'closed', closedAt: '2026-11-08T01:00:00Z', facts: fPr, labels: ['stage:queued'] });
+  const openRead = item(12, { facts: fLabel });
+  const openHandTarget = item(13, { values: [val(60, '2026-11-01'), val(70, '2026-12-31')] });
+  const reopened = item(14, { updatedAt: '2026-11-22T11:30:00Z', values: [val(60, '2026-11-02'), val(70, '2026-11-20')],
+    facts: timelineFacts([{ event: 'closed', created_at: '2026-11-19T22:00:00Z' }, { event: 'reopened', created_at: '2026-11-21T00:00:00Z' },
+      { event: 'closed', created_at: '2026-11-21T00:00:01Z' }, { event: 'reopened', created_at: '2026-11-22T11:30:00Z' }]) });
+  const reopenedHand = item(15, { updatedAt: '2026-11-22T11:30:00Z', values: [val(60, '2026-11-02'), val(70, '2026-12-31')],
+    facts: timelineFacts([{ event: 'closed', created_at: '2026-11-21T00:00:01Z' }]) });
+  const unchanged = item(16, { state: 'closed', closedAt: '2026-11-08T01:00:00Z', values: [val(60, '2026-11-02'), val(70, '2026-11-08')] });
+  const unread = item(17, { state: 'closed', closedAt: '2026-11-08T01:00:00Z' });
+  const plan = planWrites([pr, closedRead, openRead, openHandTarget, reopened, reopenedHand, unchanged, unread], DF, C);
+
+  check('a pull request: Start = created_at, Target = closed_at (the merge), in the SAME plan',
+    same(dw(plan, 10), [['set', 'Start date', '2026-11-03'], ['set', 'target date', '2026-11-04']]), JSON.stringify(dw(plan, 10)));
+  check('a pull request never gets a label-family write', !plan.writes.some((w) => w.issue === 10 && !w.date));
+  check('a closed issue: Start from its timeline, Target = closed_at; label rules still skip it',
+    same(dw(plan, 11), [['set', 'Start date', '2026-11-03'], ['set', 'target date', '2026-11-08']]) &&
+    !plan.writes.some((w) => w.issue === 11 && !w.date), JSON.stringify(plan.writes.filter((w) => w.issue === 11)));
+  check('an open issue: Start set, and NO Target invented', same(dw(plan, 12), [['set', 'Start date', '2026-11-02']]),
+    JSON.stringify(dw(plan, 12)));
+  check('an open issue with a hand-set Target and no recent change: untouched, and no timeline needed',
+    dw(plan, 13).length === 0 && timelineReason(openHandTarget, DF, C) === null);
+  check('reopened: a Target equal to the LAST close day (the job\'s own value) is cleared with a DELETE, never a PUT',
+    same(dw(plan, 14), [['clear', 'target date', null]]) &&
+    requestsFor(REPO, 14, plan.writes.filter((w) => w.issue === 14)).every((q) => q.method === 'DELETE'), JSON.stringify(dw(plan, 14)));
+  check('a reopen read never re-derives a Start date that is not the creation-day fallback',
+    !plan.writes.some((w) => (w.issue === 14 || w.issue === 15) && w.field === 'Start date'));
+  check('field names match trimmed and case-insensitively ("Start Date", " TARGET DATE ")', same(dw(planWrites([pr],
+    [{ dbId: 80, name: 'Start Date', dataType: 'DATE' }, { dbId: 81, name: ' TARGET DATE ', dataType: 'DATE' }], C), 10).map((x) => x[2]),
+  ['2026-11-03', '2026-11-04']));
+  check('reopened: a hand-set Target that is not the close day stays', dw(plan, 15).length === 0, JSON.stringify(dw(plan, 15)));
+  check('an unchanged value is never rewritten', dw(plan, 16).length === 0, JSON.stringify(dw(plan, 16)));
+  const prSynced = item(19, { isPr: true, state: 'closed', createdAt: '2026-11-03T05:00:00Z', closedAt: '2026-11-04T06:00:00Z',
+    values: [val(60, '2026-11-03'), val(70, '2026-11-04')] });
+  const openPr = item(9, { isPr: true, labels: ['priority:p1', 'thread:keeper'], createdAt: '2026-11-03T05:00:00Z', values: [val(60, '2026-11-03')] });
+  const p2 = planWrites([prSynced, openPr], DF, C);
+  check('a pull request already carrying both dates gets no write', p2.writes.filter((w) => w.issue === 19).length === 0,
+    JSON.stringify(p2.writes));
+  check('an OPEN pull request with family labels gets no label write (dates only)', p2.writes.filter((w) => w.issue === 9).length === 0,
+    JSON.stringify(p2.writes));
+  check('an issue awaiting its timeline gets NO date write at all, not even its Target, and is counted',
+    dw(plan, 17).length === 0 && plan.awaitingTimeline.fill === 1, JSON.stringify(plan.awaitingTimeline));
+  check('the label families still run on open issues beside the dates',
+    !plan.writes.some((w) => w.issue === 11 && w.field === 'Stage'));
+  check('date writes never PUT', plan.writes.every((w) => ['set', 'clear'].includes(w.action)) &&
+    [10, 11, 12, 14].flatMap((n) => requestsFor(REPO, n, plan.writes.filter((w) => w.issue === n))).every((q) => q.method !== 'PUT'));
+  check('a PR\'s two dates go in ONE POST', same(requestsFor(REPO, 10, plan.writes.filter((w) => w.issue === 10)).map((q) => [q.method, q.writes]),
+    [['POST', 2]]));
+
+  check('close day: the event\'s day and the day a few seconds earlier both count (closed_at 23:59:59, event 00:00:01)',
+    isCloseDay('2026-11-20', '2026-11-21T00:00:01Z') && isCloseDay('2026-11-21', '2026-11-21T00:00:01Z') &&
+    !isCloseDay('2026-11-19', '2026-11-21T00:00:01Z'));
+  check('a REST closed_at still on an open item is used without a timeline', same(dw(planWrites([item(18, {
+    closedAt: '2026-11-20T03:00:00Z', values: [val(60, '2026-11-02'), val(70, '2026-11-20')] })], DF, C), 18), [['clear', 'target date', null]]));
+  check('a timeline read cut short leaves the last close UNKNOWN, so nothing is cleared',
+    timelineFacts([{ event: 'closed', created_at: '2026-11-20T00:00:00Z' }], { complete: false }).lastClosedAt === null);
+
+  // When a timeline is needed.
+  check('reason: no Start date → fill', timelineReason(item(20), DF, C) === 'fill');
+  check('reason: a pull request never needs one', timelineReason(item(21, { isPr: true }), DF, C) === null);
+  check('reason: Start = creation day and changed recently → recheck (open)',
+    timelineReason(item(22, { updatedAt: '2026-11-22T10:30:00Z', values: [val(60, '2026-11-01')] }), DF, C) === 'recheck');
+  check('reason: the same, but outside the window → none',
+    timelineReason(item(23, { updatedAt: '2026-11-22T09:30:00Z', values: [val(60, '2026-11-01')] }), DF, C) === null);
+  check('reason: a closed issue is rechecked on an event pass only',
+    timelineReason(item(24, { state: 'closed', updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-01')] }), DF, C) === null &&
+    timelineReason(item(24, { state: 'closed', updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-01')] }), DF, { ...C, eventMode: true }) === 'recheck');
+  check('reason: a Start date that is not the creation day is final',
+    timelineReason(item(25, { updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-05')] }), DF, C) === null);
+  check('reason: open, Target set, recently changed → reopen',
+    timelineReason(item(26, { updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-05'), val(70, '2026-11-20')] }), DF, C) === 'reopen');
+  check('reason: no date fields → nothing is ever read', timelineReason(item(27), FIELDS, C) === null);
+
+  // Caps.
+  const many = [item(30), item(31, { state: 'closed', closedAt: '2026-11-02T00:00:00Z' }), item(32),
+    item(33, { updatedAt: '2026-11-22T11:00:00Z', values: [val(60, '2026-11-01')] }), item(34, { isPr: true })];
+  const q = timelineQueue(many, DF, C);
+  check('queue: rechecks first, then fills open before closed, newest first; PRs absent',
+    same(q.map((x) => [x.number, x.reason]), [[33, 'recheck'], [32, 'fill'], [30, 'fill'], [31, 'fill']]), JSON.stringify(q));
+  const gets = [];
+  const pageOf = (n, len) => Array.from({ length: len }, () => ({ event: 'labeled', created_at: '2026-11-02T00:00:00Z', label: { name: 'stage:building' } }));
+  const fakeGet = async (path) => {
+    gets.push(path);
+    const n = Number(/issues\/(\d+)\//.exec(path)[1]);
+    const page = Number(/[?&]page=(\d+)/.exec(path)[1]);
+    return n === 32 && page === 1 ? pageOf(n, 100) : pageOf(n, 3);
+  };
+  let r = await readTimelines(fakeGet, REPO, q, 3);
+  check('MAX_TIMELINE_READS caps requests; an item cut off part-way gets no facts; the rest wait',
+    r.reads === 3 && same([...r.facts.keys()], [33, 32]) && gets.length === 3 &&
+    r.facts.get(33).complete === true && r.facts.get(32).complete === true, JSON.stringify([r.reads, [...r.facts.keys()], gets]));
+  gets.length = 0;
+  r = await readTimelines(fakeGet, REPO, q, 0);
+  gets.length = 0;
+  r = await readTimelines(fakeGet, REPO, q, 2);
+  check('the cap falling inside one issue\'s pages: that issue gets no facts (never a partial history) and no more is read',
+    r.reads === 2 && same([...r.facts.keys()], [33]) && gets.length === 2, JSON.stringify([r.reads, [...r.facts.keys()], gets]));
+  gets.length = 0;
+  r = await readTimelines(fakeGet, REPO, q, 0);
+  check('MAX_TIMELINE_READS=0 reads nothing', r.reads === 0 && r.facts.size === 0 && gets.length === 0);
+  gets.length = 0;
+  r = await readTimelines(async (p) => { gets.push(p); return pageOf(0, 100); }, REPO, [{ number: 40 }], 1000);
+  check(`one issue stops at TIMELINE_PAGE_CAP (${TIMELINE_PAGE_CAP}) pages and is marked incomplete`,
+    r.reads === TIMELINE_PAGE_CAP && r.facts.get(40).complete === false);
+  const planAll = planWrites(many.map((it) => (r.facts.has(it.number) ? { ...it, facts: r.facts.get(it.number) } : it)), DF, C);
+  check('the remaining count is reported by reason', same(planAll.awaitingTimeline, { fill: 3, recheck: 1 }), JSON.stringify(planAll.awaitingTimeline));
+  const md = renderSummary(planAll, { mode: 'scheduled reconcile', dryRun: true, issues: 5, written: 0, failed: 0, deferred: 0,
+    calls: 0, waits: 0, timelineReads: 3, maxTimelineReads: 3 });
+  check('the summary states reads against the cap and what remains', /timeline reads: 3 of MAX_TIMELINE_READS=3; items still awaiting one \(their dates wait for it\): 4 \(fill 3, recheck 1\)/.test(md), md);
+
+  // MAX_WRITES: label writes first, then whole date groups, read items first.
+  const ws = [
+    { action: 'set', issue: 1, field: 'Priority', value: 'P1' },
+    { action: 'set', issue: 2, field: 'Start date', value: 'a', date: true }, { action: 'set', issue: 2, field: 'Target date', value: 'b', date: true },
+    { action: 'set', issue: 3, field: 'Start date', value: 'c', date: true }, { action: 'set', issue: 3, field: 'Target date', value: 'd', date: true },
+    { action: 'set', issue: 4, field: 'Start date', value: 'e', date: true },
+  ];
+  const its = [{ number: 2, state: 'closed' }, { number: 3, state: 'closed', facts: {} }, { number: 4, state: 'open' }];
+  let sel = selectWrites(ws, 4, its);
+  check('MAX_WRITES: label writes first, then the item read this run, and an item\'s dates are never split',
+    same(sel.todo.map((w) => [w.issue, w.field]), [[1, 'Priority'], [3, 'Start date'], [3, 'Target date'], [4, 'Start date']]) &&
+    sel.deferred === 2,
+    JSON.stringify(sel));
+  sel = selectWrites(ws, 100, its);
+  check('MAX_WRITES: with room, everything goes; nothing deferred', sel.todo.length === 6 && sel.deferred === 0);
+
+  // The missing-field report for the dates.
+  const noDates = planWrites([item(50, { isPr: true, createdAt: '2026-11-01T00:00:00Z' })], FIELDS, C);
+  check('missing date fields are listed and their writes skipped; nothing read', same(noDates.missingFields.map((f) => f.field),
+    ['Start date', 'Target date']) && noDates.writes.length === 0);
+  const wrongType = planWrites([item(51, { isPr: true })], [...FIELDS, { dbId: 61, name: 'Start date', dataType: 'TEXT' }], C);
+  check('a "Start date" field that is not DATE counts as missing', wrongType.missingFields.some((f) => f.field === 'Start date') &&
+    wrongType.writes.length === 0);
+
+  // Listing rows.
+  const prRow = itemFromRow({ number: 60, state: 'closed', pr: true, labels: [], created_at: 'x', closed_at: 'y', updated_at: 'z' });
+  check('a pull request read without issue_field_values is kept with unknown values (skipped, reported), not fatal',
+    prRow.values === null && prRow.isPr && same(planWrites([prRow], DF, C).valuesUnknown, [60]));
+  let threw = '';
+  try { itemFromRow({ number: 61, state: 'open', pr: false, labels: [] }); } catch (e) { threw = e.message; }
+  check('an issue read without issue_field_values is still fatal', /#61/.test(threw), threw);
+  const dateVal = valuesFromRest([{ issue_field_id: 60, issue_field_name: 'Start date', data_type: 'date', value: '2026-11-02' }], 1);
+  check('a date value reads as its YYYY-MM-DD string', same(dateVal, [{ fieldId: 60, fieldName: 'Start date', text: '2026-11-02' }]));
 }
 
 console.log('field definitions');
@@ -272,7 +452,9 @@ console.log('summary');
   check('a missing field becomes an instruction to add it', /Add the issue field \*\*Thread\*\* \(text\)/.test(md), md);
   check('a missing option becomes an instruction to add it', /Add the option \*\*waiting-on-owner\*\* to the \*\*Stage\*\* issue field/.test(md));
   check('a conflict names both labels', /#5: `priority:p1` and `priority:p2`/.test(md));
-  check('an issue read as not open is named', /not open, skipped: #6/.test(md));
+  check('closed issues are counted as dates-only', /closed issues \(dates only; the label rules apply to open issues\): 1/.test(md), md);
+  check('a missing DATE field becomes an instruction to add it', /Add the issue field \*\*Start date\*\* \(date\)/.test(md) &&
+    /Add the issue field \*\*Target date\*\* \(date\)/.test(md));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
