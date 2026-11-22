@@ -61,7 +61,11 @@
  *     declared in `lib/` (IERC20, IERC721, ...) are not followed: they reach
  *     tokens the platform does not ship, and following them into the
  *     platform's own token contracts would list those contracts' errors under
- *     every transfer.
+ *     every transfer;
+ *   - CREATIONS: `new C(...)` runs, in C's context, every constructor in C's
+ *     lineage, its state-variable initialisers and the arguments it passes to
+ *     its bases. C is the named contract, so it is followed wherever it is
+ *     declared (the vault factory's `BeaconProxy` from OpenZeppelin).
  *
  * What it cannot see, and says so in the catalogue's header:
  *   - inline assembly (a revert written in assembly, or a call made there);
@@ -289,6 +293,9 @@ function bodyFacts(fn, byId) {
   // contract or to another platform contract, so the target is resolved from
   // F's declaration at walk time, the same way as a typed external call.
   const encodedDecls = [];
+  // Contracts this body deploys (`new C(...)`): the creation runs C's
+  // constructors, and a revert there reverts this call.
+  const created = [];
   const unknownErrors = [];
 
   const raiseError = (d) => {
@@ -302,7 +309,9 @@ function bodyFacts(fn, byId) {
     if (d?.nodeType === 'ModifierDefinition') internal.push({ decl: d, dispatch: true });
   }
 
-  walk(fn.body, (n) => {
+  // A modifier's or base constructor's arguments run before the body.
+  const roots = [...(fn.modifiers ?? []).flatMap((m) => m.arguments ?? []), ...(fn.extraRoots ?? []), fn.body];
+  for (const root of roots) walk(root, (n) => {
     if (n.nodeType === 'RevertStatement') {
       const d = errorOfCall(n.errorCall, byId);
       if (d) raiseError(d);
@@ -313,6 +322,11 @@ function bodyFacts(fn, byId) {
     const e = n.expression?.nodeType === 'FunctionCallOptions' ? n.expression.expression : n.expression;
     const callee = e?.nodeType === 'Identifier' || e?.nodeType === 'MemberAccess' ? byId.get(e.referencedDeclaration) : undefined;
     const args = n.arguments ?? [];
+
+    if (e?.nodeType === 'NewExpression') {
+      const c = byId.get(e.typeName?.referencedDeclaration);
+      if (c?.nodeType === 'ContractDefinition') created.push(c);
+    }
 
     // require / revert builtins.
     if (e?.nodeType === 'Identifier' && (e.name === 'require' || e.name === 'revert') && !callee) {
@@ -356,7 +370,7 @@ function bodyFacts(fn, byId) {
     return undefined;
   });
 
-  return { raises, internal, selfSelectors, externalDecls, encodedDecls, unknownErrors };
+  return { raises, internal, selfSelectors, externalDecls, encodedDecls, created, unknownErrors };
 }
 
 /**
@@ -462,6 +476,31 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
     return out;
   };
 
+  // A creation (`new C(...)`) runs, in C's context, every constructor in C's
+  // lineage, the state-variable initialisers and the arguments passed to base
+  // contracts. C may be outside src/ (a proxy from OpenZeppelin): the target
+  // is the named contract, so it is followed wherever it is declared.
+  const creationCache = new Map();
+  const creation = (node) => {
+    if (!creationCache.has(node.id)) {
+      const info = describe(node, 'created', byId);
+      const steps = [];
+      for (const baseId of info.lineage) {
+        const base = byId.get(baseId);
+        const extraRoots = [
+          ...(base?.nodes ?? []).filter((m) => m.nodeType === 'VariableDeclaration' && m.value).map((m) => m.value),
+          ...(base?.baseContracts ?? []).flatMap((b) => b.arguments ?? []),
+        ];
+        if (extraRoots.length) steps.push({ id: `init:${baseId}`, extraRoots, body: undefined });
+        for (const m of base?.nodes ?? []) {
+          if (m.nodeType === 'FunctionDefinition' && m.kind === 'constructor' && m.body) steps.push(m);
+        }
+      }
+      creationCache.set(node.id, { info, steps });
+    }
+    return creationCache.get(node.id);
+  };
+
   const factsCache = new Map();
   const facts = (fn) => {
     if (!factsCache.has(fn.id)) factsCache.set(fn.id, bodyFacts(fn, byId));
@@ -506,6 +545,10 @@ export function raisersFrom(units, manifest, byId = indexNodes(units)) {
       }
       for (const d of ff.encodedDecls) {
         for (const t of encodedTargets(d, c)) if (t.fn.body) stack.push([t.fn, t.contract]);
+      }
+      for (const node of ff.created) {
+        const { info, steps } = creation(node);
+        for (const step of steps) stack.push([step, info]);
       }
     }
     return out;

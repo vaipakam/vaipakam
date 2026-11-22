@@ -723,6 +723,11 @@
       "actor": "nobody",
       "message": "The token-rate reader for a vault share refused, because the share's vault holds a different asset from the one its price binding names. The price guard catches this and treats the share as having no trusted rate, so it should never reach a transaction through the platform; if it does, that is a fault in the platform. Please report it with the transaction.",
       "internal": true
+    },
+    "ERC1967InvalidBeacon": {
+      "actor": "nobody",
+      "message": "A new vault could not be created, because the vault beacon address it was given has no contract code. The beacon is set when the platform is deployed, and the vault factory refuses one with no code when it records it, so this should never happen; if it does, that is a fault in the platform's setup. Please report it with the transaction.",
+      "internal": true
     }
   }
 }

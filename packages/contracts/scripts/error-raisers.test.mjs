@@ -96,6 +96,37 @@ test('an encoded call to another platform contract reaches that contract, not th
   assert.deepEqual(raisers['0xffffffff'], ['OtherFacet.grant(0x0000aaaa)']);
 });
 
+test('a creation runs every constructor in the lineage, its initialisers and base arguments, wherever the contract is declared', () => {
+  const B = errDef('B', '0xbbbbbbbb');
+  const I = errDef('I', '0x11111111');
+  const G = errDef('G', '0x22222222');
+  const N = errDef('N', '0x33333333');
+  // lib/ base whose constructor raises through an internal library helper.
+  const check = fn('check', block(revertWith(B)), { visibility: 'internal' });
+  const Lib = contract('Utils', [B, check], { contractKind: 'library' });
+  const baseCtor = fn('', block(stmt(call(ref(check)))), { kind: 'constructor', visibility: 'public' });
+  const Base = contract('BaseProxy', [baseCtor]);
+  // The created contract: an initialiser and a base-constructor argument that raise.
+  const init = fn('init', block(revertWith(I)), { visibility: 'internal' });
+  const arg = fn('arg', block(revertWith(G)), { visibility: 'internal' });
+  const stateVar = { nodeType: 'VariableDeclaration', id: id(), name: 'x', value: call(ref(init)) };
+  const Proxy = contract('Proxy', [I, G, init, arg, stateVar], { baseContracts: [{ nodeType: 'InheritanceSpecifier', arguments: [call(ref(arg))] }] });
+  Proxy.linearizedBaseContracts = [Proxy.id, Base.id];
+  // Never created: its constructor's error must not be listed.
+  const Unused = contract('Unused', [N, fn('', block(revertWith(N)), { kind: 'constructor', visibility: 'public' })]);
+  const newProxy = { nodeType: 'FunctionCallOptions', expression: { nodeType: 'NewExpression', typeName: { nodeType: 'UserDefinedTypeName', referencedDeclaration: Proxy.id } } };
+  const make = fn('make', block(stmt(call(newProxy))), { selector: '0x00000003' });
+  const F = contract('FactoryFacet', [make]);
+  const { raisers } = raisersFrom(
+    [unit('lib/Utils.sol', Lib), unit('lib/Base.sol', Base), unit('lib/Proxy.sol', Proxy), unit('src/U.sol', Unused), unit('src/F.sol', F)],
+    manifest(['FactoryFacet']),
+  );
+  assert.deepEqual(raisers['0xbbbbbbbb'], ['FactoryFacet.make(0x00000003)']);
+  assert.deepEqual(raisers['0x11111111'], ['FactoryFacet.make(0x00000003)']);
+  assert.deepEqual(raisers['0x22222222'], ['FactoryFacet.make(0x00000003)']);
+  assert.equal(raisers['0x33333333'], undefined);
+});
+
 test('super.f() is not re-dispatched into the override, and call options are seen through', () => {
   const E = errDef('E', '0xeeeeeeee');
   const baseF = fn('f', block(revertWith(E)), { selector: '0x0000000f', visibility: 'public', virtual: true });

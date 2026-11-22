@@ -78,6 +78,10 @@
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"
     },
+    "./revertData": {
+      "types": "./src/revertData.ts",
+      "default": "./src/revertData.ts"
+    },
     "./decodeContractError": {
       "types": "./src/decodeContractError.ts",
       "default": "./src/decodeContractError.ts"
