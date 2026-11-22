@@ -16,4 +16,16 @@ refuses is still treated as before. A read that ran short of gas stops the
 transaction with the named out-of-gas error, so a gas estimate always covers
 the reads. The price guard and its gas budget are unchanged.
 
+The same fault sat one layer lower, in the liquidity test's reads of the
+trading venues: the pool lookup, the pool's price, depth and price history,
+and a token's decimals. Each was given all the gas the transaction had left.
+A starved read made an asset look illiquid or unpriced, and the cheaper path
+that followed succeeded, so gas estimates still landed short now and then.
+Every such read, and the reads of peer lending markets' collateral settings,
+now runs with a fixed budget of its own. Too little gas stops the transaction
+with the same named error. A venue that needs more than the budget fails the
+test the same way for every caller. The collateral concentration view's
+valuation also passes a starved read on by name, instead of reading it as
+"unpriced".
+
 Advances #3504.

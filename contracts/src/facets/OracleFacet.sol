@@ -969,7 +969,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address token1,
         uint24 fee
     ) private view returns (address) {
-        (bool ok, bytes memory data) = factory.staticcall(
+        (bool ok, bytes memory data) = LibPriceGuard.venueRead(
+            factory,
             abi.encodeWithSignature(
                 "getPool(address,address,uint24)",
                 token0,
@@ -1028,20 +1029,21 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (pool == address(0) || pool.code.length == 0 || twapWindow == 0) {
             return (false, 0, 0, 0, 0, 0);
         }
-        (bool slotOk, bytes memory slotData) = pool.staticcall(abi.encodeWithSignature("slot0()"));
+        (bool slotOk, bytes memory slotData) = LibPriceGuard.venueRead(pool, abi.encodeWithSignature("slot0()"));
         if (!slotOk || slotData.length < 224) return (false, 0, 0, 0, 0, 0);
         (sqrtPriceX96, currentTick, , , , , ) = abi.decode(
             slotData,
             (uint160, int24, uint16, uint16, uint16, uint8, bool)
         );
         if (sqrtPriceX96 == 0) return (false, 0, 0, 0, 0, 0);
-        (bool liqOk, bytes memory liqData) = pool.staticcall(abi.encodeWithSignature("liquidity()"));
+        (bool liqOk, bytes memory liqData) = LibPriceGuard.venueRead(pool, abi.encodeWithSignature("liquidity()"));
         if (!liqOk || liqData.length < 32) return (false, 0, 0, 0, 0, 0);
         liquidity = abi.decode(liqData, (uint128));
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapWindow;
         secondsAgos[1] = 0;
-        (bool obsOk, bytes memory obsData) = pool.staticcall(
+        (bool obsOk, bytes memory obsData) = LibPriceGuard.venueRead(
+            pool,
             abi.encodeWithSignature("observe(uint32[])", secondsAgos)
         );
         // observe returns (int56[] tickCumulatives, uint160[]

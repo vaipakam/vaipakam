@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {IAavePoolDataProvider} from "../interfaces/IAavePoolDataProvider.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {LibPriceGuard} from "./LibPriceGuard.sol";
 
 /**
  * @title LibPeerLTV
@@ -83,7 +84,8 @@ library LibPeerLTV {
         // Low-level staticcall — avoids reverting the whole refresh
         // tx if the address isn't actually a PoolDataProvider, the
         // ABI doesn't match, or the asset's reserve is in a weird state.
-        (bool success, bytes memory data) = provider.staticcall(
+        (bool success, bytes memory data) = LibPriceGuard.venueRead(
+            provider,
             abi.encodeWithSelector(
                 IAavePoolDataProvider.getReserveConfigurationData.selector,
                 asset
@@ -150,7 +152,8 @@ library LibPeerLTV {
         // Compound V3 REVERTS if the asset isn't a registered
         // collateral on this Comet. staticcall+success-check catches
         // that without bubbling the revert.
-        (bool success, bytes memory data) = comet.staticcall(
+        (bool success, bytes memory data) = LibPriceGuard.venueRead(
+            comet,
             abi.encodeWithSelector(IComet.getAssetInfoByAddress.selector, asset)
         );
         // AssetInfo = (uint8, address, address, uint64, uint64, uint64,
