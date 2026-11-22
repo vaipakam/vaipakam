@@ -14,8 +14,10 @@
 //   node .github/scripts/statement-ids.mjs --selftest
 //
 // Prints one JSON object:
-//   { ids, unknown, held, noBehaviourChange, notCovered, verdict }
-// verdict is "ids", "no-behaviour-change", "not-covered" or "missing".
+//   { ids, unknown, held, noBehaviourChange, notCovered, notCoveredDomains,
+//     verdict }
+// verdict is "ids", "no-behaviour-change", "not-covered", "not-covered-unnamed"
+// (the not-covered answer names no domain the author looked in) or "missing".
 // Exit code is 0 in every case: the workflow decides what to warn about.
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
@@ -29,7 +31,17 @@ const HELD_FROM = 900;
 // A statement heading in a domain file: "### VLT-001 · rule".
 const HEADING = /^#{2,4}\s+([A-Z]{3}-\d{3})\b/gm;
 const NO_CHANGE = /\bno behaviou?r change\b/i;
-const NOT_COVERED = /\bno canonical section covers\b/i;
+const NOT_COVERED = /\bno canonical section covers\b[^\n]*/i;
+// The domain codes of CanonicalSpecDesign section 3.5; keep this list equal
+// to that table.
+// The not-covered answer names the domain the author looked in, so a reviewer
+// can check that no section of it covers the change.
+const DOMAINS = [
+  'PLT', 'VLT', 'AUT', 'SCR', 'PRC', 'OFR', 'OPN', 'LON', 'FCL', 'CLM',
+  'EXT', 'POS', 'RNT', 'MKT', 'FEE', 'VPF', 'RWD', 'XCH', 'KPR', 'DPL',
+  'IDX', 'KOP', 'APP', 'WEB', 'NTF',
+];
+const DOMAIN = new RegExp(`\\b(${DOMAINS.join('|')})\\b`, 'g');
 
 /** The ids the folder states, read from its statement headings. */
 export function folderIds(folder) {
@@ -61,12 +73,17 @@ export function evaluate(body, known) {
   const held = ids.filter((id) => Number(id.slice(4)) >= HELD_FROM);
   const unknown = ids.filter((id) => !held.includes(id) && !known.has(id));
   const noBehaviourChange = NO_CHANGE.test(text);
-  const notCovered = NOT_COVERED.test(text);
+  const notCoveredLine = text.match(NOT_COVERED)?.[0];
+  const notCovered = notCoveredLine !== undefined;
+  // The domain is named on the same line as the answer.
+  const notCoveredDomains = notCovered
+    ? [...new Set([...notCoveredLine.matchAll(DOMAIN)].map((m) => m[1]))].sort()
+    : [];
   let verdict = 'missing';
   if (ids.length > 0) verdict = 'ids';
   else if (noBehaviourChange) verdict = 'no-behaviour-change';
-  else if (notCovered) verdict = 'not-covered';
-  return { ids, unknown, held, noBehaviourChange, notCovered, verdict };
+  else if (notCovered) verdict = notCoveredDomains.length ? 'not-covered' : 'not-covered-unnamed';
+  return { ids, unknown, held, noBehaviourChange, notCovered, notCoveredDomains, verdict };
 }
 
 function selftest() {
@@ -77,7 +94,10 @@ function selftest() {
     ['a held id is not unknown', 'Implements VLT-901.', 'ids', []],
     ['no behaviour change', 'Refactor only: no behaviour change.', 'no-behaviour-change', []],
     ['american spelling', 'No behavior change.', 'no-behaviour-change', []],
-    ['not covered yet', 'No canonical section covers this yet.', 'not-covered', []],
+    ['not covered, domain named', 'No canonical section covers this change (looked in OFR).', 'not-covered', []],
+    ['not covered, no domain', 'No canonical section covers this yet.', 'not-covered-unnamed', []],
+    ['domain on another line does not count', 'No canonical section covers this.\nTouches OFR code.', 'not-covered-unnamed', []],
+    ['unknown code is not a domain', 'No canonical section covers this (ABC).', 'not-covered-unnamed', []],
     ['nothing stated', 'Fixes the thing.', 'missing', []],
     ['template comment ignored', '<!-- e.g. VLT-001 -->\nFixes the thing.', 'missing', []],
     ['empty body', '', 'missing', []],

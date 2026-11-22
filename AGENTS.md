@@ -46,9 +46,14 @@ Neither is ever written from the code. The rules (CanonicalSpecDesign §15):
 
 - **A pull request that changes behaviour names the statements it
   implements** in its description's "Statements" section, or says "No
-  behaviour change", or "No canonical section covers this change". A review
-  checks the change against the statements it names, and flags a behaviour
+  behaviour change", or "No canonical section covers this change" naming on
+  the same line the domain the author looked in (a code such as `OFR`). A
+  review checks the change against the statements it names, checks that the
+  named domain really has no section covering it, and flags a behaviour
   change that names none.
+- **A held statement is cited, never described.** Ids 900 to 999 are held
+  outside the public folder. A description, comment or review may cite such
+  an id; it never quotes or describes what the statement says.
 - **No pull request edits either folder.** A change to a canonical statement
   is approved by the owner with its design and written by the thread that
   keeps the folder; out-of-date lines in `docs/FunctionalSpecs/` go on the

@@ -37,8 +37,13 @@ The canonical statements this change implements (docs/CanonicalSpec/),
 by id, one per line, e.g. a vault statement's id. If it changes no
 behaviour, write "No behaviour change". If it changes behaviour that no
 canonical section covers yet, write "No canonical section covers this
-change" (docs/FunctionalSpecs/ still states that intent, and builders do
-not edit it: out-of-date lines go on the owner's list).
+change; looked in <code>", naming on the same line the domain you looked
+in (a code such as OFR or LON) so a reviewer can check it.
+docs/FunctionalSpecs/ still states that intent, and builders do not edit
+it: out-of-date lines go on the owner's list.
+
+An id from 900 to 999 is a statement held outside the public folder. You
+may cite its id; never quote or describe what it says.
 
 A design that changes a canonical statement brings the statement change
 to the owner with the design. The folder changes only after approval,

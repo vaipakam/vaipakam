@@ -3032,10 +3032,14 @@ The rules (owner decision, CanonicalSpecDesign §15):
   design thread). A pull request never edits it.
 - **A pull request that changes behaviour names the statements it
   implements**, by id, in its description's "Statements" section — or says
-  "No behaviour change", or "No canonical section covers this change". The
-  drift check in `.github/workflows/release-notes-drift.yml` reads the merged
+  "No behaviour change", or "No canonical section covers this change" with
+  the domain the author looked in named on the same line (a code such as
+  `OFR`), so a reviewer can check it. An id from 900 to 999 is a statement
+  held outside the public folder: cite the id, never quote or describe the
+  statement. The drift check in `.github/workflows/release-notes-drift.yml` reads the merged
   pull request's description and warns (non-blocking) when none of the three
-  is there, or when an id names no statement in the folder
+  is there, when the not-covered answer names no domain, or when an id names
+  no statement in the folder
   (`.github/scripts/statement-ids.mjs`).
 - **Divergences resolve toward intent.** Where the code and a statement
   disagree, the code is the candidate bug;
