@@ -423,3 +423,11 @@ test('a parameter row needs its value, and any table row its header\'s cell coun
   const short = parseFile('params.md', '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-001 | The wait |\n');
   assert.ok(short.errors.some((e) => /a table row has 2 cells; its header has 3/.test(e.message)));
 });
+
+test('a statement cited in a model\'s prose must exist and not be retired; a held id is exempt', () => {
+  const model = (def) => MODEL(['| Not created | Create | Anyone | VLT-012 | Recovered |'], ['| Create | VLT-012 |'], `- Not created (start): ${def}\n- Recovered (end): a recovered vault.`);
+  const f = run([['vlt.md', REFUSAL('VLT-012') + model('the balance follows VLT-099.')], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(f, 'reference', /model "a vault" cites VLT-099, which does not exist/), JSON.stringify(f));
+  const held = run([['vlt.md', REFUSAL('VLT-012') + model('the balance follows VLT-905.')], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(!has(held, 'reference', /VLT-905/));
+});

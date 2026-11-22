@@ -195,18 +195,27 @@ export function checkSpec(parsed, opts = {}) {
     for (const f of textFindings(s, { glossary, refused: refusedList(opts.wording, s.code) })) add(s.file, s.line, f.rule, `${s.id}: ${f.message}`);
   }
 
-  // Item 9: references by id, or in the owed form.
-  for (const s of statements) {
-    const text = statementText(s);
-    for (const m of text.matchAll(ID_RE)) {
+  // Item 9: references by id, or in the owed form. Every text that can cite a
+  // statement is read the same way: a statement's own text and a model's prose
+  // (states, steps, dimension values); a model's citation columns are checked
+  // with the model below.
+  const citers = [
+    ...statements.map((s) => ({ who: s.id, self: s.id, file: s.file, line: s.line, text: statementText(s) })),
+    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, self: null, file: m.file, line: x.line, text: x.text }))),
+  ];
+  for (const c of citers) {
+    for (const m of c.text.matchAll(ID_RE)) {
       const ref = `${m[1]}-${m[2]}`;
-      if (ref === s.id || m[1] === 'PRM') continue;
-      if (retired.has(ref)) add(s.file, s.line, 'reference', `${s.id} cites ${ref}, which is retired`);
+      if (ref === c.self || m[1] === 'PRM') continue;
+      if (retired.has(ref)) add(c.file, c.line, 'reference', `${c.who} cites ${ref}, which is retired`);
       else if (missing(ref)) {
-        if (codes.has(m[1])) add(s.file, s.line, 'reference', `${s.id} cites ${ref}, which does not exist`);
-        else add(s.file, s.line, 'reference', `${s.id} cites ${ref}, but no statement of ${m[1]} is in the checked set; a domain not yet drafted is cited as "(${m[1]} owed: …)"`);
+        if (codes.has(m[1])) add(c.file, c.line, 'reference', `${c.who} cites ${ref}, which does not exist`);
+        else add(c.file, c.line, 'reference', `${c.who} cites ${ref}, but no statement of ${m[1]} is in the checked set; a domain not yet drafted is cited as "(${m[1]} owed: …)"`);
       }
     }
+  }
+  for (const s of statements) {
+    const text = statementText(s);
     if (/\bthe (?!same\b|one\b)[a-z]+(?: [a-z]+)? domains?\b/i.test(text.replace(OWED_RE, ''))) {
       add(s.file, s.line, 'reference', `${s.id} refers to another domain by name; cite a statement by id, or write "(<CODE> owed: …)"`);
     }
@@ -268,10 +277,7 @@ export function checkSpec(parsed, opts = {}) {
   }
   // A parameter is named by a statement or by a model's text (a state, a step,
   // a dimension value); every name must resolve.
-  const namers = [
-    ...statements.map((s) => ({ who: s.id, file: s.file, line: s.line, text: statementText(s) })),
-    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, file: m.file, line: x.line, text: x.text }))),
-  ];
+  const namers = citers;
   const used = new Set();
   for (const n of namers) for (const m of n.text.matchAll(PARAM_ID_RE)) {
     const id = `PRM-${m[1]}`;
