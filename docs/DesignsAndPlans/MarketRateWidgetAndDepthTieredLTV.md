@@ -5,6 +5,14 @@ contracts LANDED behind the `depthTieredLtvEnabled` kill-switch (default
 `false` ⇒ no behaviour change); audit + the §4.4 follow-ups pending
 before the switch flips on any chain.**
 
+**Amended 2026-11-22 (owner decision).** `LiquidityTiersAndExposureDesign.md`
+is the design of record for the tiers, the standing of a loan and the
+exposure limit. It replaces three points wherever the sections below state
+them (§4.1.b, §4.2, §5 decisions 2 and 9, and §9.ii): an asset no longer
+starts at Tier 1 (it starts with no confidence tier and earns each step over
+time), a confidence tier that is not renewed lapses, and a liquid asset with
+no tier still backs a new loan on the most conservative terms.
+
 Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
 - **§4.4 step 1 — Piece A — SHIPPED & deployed** (base-sepolia
   `a1eb9fcb`): the widget on OfferBook, auto min-collateral, deep-link to
@@ -860,6 +868,10 @@ liquidator bot has been hardened for it.
    trade-off: single-hop only — SHIB-likes (deep *via* a stable pair,
    thin *against* one) stay low-tier / manual until a multi-hop-aware
    check exists.
+   *Amended 2026-11-22: the start at Tier 1 is replaced. The confidence
+   tier starts at none, each step is held only after renewals over the
+   time at depth, and a tier that is not renewed lapses
+   (`LiquidityTiersAndExposureDesign.md` §4).*
 3. **Tier LTVs — Tier 1 50% / Tier 2 60% / Tier 3 65%. ✅** (Init HF ≈
    1.26 vs an ~82% liq-threshold.) Risk committee may open Tier 3 lower
    and ramp; ramp gated on the liquidator-bot hardening (§4.4 deferred).
@@ -898,6 +910,9 @@ liquidator bot has been hardened for it.
    confidence window, and demotes immediately on degradation;
    `effectiveTier = min(onChainSlippageTier, keeperTier)` so the keeper
    can never promote past the on-chain ceiling. (rationale: see §9.ii.)
+   *Amended 2026-11-22: a new asset starts with no confidence tier, not
+   at Tier 1 (`LiquidityTiersAndExposureDesign.md` §4). The rule that the
+   keeper never raises a tier past the on-chain reading stands.*
 10. **Cross-chain "thin here" warning — ship the generic version with
     Piece A. ✅** "Which chain is deeper" hint is a Phase 2.5/3 follow-up
     (needs a cross-(asset, chain) depth index).

@@ -49,7 +49,12 @@ vaults read.
 **Stays in the Diamond.**
 
 - The liquidity classification: pool depth probes, tiers and the tier LTV
-  cache.
+  cache. The four settings that say where its market data is read (the
+  venues, the fee cap of a pool that counts, the list of quote assets and
+  the averaging window) are kept on the guard's side, in a record of their
+  own, and change under the guard's delay (owner decision 2026-11-22,
+  `LiquidityTiersAndExposureDesign.md` section 7). They are no part of a
+  price version.
 - The daily price snapshots and the numeraire value rule
   (`LibNumeraireValue`).
 - Every numeraire-denominated threshold.

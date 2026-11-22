@@ -83,7 +83,10 @@ date of the directory file it was checked against.
   may be the wrong one. An entry refused when it takes effect stays waiting
   and can be carried out again. The pool is found from the chain alone and
   nobody names it, and its average price over a window is a reading one
-  transaction cannot move.
+  transaction cannot move. The registry finds it by the four settings kept
+  on the guard's side (the venues, the fee cap, the list of quote assets and
+  the averaging window; `LiquidityTiersAndExposureDesign.md` section 7),
+  so it does not read the platform.
 
 With no reference at all, an entry passes only when the owner's proposal
 names it unchecked, with a reason, for the whole wait, and the asset shows

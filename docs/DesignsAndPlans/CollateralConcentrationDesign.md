@@ -1,6 +1,6 @@
 # Collateral concentration: a graded response per asset — design
 
-**Status:** owner approved this shape on 2026-11-15, before the feature freeze. Card #3685. Design for review before build.
+**Status:** owner approved this shape on 2026-11-15, before the feature freeze. Card #3685. Design for review before build. **Amended 2026-11-22 (owner decision):** a third threshold on the same measure, the exposure limit, refuses new exposure, and collateral with no tier backs a loan on the most conservative terms. Both are in `LiquidityTiersAndExposureDesign.md` (sections 6 and 5).
 **Related:** the liquidity tiers and the loan-opening loan-to-value cap, `ShortfallReserveDesign.md` (#3641), `RatePricedCollateralDesign.md` (#3683), `LoanSettingsSnapshotDesign.md` (#3437).
 
 ## 1. Why
@@ -48,7 +48,7 @@ All three apply to **new loans only**, judged when the loan opens. An open loan 
 - *Depth-tiered regime:* the regime's cap is the lower of the asset's own ceiling and its tier's cap. At High the next lower tier's cap replaces the tier cap.
 - *Untiered regime:* the loan-opening check enforces the asset's own ceiling and the health-factor floor. The loan-to-value that floor allows is the tier's liquidation loan-to-value divided by the floor. The lowered tier cap applies on top; where it is not below what the floor already allows (for example a tier-3 asset: the next tier's 60% against 90% / 1.5 = 60%), it lowers nothing.
 - *The lowest liquid tier:* its cap less the step, 10 percentage points to start, bounded 5 to 25.
-- *Tier 0* is not lowered: the tiered regime already caps it at 0.
+- *Collateral with no tier* (liquid by the floor test alone) backs a loan on terms no better than the most conservative tier's (`LiquidityTiersAndExposureDesign.md`, section 5), and its concentration is measured against the floor size. What High lowers for it is still to be stated with the risk figures.
 
 The per-asset view and the loan-opening cap read both say whether the lowered cap actually binds. The app's High warning must not claim a lower cap where it does not bind; at High with no binding cap it says only that much of the asset is pledged.
 
@@ -56,7 +56,7 @@ The per-asset view and the loan-opening cap read both say whether the lowered ca
 
 **Thresholds are stored in hundredths of a multiple** (500 = 5x), so a per-asset override can be set between whole multiples.
 
-Nothing here refuses an offer, an intent or a loan. A hard limit remains possible later as one more threshold on the same measure, if the numbers ever call for it.
+The two thresholds above refuse nothing. A third threshold on the same measure, the exposure limit, refuses new exposure past it (owner decision 2026-11-22). It reads the lower of the asset's measured tier and its proven tier, it never refuses a top-up, a cure or a repayment, and it never changes an open loan. Its rule is in `LiquidityTiersAndExposureDesign.md`, section 6.
 
 Auto-lend and matches need no special rule: the cap in 3 is applied by the one loan-opening check every route already passes, and the previews read the same rule, so a fill that would exceed the lowered cap is refused by the existing check with the existing reason.
 
@@ -94,7 +94,7 @@ As built: the cap rule and the views live on one new facet that every loan-openi
 
 ## 7. Alternatives considered
 
-1. **A hard limit that refuses new loans.** The usual answer on pooled venues, where a failed sale is a shared loss. Here the loss is one lender's and is taken in collateral, so a refusal is heavier than the risk, and it surprises a user at the moment of borrowing.
+1. **A hard limit that refuses new loans.** The usual answer on pooled venues, where a failed sale is a shared loss. Here the loss is one lender's and is taken in collateral, so a refusal is heavier than the risk, and it surprises a user at the moment of borrowing. *Amended 2026-11-22: taken after all as a third threshold, well above High and for new exposure only, with the room left shown in the previews (`LiquidityTiersAndExposureDesign.md`, section 6). The graded response below it stands.*
 2. **Offset the pledged total by opposite-side loans.** Rejected: the opposite side is healthy exactly when this side fails (section 1).
 3. **Warning only.** Cheapest, but leaves the reserve exposed to the one correlated event most likely to drain it.
 4. **A new depth probe sized to the pledged total.** More exact, but adds a market read to every loan opening. The tier's own measured size is already there.
@@ -102,7 +102,7 @@ As built: the cap rule and the views live on one new facet that every loan-openi
 
 ## 8. Recommendation
 
-The graded response of section 3: a per-asset pledged total, a warning and reserve exclusion at the caution multiple, a one-tier-lower cap at the high multiple, and no refusal.
+The graded response of section 3: a per-asset pledged total, a warning and reserve exclusion at the caution multiple, a one-tier-lower cap at the high multiple, and no refusal below the exposure limit that `LiquidityTiersAndExposureDesign.md` (section 6) adds above them.
 
 ## 9. Open items for the builder to raise, not decide silently
 
