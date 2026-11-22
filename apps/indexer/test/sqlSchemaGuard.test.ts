@@ -34,7 +34,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { LAST_EVENT_SET } from '../src/lastEvent';
+import { LAST_EVENT_SET, LAST_EVENT_UPSERT_SET } from '../src/lastEvent';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const SRC_DIR = new URL('../src/', import.meta.url);
@@ -77,7 +77,11 @@ function extractPreparedSql(): Extracted[] {
       // #3921 B2 — the shared last-event assignment is ONE constant, so it is
       // put back in before the statement is classified: a statement whose only
       // interpolation is that constant is static, and checked whole.
-      const sql = m[1].split('${LAST_EVENT_SET}').join(LAST_EVENT_SET);
+      const sql = m[1]
+        .split('${LAST_EVENT_SET}')
+        .join(LAST_EVENT_SET)
+        .split('${LAST_EVENT_UPSERT_SET}')
+        .join(LAST_EVENT_UPSERT_SET);
       out.push({ file: f, sql, interpolated: sql.includes('${') });
     }
   }

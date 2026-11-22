@@ -41,6 +41,7 @@
  * state and violation writes land in one batch.
  */
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { LAST_EVENT_UPSERT_SET } from './lastEvent';
 
 /** The contracts' `LoanStatus` enum, append-only, so the numbers are stable. */
 export const LOAN_STATUS = {
@@ -77,14 +78,27 @@ export type LifecycleReason = 'edge' | 'continuity' | 'reinitiated';
 
 /** One announcement, reduced to what the check reads. */
 export type LifecycleObservation =
-  | { kind: 'initiated'; loanId: number; blockNumber: number; logIndex: number; txHash: string }
-  | { kind: 'status'; loanId: number; blockNumber: number; logIndex: number; txHash: string; from: number; to: number };
+  | { kind: 'initiated'; loanId: number; blockNumber: number; txIndex: number | null; logIndex: number; txHash: string }
+  | {
+      kind: 'status';
+      loanId: number;
+      blockNumber: number;
+      txIndex: number | null;
+      logIndex: number;
+      txHash: string;
+      from: number;
+      to: number;
+    };
 
 /** What the check knows about one loan. */
 export interface TrackedLoan {
   status: number;
   fromInitiation: boolean;
   lastBlock: number;
+  /** The transaction position of the announcement the record was set at,
+   *  null where the log did not carry it (#3921 B2). Not part of the order:
+   *  block and log index order the announcements. */
+  lastTxIndex: number | null;
   lastLogIndex: number;
 }
 
@@ -110,7 +124,7 @@ function isAfter(prev: TrackedLoan, obs: LifecycleObservation): boolean {
  */
 export function judgeObservation(prev: TrackedLoan | null, obs: LifecycleObservation): LifecycleJudgement | null {
   if (prev && !isAfter(prev, obs)) return null;
-  const at = { lastBlock: obs.blockNumber, lastLogIndex: obs.logIndex };
+  const at = { lastBlock: obs.blockNumber, lastTxIndex: obs.txIndex, lastLogIndex: obs.logIndex };
   if (obs.kind === 'initiated') {
     return {
       next: { status: S.Active, fromInitiation: true, ...at },
@@ -134,6 +148,8 @@ export interface LifecycleLog {
   args: Record<string, unknown>;
   blockNumber: bigint;
   transactionHash: string;
+  /** Optional: a log replayed from a stored event may not carry it. */
+  transactionIndex?: number | null;
   logIndex: number;
 }
 
@@ -144,6 +160,7 @@ export function lifecycleObservations(logs: readonly LifecycleLog[]): LifecycleO
     const base = {
       loanId: Number(log.args.loanId as bigint),
       blockNumber: Number(log.blockNumber),
+      txIndex: log.transactionIndex ?? null,
       logIndex: log.logIndex,
       txHash: log.transactionHash.toLowerCase(),
     };
@@ -192,17 +209,25 @@ export async function recordLoanLifecycle(
       (
         await db
           .prepare(
-            `SELECT loan_id, status, from_initiation, last_block, last_log_index
+            `SELECT loan_id, status, from_initiation, last_block, last_event_tx_index, last_log_index
                FROM loan_lifecycle_state WHERE chain_id = ? AND loan_id IN (${chunk.placeholders})`,
           )
           .bind(...chunk.binds)
-          .all<{ loan_id: number; status: number; from_initiation: number; last_block: number; last_log_index: number }>()
+          .all<{
+            loan_id: number;
+            status: number;
+            from_initiation: number;
+            last_block: number;
+            last_event_tx_index: number | null;
+            last_log_index: number;
+          }>()
       ).results ?? [];
     for (const r of rows) {
       tracked.set(r.loan_id, {
         status: r.status,
         fromInitiation: r.from_initiation !== 0,
         lastBlock: r.last_block,
+        lastTxIndex: r.last_event_tx_index,
         lastLogIndex: r.last_log_index,
       });
     }
@@ -252,16 +277,33 @@ export async function recordLoanLifecycle(
     writes.push(
       db
         .prepare(
+          // #3921 B2 — the record names the announcement it was last set at
+          // in the three shared columns too. `last_block` / `last_log_index`
+          // stay (the check's own order). The record only moves forward
+          // (judgeObservation), and the columns take the shared forward-only
+          // rule all the same.
           `INSERT INTO loan_lifecycle_state
-             (chain_id, loan_id, status, from_initiation, last_block, last_log_index)
-           VALUES (?, ?, ?, ?, ?, ?)
+             (chain_id, loan_id, status, from_initiation, last_block, last_log_index,
+              last_event_block, last_event_tx_index, last_event_log_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (chain_id, loan_id) DO UPDATE SET
              status = excluded.status,
              from_initiation = excluded.from_initiation,
              last_block = excluded.last_block,
-             last_log_index = excluded.last_log_index`,
+             last_log_index = excluded.last_log_index,
+             ${LAST_EVENT_UPSERT_SET}`,
         )
-        .bind(chainId, loanId, t.status, t.fromInitiation ? 1 : 0, t.lastBlock, t.lastLogIndex),
+        .bind(
+          chainId,
+          loanId,
+          t.status,
+          t.fromInitiation ? 1 : 0,
+          t.lastBlock,
+          t.lastLogIndex,
+          t.lastBlock,
+          t.lastTxIndex,
+          t.lastLogIndex,
+        ),
     );
   }
   if (writes.length > 0) await db.batch(writes);

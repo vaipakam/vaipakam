@@ -865,7 +865,7 @@ export async function sweepUnpublishedListings(
       // `ctx.waitUntil`), which is why the sweep no longer needs to be gated
       // off when DO ingest is enabled.
       await env.DB.prepare(
-        `UPDATE prepay_listings
+        `UPDATE prepay_listings /* last-event: unchanged — a marketplace publish stamp */
            SET opensea_published_at = ?
          WHERE chain_id = ? AND loan_id = ? AND order_hash = ?`,
       )
@@ -878,7 +878,7 @@ export async function sweepUnpublishedListings(
       // and doesn't starve real mainnet retries by occupying the
       // batch budget every tick (Codex P1 on PR #315).
       await env.DB.prepare(
-        `UPDATE prepay_listings
+        `UPDATE prepay_listings /* last-event: unchanged — a marketplace publish stamp */
            SET opensea_published_at = 0
          WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -1882,7 +1882,7 @@ export async function _runLoanReconcilePass(input: {
             // history, which the event path alone writes and the missed
             // window may have skipped. Same transaction, same rule: only a
             // side the chain named.
-            ..._verifiedParticipantStatements(env, chainId, loanId, holders, Number(settled.timestamp)),
+            ..._verifiedParticipantStatements(env, chainId, loanId, holders, Number(settled.timestamp), readPosition(head)),
           ];
           const rows = await planReconciledNotifications(
             env.DB,
@@ -5590,15 +5590,19 @@ async function recordLoanParticipant(
   wallet: string,
   role: 'lender' | 'borrower',
   fromAt: number,
+  pos: RowPosition,
 ): Promise<void> {
   const w = participantWallet(wallet);
   if (w === null) return;
+  // #3921 B2 — a participation row is written once, by the event that made
+  // the wallet a holder, and never changes: it names that event.
   await env.DB.prepare(
     `INSERT OR IGNORE INTO loan_participants
-       (chain_id, loan_id, wallet, role, from_at)
-     VALUES (?, ?, ?, ?, ?)`,
+       (chain_id, loan_id, wallet, role, from_at,
+        last_event_block, last_event_tx_index, last_event_log_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(chainId, loanId, w, role, fromAt)
+    .bind(chainId, loanId, w, role, fromAt, ...lastEventBinds(pos))
     .run();
 }
 
@@ -5669,6 +5673,7 @@ async function insertInitiatedLoan(
   insert: D1PreparedStatement,
   participants: readonly { wallet: string | null | undefined; role: 'lender' | 'borrower' }[],
   fromAt: number,
+  pos: RowPosition,
 ): Promise<boolean> {
   const seeds: D1PreparedStatement[] = [];
   for (const { wallet, role } of participants) {
@@ -5677,10 +5682,11 @@ async function insertInitiatedLoan(
     seeds.push(
       env.DB.prepare(
         `INSERT OR IGNORE INTO loan_participants
-           (chain_id, loan_id, wallet, role, from_at)
-         SELECT ?, ?, ?, ?, ?
+           (chain_id, loan_id, wallet, role, from_at,
+            last_event_block, last_event_tx_index, last_event_log_index)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?
           WHERE NOT EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ?)`,
-      ).bind(chainId, loanId, w, role, fromAt, chainId, loanId),
+      ).bind(chainId, loanId, w, role, fromAt, ...lastEventBinds(pos), chainId, loanId),
     );
   }
   const results = await env.DB.batch([...seeds, insert]);
@@ -5930,6 +5936,7 @@ export async function processLoanLogs(
             { wallet: borrowerOwner, role: 'borrower' },
           ],
           blockAt,
+          eventPosition(log),
         );
         if (freshInsert) newLoans++;
         continue;
@@ -6070,6 +6077,7 @@ export async function processLoanLogs(
             { wallet: borrowerOwner, role: 'borrower' },
           ],
           blockAt,
+          eventPosition(log),
         );
         if (freshInsert) newLoans++;
         continue;
@@ -6128,6 +6136,7 @@ export async function processLoanLogs(
           { wallet: borrower, role: 'borrower' },
         ],
         blockAt,
+        eventPosition(log),
       );
       if (freshInsert) newLoans++;
     } else if (log.eventName === 'LoanRepaid') {
@@ -6167,8 +6176,9 @@ export async function processLoanLogs(
            (chain_id, loan_id, order_hash, committed_by,
             maker_amount, taker_amount, deadline,
             committed_at, committed_tx_hash,
-            committed_block, committed_log_index)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            committed_block, committed_log_index,
+            last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -6183,6 +6193,10 @@ export async function processLoanLogs(
           // #3205 — the point the intent opened, for its moved verdict.
           Number(log.blockNumber),
           Number(log.logIndex),
+          // #3921 B2 — the row is the commit and is replaced whole, so it
+          // names the commit (never a forward-only merge: the figures and
+          // the position must come from the same event).
+          ...lastEventBinds(eventPosition(log)),
         )
         .run();
     } else if (log.eventName === 'SwapToRepayIntentFilled') {
@@ -6338,7 +6352,7 @@ export async function processLoanLogs(
         .bind(chainId, loanId)
         .first<{ '1': number } | null>();
       if (hasListing) {
-        const refreshedGraceEnd = await _resolveGraceEnd(
+        const refreshed = await _resolveGraceEnd(
           client,
           diamond,
           loanId,
@@ -6346,10 +6360,13 @@ export async function processLoanLogs(
         );
         await env.DB.prepare(
           `UPDATE prepay_listings
-             SET grace_period_end = ?, updated_at = ?
+             SET grace_period_end = ?, updated_at = ?, ${LAST_EVENT_SET}
            WHERE chain_id = ? AND loan_id = ?`,
         )
-          .bind(refreshedGraceEnd, now, chainId, loanId)
+          // #3921 B2 — the grace end is read at the event's block (its end),
+          // so the row names that read, not the event (or nothing, when the
+          // pinned read fell back to the head).
+          .bind(refreshed.graceEnd, now, ...lastEventBinds(refreshed.at), chainId, loanId)
           .run();
       }
     } else if (log.eventName === 'SwapToRepayPartialExecuted') {
@@ -6427,7 +6444,7 @@ export async function processLoanLogs(
         // principal / collateral_amount just written at log.blockNumber.
         // #2808 — read from the contract's own listing context rather than
         // recomputed from the loan fields: the D2 loan clock moves it.
-        const refreshedGraceEnd = await _resolveGraceEnd(
+        const refreshed = await _resolveGraceEnd(
           client,
           diamond,
           loanId,
@@ -6435,10 +6452,13 @@ export async function processLoanLogs(
         );
         await env.DB.prepare(
           `UPDATE prepay_listings
-             SET grace_period_end = ?, updated_at = ?
+             SET grace_period_end = ?, updated_at = ?, ${LAST_EVENT_SET}
            WHERE chain_id = ? AND loan_id = ?`,
         )
-          .bind(refreshedGraceEnd, now, chainId, loanId)
+          // #3921 B2 — the grace end is read at the event's block (its end),
+          // so the row names that read, not the event (or nothing, when the
+          // pinned read fell back to the head).
+          .bind(refreshed.graceEnd, now, ...lastEventBinds(refreshed.at), chainId, loanId)
           .run();
       }
     } else if (log.eventName === 'CollateralAdded' || log.eventName === 'CollateralTopUpRun') {
@@ -6535,6 +6555,7 @@ export async function processLoanLogs(
         String(a.newBorrower as string),
         'borrower',
         chainTimeOf(blockTimestamps, log.blockNumber),
+        eventPosition(log),
       );
     } else if (log.eventName === 'LoanSaleOfferLinked') {
       // Rate Desk (#1129) — mark the borrower-style SALE offer so the temp
@@ -6627,6 +6648,7 @@ export async function processLoanLogs(
         String(a.newLender as string),
         'lender',
         chainTimeOf(blockTimestamps, log.blockNumber),
+        eventPosition(log),
       );
     } else if (log.eventName === 'LoanSaleCompleted' || log.eventName === 'InstantTakenOver') {
       // #3656 — an instant-market takeover moves the lender position the same
@@ -6691,6 +6713,7 @@ export async function processLoanLogs(
         newLender,
         'lender',
         chainTimeOf(blockTimestamps, log.blockNumber),
+        eventPosition(log),
       );
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
@@ -7030,7 +7053,7 @@ export async function processLoanLogs(
       // on PartialRepaid so a SQL read could surface stale
       // boundaries. The RPC read is fine on this rare hot-path
       // event. Codex P2 round-2 on PR #304.
-      const graceEnd = await _resolveGraceEnd(
+      const grace = await _resolveGraceEnd(
         client,
         diamond,
         loanId,
@@ -7091,8 +7114,9 @@ export async function processLoanLogs(
             lister, posted_at, updated_at, grace_period_end,
             block_number, tx_hash, log_index,
             conduit_key, salt, opensea_published_at, executor,
-            fee_legs_json, end_ask_price, auction_end_time, auction_mode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            fee_legs_json, end_ask_price, auction_end_time, auction_mode,
+            last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -7103,7 +7127,7 @@ export async function processLoanLogs(
           lister,
           blockAt,
           blockAt,
-          graceEnd,
+          grace.graceEnd,
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
           Number(log.logIndex),
@@ -7115,6 +7139,12 @@ export async function processLoanLogs(
           endAskPrice,
           auctionEndTime,
           auctionMode,
+          // #3921 B2 — the grace end is read at the posting's block (its
+          // end), so the row names that read (or nothing, when the pinned
+          // read fell back to the head); the posting itself stays in
+          // block_number / tx_hash / log_index. Replaced whole, so the
+          // position is bound, never merged.
+          ...lastEventBinds(grace.at),
         )
         .run();
     } else if (log.eventName === 'PrepayListingUpdated') {
@@ -7167,7 +7197,7 @@ export async function processLoanLogs(
       // backfill-INSERT case. Same reasoning as the Posted
       // handler — start_time + duration_days can drift after
       // partial repayment / auto-deduct.
-      const graceEnd = await _resolveGraceEnd(
+      const grace = await _resolveGraceEnd(
         client,
         diamond,
         loanId,
@@ -7229,7 +7259,8 @@ export async function processLoanLogs(
                block_number = ?, tx_hash = ?, log_index = ?,
                conduit_key = ?, salt = ?, opensea_published_at = ?,
                executor = ?, fee_legs_json = ?,
-               end_ask_price = ?, auction_end_time = ?, auction_mode = ?
+               end_ask_price = ?, auction_end_time = ?, auction_mode = ?,
+               ${LAST_EVENT_SET}
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -7238,7 +7269,7 @@ export async function processLoanLogs(
           conduit,
           lister,
           blockAt,
-          graceEnd,
+          grace.graceEnd,
           Number(log.blockNumber),
           String(log.transactionHash as `0x${string}`).toLowerCase(),
           Number(log.logIndex),
@@ -7250,6 +7281,8 @@ export async function processLoanLogs(
           endAskPrice,
           auctionEndTime,
           auctionMode,
+          // #3921 B2 — as at posting: the row names the grace-end read.
+          ...lastEventBinds(grace.at),
           chainId,
           loanId,
         )
@@ -7266,8 +7299,9 @@ export async function processLoanLogs(
               lister, posted_at, updated_at, grace_period_end,
               block_number, tx_hash, log_index,
               conduit_key, salt, opensea_published_at, executor,
-              fee_legs_json, end_ask_price, auction_end_time, auction_mode)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              fee_legs_json, end_ask_price, auction_end_time, auction_mode,
+              last_event_block, last_event_tx_index, last_event_log_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -7278,7 +7312,7 @@ export async function processLoanLogs(
             lister,
             blockAt,
             blockAt,
-            graceEnd,
+            grace.graceEnd,
             Number(log.blockNumber),
             String(log.transactionHash as `0x${string}`).toLowerCase(),
             Number(log.logIndex),
@@ -7290,6 +7324,7 @@ export async function processLoanLogs(
             endAskPrice,
             auctionEndTime,
             auctionMode,
+            ...lastEventBinds(grace.at),
           )
           .run();
       }
@@ -7538,7 +7573,7 @@ export async function processLoanLogs(
         ).results ?? [];
         const transferAt = chainTimeOf(blockTimestamps, log.blockNumber);
         for (const m of sideMatches) {
-          await recordLoanParticipant(env, chainId, m.loan_id, to, m.role, transferAt);
+          await recordLoanParticipant(env, chainId, m.loan_id, to, m.role, transferAt, eventPosition(log));
         }
       }
     }
@@ -7862,7 +7897,7 @@ async function _resolveGraceEnd(
    *  (undefined) to read `latest` — viem treats an absent `blockNumber` as
    *  the latest head. */
   blockNumber?: bigint,
-): Promise<number> {
+): Promise<{ graceEnd: number; at: RowPosition }> {
   try {
     const ctx = (await client.readContract({
       address: diamond,
@@ -7871,7 +7906,12 @@ async function _resolveGraceEnd(
       args: [BigInt(loanId), BigInt(Math.floor(Date.now() / 1000))],
       blockNumber,
     })) as { graceEnd: bigint };
-    return Number(ctx.graceEnd);
+    // #3921 B2 — where the figure came from: the pinned block, or (the
+    // `latest` fallback) a block this read cannot name.
+    return {
+      graceEnd: Number(ctx.graceEnd),
+      at: blockNumber === undefined ? UNKNOWN_POSITION : readPosition(blockNumber),
+    };
   } catch (err) {
     // #763 (Codex #767 P2) — a block-pinned read can fail when the RPC can't
     // serve HISTORICAL state for `blockNumber` on a catch-up (non-archive /
@@ -7887,7 +7927,8 @@ async function _resolveGraceEnd(
       return _resolveGraceEnd(client, diamond, loanId);
     }
     console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, redactedError(err));
-    return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
+    // Sentinel — the frontend treats 0 as "unknown grace end".
+    return { graceEnd: 0, at: UNKNOWN_POSITION };
   }
 }
 
@@ -8242,6 +8283,7 @@ export function _verifiedParticipantStatements(
   loanId: number,
   holders: { lender: string | null; borrower: string | null },
   observedAt: number,
+  readAt: RowPosition,
 ): D1PreparedStatement[] {
   const out: D1PreparedStatement[] = [];
   for (const [role, raw] of [
@@ -8253,8 +8295,9 @@ export function _verifiedParticipantStatements(
     // Both forms static, for `sqlSchemaGuard` (see `notificationInsertStatement`).
     const sql =
       role === 'lender'
-        ? `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
-         SELECT ?1, ?2, ?3, ?4, ?5
+        ? `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at,
+           last_event_block, last_event_tx_index, last_event_log_index)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
           WHERE NOT EXISTS (
             SELECT 1 FROM loan_participants
              WHERE chain_id = ?1 AND loan_id = ?2 AND wallet = ?3 AND role = ?4
@@ -8263,8 +8306,9 @@ export function _verifiedParticipantStatements(
             SELECT 1 FROM loans
              WHERE chain_id = ?1 AND loan_id = ?2 AND LOWER(lender_current_owner) = ?3
           )`
-        : `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
-         SELECT ?1, ?2, ?3, ?4, ?5
+        : `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at,
+           last_event_block, last_event_tx_index, last_event_log_index)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
           WHERE NOT EXISTS (
             SELECT 1 FROM loan_participants
              WHERE chain_id = ?1 AND loan_id = ?2 AND wallet = ?3 AND role = ?4
@@ -8273,7 +8317,7 @@ export function _verifiedParticipantStatements(
             SELECT 1 FROM loans
              WHERE chain_id = ?1 AND loan_id = ?2 AND LOWER(borrower_current_owner) = ?3
           )`;
-    out.push(env.DB.prepare(sql).bind(chainId, loanId, w, role, observedAt));
+    out.push(env.DB.prepare(sql).bind(chainId, loanId, w, role, observedAt, ...lastEventBinds(readAt)));
   }
   return out;
 }

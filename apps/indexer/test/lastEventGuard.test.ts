@@ -28,7 +28,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { LAST_EVENT_SET } from '../src/lastEvent';
+import { LAST_EVENT_SET, LAST_EVENT_UPSERT_SET } from '../src/lastEvent';
 import rebuildKeep from '../src/reorgRebuildKeep.json';
 
 const REPO = new URL('../../../', import.meta.url);
@@ -131,12 +131,6 @@ const CLASSIFICATION: Record<string, Classification> = {
  * handler group's change adds its migration and removes its tables here.
  */
 const PENDING = new Set<string>([
-  // The loan side tables.
-  'loan_lifecycle_state',
-  'rental_rights',
-  'swap_to_repay_intents',
-  'prepay_listings',
-  'loan_participants',
   // The signed offer book.
   'signed_offers',
   // The reward and recycling ledgers.
@@ -250,7 +244,10 @@ function refusal(w: Write): string | null {
   const columns = /^[^(]*\(([^)]*)\)/.exec(w.sql)?.[1] ?? '';
   const named = LAST_EVENT_COLUMNS.every((c) => new RegExp(`\\b${c}\\b`).test(columns));
   if (!named) return 'an INSERT whose column list does not name the three last-event columns';
-  if (/\bDO\s+UPDATE\b/i.test(w.sql) && !sets) return 'an upsert whose DO UPDATE does not set ${LAST_EVENT_SET}';
+  const upsertSets = sets || w.sql.includes('${LAST_EVENT_UPSERT_SET}');
+  if (/\bDO\s+UPDATE\b/i.test(w.sql) && !upsertSets) {
+    return 'an upsert whose DO UPDATE does not set ${LAST_EVENT_UPSERT_SET} (or ${LAST_EVENT_SET})';
+  }
   return null;
 }
 
@@ -345,11 +342,38 @@ describe('every derived row names the event that last changed it (#3921 B2)', ()
     expect(at()).toEqual([10, null, null]); // a read at the block comes after its logs
     set.run(6, 10, 4, 40);
     expect(at()).toEqual([10, null, null]); // …so a log of that block does not replace it
-    set.run(7, null, null, null);
-    expect(at()).toEqual([10, null, null]); // an unknown position never replaces a known one
-    set.run(8, 11, 0, 0);
+    set.run(7, 11, 0, 0);
     expect(at()).toEqual([11, 0, 0]); // a later block does
-    expect((t.prepare('SELECT v FROM r').get() as { v: number }).v).toBe(8); // the write itself always lands
+    // A write whose figures came from a source it cannot name makes the row
+    // unknown, so the row never names a source that did not produce it…
+    set.run(8, null, null, null);
+    expect(at()).toEqual([null, null, null]);
+    // …and a stored unknown gives way to any known position.
+    set.run(9, 3, 0, 0);
+    expect(at()).toEqual([3, 0, 0]);
+    expect((t.prepare('SELECT v FROM r').get() as { v: number }).v).toBe(9); // the write itself always lands
+  });
+
+  it('the upsert form follows the same rule (#3921 B2)', () => {
+    const t = new DatabaseSync(':memory:');
+    t.exec(`CREATE TABLE r (id INTEGER PRIMARY KEY, v INTEGER,
+      last_event_block INTEGER, last_event_tx_index INTEGER, last_event_log_index INTEGER)`);
+    const up = t.prepare(
+      `INSERT INTO r (id, v, last_event_block, last_event_tx_index, last_event_log_index) VALUES (1, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET v = excluded.v, ${LAST_EVENT_UPSERT_SET}`,
+    );
+    const at = () =>
+      Object.values(
+        t.prepare(`SELECT last_event_block, last_event_tx_index, last_event_log_index FROM r`).get() as object,
+      );
+    up.run(1, 10, 2, 30);
+    expect(at()).toEqual([10, 2, 30]);
+    up.run(2, 9, 5, 99);
+    expect(at()).toEqual([10, 2, 30]);
+    up.run(3, 10, 3, 31);
+    expect(at()).toEqual([10, 3, 31]);
+    up.run(4, null, null, null);
+    expect(at()).toEqual([null, null, null]);
   });
 
   it('refuses the shapes it is meant to refuse', () => {

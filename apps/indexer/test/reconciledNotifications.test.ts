@@ -367,7 +367,7 @@ describe('participation the repair writes for a verified holder (#2195, #2636 r7
     const holders = { lender: NEW_LENDER, borrower: null };
     return h.d1.batch([
       ..._verifiedHolderStatements(env, CHAIN, loanId, holders, 99, { block: 500, txIndex: null, logIndex: null }),
-      ..._verifiedParticipantStatements(env, CHAIN, loanId, holders, 1_700_000_000),
+      ..._verifiedParticipantStatements(env, CHAIN, loanId, holders, 1_700_000_000, { block: 500, txIndex: null, logIndex: null }),
     ]);
   };
   const participants = (h: SqliteD1, loanId: number) =>

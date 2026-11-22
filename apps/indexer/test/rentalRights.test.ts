@@ -118,6 +118,11 @@ describe('rental rights table (#3882)', () => {
     await recordRentalRights(t.d1, CHAIN, [ev({ loanId: 1, block: 30, user: ZERO, quantity: 0n })], NOW);
     await recordRentalRights(t.d1, CHAIN, [ev({ loanId: 1, block: 10 }), ev({ loanId: 1, block: 30, log: 0, user: RENTER2 })], NOW);
     expect(t.rows()[0]).toMatchObject({ user: ZERO, quantity: '0', block_number: 30 });
+    // #3921 B2 — the row names the update that set it, and the older replay
+    // did not move that back either.
+    expect(t.rows()[0]).toMatchObject({ last_event_block: 30, last_event_tx_index: null, last_event_log_index: 0 });
+    await recordRentalRights(t.d1, CHAIN, [{ ...ev({ loanId: 1, block: 31, log: 4 }), transactionIndex: 2 }], NOW);
+    expect(t.rows()[0]).toMatchObject({ last_event_block: 31, last_event_tx_index: 2, last_event_log_index: 4 });
     // In one batch out of order, the later log still wins.
     const out = rentalRightRows([ev({ loanId: 5, block: 9, log: 2, user: RENTER2 }), ev({ loanId: 5, block: 9, log: 1 })]);
     expect(out.map((r) => r.user)).toEqual([RENTER, RENTER2]);
