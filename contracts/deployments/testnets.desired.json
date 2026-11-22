@@ -45,35 +45,116 @@
   "records": {
     "keeperAddress": "keeper"
   },
-  "_settingsSource": "Testnet settings copy the deployment being replaced (design ruling 2026-11-22, item 6b): read from the three live 2026-11-16 Diamonds on 2026-11-22. Settings those Diamonds leave at their defaults (service capacity, its escrow, the arming fee, the capacity curves, the priority-routing perk) stay dark here too. A mainnet desired file may hold no carried row.",
+  "_settingsSource": "Owner decision 2026-11-22 (Raaj, via the coordinator): the next testnet deploys must exercise every feature, so every switch is on, with the figures the 2026-11-04 deploy used (read from its archived Diamonds). A mainnet desired file may hold no row carried from a replaced deployment.",
+  "serviceCapacityEscrow": "all",
   "settings": [
     {
       "chains": "all",
       "setter": "setPartialFillEnabled(bool)",
       "getter": "getPartialFillEnabled()(bool)",
       "value": "true",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
     },
     {
       "chains": "all",
       "setter": "setRiskAccessGateEnabled(bool)",
       "getter": "getRiskAccessGateEnabled()(bool)",
       "value": "true",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
     },
     {
       "chains": "all",
       "setter": "setAutoExtendEnabled(bool)",
       "getter": "getAutoExtendEnabled()(bool)",
       "value": "true",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
     },
     {
       "chains": "all",
       "setter": "setLenderIntentEnabled(bool)",
       "getter": "isLenderIntentEnabled()(bool)",
       "value": "true",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setCapacityCurve(uint8,uint256,uint256,uint256,uint256)",
+      "args": [
+        "0",
+        "20000000000000000000",
+        "5555555555555556",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "getter": "getCapacityCurve(uint8)((uint256,uint256,uint256,uint256,uint64,uint64))",
+      "getterArgs": [
+        "0"
+      ],
+      "expect": [
+        "20000000000000000000",
+        "5555555555555556",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Solver capacity curve: free tier, free rate per second, bond at 4x, class cost"
+    },
+    {
+      "chains": "all",
+      "setter": "setCapacityCurve(uint8,uint256,uint256,uint256,uint256)",
+      "args": [
+        "1",
+        "60000000000000000000",
+        "16666666666666667",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "getter": "getCapacityCurve(uint8)((uint256,uint256,uint256,uint256,uint64,uint64))",
+      "getterArgs": [
+        "1"
+      ],
+      "expect": [
+        "60000000000000000000",
+        "16666666666666667",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Keeper capacity curve"
+    },
+    {
+      "chains": "all",
+      "setter": "setArmingFeeRate(uint256)",
+      "getter": "getArmingFee()(uint256,uint256)",
+      "value": "20000000000000000",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "2% arming fee (1e18 = the whole newly armed principal)"
+    },
+    {
+      "chains": "all",
+      "setter": "setServiceCapacityEnabled(bool)",
+      "getter": "isServiceCapacityEnabled()(bool)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setPerkConfig(uint256,uint256,uint32)",
+      "args": [
+        "1",
+        "2000000000000000000",
+        "0"
+      ],
+      "getter": "getPerkConfig(uint256)(uint256,uint32,uint256)",
+      "getterArgs": [
+        "1"
+      ],
+      "expect": [
+        "2000000000000000000",
+        "0"
+      ],
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Perk 1, priority routing: 2 VPFI a credit, counted"
     },
     {
       "chains": [
@@ -82,7 +163,8 @@
       "setter": "setFeeEntitlementEnabled(bool)",
       "getter": "getFeeEntitlementConfig()(bool,uint256,uint256)",
       "value": "true",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Refused on a mirror by design"
     },
     {
       "chains": [
@@ -90,8 +172,8 @@
       ],
       "setter": "setRewardGraceSeconds(uint64)",
       "getter": "getRewardGraceSeconds()(uint64)",
-      "value": "14400",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "value": "43200",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
     },
     {
       "chains": [
@@ -100,7 +182,7 @@
       "setter": "setRewardRemittanceKeeper(address)",
       "getter": "getRewardRemittanceKeeper()(address)",
       "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B",
-      "source": "carried from the deployment being replaced, not an owner decision"
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
     }
   ],
   "sanctionsClearance": {

@@ -51,7 +51,7 @@ export const CARRIED = 'carried from the deployment being replaced, not an owner
 const ROLE_RE = /^[A-Z][A-Z0-9_]*_ROLE$/;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const SIG_RE = /^[a-zA-Z_][a-zA-Z0-9_]*\([a-z0-9,\[\]]*\)$/;
-const GETTER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*\(\)\([a-z0-9,\[\]]+\)$/;
+const GETTER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*\([a-z0-9,\[\]]*\)\([a-z0-9,\[\]()]+\)$/;
 
 /** Every `*_ENABLED` flag the keeper's environment type names. */
 export function keeperFlags(root = REPO_ROOT) {
@@ -68,6 +68,10 @@ export function termsVersions(root = REPO_ROOT) {
   }
   return out;
 }
+
+/** A setting's setter arguments, getter arguments and expected read-back words. */
+export const settingArgs = (s) => s.args ?? (s.value === undefined ? [] : [s.value]);
+export const settingExpect = (s) => s.expect ?? (s.value === undefined ? [] : [s.value]);
 
 const canonicalOf = (d) => Object.entries(d.chains).find(([, c]) => c.role === 'canonical')?.[0];
 const settingChains = (s, d) => (s.chains === 'all' ? Object.keys(d.chains) : s.chains);
@@ -116,7 +120,9 @@ export function validate(d, { flags, terms }) {
     const where = `settings[${i}] ${s.setter ?? ''}`;
     if (!SIG_RE.test(s.setter ?? '')) p.push(`${where}: setter must be a signature like setX(bool)`);
     if (!GETTER_RE.test(s.getter ?? '')) p.push(`${where}: getter must be a signature with its return, like getX()(bool)`);
-    if (typeof s.value !== 'string' || !s.value || /[#'"`$\\\s]/.test(s.value)) p.push(`${where}: value must be one plain word`);
+    const words = [...settingArgs(s), ...(s.getterArgs ?? []), ...settingExpect(s)];
+    if (!settingArgs(s).length || !settingExpect(s).length) p.push(`${where}: needs value, or args and expect`);
+    if (words.some((w) => typeof w !== 'string' || !w || /[#'"`$\\\s(),]/.test(w))) p.push(`${where}: each value must be one plain word`);
     if (typeof s.source !== 'string' || s.source.length < 10) p.push(`${where}: source must say where the value comes from (an owner decision, or "${CARRIED}")`);
     else if (s.source === CARRIED && d.network === 'mainnet') p.push(`${where}: a mainnet value is the owner's to decide; a carried row is refused`);
     const on = s.chains === 'all' ? slugs : s.chains;
@@ -131,6 +137,10 @@ export function validate(d, { flags, terms }) {
     if ((list ?? []).length && !(list ?? []).includes('KEEPER_ENABLED')) p.push(`keeper.armed.${s}: KEEPER_ENABLED is needed for any pass to run`);
   }
 
+  if (d.serviceCapacityEscrow !== undefined) {
+    const e = d.serviceCapacityEscrow;
+    if (e !== 'all' && !(Array.isArray(e) && e.every((c) => slugs.includes(c)))) p.push('serviceCapacityEscrow must be "all" or a list of the file\'s chains');
+  }
   if (d.sanctionsClearance !== undefined) {
     const { attestor, timelocks } = d.sanctionsClearance ?? {};
     if (!slugs.includes(attestor)) p.push('sanctionsClearance.attestor must be one of the file\'s chains');
@@ -260,12 +270,24 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
     }
   }
 
+  const escrowOn = d.serviceCapacityEscrow === 'all' ? ordered : d.serviceCapacityEscrow ?? [];
+  if (escrowOn.length) say('Bind the service capacity deposit escrow, record it, read it back (guide 5.6).');
+  for (const s of escrowOn) {
+    cmd(s, `${on(s)} forge script script/BindServiceCapacityEscrow.s.sol --rpc-url "$R" --broadcast`);
+    cmd(s, `${on(s)} forge script script/BindServiceCapacityEscrow.s.sol --sig 'record()' --rpc-url "$R"`);
+    cmd(s, `${on(s)} test "$(cast call "$D" 'getServiceCapacityEscrow()(address,uint64,uint256)' --rpc-url "$R" | head -1)" != 0x0000000000000000000000000000000000000000`);
+  }
+
   say('Settings profile: applied, then read back (guide 5.6).');
   for (const s of ordered) {
     for (const st of d.settings ?? []) {
       if (!settingChains(st, d).includes(s)) continue;
-      cmd(s, `${on(s)} vk_cast_send ADMIN "$D" '${st.setter}' ${st.value} --rpc-url "$R"`);
-      cmd(s, `${on(s)} test "$(cast call "$D" '${st.getter}' --rpc-url "$R" | cut -d' ' -f1 | tr 'A-F' 'a-f')" = "${st.value.toLowerCase()}"`);
+      const exp = settingExpect(st);
+      const gargs = (st.getterArgs ?? []).map((a) => ` ${a}`).join('');
+      cmd(s, `${on(s)} vk_cast_send ADMIN "$D" '${st.setter}' ${settingArgs(st).join(' ')} --rpc-url "$R"`);
+      // The read-back compares the first words of the getter's output, with
+      // cast's [1e18] annotations, tuple brackets and commas removed.
+      cmd(s, `${on(s)} test "$(cast call "$D" '${st.getter}'${gargs} --rpc-url "$R" | sed 's/ \\[[^]]*\\]//g' | tr -d '(),' | tr -s ' \\n' '  ' | cut -d' ' -f1-${exp.length} | tr 'A-F' 'a-f')" = "${exp.join(' ').toLowerCase()}"`);
     }
   }
 

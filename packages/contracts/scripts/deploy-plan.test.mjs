@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  CARRIED,
   CONTRACTS_DIR,
   buildPlan,
   derivedLanes,
@@ -66,7 +67,9 @@ test('validation refuses the mistakes the file invites', () => {
     [(d) => { d.records.keeperAddress = 'nobody'; }, /not under roles.bots/],
     [(d) => { d.sanctionsClearance.timelocks = ['bnb-testnet']; }, /sanctionsClearance.timelocks/],
     [(d) => { delete d.settings[0].source; }, /source must say where the value comes from/],
-    [(d) => { d.network = 'mainnet'; }, /a carried row is refused/],
+    [(d) => { d.network = 'mainnet'; d.settings[0].source = CARRIED; }, /a carried row is refused/],
+    [(d) => { d.settings[4].expect = []; }, /needs value, or args and expect/],
+    [(d) => { d.settings[4].args[1] = '1,2'; }, /each value must be one plain word/],
   ];
   for (const [mutate, re] of cases) {
     const d = real();
@@ -110,7 +113,7 @@ test('the canonical chain closes, finalizes and broadcasts the day before the ar
   const lines = plan().split('\n');
   const at = (re) => lines.findIndex((l) => re.test(l));
   const close = at(/'closeDay\(uint256\)'/);
-  const wait = at(/^clock \+14401$/);
+  const wait = at(/^clock \+43201$/);
   const fin = at(/'finalizeDay\(uint256\)'/);
   const bc = at(/'broadcastGlobal\(uint256\)' "\$P" --value "\$F"/);
   assert.ok(at(/^step base-sepolia launch/) < close && close < wait && wait < fin && fin < bc && bc < at(/^relay /));
@@ -123,6 +126,21 @@ test('the sanctions clearance is rewired attestor first, after every chain is co
   assert.deepEqual(runs.map(([l]) => l.split(' ')[1]), ['bnb-testnet', 'base-sepolia', 'arb-sepolia']);
   assert.ok(runs.every(([l]) => /SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID=97 SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS=84532,421614 /.test(l)));
   assert.ok(runs[0][1] > lines.indexOf('step bnb-testnet configure'));
+});
+
+test('a setting with several arguments is sent whole and read back by its first words', () => {
+  const lines = plan().split('\n').filter((l) => l.startsWith('cmd arb-sepolia ') && l.includes('CapacityCurve'));
+  assert.equal(lines.length, 4);
+  assert.match(lines[2], /'setCapacityCurve\(uint8,uint256,uint256,uint256,uint256\)' 1 60000000000000000000 16666666666666667 10000000000000000000000 1000000000000000000 /);
+  assert.match(lines[3], /'getCapacityCurve\(uint8\)\(\(uint256,uint256,uint256,uint256,uint64,uint64\)\)' 1 --rpc-url/);
+  assert.match(lines[3], /cut -d' ' -f1-4 \| tr 'A-F' 'a-f'\)" = "60000000000000000000 16666666666666667 10000000000000000000000 1000000000000000000"$/);
+});
+
+test('the service capacity escrow is bound and recorded before the settings switch the channel on', () => {
+  const lines = plan().split('\n');
+  const bind = lines.findIndex((l) => l.startsWith('cmd bnb-testnet ') && l.includes('BindServiceCapacityEscrow.s.sol --rpc-url'));
+  const enable = lines.findIndex((l) => l.startsWith('cmd bnb-testnet ') && l.includes("'setServiceCapacityEnabled(bool)' true"));
+  assert.ok(bind > 0 && bind < enable);
 });
 
 test('every setting is applied and read back on its own chains only', () => {
