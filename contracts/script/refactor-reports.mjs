@@ -527,8 +527,12 @@ export function ambiguousErrors(units, manifest, ctx = makeContext(units, manife
       if (n.nodeType === 'RevertStatement') err = errorOf(n.errorCall, ctx);
       else if (n.nodeType === 'FunctionCall' && n.expression?.name === 'require' && n.arguments?.[1]?.nodeType === 'FunctionCall') err = errorOf(n.arguments[1], ctx);
       if (!err || (err.parameters?.parameters ?? []).length) return;
-      if (!sites.has(err.id)) sites.set(err.id, { err, ids: new Set() });
-      sites.get(err.id).ids.add(n.id);
+      // Grouped by what the caller receives (the ABI signature, so the
+      // selector), not by declaration: two `Bad()` errors declared in
+      // different places revert with the same data.
+      const sig = errorAbiSig(err, ctx.byId);
+      if (!sites.has(sig)) sites.set(sig, { err, ids: new Set() });
+      sites.get(sig).ids.add(n.id);
     });
     for (const { err, ids } of sites.values()) if (ids.size > 1) ambiguous.push(`${e.key} :: ${errorSig(err)} x${ids.size}`);
   }

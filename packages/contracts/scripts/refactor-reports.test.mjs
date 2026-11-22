@@ -67,6 +67,7 @@ test('swallowed failures: a catch or failed low-level call that neither reverts 
 
 test('ambiguous errors: two raise sites of one parameterless error in one entry are listed, one is not', () => {
   assert.ok(has('ambiguous-errors', 'ambiguous AFacet.twoSites(uint256) :: Bad() x2'));
+  assert.ok(has('ambiguous-errors', 'ambiguous AFacet.twoDeclarations(uint256) :: Bad() x2'), 'two declarations of Bad() revert with the same data');
   assert.ok(!has('ambiguous-errors', 'ambiguous AFacet.oneSite('));
 });
 

@@ -8,6 +8,10 @@ interface IExt {
     function f() external;
 }
 
+library LibErr {
+    error Bad();
+}
+
 library LibLoud {
     /// @custom:event-category state-change/loan-mutation
     event Did(uint256 x);
@@ -136,6 +140,12 @@ contract AFacet {
     function twoSites(uint256 a) external {
         if (a == 1) revert Bad();
         if (a == 2) revert Bad();
+        emit Skipped();
+    }
+
+    function twoDeclarations(uint256 a) external {
+        if (a == 1) revert Bad();
+        if (a == 2) revert LibErr.Bad();
         emit Skipped();
     }
 

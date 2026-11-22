@@ -144,12 +144,47 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
     if (!prev || (prev.conditional && !conditional)) calls.set(l, { conditional });
   };
 
+  // The continuations the placeholders of the modifiers being read run.
+  const placeholders = [];
+  /**
+   * One call of a function with its modifiers, as solidity runs it: each
+   * modifier's body in order, its placeholder running the next modifier (and
+   * the last one's, the function body) under whatever condition the
+   * placeholder is reached in, then the rest of the modifier after it. A
+   * modifier that may skip its placeholder therefore makes the body
+   * conditional, and a call out after the placeholder is read before control
+   * returns to the caller. Modifier bodies are exempt only for their own
+   * storage writes. Returns true once a state change is found.
+   */
+  const invoke = (fnNode, conditional, depth, bodyInModifier) => {
+    const mods = (fnNode.modifiers ?? []).map((m) => {
+      const md = ctx.byId.get(m.modifierName?.referencedDeclaration);
+      return md?.nodeType === 'ModifierDefinition' ? { m, body: mostDerived(md, lineage, ctx)?.body } : undefined;
+    }).filter(Boolean);
+    const runFrom = (i, cond) => {
+      if (i === mods.length) return visitAll(fnNode.body?.statements, cond, depth, bodyInModifier) === true;
+      const { m, body } = mods[i];
+      for (const a of m.arguments ?? []) if (visit(a, cond, depth, true) === true) return true;
+      if (!body) return runFrom(i + 1, cond);
+      placeholders.push((c) => runFrom(i + 1, c));
+      const r = visitAll(body.statements, cond, depth + 1, true);
+      placeholders.pop();
+      return r === true;
+    };
+    return runFrom(0, conditional);
+  };
+
   // `visit` returns true once a state change is found.
   const visit = (n, conditional, depth, inModifier) => {
     if (stoppedAt) return true;
     if (!n || typeof n !== 'object') return false;
     const t = n.nodeType;
-    if (t === 'PlaceholderStatement') return 'placeholder';
+    if (t === 'PlaceholderStatement') {
+      // The placeholder runs what the modifier wraps (the next modifier, or
+      // the function body), under the conditions it is reached in.
+      const k = placeholders[placeholders.length - 1];
+      return k ? k(conditional) : 'placeholder';
+    }
     if (t === 'FunctionDefinition' || t === 'ModifierDefinition') return false;
     if (t === 'InlineAssembly') {
       let store = false;
@@ -239,19 +274,10 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         if (seen.has(target.id)) return false;
         seen.add(target.id);
         helperDepth++;
-        // The helper's own modifiers run first, up to their placeholders,
-        // under the same rules as the entry's.
-        for (const m of target.modifiers ?? []) {
-          const md = ctx.byId.get(m.modifierName?.referencedDeclaration);
-          if (md?.nodeType !== 'ModifierDefinition') continue;
-          for (const a of m.arguments ?? []) if (visit(a, conditional, depth + 1, true) === true) return (helperDepth--, seen.delete(target.id), true);
-          const derived = mostDerived(md, lineage, ctx);
-          if (derived?.body && visitAll(derived.body.statements, conditional, depth + 1, true) === true) return (helperDepth--, seen.delete(target.id), true);
-        }
-        const r = visitAll(target.body.statements, conditional, depth + 1, inModifier);
+        const r = invoke(target, conditional, depth + 1, inModifier);
         helperDepth--;
         seen.delete(target.id);
-        return r === true;
+        return r;
       }
       if (!inModifier && e?.nodeType === 'MemberAccess' && ['push', 'pop'].includes(e.memberName) && isStorageType(e.expression)) {
         stoppedAt = `a storage ${e.memberName}`;
@@ -286,16 +312,8 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
     return false;
   };
 
-  const modifiers = [];
-  for (const m of fn.modifiers ?? []) {
-    const md = ctx.byId.get(m.modifierName?.referencedDeclaration);
-    modifiers.push(m.modifierName?.name ?? md?.name ?? '?');
-    if (md?.nodeType !== 'ModifierDefinition') continue;
-    const derived = mostDerived(md, lineage, ctx);
-    for (const a of m.arguments ?? []) visit(a, false, 0, true);
-    if (derived?.body) visitAll(derived.body.statements, false, 1, true);
-  }
-  visitAll(fn.body?.statements, false, 0, false);
+  const modifiers = (fn.modifiers ?? []).map((m) => m.modifierName?.name ?? ctx.byId.get(m.modifierName?.referencedDeclaration)?.name ?? '?');
+  invoke(fn, false, 0, false);
   return { calls, modifiers, stoppedAt, unseen };
 }
 

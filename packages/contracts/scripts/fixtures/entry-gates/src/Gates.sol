@@ -149,6 +149,32 @@ contract GFacet is Guarded {
         LibGate.requireNotFlagged(msg.sender);
     }
 
+    function viaPostambleHelper() external nonReentrant {
+        _emptyThenPoke();
+        LibGate.requireNotFlagged(msg.sender);
+        LibGate.s().x = 11;
+    }
+
+    function _emptyThenPoke() internal pokesAfter {}
+
+    function viaMaybeHelper() external nonReentrant {
+        _screenMaybe();
+        LibGate.s().x = 12;
+    }
+
+    function _screenMaybe() internal view maybe {
+        LibGate.requireNotFlagged(msg.sender);
+    }
+
+    modifier pokesAfter() {
+        _;
+        other.poke();
+    }
+
+    modifier maybe() {
+        if (LibGate.s().x == 0) _;
+    }
+
     modifier pokesFirst() {
         other.poke();
         _;

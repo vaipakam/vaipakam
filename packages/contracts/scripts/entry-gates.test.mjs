@@ -51,10 +51,14 @@ test('reading: modifiers, calls before the first state change, and where it stop
   const helperMod = carried('viaModifiedHelper');
   assert.match(helperMod.stoppedAt, /external call \(IOther\.poke\)/, 'a helper\'s modifier runs before its body');
   assert.ok(!helperMod.calls.has(FLAG));
+  const post = carried('viaPostambleHelper');
+  assert.match(post.stoppedAt, /external call \(IOther\.poke\)/, 'a helper modifier\'s code after the placeholder runs before the caller resumes');
+  assert.ok(!post.calls.has(FLAG));
+  assert.equal(carried('viaMaybeHelper').calls.get(FLAG).conditional, true, 'a modifier that may skip its placeholder makes the helper body conditional');
 });
 
 test('the gate check reports the entry and the rule, and passes it once given the check (§10.18)', () => {
-  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaModifiedHelper', 'writesFirst', 'writesThroughPointer']);
+  assert.deepEqual(flagged({ rules: [rule()] }), ['branchOnly', 'externalFirst', 'externalWithOptionsFirst', 'modifierCallsOut', 'selfMutateFirst', 'viaHelperEarlyReturn', 'viaHost', 'viaMaybeHelper', 'viaModifiedHelper', 'viaPostambleHelper', 'writesFirst', 'writesThroughPointer']);
   const f = run({ rules: [rule()] }).findings.find((x) => x.entry.startsWith('GFacet.writesFirst'));
   assert.equal(f.rule, 'screen-flagged');
   assert.match(f.why, /none of LibGate\.requireNotFlagged before a storage write/);
