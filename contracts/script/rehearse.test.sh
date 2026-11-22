@@ -101,12 +101,36 @@ echo "$OUT" | grep -q "added outside the scratch folder: contracts/deployments/b
 rm -f "$PROBE"
 [ "$made_markers" = 1 ] && rmdir "$(dirname "$PROBE")"
 
+drive manual $'chains base-sepolia\nstep base-sepolia preflight\nmanual base-sepolia -- close the first reward day by hand'
+[ "$RC" -ne 0 ] && ok "a manual step with no command fails the run" || bad "a manual step passed"
+grep -q "not covered" "$RUNDIR/verdict.json" && ok "the verdict says the step is not covered" || bad "verdict: $(grep failedStage "$RUNDIR/verdict.json")"
+grep -q "close the first reward day by hand" "$RUNDIR/report.md" && ok "the report lists the uncovered step" || bad "report misses the uncovered step"
+[ -f "$RUNDIR/logs/001-base-sepolia-preflight.log" ] && ok "the steps before it still run" || bad "earlier steps did not run"
+
+drive norelay $'chains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia'
+[ "$RC" -ne 0 ] && grep -q "the relay between forks" "$RUNDIR/verdict.json" \
+  && ok "a relay step without the relay is not covered" || bad "relay without the relay: rc $RC"
+cat > "$WORK/bin/relay" <<'S'
+#!/usr/bin/env bash
+echo "RELAY $*"
+S
+chmod +x "$WORK/bin/relay"
+drive relay $'chains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia' RH_RELAY="$WORK/bin/relay"
+[ "$RC" -eq 0 ] && grep -q "RELAY base-sepolia http://127.0.0.1:1 arb-sepolia http://127.0.0.1:2" "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" \
+  && ok "a relay step runs the relay with both forks" || { bad "relay step: rc $RC"; echo "$OUT" | tail -5; }
+
+drive cmdmark $'chains base-sepolia\ncmd base-sepolia -- echo reached'
+[ "$RC" -ne 0 ] && ! grep -q "^reached" "$RUNDIR/logs/001-base-sepolia-cmd.log" \
+  && ok "a hand step enters rehearsal mode first (a node without the marker is refused)" || bad "a hand step ran against a node without the marker"
+
 for bad_plan in 'step base-sepolia preflight' \
   $'chains base-sepolia\nstep arb-sepolia preflight' \
   $'chains base-sepolia\nstep base-sepolia cf-app' \
   $'chains base-sepolia\nstep base-sepolia contracts --rehearse' \
   $'chains base-sepolia\nclock soon' \
   $'chains base-sepolia\nwhatever x' \
+  $'chains base-sepolia\nrelay base-sepolia arb-sepolia' \
+  $'chains base-sepolia\nmanual base-sepolia' \
   $'chains base'; do
   drive plan "$bad_plan"
   if [ "$RC" -ne 0 ] && grep -q '"failedStage": "plan"' "$RUNDIR/verdict.json" 2>/dev/null; then

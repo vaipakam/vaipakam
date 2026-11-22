@@ -22,9 +22,17 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #   cmd <chain> -- <command...>           a hand step, as its exact command
 #                                         text, run in the chain's rehearsal
 #                                         environment
+#   manual <chain> -- <what>              a step with no command yet: reported
+#                                         as not covered; the run stops there
+#                                         and the verdict is never green
+#   relay <from> <to>                     deliver pending cross-chain messages
+#                                         (RH_RELAY; not covered without it)
 #
-# #3111's desired-state file produces the plan; until then it is written by
-# hand. The plan's digest is part of the verdict.
+# The plan comes from the desired-state file (#3111), never typed by hand:
+#   node script/deploy-plan.mjs plan deployments/testnets.desired.json \
+#     --anchor today --env-file .env > /tmp/plan.txt
+# The plan's digest is part of the verdict, and the plan's first line carries
+# the desired file's hash, so the digest covers the file too.
 #
 # Stages, in order. Any failure stops the run, writes the report and a
 # failing verdict, and stops the forks:
@@ -123,6 +131,7 @@ STAGES_RUN=()
 declare -A FORK_URL FORK_BLOCK
 CHAINS=()
 STEP_LINES=()
+UNCOVERED=()
 
 log() { printf '%s\n' "$*" | rh_redact | tee -a "$LOGS/driver.log"; }
 
@@ -197,8 +206,13 @@ JSON
     echo "## Forks"
     for c in "${CHAINS[@]+"${CHAINS[@]}"}"; do echo "- $c: forked at block ${FORK_BLOCK[$c]:-not started}"; done
     echo
+    if [ "${#UNCOVERED[@]}" -gt 0 ]; then
+      echo "## Not covered (the verdict cannot be green while any remain)"
+      for u in "${UNCOVERED[@]}"; do echo "- $u"; done
+      echo
+    fi
     echo "## Not run in this rehearsal"
-    echo "- The relay between forks (#3892): cross-chain messages are not delivered."
+    [ -n "${RH_RELAY:-}" ] || echo "- The relay between forks (#3892): cross-chain messages are not delivered."
     echo "- The readback against the desired state (#3893)."
     echo "- The indexer, keeper and app against the forks, and the smoke flows (#3894, #3895, #3896)."
     echo
@@ -247,19 +261,37 @@ while IFS= read -r line || [ -n "$line" ]; do
       [ "${words[2]:-}" = "--" ] && [ "${#words[@]}" -ge 4 ] || { log "✗ plan:$lineno: cmd <chain> -- <command...>"; exit 1; }
       STEP_LINES+=("$lineno|$line")
       ;;
+    manual)
+      # A step the plan knows but has no command for yet (design section 3):
+      # reported as not covered, and the verdict is never green.
+      [ "${words[2]:-}" = "--" ] && [ "${#words[@]}" -ge 4 ] || { log "✗ plan:$lineno: manual <chain> -- <what the step does>"; exit 1; }
+      STEP_LINES+=("$lineno|$line")
+      UNCOVERED+=("plan:$lineno ${words[1]}: ${line#*-- }")
+      ;;
+    relay)
+      # Deliver every pending cross-chain message from one fork to another.
+      [ "${#words[@]}" -eq 3 ] || { log "✗ plan:$lineno: relay <from-chain> <to-chain>"; exit 1; }
+      STEP_LINES+=("$lineno|$line")
+      [ -n "${RH_RELAY:-}" ] || UNCOVERED+=("plan:$lineno relay ${words[1]} to ${words[2]}: the relay between forks is not wired into the driver yet (#3892)")
+      ;;
     *) log "✗ plan:$lineno: unknown step kind ${words[0]}"; exit 1 ;;
   esac
 done < "$PLAN"
 [ "${#CHAINS[@]}" -gt 0 ] || { log "✗ plan: no chains line"; exit 1; }
 for s in "${STEP_LINES[@]}"; do
   read -r -a words <<<"${s#*|}"
-  case "${words[0]}" in step | cmd)
-    in_set=0
-    for c in "${CHAINS[@]}"; do [ "$c" = "${words[1]}" ] && in_set=1; done
-    [ "$in_set" = 1 ] || { log "✗ plan:${s%%|*}: chain ${words[1]} is not in the chains line"; exit 1; }
+  case "${words[0]}" in step | cmd | manual | relay)
+    named=("${words[1]}")
+    [ "${words[0]}" = relay ] && named+=("${words[2]}")
+    for want in "${named[@]}"; do
+      in_set=0
+      for c in "${CHAINS[@]}"; do [ "$c" = "$want" ] && in_set=1; done
+      [ "$in_set" = 1 ] || { log "✗ plan:${s%%|*}: chain $want is not in the chains line"; exit 1; }
+    done
   esac
 done
 log "  ✓ plan: ${#STEP_LINES[@]} steps over ${CHAINS[*]} (digest $PLAN_DIGEST)"
+for u in "${UNCOVERED[@]+"${UNCOVERED[@]}"}"; do log "  ! not covered: $u"; done
 
 # The operator's .env, read as data and with every key variable left out:
 # the driver never holds a key. It needs the RPC URLs to fork from and the
@@ -364,13 +396,32 @@ for s in "${STEP_LINES[@]}"; do
       # shellcheck disable=SC2046
       rh_clock_set "$target" $(fork_urls)
       ;;
+    manual)
+      log "  → [$n] plan:$ln ${words[1]} manual step with no command: ${s#*-- }"
+      FAILED_STAGE="steps (plan:$ln not covered: a manual step with no command)"
+      exit 1
+      ;;
+    relay)
+      from="${words[1]}"; to="${words[2]}"
+      log "  → [$n] plan:$ln relay $from to $to"
+      if [ -z "${RH_RELAY:-}" ]; then
+        FAILED_STAGE="steps (plan:$ln not covered: the relay between forks, #3892)"
+        exit 1
+      fi
+      steplog="$LOGS/$(printf '%03d' "$n")-relay-$from-$to.log"
+      if ! $RH_RELAY "$from" "${FORK_URL[$from]}" "$to" "${FORK_URL[$to]}" 2>&1 | rh_redact > "$steplog"; then
+        FAILED_STAGE="steps (plan:$ln relay $from to $to)"
+        tail -20 "$steplog" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
+        exit 1
+      fi
+      ;;
     cmd)
       chain="${words[1]}"
       text="${s#*|}"; text="${text#*-- }"
       log "  → [$n] plan:$ln $chain hand step: $text"
       steplog="$LOGS/$(printf '%03d' "$n")-$chain-cmd.log"
       if ! (cd "$CONTRACTS_DIR" && REHEARSE=1 VAIPAKAM_REHEARSAL=1 VAIPAKAM_REHEARSAL_RPC_URL="${FORK_URL[$chain]}" \
-            RPC="${FORK_URL[$chain]}" bash -c "source '$SCRIPT_DIR/lib/rehearsal.sh'; $text") 2>&1 \
+            RPC="${FORK_URL[$chain]}" bash -c "source '$SCRIPT_DIR/lib/rehearsal.sh' && rehearsal_enter \"\$RPC\" '$CONTRACTS_DIR' '$RH_ENV_FILE' || exit 1; $text") 2>&1 \
           | rh_redact > "$steplog"; then
         FAILED_STAGE="steps (plan:$ln hand step)"
         tail -20 "$steplog" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
@@ -389,5 +440,6 @@ stage compare
 [ "${PIPESTATUS[0]}" -eq 0 ] || { FAILED_STAGE=compare; exit 1; }
 
 stage verdict
+if [ "${#UNCOVERED[@]}" -gt 0 ]; then FAILED_STAGE="verdict (${#UNCOVERED[@]} step(s) not covered)"; exit 1; fi
 RESULT="pass"
 exit 0

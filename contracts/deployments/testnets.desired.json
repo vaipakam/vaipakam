@@ -1,0 +1,148 @@
+{
+  "_comment": "The testnet deployment as one desired state (#3111, deploy rehearsal design sections 3 and 16). script/deploy-plan.mjs reads it and prints the plan a rehearsal runs and the real deploy follows; the readback (#3893) checks the live chains against it. Lanes and reward sources are DERIVED from the chain set, never typed. Role holders are named by the operator .env variable that carries the address (public values), so this file holds no address that could drift from the .env.",
+  "network": "testnet",
+  "chains": {
+    "base-sepolia": {
+      "role": "canonical"
+    },
+    "arb-sepolia": {
+      "role": "mirror"
+    },
+    "bnb-testnet": {
+      "role": "mirror",
+      "swapAdapters": true
+    }
+  },
+  "rewards": {
+    "anchor": null,
+    "baseRewardPoolVpfi": "100000",
+    "poolFundedFrom": "TREASURY",
+    "_why": "Owner decision 2026-11-16: 100,000 VPFI to the Base reward pool, sourced from the treasury wallet through the admin. The anchor is set per run (deploy-plan --anchor today) unless fixed here."
+  },
+  "roles": {
+    "admin": "ADMIN_ADDRESS",
+    "deployer": "DEPLOYER_ADDRESS",
+    "treasury": "TREASURY_ADDRESS",
+    "bots": {
+      "keeper": {
+        "address": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B",
+        "roles": [
+          "KEEPER_ROLE",
+          "WATCHER_ROLE",
+          "NOTIF_BILLER_ROLE"
+        ]
+      }
+    }
+  },
+  "governance": {
+    "handover": false,
+    "_why": "Owner decision for the 2026-11-16 fresh deploy, kept: testnet roles stay admin-owned (no Safe handover on testnets)."
+  },
+  "terms": {
+    "version": 4,
+    "_why": "Terms v4 (PR #3784) is set on-chain with the next deploy; the hash is read from apps/www/src/pages/terms/versions.ts."
+  },
+  "records": {
+    "keeperAddress": "keeper"
+  },
+  "settings": [
+    {
+      "chains": "all",
+      "setter": "setPartialFillEnabled(bool)",
+      "getter": "getPartialFillEnabled()(bool)",
+      "value": "true"
+    },
+    {
+      "chains": "all",
+      "setter": "setRiskAccessGateEnabled(bool)",
+      "getter": "getRiskAccessGateEnabled()(bool)",
+      "value": "true"
+    },
+    {
+      "chains": "all",
+      "setter": "setAutoExtendEnabled(bool)",
+      "getter": "getAutoExtendEnabled()(bool)",
+      "value": "true"
+    },
+    {
+      "chains": "all",
+      "setter": "setLenderIntentEnabled(bool)",
+      "getter": "isLenderIntentEnabled()(bool)",
+      "value": "true"
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setRewardGraceSeconds(uint64)",
+      "getter": "getRewardGraceSeconds()(uint64)",
+      "value": "43200"
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setRewardRemittanceKeeper(address)",
+      "getter": "getRewardRemittanceKeeper()(address)",
+      "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B"
+    }
+  ],
+  "manual": [
+    {
+      "after": "launch",
+      "chains": [
+        "base-sepolia"
+      ],
+      "what": "Close, finalize and broadcast the first reward day on the canonical chain after it launched (closeDay, finalizeDay, broadcastGlobal, or the keeper day-close pass), so each mirror launch finds the broadcast carrying the armed day. The exact calls and the reward grace wait are not yet written down (guide 5.5 step 5, UNVERIFIED)."
+    }
+  ],
+  "keeper": {
+    "armed": {
+      "base-sepolia": [
+        "KEEPER_ENABLED",
+        "GRACE_DEFAULT_ENABLED",
+        "REWARD_COMMIT_ENABLED",
+        "REWARD_REMIT_ENABLED",
+        "REWARD_SANCTIONS_KEEPER_ENABLED",
+        "REWARD_DAY_CLOSE_ENABLED",
+        "REWARD_ENTRY_SETTLE_ENABLED",
+        "STANDIN_REFRESH_ENABLED",
+        "REWARD_REMIT_ACK_ENABLED",
+        "POSITION_UPKEEP_ENABLED",
+        "BACKSTOP_FILL_ENABLED",
+        "ASSET_RANKINGS_ENABLED",
+        "PRICE_CHECKPOINT_ENABLED"
+      ],
+      "arb-sepolia": [
+        "KEEPER_ENABLED",
+        "GRACE_DEFAULT_ENABLED",
+        "REWARD_COMMIT_ENABLED",
+        "REWARD_REMIT_ENABLED",
+        "REWARD_SANCTIONS_KEEPER_ENABLED",
+        "REWARD_DAY_CLOSE_ENABLED",
+        "REWARD_ENTRY_SETTLE_ENABLED",
+        "STANDIN_REFRESH_ENABLED",
+        "REWARD_REMIT_ACK_ENABLED",
+        "POSITION_UPKEEP_ENABLED",
+        "BACKSTOP_FILL_ENABLED",
+        "ASSET_RANKINGS_ENABLED",
+        "PRICE_CHECKPOINT_ENABLED"
+      ],
+      "bnb-testnet": [
+        "KEEPER_ENABLED",
+        "GRACE_DEFAULT_ENABLED",
+        "REWARD_COMMIT_ENABLED",
+        "REWARD_REMIT_ENABLED",
+        "REWARD_SANCTIONS_KEEPER_ENABLED",
+        "REWARD_DAY_CLOSE_ENABLED",
+        "REWARD_ENTRY_SETTLE_ENABLED",
+        "STANDIN_REFRESH_ENABLED",
+        "REWARD_REMIT_ACK_ENABLED",
+        "POSITION_UPKEEP_ENABLED",
+        "BACKSTOP_FILL_ENABLED",
+        "ASSET_RANKINGS_ENABLED",
+        "PRICE_CHECKPOINT_ENABLED"
+      ]
+    }
+  }
+}
