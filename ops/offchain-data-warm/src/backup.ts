@@ -141,6 +141,16 @@ const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
   //     initiation is not in canonical history), so without the archive a
   //     D1 loss would erase the only record of what was withdrawn.
   { table: 'loan_orphans', migrationPrefix: '0065' },
+  //   - failed_tx, failed_tx_cursor, failed_tx_range (#3918, migration 0123)
+  //     — the failed transaction record: each error and explanation decoded
+  //     while the node still held the block's state, and the pass's position
+  //     and range statements. No replay recreates them. A stored explanation
+  //     is bounded at 256 KB a record by the write route, and failures are
+  //     few, but this is the table to watch against the archive's memory
+  //     ceiling.
+  { table: 'failed_tx', migrationPrefix: '0123' },
+  { table: 'failed_tx_cursor', migrationPrefix: '0123' },
+  { table: 'failed_tx_range', migrationPrefix: '0123' },
 ];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).

@@ -76,6 +76,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleRepaymentRecord, handleRepaymentRecordPreflight } from './repaymentRecord';
 import { handleIngestHealth } from './healthRoutes';
+import { handleFailedTxHealth, handleFailedTxWrite } from './failedTx';
 import { handleAssetRankings } from './assetRankings';
 import { handleAssetIssuerPowers } from './issuerPowers';
 import { handlePublicFeed, handlePublicFeedPreflight, isPublicFeedPath } from './publicFeed';
@@ -563,6 +564,24 @@ export default {
       if (req.method === 'GET') {
         return handleIngestHealth(earlyRouteEnv(env).DB, configuredScanChains(env));
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /internal/failed-tx, /health/failed-tx ──────────────────
+    // #3918 — the failed transaction record. The write is the failed-tx
+    // pass's ONE route (records, its cursor, a replaced range), under its own
+    // token, read from the raw env before any Secrets Store fetch: an
+    // unauthenticated POST is refused from the header alone. The health read
+    // is D1 only, like /health/ingest.
+    if (url.pathname === '/internal/failed-tx') {
+      if (req.method === 'POST') {
+        return handleFailedTxWrite(req, earlyRouteEnv(env).DB, env.FAILED_TX_WRITER_TOKEN, readBodyText);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname === '/health/failed-tx') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleFailedTxHealth(earlyRouteEnv(env).DB);
       return new Response('Not found', { status: 404 });
     }
 

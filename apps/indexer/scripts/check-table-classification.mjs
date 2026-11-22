@@ -97,6 +97,15 @@ export const CLASSIFICATION = {
   },
   telegram_links: { class: 'born-off-chain', reason: 'user Telegram chat links' },
   support_tickets: { class: 'born-off-chain', reason: 'durable user support requests (#1040)' },
+  failed_tx: {
+    class: 'born-off-chain',
+    reason: 'the failed transaction record (#3918): errors and explanations decoded while the node still had the state, which no replay can give back',
+  },
+  failed_tx_cursor: { class: 'born-off-chain', reason: 'the failed-tx pass\'s position per network (#3918), kept with the records it covers' },
+  failed_tx_range: {
+    class: 'born-off-chain',
+    reason: 'the failed-tx pass\'s checkpoints, gaps, audit windows and replaced ranges (#3918), kept with the records they describe',
+  },
 
   // replay-derived (the §6 clear list)
   offers: { class: 'replay-derived', reason: 'chain projection' },
