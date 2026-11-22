@@ -22,7 +22,7 @@ import {
   type Chain,
   type TransactionReceipt,
 } from 'viem';
-import { extractRevertData } from '@vaipakam/lib/decodeContractError';
+import { extractRevertData } from '@vaipakam/lib/revertData';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { ANVIL_URL } from './anvil';
 import { failingFrame, type TraceFrame } from './traceFrame';

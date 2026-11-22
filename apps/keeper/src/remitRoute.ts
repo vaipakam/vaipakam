@@ -29,7 +29,7 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { RewardRemittanceLensFacetABI } from '@vaipakam/contracts/abis';
-import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
+import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/revertData';
 import { settledChunkedRead, type BatchResult } from './batchRead';
 
 const LENS_ABI = RewardRemittanceLensFacetABI as Abi;

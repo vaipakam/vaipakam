@@ -32,6 +32,11 @@
 #       `permissionless-steps.json` (keeper-backed, user-driven, a recorded
 #       gap, ...), read from the same AST artifacts as 1c.
 #
+#   1f. Error raisers (#3916) — `packages/contracts/src/errorRaisers.json`,
+#       the "raised by" half of the error catalogue, matches what the same
+#       AST artifacts say: every entry function whose reachable code can
+#       raise each error.
+#
 #   2. Forge test suite:
 #        • default            — the deploy-sanity suite (test/deploy/*),
 #            in chunks of DEPLOY_CHUNK_SIZE suites (default 16, #2712) so
@@ -292,6 +297,23 @@ elif node "$SCRIPT_DIR/check-permissionless-steps.mjs"; then
 else
   echo "  ✗ permissionless-steps ledger failed — classify each open entry point" >&2
   echo "    in contracts/permissionless-steps.json (see above)" >&2
+  FAIL=1
+fi
+
+# ── 1f. Error raisers ─────────────────────────────────────────────────
+# The error catalogue's "raised by" lists come from the same AST artifacts
+# as 1d/1e (#3916). The catalogue itself (names, values, meanings) is checked
+# by the @vaipakam/contracts package test; this is the half that needs forge.
+echo
+echo "[predeploy 1f/4] error raisers (#3916)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/error-raisers.mjs" --check; then
+  : # the script prints its own lines
+else
+  echo "  ✗ error raisers are stale — run node contracts/script/error-raisers.mjs," >&2
+  echo "    then node packages/contracts/scripts/build-error-catalogue.mjs (or the ABI export)" >&2
   FAIL=1
 fi
 
