@@ -56,6 +56,19 @@ test('env values come from the deploy loader: quotes, inline comments, later lin
   assert.deepEqual(values, { A: '4', B: '3', D: '97,421614', E: 'exported' });
   writeFileSync(f, 'A="unterminated\n');
   assert.match(loaderValues(f, ['A'], { PATH: process.env.PATH }).error, /unterminated/);
+  // A name both exported and in the file: the loader's declaration baseline
+  // treats the exported value as operator configuration the file may replace,
+  // exactly as the deploy wrappers do.
+  writeFileSync(f, 'E=fromfile\n');
+  assert.deepEqual(loaderValues(f, ['E'], { PATH: process.env.PATH, E: 'exported' }).values, { E: 'fromfile' });
+  assert.match(loaderValues(join(dir, 'missing.env'), ['E']).error, /no such file/);
+  assert.match(loaderValues(dir, ['E']).error, /not a regular file/);
+});
+
+test('the launch waits for the armed day read from the chain, not a fixed distance', () => {
+  const lines = plan().split('\n');
+  assert.ok(lines.includes('clock armed base-sepolia'));
+  assert.ok(!lines.includes('clock +86400'));
 });
 
 test('validation refuses the mistakes the file invites', () => {

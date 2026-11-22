@@ -119,6 +119,12 @@ drive relay $'chains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia' R
 [ "$RC" -eq 0 ] && grep -q "RELAY base-sepolia http://127.0.0.1:1 arb-sepolia http://127.0.0.1:2" "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" \
   && ok "a relay step runs the relay with both forks" || { bad "relay step: rc $RC"; echo "$OUT" | tail -5; }
 
+drive armed $'chains base-sepolia\nclock armed base-sepolia'
+# The fake fork answers nothing, so the armed day cannot be read: the run
+# stops at that line rather than moving the clock a guessed distance.
+[ "$RC" -ne 0 ] && grep -q "plan:2 clock armed: base-sepolia has no launch timestamp or armed day\|plan:2 clock armed: no Diamond recorded on base-sepolia" "$RUNDIR/verdict.json" \
+  && ok "clock armed reads the armed day from the chain; unreadable, the run stops there" || bad "clock armed unreadable: rc $RC $(grep failedStage "$RUNDIR/verdict.json")"
+
 drive cmdmark $'chains base-sepolia\ncmd base-sepolia -- echo reached'
 [ "$RC" -ne 0 ] && ! grep -q "^reached" "$RUNDIR/logs/001-base-sepolia-cmd.log" \
   && ok "a hand step enters rehearsal mode first (a node without the marker is refused)" || bad "a hand step ran against a node without the marker"
@@ -128,6 +134,9 @@ for bad_plan in 'step base-sepolia preflight' \
   $'chains base-sepolia\nstep base-sepolia cf-app' \
   $'chains base-sepolia\nstep base-sepolia contracts --rehearse' \
   $'chains base-sepolia\nclock soon' \
+  $'chains base-sepolia\nclock armed' \
+  $'chains base-sepolia\nclock armed arb-sepolia' \
+  $'chains base-sepolia\nclock armed base-sepolia extra' \
   $'chains base-sepolia\nwhatever x' \
   $'chains base-sepolia\nrelay base-sepolia arb-sepolia' \
   $'chains base-sepolia\nmanual base-sepolia' \

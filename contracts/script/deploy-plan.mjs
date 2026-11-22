@@ -29,7 +29,7 @@
  */
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -183,9 +183,16 @@ const idSet = (v) => String(v ?? '').split(',').map((x) => x.trim()).filter(Bool
  * `{ values }`, or `{ error }` when the loader refuses the file.
  */
 export function loaderValues(envFile, names, env = process.env) {
-  const script = '__lenv_baseline="$(compgen -v)"; source "$1" || exit 3; load_env_file "$2" --drop-key-vars >&2 || exit 4; shift 2; '
+  // The file reaches bash as a positional argument ("$2"), never as command
+  // text; it is still resolved and required to be a regular file first.
+  const file = resolve(envFile);
+  let st;
+  try { st = statSync(file); } catch { return { error: `${envFile}: no such file` }; }
+  if (!st.isFile()) return { error: `${envFile}: not a regular file` };
+  if (!names.every((n) => /^[A-Z_][A-Z0-9_]*$/.test(n))) return { error: 'a variable name is not UPPER_SNAKE' };
+  const script = '__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"; source "$1" || exit 3; load_env_file "$2" --drop-key-vars >&2 || exit 4; shift 2; '
     + 'for n in "$@"; do if [ -n "${!n+set}" ]; then printf \'%s\\0%s\\0\' "$n" "${!n}"; fi; done';
-  const r = spawnSync('bash', ['-c', script, 'deploy-plan', join(HERE, 'lib', 'load-env.sh'), envFile, ...names], { encoding: 'utf8', env });
+  const r = spawnSync('bash', ['-c', script, 'deploy-plan', join(HERE, 'lib', 'load-env.sh'), file, ...names], { encoding: 'utf8', env });
   if (r.status !== 0) return { error: (r.stderr || '').trim().split('\n').filter((l) => /^Error/.test(l)).join('; ') || `the loader refused ${envFile}` };
   const parts = r.stdout.split('\0');
   const values = {};
@@ -325,7 +332,9 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
   cmd(canon, `${on(canon)} T=$(cast call "$D" 'getInteractionCurrentDay()(uint256,bool)' --rpc-url "$R" | head -1 | cut -d' ' -f1); vk_cast_send ADMIN "$D" 'setGovernorCommitArmedFromDay(uint256)' $((T + 1)) --rpc-url "$R"`);
 
   say('Move to the start of the armed day, then launch (guide 5.5 steps 4 and 5).');
-  L.push(`clock +86400`);
+  // The armed day's start is read from the chain (anchor + armed day x 1 day),
+  // never a fixed distance: a future anchor or a late-day arming would miss it.
+  L.push(`clock armed ${canon}`);
   step(canon, 'launch');
   for (const m of (d.manual ?? []).filter((x) => x.after === 'launch')) {
     for (const s of m.chains === 'all' ? ordered : m.chains) m.run ? cmd(s, `${on(s)} ${m.run}`) : manual(s, m.what);

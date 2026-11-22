@@ -19,6 +19,10 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #   chains base-sepolia arb-sepolia       the chains to fork (first line)
 #   step <chain> <phase> [flags...]       a deploy-script phase on that chain
 #   clock +<seconds> | clock @<unix>      move every fork to one time
+#   clock armed <chain>                   move every fork to the start of the
+#                                         reward day armed on <chain> (its
+#                                         launch timestamp + armed day x 1
+#                                         day); no move when already past it
 #   cmd <chain> -- <command...>           a hand step, as its exact command
 #                                         text, run in the chain's rehearsal
 #                                         environment
@@ -261,7 +265,11 @@ while IFS= read -r line || [ -n "$line" ]; do
       STEP_LINES+=("$lineno|$line")
       ;;
     clock)
-      [[ "${words[1]:-}" =~ ^[+@][0-9]+$ ]] || { log "✗ plan:$lineno: clock takes +<seconds> or @<unix>"; exit 1; }
+      if [ "${words[1]:-}" = "armed" ]; then
+        [ "${#words[@]}" -eq 3 ] || { log "✗ plan:$lineno: clock armed takes one chain"; exit 1; }
+      else
+        [[ "${words[1]:-}" =~ ^[+@][0-9]+$ ]] || { log "✗ plan:$lineno: clock takes +<seconds>, @<unix> or armed <chain>"; exit 1; }
+      fi
       STEP_LINES+=("$lineno|$line")
       ;;
     cmd)
@@ -287,9 +295,11 @@ done < "$PLAN"
 [ "${#CHAINS[@]}" -gt 0 ] || { log "✗ plan: no chains line"; exit 1; }
 for s in "${STEP_LINES[@]}"; do
   read -r -a words <<<"${s#*|}"
-  case "${words[0]}" in step | cmd | manual | relay)
+  case "${words[0]}" in step | cmd | manual | relay | clock)
+    [ "${words[0]}" = clock ] && [ "${words[1]}" != armed ] && continue
     named=("${words[1]}")
     [ "${words[0]}" = relay ] && named+=("${words[2]}")
+    [ "${words[0]}" = clock ] && named=("${words[2]}")
     for want in "${named[@]}"; do
       in_set=0
       for c in "${CHAINS[@]}"; do [ "$c" = "$want" ] && in_set=1; done
@@ -421,8 +431,24 @@ for s in "${STEP_LINES[@]}"; do
       ;;
     clock)
       arg="${words[1]}"
-      if [ "${arg:0:1}" = "@" ]; then target="${arg:1}"; else
-        first="${CHAINS[0]}"
+      first="${CHAINS[0]}"
+      if [ "$arg" = "armed" ]; then
+        # The start of the armed reward day, read from the chain itself, so a
+        # future anchor or an arming made late in a day still lands at the
+        # day's start instead of a fixed distance from now.
+        ac="${words[2]}"
+        [ -n "${FORK_URL[$ac]:-}" ] || { FAILED_STAGE="steps (plan:$ln clock armed: $ac is not forked)"; exit 1; }
+        ad=$(jq -r '.diamond // empty' "$SCRATCH/$ac/addresses.json" 2>/dev/null)
+        [ -n "$ad" ] || { FAILED_STAGE="steps (plan:$ln clock armed: no Diamond recorded on $ac)"; exit 1; }
+        launch=$(cast call "$ad" 'getInteractionLaunchTimestamp()(uint256)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | cut -d' ' -f1 || true)
+        armed=$(cast call "$ad" 'getGovernorCommitState()(uint256,uint256,uint256,uint256)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | head -1 | cut -d' ' -f1 || true)
+        if ! [[ "$launch" =~ ^[0-9]+$ && "$armed" =~ ^[0-9]+$ ]] || [ "$launch" = 0 ] || [ "$armed" = 0 ]; then
+          FAILED_STAGE="steps (plan:$ln clock armed: $ac has no launch timestamp or armed day)"; exit 1
+        fi
+        target=$((launch + armed * 86400))
+        now=$(cast block latest --field timestamp --rpc-url "${FORK_URL[$first]}")
+        [ "$target" -ge "$now" ] || target="$now"
+      elif [ "${arg:0:1}" = "@" ]; then target="${arg:1}"; else
         now=$(cast block latest --field timestamp --rpc-url "${FORK_URL[$first]}")
         target=$((now + ${arg:1}))
       fi
