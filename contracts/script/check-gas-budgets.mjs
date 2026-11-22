@@ -20,20 +20,29 @@
  *
  * Instant borrow is measured with 1, 2, 4 and 8 sources, and with one
  * skipped source before one fill (a skip refused early and one refused
- * late). Every instant-borrow figure here counts each price-guard read at the
- * guard's full read budget (`instantBorrow.guardReadGas`), since the suite's
- * guard is a mock. The largest count whose gas stays within
+ * late). The suite's guard is a mock, so every instant-borrow figure here
+ * counts each price-guard read at the worst cost of one read against a fully
+ * set-up mainnet-shaped guard: every source the mainnet guard reads, set and
+ * live (test/gas/GasSuiteGuardRig.t.sol), plus each source call at its cold
+ * cost measured on a live network (`instantBorrow.guardSourceCosts`, from
+ * test/fork/GuardSourceReadCostFork.t.sol). The read
+ * BUDGET (`instantBorrow.guardReadBudget`) is what a read is handed, not what
+ * it spends; the transaction needs it in hand once more, so the last read can
+ * still be handed its share, and it is added once per transaction (design
+ * re-ruling 2026-11-22). The largest count whose gas stays within
  * `instantBorrow.headroom` (80%) of the smallest transaction gas limit among
  * the networks listed is computed here, and must equal the file's
  * `instantBorrow.maxSources`.
  *
  * The source rule (design ruling 2026-11-22, instant borrow source cap): for
- * a fill bound b and a list of up to L sources, the first fill, plus (b - 1)
- * further fills, plus (L - b) skips, must stay within the headroom of the
- * smallest network limit. It is checked for the bound the deploy sets
- * (`instantBorrow.deployBound`), the code's default and the top of the range
- * governance may set, as the suite reads them from the code
- * (`out-gas-suite/config/instant.json`). A bound that breaks it is a finding.
+ * a fill bound b, the first fill, plus (b - 1) further fills, plus
+ * `instantBorrow.skipAllowance` skips each at the dearest measured skip (a
+ * late skip at its own cost), plus the one budget in hand, must stay within
+ * the headroom of the smallest network limit. It is checked for the bound the
+ * deploy sets (`instantBorrow.deployBound`), the code's default and the top
+ * of the range governance may set, as the suite reads them from the code
+ * (`out-gas-suite/config/instant.json`). A bound that breaks it is a finding,
+ * and so is a code list cap above the bound plus the skip allowance.
  *
  * Measurements whose action starts with `_` are the suite's own probes (the
  * isolation demonstration) and are ignored.
@@ -61,12 +70,63 @@ export function readMeasurements(dir) {
   const cfg = join(dir, 'config', 'instant.json');
   // Not an action: kept under a key no action can take.
   if (existsSync(cfg)) Object.defineProperty(out, '__instantConfig', { value: JSON.parse(readFileSync(cfg, 'utf8')), enumerable: false });
+  const rigDir = join(dir, 'config', 'guard-rig');
+  if (existsSync(rigDir)) {
+    const reads = readdirSync(rigDir).filter((f) => f.endsWith('.json')).sort().map((f) => {
+      const r = JSON.parse(readFileSync(join(rigDir, f), 'utf8'));
+      if (typeof r.sourceCalls === 'string') r.sourceCalls = JSON.parse(r.sourceCalls);
+      return r;
+    });
+    Object.defineProperty(out, '__guardRig', { value: { reads }, enumerable: false });
+  }
   return out;
 }
 
-/** An instant-borrow figure with every guard read at the guard's full read budget. */
+/**
+ * The worst cost of one guard read: each read the rig measured (the guard's
+ * own code, cold, with every source answered by a mock), plus each call it
+ * made to an outside source at that source's cold cost measured on a live
+ * network (`instantBorrow.guardSourceCosts`). Returns `{ cost, read }`, or
+ * `{ problem }` when the rig is missing or names a source with no cost.
+ */
+export function guardReadCost(ib, rig) {
+  if (!rig || !Array.isArray(rig.reads) || !rig.reads.length) return { problem: 'the mainnet-shaped guard rig was not run (out-gas-suite/config/guard-rig/)' };
+  const costs = ib.guardSourceCosts ?? {};
+  let worst = { cost: 0, read: '' };
+  for (const r of rig.reads) {
+    let cost = r.gas;
+    for (const [kind, n] of Object.entries(r.sourceCalls ?? {})) {
+      if (!n) continue;
+      const c = costs[kind]?.gas;
+      if (!Number.isInteger(c)) return { problem: `the guard rig's ${r.read} calls ${kind}, which has no measured cost in guardSourceCosts` };
+      cost += n * c;
+    }
+    if (cost > worst.cost) worst = { cost, read: r.read };
+  }
+  return worst;
+}
+
+/** An instant-borrow figure with every guard read at its measured mainnet-shaped worst cost. */
 export function fullGas(ib, m) {
-  return m.gas + (m.guardReads ?? 0) * (ib.guardReadGas ?? 0);
+  return m.gas + (m.guardReads ?? 0) * (ib.guardReadCost ?? 0);
+}
+
+/** The read budget the transaction must still hold for its last read, once. */
+export function budgetInHand(ib) {
+  return ib.guardReadBudget ?? 0;
+}
+
+/** `budgets` with `instantBorrow.guardReadCost` taken from the rig. */
+export function withGuardReadCost(budgets, measured, refusals = []) {
+  const ib = budgets.instantBorrow;
+  if (!ib) return budgets;
+  const r = guardReadCost(ib, measured.__guardRig);
+  if (r.problem) {
+    refusals.push(`instantBorrow: ${r.problem}`);
+    // Never a figure from the budgets file in place of the measurement.
+    return { ...budgets, instantBorrow: { ...ib, guardReadCost: undefined } };
+  }
+  return { ...budgets, instantBorrow: { ...ib, guardReadCost: r.cost, guardReadWorst: r.read } };
 }
 
 /** The largest measured source count within the headroom of the smallest network limit. */
@@ -78,7 +138,7 @@ export function largestInstantCount(budgets, measured) {
   let best = 0;
   for (const n of ib.sources ?? []) {
     const m = measured[`${ib.actionPrefix}${n}`];
-    if (m && fullGas(ib, m) <= cap && n > best) best = n;
+    if (m && fullGas(ib, m) + budgetInHand(ib) <= cap && n > best) best = n;
   }
   return { limit, cap, best };
 }
@@ -104,9 +164,9 @@ export function instantCosts(ib, measured) {
   return { first, perFill, skip };
 }
 
-/** The source rule for a bound `b` and a list of up to `listMax` sources. */
-export function sourceRuleCost(costs, b, listMax) {
-  return costs.first + (b - 1) * costs.perFill + Math.max(0, listMax - b) * costs.skip;
+/** The source rule for a bound `b`, `skips` skips and `inHand` gas held for the last read. */
+export function sourceRuleCost(costs, b, skips, inHand = 0) {
+  return costs.first + (b - 1) * costs.perFill + Math.max(0, skips) * costs.skip + inHand;
 }
 
 /**
@@ -117,6 +177,7 @@ export function compareBudgets(budgets, measured, base) {
   const findings = [];
   const notes = [];
   const refusals = [];
+  budgets = withGuardReadCost(budgets, measured, refusals);
   const rows = budgets.actions ?? {};
   const lowerAt = budgets.lowerAt ?? 0.8;
   for (const [action, row] of Object.entries(rows)) {
@@ -148,17 +209,24 @@ export function compareBudgets(budgets, measured, base) {
     const cfg = measured.__instantConfig;
     if (!costs) findings.push('instantBorrow: the source rule needs instant borrow at 1 and at least one more count, and every skip in skipActions');
     else if (!cfg) findings.push('instantBorrow: the source rule needs the code\'s fill bounds (out-gas-suite/config/instant.json)');
+    else if (!Number.isInteger(ibCfg.skipAllowance) || ibCfg.skipAllowance < 0) refusals.push('instantBorrow: skipAllowance must be a whole number, 0 or more');
+    else if (!Number.isInteger(ibCfg.guardReadCost) || ibCfg.guardReadCost <= 0) refusals.push('instantBorrow: no measured cost of one mainnet-shaped guard read');
     else {
+      const allow = ibCfg.skipAllowance;
+      const inHand = budgetInHand(ibCfg);
       const bounds = [['the deploy setting', ibCfg.deployBound], ['the code default', cfg.defaultBound], ['the top of the governance range', cfg.topBound]];
       for (const [what, b] of bounds) {
         if (!Number.isInteger(b)) {
           refusals.push(`instantBorrow: ${what} is not a whole number`);
           continue;
         }
-        const cost = sourceRuleCost(costs, b, cfg.maxSources);
+        const cost = sourceRuleCost(costs, b, allow, inHand);
         if (cost > ib.cap) {
-          findings.push(`instantBorrow: a bound of ${b} (${what}) with a list of ${cfg.maxSources} needs ${cost} gas (first ${costs.first}, ${b - 1} more at ${costs.perFill}, ${Math.max(0, cfg.maxSources - b)} skips at ${costs.skip}), over ${ib.cap}`);
+          findings.push(`instantBorrow: a bound of ${b} (${what}) with ${allow} skip(s) needs ${cost} gas (first ${costs.first}, ${b - 1} more at ${costs.perFill}, ${allow} skips at ${costs.skip}, ${inHand} in hand for the last read), over ${ib.cap}`);
         }
+      }
+      if (Number.isInteger(cfg.maxSources) && Number.isInteger(ibCfg.deployBound) && cfg.maxSources > ibCfg.deployBound + allow) {
+        findings.push(`instantBorrow: the code accepts a list of ${cfg.maxSources} sources, over the bound ${ibCfg.deployBound} plus the skip allowance ${allow}`);
       }
     }
   }
@@ -178,7 +246,7 @@ export function main(argv = process.argv.slice(2)) {
       return 2;
     }
   }
-  const budgets = JSON.parse(readFileSync(budgetsPath, 'utf8'));
+  let budgets = JSON.parse(readFileSync(budgetsPath, 'utf8'));
   const base = basePath && existsSync(basePath) ? JSON.parse(readFileSync(basePath, 'utf8')) : undefined;
   const measured = readMeasurements(dir);
   if (!Object.keys(measured).length) {
@@ -186,12 +254,13 @@ export function main(argv = process.argv.slice(2)) {
     return 1;
   }
   const { findings, notes, refusals } = compareBudgets(budgets, measured, base);
+  budgets = withGuardReadCost(budgets, measured);
   for (const [a, m] of Object.entries(measured).sort()) {
     console.log(`  ${a.padEnd(34)} ${String(m.gas).padStart(9)} gas  ${String(m.slotsWritten).padStart(3)} written  ${String(m.slotsRead).padStart(3)} read  ${String(m.facetCalls).padStart(2)} facet calls  ${String(m.events).padStart(2)} events  (budget ${budgets.actions?.[a]?.gas ?? '—'})`);
   }
   const ib = largestInstantCount(budgets, measured);
   if (ib && Number.isFinite(ib.limit)) {
-    console.log(`  instant borrow: up to ${ib.best} sources within ${ib.cap} gas, guard reads at their full budget`);
+    console.log(`  instant borrow: up to ${ib.best} sources within ${ib.cap} gas, guard reads at ${budgets.instantBorrow.guardReadCost} each (worst: ${budgets.instantBorrow.guardReadWorst}) plus ${budgetInHand(budgets.instantBorrow)} in hand`);
     const c = instantCosts(budgets.instantBorrow, measured);
     if (c) console.log(`  instant borrow: first fill ${c.first}, each further fill ${c.perFill}, each skip ${c.skip}`);
   }

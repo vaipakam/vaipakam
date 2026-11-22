@@ -5,11 +5,14 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareBudgets, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost } from '../../../contracts/script/check-gas-budgets.mjs';
+import { compareBudgets, guardReadCost, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost } from '../../../contracts/script/check-gas-budgets.mjs';
 
 const R = 'the measured figure on the first suite run, with mocked oracles';
 const budgets = (actions, extra = {}) => ({ blocking: false, lowerAt: 0.8, actions, ...extra });
 const m = (gas) => ({ gas, slotsWritten: 1, slotsRead: 1, facetCalls: 0, events: 1 });
+
+/** Attaches a guard rig whose one read costs `gas` with no source calls. */
+const withRig = (meas, gas) => Object.defineProperty(meas, '__guardRig', { value: { reads: [{ read: 'r', gas, sourceCalls: {} }] }, enumerable: false });
 
 test('over a budget is a finding; well under asks for a lower budget; within is quiet', () => {
   const b = budgets({ a: { gas: 100_000, reason: R }, b: { gas: 100_000, reason: R }, c: { gas: 100_000, reason: R } });
@@ -50,32 +53,56 @@ test('the suite\'s own probes are ignored', () => {
   assert.deepEqual(Object.keys(readMeasurements(dir)), ['offer_post']);
 });
 
-test('the source rule: guard reads at their full budget, the dearest further fill and skip, for every bound', () => {
+test('the source rule: reads at their measured cost, one budget in hand, the skip allowance, for every bound', () => {
   const ib = {
-    actionPrefix: 'ib_', sources: [1, 2, 4], headroom: 0.8, maxSources: 1, deployBound: 2, guardReadGas: 1_000,
+    actionPrefix: 'ib_', sources: [1, 2, 4], headroom: 0.8, maxSources: 1, deployBound: 2,
+    guardReadBudget: 50_000, skipAllowance: 1,
     skipActions: ['ib_1_skip_a', 'ib_1_skip_b'],
     networkTxGasLimits: { eth: { gas: 1_000_000, why: 'x' } },
   };
   const g = (gas, guardReads) => ({ ...m(gas), guardReads });
-  const meas = { ib_1: g(100_000, 10), ib_2: g(190_000, 20), ib_4: g(400_000, 40), ib_1_skip_a: g(105_000, 10), ib_1_skip_b: g(150_000, 15) };
-  const c = instantCosts(ib, meas);
+  const meas = withRig({ ib_1: g(100_000, 10), ib_2: g(190_000, 20), ib_4: g(400_000, 40), ib_1_skip_a: g(105_000, 10), ib_1_skip_b: g(150_000, 15) }, 1_000);
+  const c = instantCosts({ ...ib, guardReadCost: 1_000 }, meas);
   // first 110,000; 2: 210,000 (+100,000); 4: 440,000 (+115,000 each); skips +5,000 and +55,000.
   assert.deepEqual(c, { first: 110_000, perFill: 115_000, skip: 55_000 });
-  assert.equal(sourceRuleCost(c, 2, 4), 110_000 + 115_000 + 2 * 55_000);
-  Object.defineProperty(meas, '__instantConfig', { value: { defaultBound: 3, topBound: 6, maxSources: 6 }, enumerable: false });
+  assert.equal(sourceRuleCost(c, 2, 1, 50_000), 110_000 + 115_000 + 55_000 + 50_000);
+  Object.defineProperty(meas, '__instantConfig', { value: { defaultBound: 3, topBound: 6, maxSources: 3 }, enumerable: false });
   const rows = Object.fromEntries(Object.keys(meas).map((k) => [k, { gas: 2_000_000, reason: R }]));
-  const f = compareBudgets(budgets(rows, { instantBorrow: { ...ib, maxSources: 4 } }), meas).findings.filter((x) => /bound of/.test(x));
-  // bound 2: 110k + 115k + 4×55k = 445k, fits 800k; bound 3: 110k + 230k + 3×55k = 505k fits; bound 6: 110k + 575k = 685k fits.
+  const f = compareBudgets(budgets(rows, { instantBorrow: { ...ib, maxSources: 4 } }), meas).findings.filter((x) => /bound of|accepts a list/.test(x));
+  // bound 2: 330k; bound 3: 445k; bound 6: 110k + 575k + 55k + 50k = 790k: all within 800k. A list of 3 = 2 + 1.
   assert.deepEqual(f, []);
   const tight = { ...ib, maxSources: 4, networkTxGasLimits: { eth: { gas: 600_000, why: 'x' } } };
   const f2 = compareBudgets(budgets(rows, { instantBorrow: tight }), meas).findings.filter((x) => /bound of/.test(x));
-  assert.equal(f2.length, 2, f2.join('\n'));
-  assert.match(f2[0], /bound of 3 \(the code default\) with a list of 6 needs 505000 gas/);
-  assert.match(f2[1], /bound of 6 \(the top of the governance range\)/);
+  assert.equal(f2.length, 1, f2.join('\n'));
+  assert.match(f2[0], /bound of 6 \(the top of the governance range\) with 1 skip\(s\) needs 790000 gas/);
+});
+
+test('the source rule: a code list cap above the bound plus the skip allowance is a finding', () => {
+  const ib = {
+    actionPrefix: 'ib_', sources: [1, 2], headroom: 0.8, maxSources: 2, deployBound: 2,
+    guardReadBudget: 0, skipAllowance: 1, skipActions: ['ib_1_skip'],
+    networkTxGasLimits: { eth: { gas: 10_000_000, why: 'x' } },
+  };
+  const meas = withRig({ ib_1: m(100), ib_2: m(200), ib_1_skip: m(150) }, 1);
+  Object.defineProperty(meas, '__instantConfig', { value: { defaultBound: 2, topBound: 2, maxSources: 16 }, enumerable: false });
+  const rows = Object.fromEntries(Object.keys(meas).map((k) => [k, { gas: 1_000, reason: R }]));
+  assert.ok(compareBudgets(budgets(rows, { instantBorrow: ib }), meas).findings.some((x) => /accepts a list of 16 sources, over the bound 2 plus the skip allowance 1/.test(x)));
+  const noRig = { ib_1: m(100), ib_2: m(200), ib_1_skip: m(150) };
+  Object.defineProperty(noRig, '__instantConfig', { value: meas.__instantConfig, enumerable: false });
+  const r = compareBudgets(budgets(rows, { instantBorrow: { ...ib, guardReadCost: 5 } }), noRig).refusals;
+  assert.ok(r.some((x) => /guard rig was not run/.test(x)), r.join('\n'));
+});
+
+test('a guard read costs its rig gas plus each source call at its measured cost, and an unpriced source refuses', () => {
+  const ib = { guardSourceCosts: { tellor: { gas: 100 }, pyth: { gas: 10 } } };
+  const rig = { reads: [{ read: 'a', gas: 1_000, sourceCalls: { tellor: 2, pyth: 1 } }, { read: 'b', gas: 1_150, sourceCalls: { pyth: 0 } }] };
+  assert.deepEqual(guardReadCost(ib, rig), { cost: 1_210, read: 'a' });
+  assert.match(guardReadCost(ib, { reads: [{ read: 'c', gas: 1, sourceCalls: { dia: 1 } }] }).problem, /calls dia, which has no measured cost/);
+  assert.match(guardReadCost(ib, undefined).problem, /was not run/);
 });
 
 test('the source rule without its measurements or the code bounds is a finding, never a silent pass', () => {
-  const ib = { actionPrefix: 'ib_', sources: [1, 2], headroom: 0.8, maxSources: 2, deployBound: 2, guardReadGas: 0, skipActions: ['ib_1_skip'], networkTxGasLimits: { eth: { gas: 10_000_000, why: 'x' } } };
+  const ib = { actionPrefix: 'ib_', sources: [1, 2], headroom: 0.8, maxSources: 2, deployBound: 2, skipAllowance: 1, skipActions: ['ib_1_skip'], networkTxGasLimits: { eth: { gas: 10_000_000, why: 'x' } } };
   const meas = { ib_1: m(1), ib_2: m(2) };
   const rows = { ib_1: { gas: 10, reason: R }, ib_2: { gas: 10, reason: R } };
   assert.ok(compareBudgets(budgets(rows, { instantBorrow: ib }), meas).findings.some((x) => /needs instant borrow at 1/.test(x)));

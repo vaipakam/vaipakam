@@ -162,8 +162,41 @@
     "headroom": 0.8,
     "maxSources": 0,
     "deployBound": 2,
-    "guardReadGas": 500000,
-    "_guardReadGasWhy": "Design ruling 2026-11-22 (instant borrow source cap): each price-guard read is counted at the full gas the Diamond gives the guard (LibPriceGuard GUARD_READ_GAS), not at the mocked cost. A read measured on Base Sepolia costs 45,000-57,000 gas.",
+    "guardReadBudget": 500000,
+    "_guardReadBudgetWhy": "Design re-ruling 2026-11-22 (instant borrow source cap): the gas the Diamond hands each guard read (LibPriceGuard GUARD_READ_GAS). Handed, not spent: unused gas comes back. The transaction must still hold it once for its last read, so the rule adds it once per transaction.",
+    "guardSourceCosts": {
+      "_why": "Cold cost of one call to each outside source the mainnet guard reads, as a caller sees it, measured on live forks by test/fork/GuardSourceReadCostFork.t.sol on 2026-11-22. Each kind takes the dearest call measured for it. Re-measure when a source changes.",
+      "chainlinkFeed": {
+        "gas": 18474,
+        "where": "Arbitrum One, Chainlink ETH/USD proxy latestRoundData (proxy plus aggregator, both cold)"
+      },
+      "feedRegistry": {
+        "gas": 10753,
+        "where": "Base Sepolia feed registry pairBase; the Ethereum mainnet Chainlink registry getFeed measured 8,057"
+      },
+      "sequencer": {
+        "gas": 16395,
+        "where": "Arbitrum One, Chainlink L2 sequencer uptime feed latestRoundData"
+      },
+      "pyth": {
+        "gas": 10843,
+        "where": "Arbitrum One, Pyth getPriceUnsafe ETH/USD"
+      },
+      "tellor": {
+        "gas": 18653,
+        "where": "Arbitrum One, Tellor getDataBefore ETH/USD"
+      },
+      "api3": {
+        "gas": 7694,
+        "where": "Arbitrum One, API3 readDataFeedWithDapiNameHash ETH/USD"
+      },
+      "dia": {
+        "gas": 6004,
+        "where": "Arbitrum Sepolia, DIA getValue ETH/USD (DIA has no getValue oracle on Arbitrum One)"
+      }
+    },
+    "skipAllowance": 1,
+    "_skipAllowanceWhy": "Design re-ruling 2026-11-22: until the one-price-per-asset-per-transaction root fix, a list may carry one source beyond the fill bound, counted at the dearest measured skip (a late skip at its own cost).",
     "skipActions": [
       "instant_borrow_1_skip_early",
       "instant_borrow_1_skip_late"
