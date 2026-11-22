@@ -445,9 +445,11 @@ export function checkSpec(parsed, opts = {}) {
       if (waits) add(mk.file, mk.line, 'mistake', `${mk.id} carries both **Answered by:** and **Waits for:**; a mistake is answered or waits, never both`);
       if (!named.length) add(mk.file, mk.line, 'mistake', `${mk.id}: **Answered by:** names no statement`);
       for (const id of named) {
-        if (isHeldId(id)) continue;
-        if (!byId.has(id)) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${id}, which does not exist`);
-        else if (!a.includes(id)) add(mk.file, mk.line, 'mistake', `${mk.id} names ${id} as its answer, but ${id}'s **For the mistake:** does not name ${mk.id}`);
+        // A held statement the public check does not hold is exempt; one that
+        // is loaded (--held, or released) is checked like any other.
+        if (!byId.has(id)) {
+          if (!isHeldId(id)) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${id}, which does not exist`);
+        } else if (!a.includes(id)) add(mk.file, mk.line, 'mistake', `${mk.id} names ${id} as its answer, but ${id}'s **For the mistake:** does not name ${mk.id}`);
       }
       for (const id of a) if (!named.includes(id)) add(mk.file, mk.line, 'mistake', `${id} answers ${mk.id}, but ${mk.id}'s **Answered by:** does not name it`);
     } else if (mode !== 'draft' && a.length) add(mk.file, mk.line, 'mistake', `${mk.id}: an answered mistake names its answer (**Answered by:** ${a.join(', ')})`);

@@ -50,6 +50,9 @@ const LEAD_LINE = /^\*\*(Who|When):\*\*\s*(.*)$/;
 const linesOf = (text) => text.split('\n').map((t, i) => ({ t, n: i + 1 }));
 
 /** A Markdown table starting at `i` (header, separator, rows). Returns {header, rows, end}. */
+/** A table cell, empty when the row is short (the short row itself is a parse error). */
+const cell = (r, i) => r.cells[i] ?? '';
+
 export function readTable(lines, i) {
   const cells = (t) => t.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
   const header = cells(lines[i].t);
@@ -192,7 +195,7 @@ function parseModel(file, lines, start, end) {
       const want = { Steps: ['From', 'Step', 'Who', 'Guarded by', 'To'], 'Refusals out of state': ['Step', 'Refused by'], Dimensions: ['Dimension', 'Values', 'Named by'] }[section];
       if (want.join('|') !== table.header.join('|')) err(n, `the ${section} table's columns must be ${want.join(' | ')}`);
       for (const r of table.rows) {
-        const row = Object.fromEntries(want.map((k, j) => [k, r.cells[j] ?? '']));
+        const row = Object.fromEntries(want.map((k, j) => [k, cell(r, j)]));
         // Every cell of a model row says something: a step names its party
         // ("nobody" for a step no one takes), its guard and both states.
         for (const k of want) if (!row[k].trim()) err(r.line, `the ${section} row's ${k} cell is empty`);
@@ -308,12 +311,12 @@ export function recordEntries(parsed) {
     if (hdr[0] === 'id' && hdr[1] === 'mark' && hdr[2] === 'sources') {
       const approvedCol = hdr.indexOf('approved');
       for (const r of tbl.rows) {
-        entries.push({ id: r.cells[0], mark: r.cells[1], sources: r.cells[2] ?? '', approved: approvedCol >= 0 ? r.cells[approvedCol] ?? '' : '', file: parsed.file, line: r.line });
+        entries.push({ id: cell(r, 0), mark: cell(r, 1), sources: cell(r, 2), approved: approvedCol >= 0 ? cell(r, approvedCol) : '', file: parsed.file, line: r.line });
       }
     } else if (hdr[0] === 'id' && hdr[1] === 'retired by') {
-      for (const r of tbl.rows) retired.push({ id: r.cells[0], by: r.cells[1] ?? '', file: parsed.file, line: r.line });
+      for (const r of tbl.rows) retired.push({ id: cell(r, 0), by: cell(r, 1), file: parsed.file, line: r.line });
     } else if (hdr[0] === 'owed' && hdr[1] === 'cited by') {
-      for (const r of tbl.rows) owed.push({ ref: r.cells[0], by: r.cells[1] ?? '', file: parsed.file, line: r.line });
+      for (const r of tbl.rows) owed.push({ ref: cell(r, 0), by: cell(r, 1), file: parsed.file, line: r.line });
     }
   }
   return { entries, retired, owed };
@@ -325,7 +328,7 @@ export function parameterRows(parsed) {
   for (const tbl of parsed.tables) {
     const hdr = tbl.header.map((h) => h.toLowerCase());
     if (hdr[0] === 'id' && hdr[1] === 'name' && hdr[2] === 'value') {
-      for (const r of tbl.rows) out.push({ id: r.cells[0], name: r.cells[1], value: r.cells[2] ?? '', file: parsed.file, line: r.line });
+      for (const r of tbl.rows) out.push({ id: cell(r, 0), name: cell(r, 1), value: cell(r, 2), file: parsed.file, line: r.line });
     }
   }
   return out;
@@ -339,8 +342,8 @@ export function glossaryRows(parsed) {
     if (hdr[0] === 'term' && hdr[1] === 'meaning') {
       const insteadCol = hdr.indexOf('instead of');
       for (const r of tbl.rows) {
-        const instead = insteadCol >= 0 ? (r.cells[insteadCol] ?? '').split(/[,;]/).map((x) => x.trim().toLowerCase()).filter(Boolean) : [];
-        out.push({ term: r.cells[0], instead, file: parsed.file, line: r.line });
+        const instead = insteadCol >= 0 ? (cell(r, insteadCol)).split(/[,;]/).map((x) => x.trim().toLowerCase()).filter(Boolean) : [];
+        out.push({ term: cell(r, 0), instead, file: parsed.file, line: r.line });
       }
     }
   }

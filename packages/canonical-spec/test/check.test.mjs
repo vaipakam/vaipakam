@@ -539,3 +539,18 @@ test('an owed line to another domain that has entered the checked set is a notic
   const ownTable = '\n| Owed | Cited by |\n| --- | --- |\n| VLT owed: the wait | VLT-012 |\n';
   assert.ok(!has(run([['vlt.md', own], ['record.md', RECORD([['VLT-012']], ownTable)]]), 'owed', /./), 'a domain\'s own owed lines name its later sections');
 });
+
+test('a short record row is refused by name, never a crash', () => {
+  const extra = '\n| Id | Mark | Sources | Build |\n| --- | --- | --- | --- |\n| VLT-013 |\n';
+  const f = run([['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012']], extra)]]);
+  assert.ok(has(f, 'record', /a record row needs a statement id \(like VLT-001\) and its mark; read "VLT-013"/), JSON.stringify(f));
+});
+
+test('a held statement named as an answer is checked when it is loaded', () => {
+  const stmts = STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M01, bound.\n') + STMT('VLT-900', 'rule');
+  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-012, VLT-900.\n';
+  const f = run([['vlt.md', stmts], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012'], ['VLT-900']])]]);
+  assert.ok(has(f, 'mistake', /VLT-M01 names VLT-900 as its answer, but VLT-900's/), JSON.stringify(f));
+  const unloaded = run([['vlt.md', STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M01, bound.\n')], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(!has(unloaded, 'mistake', /VLT-900/), JSON.stringify(unloaded));
+});
