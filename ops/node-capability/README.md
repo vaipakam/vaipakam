@@ -79,3 +79,18 @@ committing), then commit them under `ops/node-capability/results/`, one
 or plan changes. The record reads the committed file, never a live probe.
 
 Tests: `node --test ops/node-capability/check.test.mjs`.
+
+## Results (2026-11-22)
+
+The committed files under `results/` come from a read-only run against the
+deploy `.env` nodes with a keyed explorer configured. The always-on
+machine's run against `keeper.env` replaces them if its nodes differ.
+
+| Network | Mode | Why | Explorer |
+| --- | --- | --- | --- |
+| Base Sepolia | `explorer-and-audit` | The trace filter answered 10 blocks on this pass and 100 on an earlier keyless pass, so it is not dependable; a scan would cost about 432,000 requests and 4 GB a day. The audit costs about 9,000 requests and 87 MB a day. | Needs a key. Delay about 2 seconds, inside the node's replay reach. |
+| Arbitrum Sepolia | `explorer-and-audit` | The node's trace calls failed with a server error; a scan would cost about 309,000 requests and 2 GB a day. The audit costs about 6,400 requests and 44 MB a day. | Needs a key (the keyless explorer refused). Delay about 1 second. |
+| BNB Testnet | `trace-filter` | The trace filter answered 10,000 blocks, about 20 requests a day, with about a year of reach. | None: the keyed explorer's free tier does not serve this network, so there is no explorer fallback here. |
+
+Base Sepolia's answer is the one to recheck: if its node starts answering a
+100-block filter steadily, the check picks `trace-filter` there on its own.
