@@ -1,4 +1,4 @@
-## Troubleshooting — offer and loan rows name the event that last changed them (PR #<n>)
+## Troubleshooting — offer and loan rows name the event that last changed them (PR #4025)
 
 Every offer and loan row the indexer keeps now records the event that last
 changed it: the block, the transaction's position in that block, and the log's
