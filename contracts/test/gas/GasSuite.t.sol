@@ -2,6 +2,10 @@
 pragma solidity ^0.8.29;
 
 import {GasSuiteBase} from "./GasSuiteBase.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
@@ -229,6 +233,36 @@ contract GasSuiteTest is GasSuiteBase {
                 (loanId, RATE_BPS, true, uint64(3 days), 0, type(uint256).max, type(uint64).max)
             )
         );
+    }
+
+    /// @dev The listing route's settling transaction: a buyer accepts the
+    ///      listed sale offer, and the accept completes the sale in the same
+    ///      transaction (`completeLoanSaleInternal`). Listing is measured
+    ///      above as its own action.
+    function test_gas_exit_sale_listing_accept() public {
+        uint256 loanId = _openLoan();
+        _skip(5 days);
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            loanId, RATE_BPS, true, uint64(3 days), 0, type(uint256).max, type(uint64).max
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 saleOfferId;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("LoanSaleOfferLinked(uint256,uint256)")) {
+                saleOfferId = uint256(logs[i].topics[2]);
+            }
+        }
+        require(saleOfferId != 0, "sale offer not created");
+        LibTestTiming.backdateTerms(address(diamond), saleOfferId);
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("gasSaleBuyer");
+        ERC20Mock(mockERC20).mint(buyer, PRINCIPAL * 2);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(address(diamond), buyer, saleOfferId, true, loanId);
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        _measure("exit_sale_listing_accept", buyer, abi.encodeCall(OfferAcceptFacet.acceptOffer, (saleOfferId, t, sig)));
     }
 
     // ─── Vault moves ─────────────────────────────────────────────────────

@@ -42,6 +42,10 @@
       "gas": 1605000,
       "reason": "the lender lists the loan for sale with a sale offer; measured at the first build, plus 10%"
     },
+    "exit_sale_listing_accept": {
+      "gas": 4022000,
+      "reason": "a buyer accepts a listed loan sale and the sale settles in the same transaction; measured at the first build, plus 10%"
+    },
     "instant_borrow_1": {
       "gas": 7047000,
       "reason": "instant borrow taking 1 Auto-lend slot, each its own loan; measured at the first build, plus 10%"
