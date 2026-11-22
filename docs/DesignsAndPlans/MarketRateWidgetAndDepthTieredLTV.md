@@ -420,6 +420,8 @@ Governance owns only the **global** knobs (test sizes, slippage
 thresholds, per-tier LTVs, kill-switch). So the on-chain check has to
 *be* the tier authority. Good news: a useful one is cheap.
 
+> **Superseded reading (#3880).** The per-asset pause is now bound by the rule in [`IncidentRunbook.md`](../ops/IncidentRunbook.md) §3.8, which replaces the reading above: it is used only when the asset's own code takes, freezes or blocks what vaults hold or breaks a close-out, or when the platform's own reading of the asset is shown wrong (and only while it is), and never for reputation or an issuer's conduct.
+
 **The metric: simulated-swap slippage.** Instead of `pool.liquidity()`
 (not a USD figure — see §3) or its `L × sqrtP × price` reconstruction
 (over-states correlated/stable pools by 2–4 orders of magnitude),
@@ -733,6 +735,8 @@ allowlist, both permissionless-compatible:
   (Lender-sale vehicles / both-legs-illiquid loans keep their existing
   LTV/HF skip.)
 
+> **Superseded reading (#3880).** The per-asset pause is now bound by the rule in [`IncidentRunbook.md`](../ops/IncidentRunbook.md) §3.8, which replaces the reading above: it is used only when the asset's own code takes, freezes or blocks what vaults hold or breaks a close-out, or when the platform's own reading of the asset is shown wrong (and only while it is), and never for reputation or an issuer's conduct.
+
 ### 4.3 Proposed launch defaults (all governance globals)
 
 | Knob | Default | Meaning |
@@ -905,6 +909,8 @@ liquidator bot has been hardened for it.
     default `false`. ✅** While off, the init gate is exactly today's
     `HF ≥ 1.5`; flip per chain after that chain's census + the relay
     being live.
+
+> **Superseded reading (#3880).** The per-asset pause is now bound by the rule in [`IncidentRunbook.md`](../ops/IncidentRunbook.md) §3.8, which replaces the reading above: it is used only when the asset's own code takes, freezes or blocks what vaults hold or breaks a close-out, or when the platform's own reading of the asset is shown wrong (and only while it is), and never for reputation or an issuer's conduct.
 
 ### 9.ii — the keeper liquidity-confidence relay, in detail
 

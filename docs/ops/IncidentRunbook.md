@@ -790,8 +790,14 @@ contains the incident before considering the full `AdminFacet.pause()` (§3).
 
 Each is reversible at zero cost beyond gas and touches no user funds or
 per-user consent. Post-handover these move behind the Timelock — confirm
-whether the incident needs an immediate-effect lever (pre-handover, or the
-asset-level `AdminFacet.pauseAsset`) before relying on one of these.
+whether the incident needs an immediate-effect lever before relying on one
+of these. Pre-handover each is immediate. After it, the one immediate lever
+for a single asset is the per-asset pause (`AdminFacet.pauseAsset`), and only
+for the two reasons in §3.8: the asset's own code takes, freezes or blocks
+what vaults hold or breaks a close-out, or the platform's own reading of the
+asset (a mispricing aggregator, manipulated peer LTV reads) is shown wrong so
+new positions would open on false numbers, and then only while that reading
+is wrong.
 
 ### Confirm afterwards
 
@@ -841,6 +847,101 @@ This is a config issue, not an on-chain incident:
    *permissionless* intents is unaffected — it needs no delegation.)
 
 See the Deployment Runbook "Auto-lend keeper address" section.
+
+---
+
+## 3.8 The per-asset pause — when it may be used (#3880)
+
+`AdminFacet.pauseAsset(asset)` is the one place the platform acts on a
+named asset, so its use is bound by a written rule. Read this before
+reaching for it. The design is
+[`ProjectKitDesign.md`](../DesignsAndPlans/ProjectKitDesign.md) section 8
+(guard 3) and section 14.
+
+**What it does.** It stops new positions in the asset, on either leg: a new
+offer, an offer change, an acceptance, a match, funding a standing intent, a
+standing-intent fill or roll, an instant takeover and the backstop's
+seeding. A lender's sale of a loan that names the asset (both routes) is
+refused too, because a sale opens a position for its buyer. Every close-out
+stays open: repaying, claiming, withdrawing, defaulting, liquidating,
+cancelling an offer, and taking capital out of a standing intent (or
+cancelling it).
+
+Today it also refuses three steps that add to a position already open:
+adding more of the asset as collateral to an open loan, the collateral
+reserve's top-up from a standing instruction, and funding a loan reserve in
+it. #3887 changes that, so those steps stay open under the pause; until it
+lands, say in the public note that a borrower whose collateral is paused can
+still repay but cannot top up.
+
+It is never the lever for stopping a defect in the platform's own code (see
+the corrections in §3.5 and §3.6): that is the global pause (§3) or a
+targeted kill switch (§3.7).
+
+**When it may be used.** For one of two reasons, each shown, not suspected:
+
+1. **The asset's own code** is shown to take, freeze or block what vaults
+   hold (for example a token whose owner can seize or freeze balances held
+   by a vault, or refuse transfers out of one), or to break a close-out (a
+   token whose transfer now reverts or delivers less than sent, so a
+   repayment, liquidation or claim on it cannot complete).
+2. **The platform's own reading of the asset** is shown to be wrong or
+   manipulated, so new positions would open on false numbers: its price
+   sources, its liquidity reading, or a limit taken from an outside reading.
+   The pause lasts only while that reading is wrong; lift it once the
+   reading is repaired or replaced.
+
+"Shown" means the behaviour is demonstrated: by the asset's code, a
+transaction on chain, a reproduction against a fork, or a comparison of the
+platform's reading with the market it claims to read. A report or a
+suspicion starts the investigation; it is not the reason.
+
+"Shown" in the second reason means that a reading the platform uses
+disagrees with something anyone can check. Four cases count: the platform's
+price sources disagree with each other past the price guard's own bound; a
+feed is stale or halted; a liquidity reading was moved by a trade in the
+pool with no matching move in the wider market, named by its transaction; or
+a limit taken from an outside reading is shown to be in error. If the
+platform's readings agree with independent sources, the second reason does
+not apply, however fast or far the price moves.
+
+**When it is never used.** Not because the market price moved (a crash or
+thin liquidity on its own is handled by the risk rules and the price guard),
+not for the asset's reputation or its issuer's conduct, and never at
+anyone's request, the asset's own project included.
+The pause does not stop liquidation, default or repayment, so it is never a
+tool against a price move.
+
+**Each use is published, in [`AssetPauseLog.md`](AssetPauseLog.md), with
+its reason when the pause is placed.** A notice for the second reason names
+the reading, the discrepancy, and the block or the transaction that shows
+it. A pause for the second reason with no stated discrepancy is outside the
+rule, and it is lifted. Checklist, in this order:
+
+1. Pause (`pauseAsset`) and confirm the `AssetPauseEnabled` event.
+2. Open the log entry straight away, through a commit to `main`: network,
+   asset address, time and transaction, the reason number (1 or 2 above) and
+   one sentence, and what the pause stops that day. For the second reason,
+   also the reading, what it disagrees with, and the block or transaction
+   that shows it, all in the first entry and never left for later. For the
+   first reason only, if the evidence would help someone exploit a fault
+   that is still open, write "Evidence follows." and add it once safe.
+3. Correct anything later with a new line under the entry; never rewrite
+   one.
+
+The contract's `AssetPauseEnabled` event carries no reason and is not
+changed; the log is where the reason lives. A pause with no entry is a
+defect in the response, and the daily launch check reports it, as it does
+a second-reason entry with no stated discrepancy.
+
+**Lifting it.** After handover, `unpauseAsset` needs `ADMIN_ROLE` or
+`UNPAUSER_ROLE`, both held by the Timelock, so a lift waits the standard
+delay and the Pauser Safe can cancel it; the Pauser Safe cannot lift its own
+pause. Before handover the admin lifts it directly; say so in the lift line
+when that happens. Record the lift as a lift line under the entry, with what
+changed in the asset's code or in the platform's reading.
+
+**Who.** The Pauser Safe (`PAUSER_ROLE`) or the admin.
 
 ---
 

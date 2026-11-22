@@ -287,6 +287,8 @@ Master kill-switch:
   disabled, loans on that chain default to the atomic-swap path
   + oracle-quorum fallback (no behavioural regression).
 
+> **Superseded reading (#3880).** The per-asset pause is now bound by the rule in [`IncidentRunbook.md`](../ops/IncidentRunbook.md) §3.8, which replaces the reading above: it is used only when the asset's own code takes, freezes or blocks what vaults hold or breaks a close-out, or when the platform's own reading of the asset is shown wrong (and only while it is), and never for reputation or an issuer's conduct. It is not an immediate lever against a defect in the liquidation path: see the corrections in IncidentRunbook §3.5 and §3.6.
+
 ## 10. Implementation plan (3 phases)
 
 | # | Phase | Surface | Effort | Status |

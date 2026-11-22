@@ -18,7 +18,7 @@ Roles defined in `LibAccessControl.sol`:
 |---|---|---|---|
 | `DEFAULT_ADMIN_ROLE` | `0x00` | Deployer on init, then rotated to the admin timelock (D1, #934) | Can grant/revoke every other role, `transferAdmin` |
 | `ADMIN_ROLE` | `keccak256("ADMIN_ROLE")` | Deployer on init | `AdminFacet.setZeroExProxy/setallowanceTarget/setKYCEnforcement/addSwapAdapter/removeSwapAdapter/reorderSwapAdapters/setPancakeswapV3Factory/setSushiswapV3Factory`, `RewardReporterFacet.set*`, `RewardAggregatorFacet.setExpectedSourceEids`. (No treasury setter since #3569: the treasury is fixed in the vault code and moves only through the `VaultBeacon`, whose owner is the Timelock.) |
-| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Deployer on init | `AdminFacet.pause / unpause`, `AdminFacet.pauseAsset / unpauseAsset` (per-asset reserve pause / blacklist — either `ADMIN_ROLE` or `PAUSER_ROLE` accepted) |
+| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Deployer on init | `AdminFacet.pause / unpause`, `AdminFacet.pauseAsset / unpauseAsset` (the per-asset pause, bound by the rule in [IncidentRunbook §3.8](IncidentRunbook.md) — either `ADMIN_ROLE` or `PAUSER_ROLE` accepted to pause) |
 | `KYC_ADMIN_ROLE` | `keccak256("KYC_ADMIN_ROLE")` | Deployer on init | `ProfileFacet.updateKYCStatus/updateKYCTier/updateKYCThresholds/setKeeperAccess/setLoanKeeperAccess` |
 | `ORACLE_ADMIN_ROLE` | `keccak256("ORACLE_ADMIN_ROLE")` | Deployer on init | `OracleAdminFacet.setChainlinkRegistry/setUsdChainlinkDenominator/setEthChainlinkDenominator/setWethContract/setUniswapV3Factory/setStableTokenFeed/setSequencerUptimeFeed/setFeedOverride/setTellorOracle/setApi3ServerV1/setDIAOracleV2/setSecondaryOracleMaxDeviationBps/setSecondaryOracleMaxStaleness` |
 | `RISK_ADMIN_ROLE` | `keccak256("RISK_ADMIN_ROLE")` | Deployer on init | `RiskFacet.updateRiskParams` |
@@ -68,6 +68,21 @@ gives up the root.
 - Upgrade facets or vault implementation.
 
 Pausing is a **brake**, not a wrench. Anything structural requires governance → timelock.
+
+### The per-asset pause has a written rule (#3880)
+
+`pauseAsset` stops new positions in one named asset (a lender's sale of a
+loan in it is one, since it opens a position for the buyer); every close-out
+stays open: repay, claim, withdraw, default, liquidation, offer cancel and
+taking capital out of a standing intent. It is used for one of two reasons,
+each shown: the asset's own code takes, freezes or blocks what vaults hold
+or breaks a close-out; or the platform's own reading of the asset (its price
+sources, liquidity reading, or a limit taken from an outside reading) is
+wrong or manipulated, and then only while that reading is wrong. It is never
+used because a market price moved, for reputation or an issuer's conduct, or
+at anyone's request. Each use is published with its reason. After handover
+lifting it waits the Timelock's delay; before handover the admin lifts it
+directly. The full rule is in [`IncidentRunbook.md`](IncidentRunbook.md) §3.8.
 
 ### Permissionless callers vs. role-gated admins
 
@@ -150,7 +165,7 @@ hasRole(<any role>, DEPLOYER) == false and hasRole(<any role but the bot roles>,
 |---|---|
 | Deployer renounces before new multisig is active | **Never skip step 6 verify.** If broken, the Diamond has no admin; only recovery is a fresh deploy + migration. |
 | A bad proposal is queued | The governance multisig (proposer) or the independent canceller (pauser multisig) cancels via `cancel(id)` during the delay. |
-| A bot or pauser key is compromised | The governance multisig calls `emergencyRevokeRole(role, key, reason)` — immediate, no timelock. It cannot touch `DEFAULT_ADMIN_ROLE` or the timelock's roles. |
+| A bot or pauser key is compromised | The governance multisig calls `emergencyRevokeRole(role, key, reason)` — immediate, no timelock. It cannot touch `DEFAULT_ADMIN_ROLE` or the timelock's roles. A compromised Pauser Safe (also the Timelock canceller) follows the compromised-Guardian steps in [`GovernanceRunbook.md`](GovernanceRunbook.md), which end by lifting every per-asset pause that has no entry meeting the rule. |
 | PAUSER_ROLE granted to a single EOA (not multisig) | Do not ship. A single-EOA pauser is a single point of compromise *and* a single point of delay. |
 
 ---
