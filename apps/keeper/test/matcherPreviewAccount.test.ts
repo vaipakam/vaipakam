@@ -6,7 +6,7 @@
  * from an `eth_call` with no `from`, whose never-seen bucket always reads covered.)
  */
 import { describe, expect, it } from 'vitest';
-import { zeroAddress } from 'viem';
+import { encodeFunctionData, zeroAddress } from 'viem';
 import { previewIntentRequest, previewMatchRequest } from '../src/matcher';
 
 describe('previewMatchRequest', () => {
@@ -53,5 +53,25 @@ describe('previewIntentRequest', () => {
       7n,
       9n,
     ]);
+  });
+
+  it('resolves against the ABI of previewIntent\'s own host (#3843), selector 0x51e43cd9', () => {
+    // #3843 moved previewIntent off RiskPreviewFacet; a matcher ABI built
+    // without IntentPreviewFacet cannot encode the read at all.
+    const intent = {
+      owner: '0x00000000000000000000000000000000000000b1',
+      lendingAsset: '0x00000000000000000000000000000000000000c1',
+      collateralAsset: '0x00000000000000000000000000000000000000c2',
+      slot: 0,
+    } as const;
+    const req = previewIntentRequest(
+      '0x00000000000000000000000000000000000000d1',
+      '0x00000000000000000000000000000000000000aa',
+      intent,
+      1n,
+      2n,
+    );
+    const data = encodeFunctionData({ abi: req.abi, functionName: req.functionName, args: req.args });
+    expect(data.slice(0, 10)).toBe('0x51e43cd9');
   });
 });

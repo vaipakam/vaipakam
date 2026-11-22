@@ -54,7 +54,7 @@ import {
   OfferMatchFacetABI,
   OfferMatchIntentFacetABI,
   RiskAccessFacetABI,
-  RiskPreviewFacetABI,
+  IntentPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
   LenderIntentViewFacetABI,
@@ -96,7 +96,7 @@ import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 // Diamond.
 // `getActiveLenderIntents` lives on LenderIntentFacet (moved off MetricsFacet
 // in #3618); `previewIntent` on
-// RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchIntentFacet (split out of
+// IntentPreviewFacet (moved off RiskPreviewFacet in #3843); `matchIntent` on OfferMatchIntentFacet (split out of
 // OfferMatchFacet in the #1219 host split) — added for the #625
 // WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
 const MATCHER_ABI: Abi = [
@@ -107,7 +107,7 @@ const MATCHER_ABI: Abi = [
   ...(OfferMatchFacetABI as Abi),
   ...(OfferMatchIntentFacetABI as Abi), // matchIntent — its own host since #1219
   ...(RiskAccessFacetABI as Abi),
-  ...(RiskPreviewFacetABI as Abi), // previewIntent — split off RiskAccessFacet (#1104)
+  ...(IntentPreviewFacetABI as Abi), // previewIntent: its own host since #3843
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
   ...(LenderIntentFacetABI as Abi), // rollIntentLoan — #625 WI-2c part 2b
   ...(LenderIntentViewFacetABI as Abi), // the intent feeds + priority snapshot
@@ -400,7 +400,7 @@ export interface LenderIntentSummary {
   acceptsProRata: boolean;
 }
 
-/** `RiskAccessFacet.previewIntent` → `LibOfferMatch.IntentPreviewResult`. */
+/** `IntentPreviewFacet.previewIntent` → `LibOfferMatch.IntentPreviewResult`. */
 interface IntentPreview {
   ok: boolean;
   intentError: number;
