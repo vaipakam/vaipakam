@@ -201,17 +201,23 @@ stated size (**Default** 256 KB a record). Above it the call path, the
 error and the events are kept and the longest argument values are cut, each
 with a mark that says so.
 
-**Where it runs.** As a small Worker of its own, on its own schedule, with
-**no signing key** and **no database binding**. At the volumes of the trace
-filter and of list and audit, its work fits inside a Worker's limit on
-outside requests per run, and the audit window is spread over the runs of a
-day. It is kept out of the indexer so that the indexer's own limit is not
-shared. It writes through a route on the indexer, under its own token, that
+**Where it runs.** As a unit of its own on the always-on machine, beside
+the keeper and on the pattern of the sanctions services (`ops/sanctions/`):
+its own user, its own env file, its own memory cap and its own schedule,
+with **no signing key** and **no database binding**. It was first placed on
+a small Worker of its own. Measured, the first decode of a stored
+explanation takes several times the processor time one Worker run is given
+on the present plan, the pass would take the last schedule slot, and one
+run's limit on outside requests would bound the audit window. The pass is
+written so that it does not depend on its host, and can move to a Worker
+when the plan allows. It is kept out of the indexer and out of the keeper's
+own unit, so that neither shares its limits or its failures. It writes
+through a route on the indexer, under its own token, that
 accepts three things and nothing else: a record, the pass's cursor and
 checkpoints, and a statement that a block range was replaced. That statement
 marks records and deletes none. So the pass can add to and mark the
 failed-transaction record and can touch no other table. No user reaches this
-Worker. A network that is given a continuous block scan inside the bound
+unit. A network that is given a continuous block scan inside the bound
 runs it the same way.
 
 **Completeness is stated.** The pass keeps a cursor per network. The health
@@ -639,7 +645,7 @@ before a mainnet, and treat each miss as a defect of this design.
 | Node capability check per network | Operations | No | Now |
 | Error catalogue (companion design) | Shared library | No | Now |
 | Transaction explainer | Shared library, operator command | No | Now |
-| Failed transaction record: the pass as its own Worker, the route, the table, health | Operations and indexer | No | Now, after the capability check |
+| Failed transaction record: the pass as its own unit on the always-on machine, the route, the table, health | Operations and indexer | No | Now, after the capability check |
 | Keeper decision record, pass runs, switch history | Keeper | No | Beside the batch |
 | Settings, facet and build histories; every event kept; a row's last event | Indexer | No | Beside the batch |
 | Request reference and service error record | App, agent, indexer | No | Beside the batch |

@@ -64,8 +64,9 @@ and a check that fails work already reviewed would only be switched off.
 
 ### 3.1 How the pass is done: a new structure, the same rules
 
-**Recommended, awaiting the owner's decision** (asked 2026-11-22: write all
-the contract code from scratch, or change the existing code facet by facet).
+**Decided by the owner, 2026-11-22.** He asked whether to write all the
+contract code from scratch or to change the existing code facet by facet,
+and confirmed the answer below the same day.
 
 Neither as stated. The structure is designed from scratch. The rules are
 carried across, not typed again.
