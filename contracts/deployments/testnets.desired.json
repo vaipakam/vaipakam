@@ -195,18 +195,21 @@
   },
   "notDeployedHere": {
     "getBaseRewardDeployment()": {
+      "kind": "byDesign",
       "chains": [
         "base-sepolia"
       ],
       "reason": "Base is the canonical reward chain; only a mirror records the Base reward deployment it reports to."
     },
     "getRewardRemittanceReceiver()": {
+      "kind": "byDesign",
       "chains": [
         "base-sepolia"
       ],
       "reason": "The reward remittance receiver takes Base's budget on a mirror; Base sends remittances and receives none."
     },
     "getBuybackRemittanceReceiver()": {
+      "kind": "byDesign",
       "chains": [
         "arb-sepolia",
         "bnb-testnet"
@@ -214,6 +217,7 @@
       "reason": "Buyback remittances are received on the canonical chain only; a mirror sends its buyback share to Base."
     },
     "getVPFIMinter()": {
+      "kind": "byDesign",
       "chains": [
         "arb-sepolia",
         "bnb-testnet"
@@ -221,7 +225,12 @@
       "reason": "VPFI is minted on the canonical chain only; a mirror holds the CCIP mirror token, which has no minter on the Diamond."
     }
   },
-  "_notDeployedHereWhy": "#3893: the readback refuses a zero answer from any Diamond getter that names a deployment contract unless it is listed here with a reason. These four are zero by design (the canonical/mirror split). Outside venues and our own unwired contracts await a design decision.",
+  "awaitingRuling": {
+    "getRateModel()": {
+      "reason": "Design ruling 2026-11-22: shown as awaiting a ruling while the rate-reference thread says whether Auto-lend still reads the rate model."
+    }
+  },
+  "_notDeployedHereWhy": "#3893, design ruling 2026-11-22: the readback refuses a zero answer from a Diamond getter that names a deployment contract, and refuses a revert outright, unless the getter is listed here. byDesign: a zero the canonical/mirror split explains (design checks each). venue: an outside contract absent from the chain, with the venue's published deployment list and the date read; where the venue exists, its address is set instead. On mainnet every entry needs the owner's recorded acceptance. awaitingRuling rows are shown, neither met nor failed, and are refused on mainnet.",
   "manual": [],
   "keeper": {
     "armed": {

@@ -14,7 +14,9 @@ It checks:
 
 The rehearsal driver runs the readback as its own stage, after the plan's steps and before anything else touches the forks. It reads the desired file named on the plan's first line, and refuses it if the file changed after the plan was made. A plan that names no desired file is reported as not covered, so its verdict cannot be green. The plan check now also validates the two new lists in the desired file and refuses an entry without a reason.
 
-Run against today's live testnets, the readback shows where they differ from the next deploy's desired state. That is expected, since the next deploy sets those values. It also shows six address getters that no deploy script sets; they are with the design thread to decide (deploy step or listed with a reason). Four zero answers that the canonical/mirror split explains are listed in the desired file now.
+A getter may answer zero only when the desired file says why, as a recorded fact and never a default. A "by design" entry covers a zero that the canonical/mirror split explains; the four such zeros on the testnets are listed, for design to check. A "venue" entry covers an outside contract missing from the chain. It must cite the venue's own published deployment list and the date it was read, and the row shows that evidence. On mainnet every such entry also needs the owner's recorded acceptance. A getter that reverts always fails. A getter whose rule design has not given yet (today, the rate model) shows as "awaiting ruling": neither met nor failed, and refused outright on mainnet.
+
+Run against today's live testnets, the readback shows where they differ from the next deploy's desired state. That is expected, since the next deploy sets those values.
 
 > Caveat: not yet covered are the token pools' rate limits and their admin, the token's CCIP registration, the delisting route's clearance source and the feed bindings. The script's header says so.
 

@@ -9,8 +9,9 @@
  *
  * One readback, used on the rehearsal's forks and on the live chains after the
  * real deploy. Each row is { id, chain, expected, found, result, by }, where
- * result is `met`, `not met`, `unreadable` or `info`. Any row that is not met
- * or unreadable fails the run (exit 1); an info row never does.
+ * result is `met`, `not met`, `unreadable`, `info` or `awaiting ruling`. Any row
+ * that is not met or unreadable fails the run (exit 1); an info row never does,
+ * and neither does a row whose rule the design thread has not given yet.
  *
  * What it reads:
  *   - each chain through `cast call` against `--rpc <slug>=<url>`, or the
@@ -54,6 +55,8 @@ export const MET = 'met';
 export const NOT_MET = 'not met';
 export const UNREADABLE = 'unreadable';
 export const INFO = 'info';
+/** A row whose rule is with the design thread: shown, never met and never a failure. */
+export const AWAITING = 'awaiting ruling';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -257,11 +260,14 @@ export function readback(d, ctx) {
     for (const g of getters) {
       const nd = d.notDeployedHere?.[g];
       const allowed = nd && (nd.chains === 'all' || nd.chains.includes(s));
+      const why = allowed ? `zero: ${nd.reason}${nd.kind === 'venue' ? ` (${nd.evidence.list}, read ${nd.evidence.checked})` : ''}` : 'an address';
       const r = ask(s, D, `${g}(address)`);
-      if (!r.ok) { R.push(row(`getter.${g}`, s, 'an address', r.err, UNREADABLE, 'deployment getter')); continue; }
+      // A revert is a failure, never a zero (design ruling 2026-11-22).
+      if (!r.ok) { R.push(row(`getter.${g}`, s, why, r.err, UNREADABLE, 'deployment getter')); continue; }
       const a = r.w[0];
-      if (a !== ZERO) R.push(row(`getter.${g}`, s, 'an address', a, allowed ? NOT_MET : MET, allowed ? 'deployment getter (listed as not deployed here, but answers)' : 'deployment getter'));
-      else R.push(row(`getter.${g}`, s, allowed ? `zero: ${nd.reason}` : 'an address', a, allowed ? MET : NOT_MET, 'deployment getter'));
+      if (d.awaitingRuling?.[g]) R.push(row(`getter.${g}`, s, `awaiting a ruling: ${d.awaitingRuling[g].reason}`, a, AWAITING, 'deployment getter'));
+      else if (a !== ZERO) R.push(row(`getter.${g}`, s, why, a, allowed ? NOT_MET : MET, allowed ? 'deployment getter (listed as not deployed here, but answers)' : 'deployment getter'));
+      else R.push(row(`getter.${g}`, s, why, a, allowed ? MET : NOT_MET, 'deployment getter'));
     }
 
     // ── Code: routed selectors equal this commit's facet set ────────────
@@ -394,7 +400,8 @@ export function main(argv = process.argv.slice(2), { env = process.env, log = co
   const pad = (t, n) => String(t).padEnd(n);
   for (const r of rows) log(`${pad(r.result, 10)} ${pad(r.chain, 13)} ${pad(r.id, 34)} expected ${r.expected} | found ${r.found}`);
   const bad = failed(rows);
-  log(`\n  ${rows.length} rows: ${rows.length - bad.length} met or info, ${bad.length} not met or unreadable`);
+  const waiting = rows.filter((r) => r.result === AWAITING).length;
+  log(`\n  ${rows.length} rows: ${rows.length - bad.length - waiting} met or info, ${waiting} awaiting a ruling, ${bad.length} not met or unreadable`);
   const jp = arg(rest, '--json');
   if (jp) writeFileSync(jp, `${JSON.stringify({ desired: file, records: recordsRoot, rows, failed: bad.length }, null, 2)}\n`);
   return bad.length ? 1 : 0;

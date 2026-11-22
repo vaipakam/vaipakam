@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CHAINS, CONTRACTS_DIR, derivedRewardSources, settingExpect, termsVersions, validate, keeperFlags, addressGetters } from '../../../contracts/script/deploy-plan.mjs';
-import { MET, NOT_MET, UNREADABLE, createdAddresses, failed, grantableRoles, readback, words } from '../../../contracts/script/readback.mjs';
+import { AWAITING, MET, NOT_MET, UNREADABLE, createdAddresses, failed, grantableRoles, readback, words } from '../../../contracts/script/readback.mjs';
 
 const desired = () => JSON.parse(readFileSync(join(CONTRACTS_DIR, 'deployments/testnets.desired.json'), 'utf8'));
 const terms = termsVersions();
@@ -171,9 +171,11 @@ test('a lane pointing at the wrong peer fails', () => {
 test('a zero deployment getter fails unless the file lists it, with a reason, on that chain', () => {
   const d = desired();
   const w = world(d);
+  delete d.awaitingRuling;
   for (const s of Object.keys(d.chains)) w.getters[s]['getRateModel()'] = A(0);
   assert.deepEqual(bad(readback(d, fakeCtx(d, w))).length, 3);
-  d.notDeployedHere = { 'getRateModel()': { chains: ['base-sepolia', 'arb-sepolia'], reason: 'no rate model on testnets yet, decided by design' } };
+  d.notDeployedHere = { 'getRateModel()': { kind: 'byDesign', chains: ['base-sepolia', 'arb-sepolia'], reason: 'no rate model on testnets yet, decided by design' } };
+  delete d.awaitingRuling;
   assert.deepEqual(validate(d, { flags: keeperFlags(), terms, getters: addressGetters() }), []);
   assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['bnb-testnet getter.getRateModel()']);
   // Listed as not deployed, but answering an address: the list is stale.
@@ -183,7 +185,7 @@ test('a zero deployment getter fails unless the file lists it, with a reason, on
 
 test('validation refuses a not-deployed entry with no reason or naming no getter', () => {
   const d = desired();
-  d.notDeployedHere = { 'getRateModel()': { chains: 'all', reason: 'short' }, 'notAGetter()': { chains: 'all', reason: 'a reason long enough to pass the length check' } };
+  d.notDeployedHere = { 'getRateModel()': { kind: 'byDesign', chains: 'all', reason: 'short' }, 'notAGetter()': { kind: 'byDesign', chains: 'all', reason: 'a reason long enough to pass the length check' } };
   d.notRecorded = { MockThing: '' };
   const p = validate(d, { flags: keeperFlags(), terms, getters: addressGetters() });
   assert.ok(p.some((x) => x.startsWith('notDeployedHere.getRateModel(): needs a reason')));
@@ -252,4 +254,47 @@ test('createdAddresses reads CREATE transactions and internal creations from run
   }));
   const m = createdAddresses(dir);
   assert.deepEqual(m.get(84532).map((c) => c.name), ['VaipakamDiamond', 'Child']);
+});
+
+test("a venue entry needs the venue's published list and the date it was read; a default is refused", () => {
+  const d = desired();
+  const v = { getters: addressGetters(), flags: keeperFlags(), terms };
+  d.notDeployedHere = { 'getPancakeswapV3Factory()': { kind: 'venue', chains: ['bnb-testnet'], reason: 'PancakeSwap v3 is not deployed on BNB testnet per its list' } };
+  let p = validate(d, v);
+  assert.ok(p.some((x) => x.includes('evidence.list')));
+  assert.ok(p.some((x) => x.includes('evidence.checked')));
+  d.notDeployedHere['getPancakeswapV3Factory()'].evidence = { list: 'https://developer.pancakeswap.finance/contracts/v3/addresses', checked: '2026-11-22' };
+  assert.deepEqual(validate(d, v), []);
+  d.notDeployedHere['getPancakeswapV3Factory()'].kind = 'default';
+  assert.ok(validate(d, v).some((x) => x.includes('kind must be venue or byDesign')));
+});
+
+test('the venue evidence is shown on the readback row', () => {
+  const d = desired();
+  const w = world(d);
+  delete d.awaitingRuling;
+  d.notDeployedHere = { 'getRateModel()': { kind: 'venue', chains: 'all', reason: 'stands in for an outside venue absent on testnets', evidence: { list: 'https://example.org/deployments', checked: '2026-11-22' } } };
+  for (const s of Object.keys(d.chains)) w.getters[s]['getRateModel()'] = A(0);
+  const r = readback(d, fakeCtx(d, w)).find((x) => x.id === 'getter.getRateModel()');
+  assert.equal(r.result, MET);
+  assert.match(r.expected, /https:\/\/example\.org\/deployments, read 2026-11-22/);
+});
+
+test('on mainnet a zero needs the owner\'s recorded acceptance, and nothing may await a ruling', () => {
+  const d = { network: 'mainnet', chains: {}, notDeployedHere: { 'getRateModel()': { kind: 'byDesign', chains: 'all', reason: 'a reason long enough to pass the length check' } }, awaitingRuling: { 'getPriceGuard()': { reason: 'a reason long enough to pass the length check' } } };
+  const p = validate(d, { getters: addressGetters(), flags: keeperFlags(), terms });
+  assert.ok(p.some((x) => x.includes("owner's recorded acceptance")));
+  assert.ok(p.some((x) => x.includes('may hold no getter awaiting a ruling')));
+});
+
+test('a getter awaiting a ruling is shown, neither met nor failed, and a revert still fails', () => {
+  const d = desired();
+  const w = world(d);
+  for (const s of Object.keys(d.chains)) w.getters[s]['getRateModel()'] = A(0);
+  const rows = readback(d, fakeCtx(d, w));
+  assert.deepEqual(bad(rows), []);
+  assert.ok(rows.filter((x) => x.id === 'getter.getRateModel()').every((x) => x.result === AWAITING));
+  const base = fakeCtx(d, w);
+  const rows2 = readback(d, { ...base, call: (s, to, sig, args) => { if (sig === 'getRateModel()(address)') throw new Error('execution reverted: FunctionDoesNotExist'); return base.call(s, to, sig, args); } });
+  assert.equal(bad(rows2).filter((x) => x.endsWith('getter.getRateModel()')).length, 3);
 });

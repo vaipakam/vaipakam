@@ -176,12 +176,35 @@ export function validate(d, { flags, terms, getters }) {
       p.push('sanctionsClearance.timelocks must list other chains of the file, each once');
     }
   }
-  // #3893: a deployment getter allowed to answer zero, per chain, with why.
+  // #3893: a deployment getter allowed to answer zero, per chain (design
+  // ruling 2026-11-22). Two kinds: `venue`, an outside contract that does not
+  // exist on the chain, recorded with the venue's own published deployment
+  // list and the date it was read; `byDesign`, a zero the canonical/mirror
+  // split explains. It is a recorded fact, never a default. On mainnet every
+  // entry needs the owner's recorded acceptance.
   for (const [g, e] of Object.entries(d.notDeployedHere ?? {})) {
-    if (getters && !getters.has(g)) p.push(`notDeployedHere.${g}: not a Diamond getter that returns one address (no inputs)`);
-    if (typeof e?.reason !== 'string' || e.reason.trim().length < MIN_REASON) p.push(`notDeployedHere.${g}: needs a reason of at least ${MIN_REASON} characters`);
+    const at = `notDeployedHere.${g}`;
+    if (getters && !getters.has(g)) p.push(`${at}: not a Diamond getter that returns one address (no inputs)`);
+    if (typeof e?.reason !== 'string' || e.reason.trim().length < MIN_REASON) p.push(`${at}: needs a reason of at least ${MIN_REASON} characters`);
     const on = e?.chains === 'all' ? slugs : e?.chains;
-    if (!Array.isArray(on) || !on.length || on.some((c) => !slugs.includes(c))) p.push(`notDeployedHere.${g}: chains must be "all" or a list of the file's chains`);
+    if (!Array.isArray(on) || !on.length || on.some((c) => !slugs.includes(c))) p.push(`${at}: chains must be "all" or a list of the file's chains`);
+    if (!['venue', 'byDesign'].includes(e?.kind)) p.push(`${at}: kind must be venue or byDesign`);
+    if (e?.kind === 'venue') {
+      if (!/^https:\/\/\S+$/.test(e.evidence?.list ?? '')) p.push(`${at}: a venue entry needs evidence.list, the venue's published deployment list (https URL)`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.evidence?.checked ?? '')) p.push(`${at}: a venue entry needs evidence.checked, the date the list was read (YYYY-MM-DD)`);
+    }
+    if (d.network === 'mainnet' && !(/^\d{4}-\d{2}-\d{2}$/.test(e?.ownerAccepted?.on ?? '') && typeof e?.ownerAccepted?.ref === 'string' && e.ownerAccepted.ref.length >= 10)) {
+      p.push(`${at}: on mainnet a zero is allowed only with the owner's recorded acceptance (ownerAccepted.on, ownerAccepted.ref)`);
+    }
+  }
+  // #3893: a getter whose zero is awaiting a design ruling: reported, neither
+  // met nor failed. Refused on mainnet, where every row must be decided.
+  for (const [g, e] of Object.entries(d.awaitingRuling ?? {})) {
+    const at = `awaitingRuling.${g}`;
+    if (getters && !getters.has(g)) p.push(`${at}: not a Diamond getter that returns one address (no inputs)`);
+    if (typeof e?.reason !== 'string' || e.reason.trim().length < MIN_REASON) p.push(`${at}: needs a reason of at least ${MIN_REASON} characters`);
+    if (d.notDeployedHere?.[g]) p.push(`${at}: also listed under notDeployedHere`);
+    if (d.network === 'mainnet') p.push(`${at}: a mainnet file may hold no getter awaiting a ruling`);
   }
   // #3893: contracts a run creates and deliberately does not record, by name.
   for (const [name, why] of Object.entries(d.notRecorded ?? {})) {
