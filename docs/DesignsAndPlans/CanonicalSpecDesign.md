@@ -377,6 +377,8 @@ hold, and not before:
    drafted and is listed as owed by that domain.
 5. Every threat and every mistake on the domain's lists has its answer.
 6. No statement of the domain is on a question list that is still open.
+7. No item of the feature ledger (section 23) that is assigned to the
+   domain is without an outcome.
 
 **What a machine cannot find, people read for.** Two statements in
 different words that contradict each other pass every check above. Three
@@ -1101,6 +1103,22 @@ running report.
 42. A statement in the held range is traced by the code check and owes
     its tests like any other, the public check reports no missing id for
     it, and the published numbers count it.
+43. A function added to a contract with no row in the feature ledger
+    fails the ledger check by name. So does a new design document, a new
+    keeper pass and a new row of an app's coverage matrix.
+44. A ledger row marked covered whose statement was removed fails. A row
+    for an item that no list holds any more fails as stale.
+45. A row marked covered by a statement that names the item and states
+    nothing it does is refused: for a callable function the check reads
+    the input table, and finds no statement that governs the function.
+46. A statement that no item reaches, and that is not marked decided and
+    not built, is listed by id. Marked so, it appears on the build list.
+47. A domain with one open ledger item assigned to it cannot close, and
+    the audit tag is refused while any item of any list is open.
+48. A contract with values fixed at construction, deployed on two chains
+    from one build, passes the deployed-code comparison on both. The same
+    contract with one such value changed fails by that value's name, and
+    with one changed byte of other code fails on the hash.
 
 ## 17. Alternatives considered
 
@@ -1194,10 +1212,20 @@ running report.
     where it applies, and a promise that a party can always get out must
     be tested from every state, which is a different debt.
 33. **Keep the register as cards only, or in each design.** Rejected: a
-    card can be closed by hand, and eighteen rows across four documents
+    card can be closed by hand, and nineteen rows across four documents
     is how one is missed. One table, read by the one launch check.
 34. **Let a watcher pause the platform by itself.** Rejected here: it
     would hold a key, and a false alarm would stop every user.
+35. **Cross-check the finished folder once, by hand, against a list of
+    features.** Rejected: it comes late and finds only what the writer of
+    the list remembered. The feature ledger of section 23 is built from
+    lists that are generated, and is checked as each domain closes.
+36. **Let the code check's silent list be the only check of coverage.**
+    Rejected as the only one: it sees the contracts and only what is
+    built. A feature that lives in an approved design, an app, the keeper
+    or the indexer is outside it.
+37. **Match features to statements by searching for words.** Rejected: a
+    statement that mentions a thing does not state what it does.
 
 ## 18. Recommendation
 
@@ -1250,13 +1278,15 @@ audit tag.
 | The four numbers in the launch check and on the audit tag. The changed standing rule in the standing documents | Governance | With the first canonical section |
 | The comment standard and its check, the tool that places examples, the generated reference "Calling the contracts directly", the preview gap list | Test tooling builds. The refactor's threads write to the standard | The check now. New facets in the refactor |
 | The wallet description files: generated now, published after the fresh mainnet deploy | Test tooling generates. Governance owns the launch card | Generation with the reference. Publishing at launch |
+| The feature ledger of section 23: the list generators, the ledger check, the build list | Test tooling builds. Design fills the ledger as each domain closes. The discussion thread makes the human pass | With the folder check. The human pass before the audit tag |
 | The further tests and reviews of section 21, and the register's lines in the launch check | As the register of section 22 names, card by card | Per the register's gates |
 | Approvals: each section's question list, each worked example, each accepted exception | The owner | Each section |
 
 ## 21. Further tests and reviews
 
 On 2026-11-22 the owner asked whether any other kind of test or review
-should be added, and approved nine. Everything above proves the contract
+should be added, and approved nine. A tenth, the feature ledger, was
+asked for by the owner the same day and is section 23. Everything above proves the contract
 code against the specification. These nine cover where a lending platform
 loses funds outside that proof. Seven are described here. The other two,
 the review of off-chain code and the proof of the core arithmetic, are
@@ -1346,9 +1376,29 @@ each deployed address with the build of the reviewed commit, and the live
 settings and roles with the parameters table and the authority
 statements. The reviewed commit is named by a protected tag, and the
 hashes compared are the ones in that tag's baseline record
-([`RefactorRulesDesign.md`](RefactorRulesDesign.md), section 3.2). The per-chain record that already binds each address to a
-code hash is the starting point. A difference is a refusal that names the
+([`RefactorRulesDesign.md`](RefactorRulesDesign.md), section 3.2). The
+per-chain record that already binds each address to a code hash is the
+starting point. A difference is a refusal that names the
 address or the setting.
+
+**Code that carries values fixed at construction is compared in two
+parts.** A contract such as the vault code holds addresses in its runtime
+code that are set when it is deployed (the position token, the treasury,
+the backstop), so one build has a different code hash on every chain and
+a plain comparison with the build's hash would refuse every valid deploy.
+For such a contract the launch check:
+
+- blanks every such value in the deployed code, at the places the build's
+  own output lists for it, and compares the hash of what is left with the
+  record's hash, which is made the same way;
+- then reads each value and compares it, by name, with what that chain's
+  deployment record and the folder say it must be. A value with no
+  expected figure is a refusal, the same as a wrong one.
+
+The record lists, for each contract, the name of every such value. A
+contract with none is compared whole. The price guard's deploy check
+already compares code this way, and this is the same rule for every
+contract.
 
 **The settings and roles are compared again on a schedule after launch,**
 by the watcher of section 21.6, and a difference is an operator alert. A
@@ -1419,6 +1469,7 @@ mainnet deploy.
 | B7 | What is deployed is what was reviewed; chain differences; outside dependencies | Section 21.5, the launch check, two review notes | #3960 | The check green on each chain at its deploy; both notes written; the scheduled comparison armed | Mainnet, and every deploy after |
 | B8 | Never statements watched live, and the response drills | Section 21.6, the watcher list, the drill records | #3961 | Watchers armed on every chain; each drill's record names the present design, holders and host | Mainnet |
 | B9 | First-time user tests | Section 21.7, the mistake lists | #3962 | Every finding answered | Mainnet |
+| B10 | The feature ledger: every function, design, screen, pass and decision ends in a statement, and the human pass | Section 23, the ledger file in the folder | #3965 | Every item of every list has an outcome; the check green on the tagged commit; every finding of the human pass answered | Tag |
 
 **How a row cannot be missed.**
 
@@ -1445,4 +1496,89 @@ mainnet deploy.
 **Order.** B1, B2 and B6 start now, with the vault pilot: they are cheap
 and protect funds directly. B5 and the two reviews of B7 are done before
 the audit, so the auditors read them. B3, B4, B8 and B9 are done before a
-mainnet.
+mainnet. B10 is filled domain by domain as each closes, and its human pass
+is made once, before the audit tag.
+
+## 23. The feature ledger: nothing the platform does is left out
+
+Asked for by the owner on 2026-11-22: once the canonical documents are
+ready, check that they cover every feature the platform has.
+
+**What the other checks leave open.** The folder check proves the folder
+agrees with itself. The record proves every line of the old
+specifications was considered (section 6). The code check lists what the
+contracts do that no statement covers (section 12). None of them sees a
+feature that lives only in an approved design, in an app, the keeper or
+the indexer, or in a decision that never reached a specification.
+
+**The lists.** Each exists independently of the folder, so none can share
+its blind spots. A tool regenerates all of them on every run.
+
+| List | Read from | One item is |
+| --- | --- | --- |
+| What can be called | The compiled interface of every deployed contract | One function |
+| What is announced and refused | The same interfaces, and the file of error meanings | One event, or one error |
+| What can be set | Every value a governed step can change | One setting |
+| What anyone may run | The ledger of open steps the pre-deploy gate reads | One step |
+| The old specifications | `docs/FunctionalSpecs/` | One section |
+| The approved designs | `docs/DesignsAndPlans/` | One document, and each of its sections that states behaviour |
+| The keeper | Its list of passes and their switches | One pass |
+| The apps | Each app's coverage matrix | One row |
+| The indexer | What it handles and what it serves | One handled event, or one feed |
+| Notifications | The kinds the agent can send | One kind |
+| What shipped | `docs/ReleaseNotes/` | One section |
+| What was decided | The owner decisions the documents record by date | One decision |
+
+**The ledger.** One data file in the folder, `feature-ledger.json`
+(**Default**). Each item of each list has exactly one outcome.
+
+| Outcome | Carries |
+| --- | --- |
+| **Covered** | The ids of the statements that state what the item does |
+| **Dropped** | The owner's decision that removed it, by date |
+| **Not a behaviour** | The reason: a build note, a history section, a tool |
+| **Held** | Nothing in public. The pointer is in the private records, and the published report counts it (section 3.6) |
+
+Each item is also assigned to the domain that answers for it.
+
+**Covered means stated, not mentioned.** A statement that names a thing
+does not cover it. So for the four lists read from the contracts nobody
+maps by hand: a function is covered through its input table (section
+8.3), an event through the map of facts to events, a refusal through the
+"Refused as" line that names its error, and a setting through its row of
+the parameters table. For the other lists the drafter writes the outcome,
+and the conflict read checks a sample of them against their sources.
+
+**The check** refuses:
+
+1. an item with no outcome;
+2. an outcome that cites a statement that does not exist, or a decision
+   that no document records;
+3. a row for an item no list holds any more;
+4. a "covered" for a contract item that its table, map or line does not
+   bear out.
+
+**The other direction.** Every statement must be reached by at least one
+item that does it: a function, a step, a pass, a screen. A statement that
+nothing reaches is listed by id, unless its record marks it **decided and
+not built**. Those are printed as the **build list**: what the owner has
+approved that the code does not yet do. This is where a builder learns
+what an approval asked of them, and no second list of build items is
+kept by hand.
+
+**The human pass.** A tool cannot tell whether a statement says enough.
+After the check passes for the whole folder, a thread that drafted none
+of it walks each app screen by screen, each keeper pass and the private
+survey of features, and writes down anything a user or an operator would
+say the platform does that no statement says. Each finding ends as a
+statement or as an outcome in the ledger, and the record of the pass is
+what closes register row B10.
+
+**When.** The ledger is filled as each domain is drafted. A domain cannot
+close with an open item assigned to it (section 4). An item nobody has
+assigned is open for the folder. The audit tag is refused while any item
+of any list is open.
+
+**What is published.** The counts: items, covered, dropped, not a
+behaviour, held, open. An outcome that would describe a held matter is
+never written in the public file.

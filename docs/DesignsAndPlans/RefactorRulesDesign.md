@@ -168,7 +168,11 @@ moment, for that fix.
 nothing else. The record holds:
 
 - for every deployable contract, the hash of its runtime code, its size in
-  bytes, and the hash of its interface (functions, events and errors);
+  bytes, and the hash of its interface (functions, events and errors). For
+  a contract whose runtime code carries values fixed at construction, the
+  hash is taken with those values blanked, and the record lists each such
+  value by name, so that a deployed copy can be compared with it on any
+  chain ([`CanonicalSpecDesign.md`](CanonicalSpecDesign.md), section 21.5);
 - the storage layout, as the hash of the layout guard's recorded file;
 - the gas figures of report 1 for every measured action;
 - the full regression's manifest: its plan digest, its chunks, and the
@@ -201,7 +205,7 @@ copy of a build has to be trusted.
 - The public keeper bot's repository gets a tag of the same name, on the
   commit whose interface files were synced from the tagged commit.
 - The private review copy is refreshed to exactly the tagged commit, so the
-  coverage ledger's hashes and the record describe one tree.
+  review coverage ledger's hashes and the record describe one tree.
 - The testnet fresh deploy that precedes the pass is made from exactly the
   tagged commit, and each chain's deployment record names the tag.
 
