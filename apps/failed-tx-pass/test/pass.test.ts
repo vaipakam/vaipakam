@@ -13,8 +13,9 @@ import { codeNamesFromDeployment } from '@vaipakam/lib/txExplainer';
 import { createSqliteD1 } from '../../indexer/test/helpers/sqliteD1';
 import { handleFailedTxState, handleFailedTxWrite, type D1Write } from '../../indexer/src/failedTx';
 import { planFor, watchedAddresses, type CapabilityResult } from '../src/chains';
-import { boundExplanation, CUT_MARK, MAX_EXPLANATION_BYTES } from '../src/record';
-import { defaultSettings, runChain, type RunContext } from '../src/pass';
+import { boundErrorValues, boundExplanation, CUT_MARK, MAX_EXPLANATION_BYTES } from '../src/record';
+import { MAX_ERROR_VALUES_BYTES, jsonBytes } from '@vaipakam/lib/failedTxBounds';
+import { ALERT_MESSAGE_CHARS, alertBatches, defaultSettings, runChain, type RunContext } from '../src/pass';
 import { RpcFailure, hex, type Rpc } from '../src/rpc';
 import type { Explorer } from '../src/explorer';
 import { IndexerFailure, type IndexerClient } from '../src/indexer';
@@ -285,6 +286,44 @@ describe('the failed transaction pass', () => {
     expect(ix.rows('SELECT tx_hash FROM failed_tx ORDER BY block_number').map((x) => x.tx_hash)).toEqual([txHash(6), txHash(7)]);
   });
 
+  it('rescans a replaced range even when the run that marked it stopped before its cursor write', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const ix = realIndexer();
+    const ctx = () => context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain));
+    await runChain(ctx());
+    chain.setHead(HEAD + 100);
+    await runChain(ctx());
+    chain.replaceFrom(HEAD + 1);
+    chain.txs.push({ hash: txHash(22), block: HEAD + 50, to: DIAMOND, input: repay(22n), status: 0, revert: REVERT, trace: 'ok' });
+    // The run marks the replacement, then the node stops answering before the cursor write.
+    const stopping = ctx();
+    const inner = stopping.indexer;
+    stopping.indexer = {
+      state: inner.state.bind(inner),
+      write: async (body) => {
+        if ((body as { kind?: string }).kind === 'records') throw new RpcFailure('transient', null, 'stopped');
+        return inner.write(body);
+      },
+    };
+    const r1 = await runChain(stopping);
+    expect(r1.held).toBeDefined();
+    expect(ix.rows('SELECT block_number FROM failed_tx_cursor')).toEqual([{ block_number: HEAD + 100 }]);
+    // The next run reads the rewind from what is stored and scans the range again.
+    const r2 = await runChain(ctx());
+    expect(r2.scanned!.from).toBe(HEAD + 1);
+    expect(ix.rows('SELECT tx_hash FROM failed_tx').map((x) => x.tx_hash)).toEqual([txHash(22)]);
+  });
+
+  it('alerts when its state cannot be read', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const ix = realIndexer();
+    const ctx = context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain));
+    ctx.indexer = { ...ix, state: async () => { throw new IndexerFailure(401, 'state 401'); } };
+    const r = await runChain(ctx);
+    expect(r.held).toMatch(/could not be read/);
+    expect(r.findings.some((f) => f.level === 'alert' && f.key === 'state-unreadable')).toBe(true);
+  });
+
   it('holds when two reads of the checkpoint block disagree', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const ix = realIndexer();
@@ -320,6 +359,19 @@ describe('the failed transaction pass', () => {
     expect(r2.audited!.from).toBe(r.audited!.to + 1);
   });
 
+  it('stops the audit slice at a block the node gives no receipts for, and reads it again next run', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const windowStart = DEPLOY + 86_400;
+    const ix = realIndexer();
+    const ctx = context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain));
+    const rpc = chain.rpc;
+    ctx.rpc = { call: (m, p) => (m === 'eth_getBlockReceipts' && Number.parseInt(p[0] as string, 16) === windowStart + 2 ? Promise.resolve(null as never) : rpc.call(m, p)) };
+    const r = await runChain(ctx);
+    expect(r.audited).toMatchObject({ from: windowStart, to: windowStart + 1 });
+    const r2 = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
+    expect(r2.audited!.from).toBe(windowStart + 2);
+  });
+
   it('with no explorer key, runs sends-and-audit and states the watched share', async () => {
     const chain = modelChain(DEPLOY, HEAD);
     const ix = realIndexer();
@@ -345,7 +397,29 @@ describe('cadence', () => {
     const third = listedExplorer(chain);
     await runChain(context(chain, ix, 'explorer-and-audit', NOW + 3700, third));
     expect(third.calls.length).toBe(plan.watched.length);
-    expect(third.calls).toContain(`${plan.watched.find((a) => !plan.direct.includes(a))}:${HEAD + 1}-${HEAD + 3700}`);
+    // Each list is asked again over the overlap behind its position.
+    const overlap = Math.ceil(defaultSettings(plan).listOverlapSeconds / plan.blockTimeSeconds);
+    expect(third.calls).toContain(`${plan.watched.find((a) => !plan.direct.includes(a))}:${HEAD + 1 - overlap}-${HEAD + 3700}`);
+    expect(third.calls).toContain(`${plan.direct[0]}:${HEAD + 601 - overlap}-${HEAD + 3700}`);
+  });
+
+  it('collects a failure the explorer lists only after its block was first read, without decoding recorded ones again', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    chain.txs.push({ hash: txHash(20), block: HEAD - 200, to: DIAMOND, input: repay(20n), status: 0, revert: REVERT, trace: 'ok' });
+    chain.txs.push({ hash: txHash(21), block: HEAD - 5, to: DIAMOND, input: repay(21n), status: 0, revert: REVERT, trace: 'ok' });
+    const ix = realIndexer();
+    // The first run's list does not yet carry tx 21.
+    await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain, new Set([txHash(21)]))));
+    expect(ix.rows('SELECT tx_hash FROM failed_tx').map((x) => x.tx_hash)).toEqual([txHash(20)]);
+    chain.setHead(HEAD + 300);
+    const traced: string[] = [];
+    const rpc = chain.rpc;
+    const ctx = context(chain, ix, 'explorer-and-audit', NOW + 300, listedExplorer(chain));
+    ctx.rpc = { call: (m, p) => (m === 'debug_traceTransaction' && traced.push(p[0] as string), rpc.call(m, p)) };
+    const r = await runChain(ctx);
+    expect(ix.rows('SELECT tx_hash FROM failed_tx ORDER BY block_number').map((x) => x.tx_hash)).toEqual([txHash(20), txHash(21)]);
+    expect(traced).toEqual([txHash(21)]);
+    expect(r.findings.some((f) => f.key === `listed-late-${txHash(21)}`)).toBe(true);
   });
 
   it('spreads a catch-up over runs, and says when the cursor is behind', async () => {
@@ -368,6 +442,37 @@ describe('the plan and the record bounds', () => {
   it('refuses a block-scan result rather than running it as something else', () => {
     expect(() => planFor(cap('block-scan'), true)).toThrow(/block-scan/);
     expect(() => planFor(cap('trace-filter'), true)).toThrow(/no usable range/);
+  });
+
+  it('bounds the error values to their own field limit, and says when they are not stored', () => {
+    const cut = boundErrorValues({ reason: 'r'.repeat(20 * 1024), code: '7' });
+    expect(cut.dropped).toBe(false);
+    expect((cut.value as Record<string, string>).reason!.endsWith(CUT_MARK)).toBe(true);
+    expect(jsonBytes(cut.value)).toBeLessThanOrEqual(MAX_ERROR_VALUES_BYTES);
+    const many = boundErrorValues({ list: Array.from({ length: 5000 }, (_, i) => String(i)) });
+    expect(many).toMatchObject({ value: null, cut: true, dropped: true });
+  });
+
+  it('records a failure whose error values are over their bound, rather than having every write refused', async () => {
+    const chain = modelChain(DEPLOY, HEAD);
+    const long = encodeErrorResult({ abi: parseAbi(['error Error(string)']), errorName: 'Error', args: ['z'.repeat(20 * 1024)] });
+    chain.txs.push({ hash: txHash(23), block: HEAD - 10, to: DIAMOND, input: repay(23n), status: 0, revert: long, trace: 'ok' });
+    const ix = realIndexer();
+    const r = await runChain(context(chain, ix, 'explorer-and-audit', NOW, listedExplorer(chain)));
+    expect(r.records).toBe(1);
+    const [row] = ix.rows('SELECT error_values, explanation_cut FROM failed_tx');
+    expect(String(row!.error_values)).toContain(CUT_MARK);
+    expect(row!.explanation_cut).toBe(1);
+  });
+
+  it('splits alerts into messages the operator chat takes, every alert in one of them', () => {
+    const alerts = Array.from({ length: 30 }, (_, i) => ({ chainId: 1, level: 'alert' as const, key: `k${i}`, text: `${i} `.padEnd(300, 'x') }));
+    const batches = alertBatches(alerts);
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.flat().map((a) => a.key)).toEqual(alerts.map((a) => a.key));
+    for (const b of batches) expect(['Failed transaction pass', ...b.map((a) => `• ${a.text}`)].join('\n').length).toBeLessThanOrEqual(ALERT_MESSAGE_CHARS);
+    const huge = alertBatches([{ chainId: 1, level: 'alert', key: 'h', text: 'h'.repeat(10_000) }]);
+    expect(huge[0]![0]!.text.length).toBeLessThan(ALERT_MESSAGE_CHARS);
   });
 
   it('cuts the longest argument values to fit, with a mark', () => {

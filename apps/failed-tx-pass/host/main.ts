@@ -26,7 +26,7 @@ import { codeNamesFromDeployment } from '@vaipakam/lib/txExplainer';
 import { planFor, type CapabilityResult } from '../src/chains';
 import { txlistExplorer } from '../src/explorer';
 import { indexerClient } from '../src/indexer';
-import { defaultSettings, runChain, type Finding, type RunResult } from '../src/pass';
+import { alertBatches, defaultSettings, runChain, type Finding, type RunResult } from '../src/pass';
 import { jsonRpc } from '../src/rpc';
 
 const env = (k: string): string | undefined => {
@@ -59,18 +59,28 @@ async function sendAlerts(findings: Finding[], now: number): Promise<void> {
   const due = alerts.filter((a) => now - (sent[`${a.chainId}:${a.key}`] ?? 0) >= REPEAT_SECONDS);
   for (const a of alerts) process.stdout.write(`ALERT ${a.text}\n`);
   if (due.length && token && chat) {
-    const text = ['Failed transaction pass', ...due.map((a) => `• ${a.text}`)].join('\n').slice(0, 4000);
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (res.ok) for (const a of due) sent[`${a.chainId}:${a.key}`] = now;
-      else process.stdout.write(`the operator chat refused the alert (HTTP ${res.status})\n`);
-    } catch (e) {
-      process.stdout.write(`the operator chat did not answer (${e instanceof Error ? e.name : 'error'})\n`);
+    // Telegram takes 4,096 characters a message: the due alerts go out in as
+    // many messages as they need, and an alert is marked sent only once the
+    // message carrying it was accepted. A refused message stops the rest, which
+    // stay due for the next run.
+    for (const batch of alertBatches(due)) {
+      const text = ['Failed transaction pass', ...batch.map((a) => `• ${a.text}`)].join('\n');
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!res.ok) {
+          process.stdout.write(`the operator chat refused the alert (HTTP ${res.status})\n`);
+          break;
+        }
+        for (const a of batch) sent[`${a.chainId}:${a.key}`] = now;
+      } catch (e) {
+        process.stdout.write(`the operator chat did not answer (${e instanceof Error ? e.name : 'error'})\n`);
+        break;
+      }
     }
   }
   if (file) {

@@ -30,6 +30,7 @@ import {
 } from '@vaipakam/lib/txExplainer';
 import { CALL_TRACER, platformAbis, receiptFacts } from '@vaipakam/lib/txExplainerNode';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { MAX_ERROR_VALUES_BYTES, MAX_EXPLANATION_BYTES, jsonBytes } from '@vaipakam/lib/failedTxBounds';
 import { RpcFailure, hex, num, stateGone, type Rpc } from './rpc';
 
 export type FoundBy = 'keeper-send' | 'explorer-list' | 'audit' | 'trace-filter' | 'block-scan';
@@ -64,8 +65,7 @@ export interface FailedTxRecord {
   stateUnreachable: boolean;
 }
 
-/** The size a stored explanation is kept whole up to (§4.3, Default 256 KB). */
-export const MAX_EXPLANATION_BYTES = 256 * 1024;
+export { MAX_EXPLANATION_BYTES };
 /** An argument value cut to fit keeps this many characters. */
 const CUT_KEEP = 256;
 export const CUT_MARK = '…[cut to fit the record]';
@@ -126,7 +126,38 @@ function idArg(args: Record<string, unknown> | undefined, name: 'loanId' | 'offe
   return typeof v === 'string' && /^[0-9]+$/.test(v) ? v : null;
 }
 
-const size = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
+const size = jsonBytes;
+
+/**
+ * Cuts the longest string values in `value` (in place), each to CUT_KEEP
+ * characters and a mark, until it fits `max`. `inArgs` says whether every
+ * string counts or only those under an `args` object. Returns whether
+ * anything was cut and whether the value now fits.
+ */
+function cutLongest(value: unknown, max: number, inArgs: boolean): { cut: boolean; fits: boolean } {
+  if (size(value) <= max) return { cut: false, fits: true };
+  const leaves: Array<{ holder: Record<string, unknown> | unknown[]; key: string | number; len: number }> = [];
+  const walk = (v: unknown, counted: boolean) => {
+    if (Array.isArray(v)) v.forEach((x, i) => (typeof x === 'string' && counted ? leaves.push({ holder: v, key: i, len: x.length }) : walk(x, counted)));
+    else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof x === 'string' && counted) leaves.push({ holder: v as Record<string, unknown>, key: k, len: x.length });
+        else walk(x, counted || k === 'args');
+      }
+    }
+  };
+  walk(value, inArgs);
+  leaves.sort((a, b) => b.len - a.len);
+  let cut = false;
+  for (const l of leaves) {
+    if (l.len <= CUT_KEEP + CUT_MARK.length) break;
+    const h = l.holder as Record<string | number, string>;
+    h[l.key] = `${h[l.key]!.slice(0, CUT_KEEP)}${CUT_MARK}`;
+    cut = true;
+    if (size(value) <= max) return { cut, fits: true };
+  }
+  return { cut, fits: false };
+}
 
 /**
  * An explanation bounded to the record's size: the longest argument values
@@ -135,28 +166,8 @@ const size = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
  */
 export function boundExplanation(e: unknown, max = MAX_EXPLANATION_BYTES): { value: unknown; cut: boolean; dropped: boolean } {
   const value = structuredClone(plainValue(e)) as Record<string, unknown>;
-  if (size(value) <= max) return { value, cut: false, dropped: false };
-  // Every string under an `args` object, longest first.
-  const leaves: Array<{ holder: Record<string, unknown> | unknown[]; key: string | number; len: number }> = [];
-  const walk = (v: unknown, inArgs: boolean) => {
-    if (Array.isArray(v)) v.forEach((x, i) => (typeof x === 'string' && inArgs ? leaves.push({ holder: v, key: i, len: x.length }) : walk(x, inArgs)));
-    else if (v && typeof v === 'object') {
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-        if (typeof x === 'string' && inArgs) leaves.push({ holder: v as Record<string, unknown>, key: k, len: x.length });
-        else walk(x, inArgs || k === 'args');
-      }
-    }
-  };
-  walk(value, false);
-  leaves.sort((a, b) => b.len - a.len);
-  let cut = false;
-  for (const l of leaves) {
-    if (l.len <= CUT_KEEP + CUT_MARK.length) break;
-    const h = l.holder as Record<string | number, string>;
-    h[l.key] = `${h[l.key]!.slice(0, CUT_KEEP)}${CUT_MARK}`;
-    cut = true;
-    if (size(value) <= max) return { value, cut, dropped: false };
-  }
+  const r = cutLongest(value, max, false);
+  if (r.fits) return { value, cut: r.cut, dropped: false };
   // Still over: keep what the failure needs and say the call path is not stored.
   const kept = {
     subject: value.subject,
@@ -173,6 +184,26 @@ export function boundExplanation(e: unknown, max = MAX_EXPLANATION_BYTES): { val
   return { value: kept, cut: true, dropped: true };
 }
 
+/**
+ * The decoded error values bounded to their own field limit (shared with the
+ * indexer's route): the longest values are cut with a mark, and values still
+ * over it are not stored, which the record's `unavailable` list says.
+ */
+export function boundErrorValues(args: unknown, max = MAX_ERROR_VALUES_BYTES): { value: unknown; cut: boolean; dropped: boolean } {
+  if (args === null || args === undefined) return { value: null, cut: false, dropped: false };
+  const value = structuredClone(args);
+  const r = cutLongest(value, max, true);
+  return r.fits ? { value, cut: r.cut, dropped: false } : { value: null, cut: true, dropped: true };
+}
+
+/** A record fitted to the route's field bounds before it is written. */
+function fitRecord(r: FailedTxRecord): FailedTxRecord {
+  const ev = boundErrorValues(r.errorValues);
+  if (!ev.cut) return r;
+  const unavailable = ev.dropped ? [...(r.unavailable ?? []), 'the error values (over the record size bound; the explanation keeps them where it can)'] : r.unavailable;
+  return { ...r, errorValues: ev.value as FailedTxRecord['errorValues'], explanationCut: true, unavailable };
+}
+
 export interface RecordContext {
   rpc: Rpc;
   chainId: number;
@@ -187,6 +218,11 @@ export interface RecordContext {
  * the transaction). Throws on a node that does not answer.
  */
 export async function recordFor(ctx: RecordContext, txHash: string, foundBy: FoundBy): Promise<FailedTxRecord | null> {
+  const r = await recordUnfitted(ctx, txHash, foundBy);
+  return r ? fitRecord(r) : null;
+}
+
+async function recordUnfitted(ctx: RecordContext, txHash: string, foundBy: FoundBy): Promise<FailedTxRecord | null> {
   const { rpc } = ctx;
   const abis = ctx.abis ?? platformAbis();
   const [tx, receipt] = await Promise.all([

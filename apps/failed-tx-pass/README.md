@@ -45,17 +45,25 @@ For each network in `FAILED_TX_CHAINS`, independently:
    when both reads agree with each other and differ from the checkpoint. The
    pass then walks back to the newest checkpoint the chain still agrees with,
    marks every record above it as replaced (nothing is deleted), and scans the
-   range again. A disagreeing read holds the run.
+   range again. A disagreeing read holds the run. The rewind is kept in what
+   is stored: a cursor above the newest unmarked checkpoint is read as a
+   marked replacement and scanned again from that checkpoint, so a run that
+   stops between the marking and its cursor write loses nothing.
 4. Finds failed transactions after its cursor, by the network's mode. The
    mode comes from the node capability check's committed result
-   (`ops/node-capability/results/<slug>.json`, #3913):
+   (`ops/node-capability/results/<slug>.json`, #3913). Those results reach
+   main with the capability check itself, and `install.sh` refuses a commit
+   that does not carry them:
    - **trace-filter**: one `trace_filter` request per range over every
      watched contract. This covers direct calls and calls made through another
      contract.
    - **list-and-audit**: the explorer's list of transactions sent to each
      contract (Etherscan v2, one key), keeping the failed ones. The contracts
      users call directly (the Diamond, the position token, the VPFI token) are
-     read every run, and the rest once an hour of blocks has passed.
+     read every run, and the rest once an hour of blocks has passed. Each
+     list is asked again over the hour behind its position, because the
+     explorer can index a transaction after the node already shows the block
+     settled; what it lists later than that is the audit's to find.
    - **sends-and-audit**: no explorer key. The keeper's own sends are this
      mode's continuous source, and they arrive with the keeper decision record
      (§4.4), which is not built yet. Until then the daily audit is the only

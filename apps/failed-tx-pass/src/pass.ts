@@ -33,6 +33,7 @@ import { IndexerFailure, type IndexerClient, type PassState } from './indexer';
 import { recordFor, type FailedTxRecord, type FoundBy } from './record';
 import { RpcFailure, hex, num, type Rpc } from './rpc';
 import type { ChainPlan } from './chains';
+import { MAX_RECORDS_PER_WRITE } from '@vaipakam/lib/failedTxBounds';
 
 export interface PassSettings {
   /** The most blocks one run moves the cursor by (a catch-up is spread over runs). */
@@ -47,11 +48,22 @@ export interface PassSettings {
   behindSeconds: number;
   /** Where a network with no cursor starts: this far behind the settled head (never before its deploy block). */
   firstRunLookbackSeconds: number;
+  /**
+   * List-and-audit mode: how far behind each list's position the explorer is
+   * asked again. The explorer can index a transaction after the node already
+   * shows its block settled; a failure it lists late, within this window, is
+   * still collected. One listed later than that is the audit's to find (a
+   * measured miss).
+   */
+  listOverlapSeconds: number;
 }
 
-export const RECORDS_PER_WRITE = 20;
+/** Records in one write: the route's own bound. */
+export const RECORDS_PER_WRITE = MAX_RECORDS_PER_WRITE;
 const HOUR = 3600;
 const DAY = 86_400;
+/** The widest block range one state read lists recorded transactions for (the indexer's bound). */
+const STATE_RECORDED_RANGE = 20_000;
 
 /** Settings for a network, from its block time and a run every five minutes. */
 export function defaultSettings(plan: ChainPlan, runsPerDay = 288): PassSettings {
@@ -65,6 +77,7 @@ export function defaultSettings(plan: ChainPlan, runsPerDay = 288): PassSettings
     auditBlocksPerRun: Math.max(1, Math.ceil((windowBlocks * 2) / runsPerDay)),
     behindSeconds: 30 * 60,
     firstRunLookbackSeconds: DAY,
+    listOverlapSeconds: HOUR,
   };
 }
 
@@ -153,6 +166,9 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
   } catch (e) {
     if (mismatch(e)) return result;
     result.held = `its state could not be read from the indexer (${why(e)})`;
+    // Without its state the pass records nothing, so this is an operator's
+    // matter on every run it lasts (the host repeats it at its own pace).
+    alert('state-unreadable', `Chain ${chainId}: the failed transaction pass could not read its state from the indexer (${why(e)}); nothing is being recorded for this network.`);
     return result;
   }
 
@@ -169,6 +185,16 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
 
   let start = state.cursor?.blockNumber ?? null;
   let slow = plan.mode === 'list-and-audit' ? (state.cursor?.slowBlockNumber ?? start) : null;
+  // Every cursor write stores a checkpoint at the cursor, so the newest live
+  // checkpoint is the cursor's own unless a replacement marked it. A cursor
+  // above the newest live checkpoint therefore means a replacement was marked
+  // and the run that marked it stopped before rewinding: scan again from the
+  // checkpoint. The rewind lives in what is stored, not in one run's memory.
+  const live = state.checkpoints[0];
+  if (live && start !== null && live.blockNumber < start) {
+    start = live.blockNumber;
+    if (slow !== null) slow = Math.min(slow, live.blockNumber);
+  }
 
   try {
     // 3. A replaced block.
@@ -251,12 +277,26 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
             }
           }
         };
-        await listed(plan.direct, from, to);
+        // Each list is asked again over the overlap behind its position, for
+        // what the explorer indexed late; transactions already recorded there
+        // are not decoded again.
+        const overlap = Math.ceil(settings.listOverlapSeconds / plan.blockTimeSeconds);
+        const back = (a: number) => Math.max(plan.deployBlock, a - overlap);
+        await listed(plan.direct, back(from), to);
         const slowFrom = (slow ?? start) + 1;
+        let lowest = back(from);
         if ((to - slowFrom + 1) * plan.blockTimeSeconds >= HOUR) {
           const rest = plan.watched.filter((a) => !plan.direct.includes(a));
-          await listed(rest, slowFrom, to);
+          lowest = Math.min(lowest, back(slowFrom));
+          await listed(rest, back(slowFrom), to);
           slow = to;
+        }
+        for (let a = lowest; a < from; a += STATE_RECORDED_RANGE) {
+          const b = Math.min(from - 1, a + STATE_RECORDED_RANGE - 1);
+          for (const h of (await indexer.state(chainId, { from: a, to: b })).recorded ?? []) found.delete(h);
+        }
+        for (const [hash, f] of found) {
+          if (f.blockNumber < from) note(`listed-late-${hash}`, `Chain ${chainId}: the explorer listed ${hash} (block ${f.blockNumber}) after its block was first read; it is recorded now.`);
         }
       }
       // sends-and-audit: the keeper's own sends are the only continuous
@@ -310,12 +350,18 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
           const failures: Array<{ hash: string; blockNumber: number }> = [];
           let doneTo = next - 1;
           for (let b = next; b <= sliceTo; b++) {
-            let receipts: Array<{ transactionHash: string; to: string | null; status: string }>;
+            let receipts: Array<{ transactionHash: string; to: string | null; status: string }> | null;
             try {
-              receipts = (await rpc.call<typeof receipts | null>('eth_getBlockReceipts', [hex(b)])) ?? [];
+              receipts = await rpc.call<typeof receipts>('eth_getBlockReceipts', [hex(b)]);
             } catch (e) {
               if (isWait(e)) break;
               throw e;
+            }
+            // No answer is not an empty block: the slice stops here and the
+            // next run reads this block again.
+            if (!receipts) {
+              note('audit-receipts-unavailable', `Chain ${chainId}: the node gave no receipts for block ${b}; the audit continues from it next run.`);
+              break;
             }
             for (const r of receipts) {
               if (num(r.status) === 0 && r.to && plan.watched.includes(r.to.toLowerCase())) failures.push({ hash: r.transactionHash.toLowerCase(), blockNumber: b });
@@ -372,6 +418,34 @@ export async function runChain(ctx: RunContext): Promise<RunResult> {
     }
     throw e;
   }
+}
+
+/** The most characters one operator-chat message carries (Telegram takes 4,096). */
+export const ALERT_MESSAGE_CHARS = 4_000;
+/** An alert's text is cut to this, so any one alert fits a message with its heading. */
+const ALERT_TEXT_CHARS = 3_500;
+
+/**
+ * Alerts grouped into messages of at most ALERT_MESSAGE_CHARS each, heading
+ * included; every alert is in exactly one batch, in order.
+ */
+export function alertBatches(alerts: Finding[], heading = 'Failed transaction pass'): Finding[][] {
+  const batches: Finding[][] = [];
+  let batch: Finding[] = [];
+  let length = heading.length;
+  for (const a0 of alerts) {
+    const a = a0.text.length > ALERT_TEXT_CHARS ? { ...a0, text: `${a0.text.slice(0, ALERT_TEXT_CHARS)}…` } : a0;
+    const line = 3 + a.text.length; // newline, bullet, space
+    if (batch.length && length + line > ALERT_MESSAGE_CHARS) {
+      batches.push(batch);
+      batch = [];
+      length = heading.length;
+    }
+    batch.push(a);
+    length += line;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
 }
 
 function behind(result: RunResult, cursorTime: number | undefined, now: number, limit: number): void {

@@ -35,13 +35,18 @@
  */
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import {
+  MAX_ERROR_VALUES_BYTES,
+  MAX_EXPLANATION_BYTES,
+  MAX_RECORDS_PER_WRITE,
+  MAX_UNAVAILABLE_BYTES,
+} from '@vaipakam/lib/failedTxBounds';
 
 // ─── Bounds ──────────────────────────────────────────────────────────────
 
-/** A stored explanation is kept whole up to this size; the pass cuts above it (§4.3). */
-export const MAX_EXPLANATION_BYTES = 256 * 1024;
-/** Records in one write. */
-export const MAX_RECORDS_PER_WRITE = 20;
+// The record bounds are shared with the pass, which cuts to them before it
+// writes (@vaipakam/lib/failedTxBounds).
+export { MAX_EXPLANATION_BYTES, MAX_RECORDS_PER_WRITE };
 /** The request body the route reads at most. */
 export const MAX_FAILED_TX_BODY = MAX_RECORDS_PER_WRITE * (MAX_EXPLANATION_BYTES + 8 * 1024);
 const MAX_CHECKPOINTS = 200;
@@ -210,13 +215,13 @@ function parseRecord(v: unknown, where: string): FailedTxRecord {
     offerId: optional(o.offerId, (x) => (typeof x === 'string' && UINT.test(x) ? x : refuse(`${where}.offerId must be a decimal string`))),
     errorSelector: optional(o.errorSelector, (x) => lowerMatch(x, SELECTOR, `${where}.errorSelector`)),
     errorName: optional(o.errorName, (x) => (typeof x === 'string' && IDENT.test(x) ? x : refuse(`${where}.errorName is malformed`))),
-    errorValues: jsonText(o.errorValues, 16 * 1024, `${where}.errorValues`),
+    errorValues: jsonText(o.errorValues, MAX_ERROR_VALUES_BYTES, `${where}.errorValues`),
     foundBy: oneOf(o.foundBy, FOUND_BY, `${where}.foundBy`),
     mode: oneOf(o.mode, MODES, `${where}.mode`),
     source,
     explanation,
     explanationCut: flag(o.explanationCut, `${where}.explanationCut`),
-    unavailable: jsonText(o.unavailable, 4 * 1024, `${where}.unavailable`),
+    unavailable: jsonText(o.unavailable, MAX_UNAVAILABLE_BYTES, `${where}.unavailable`),
     gasUsed: typeof o.gasUsed === 'string' && UINT.test(o.gasUsed) ? o.gasUsed : refuse(`${where}.gasUsed must be a decimal string`),
     gasLimit: typeof o.gasLimit === 'string' && UINT.test(o.gasLimit) ? o.gasLimit : refuse(`${where}.gasLimit must be a decimal string`),
     usedAllGas: flag(o.usedAllGas, `${where}.usedAllGas`),

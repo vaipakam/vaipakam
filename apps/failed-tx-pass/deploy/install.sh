@@ -67,6 +67,11 @@ main() {
       PATH="/usr/local/bin:$PATH" corepack pnpm --filter @vaipakam/failed-tx-pass build >/dev/null
     )
     [ -f "$tmp/apps/failed-tx-pass/dist/failed-tx-pass.mjs" ] || die "the build left no bundle"
+    # The pass's mode per network comes from the node capability check's
+    # committed results (#3913); a commit without them would install a pass
+    # that fails every network at its first read, so it is refused here.
+    compgen -G "$tmp/ops/node-capability/results/*.json" >/dev/null \
+      || die "$commit carries no node capability results (ops/node-capability/results/*.json, #3913): install a commit on main that includes them"
     # Only the bundle and the capability results are read at run time.
     rm -rf "$tmp/node_modules" "$tmp"/apps/*/node_modules "$tmp"/packages/*/node_modules
     mv "$tmp" "$rel"
