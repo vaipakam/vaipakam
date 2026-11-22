@@ -39,10 +39,15 @@
  * under the advanced-mode reveal.
  */
 import {
+  alertPhraseFingerprint,
+  alertPhraseProblem,
+  buildAlertPhraseClearMessage,
+  buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
+  requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
 import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
@@ -627,4 +632,117 @@ export interface TelegramUnlinkOutcome {
    *  `effectiveAt` is null until the chat has been told (no end time yet). */
   pending: { chainId: number; effectiveAt: number | null }[];
   protectionUnknown: boolean;
+}
+
+// ─── The alert phrase (#3346) ────────────────────────────────────────────
+
+/** Where a phrase applies: the wallet's on every network (set with the
+ *  wallet's own key) or this network's own (set by a contract wallet's
+ *  approval, which speaks for the network it is on only). */
+export type AlertPhraseScope = 'all' | 'network';
+
+/** Whether the wallet has an alert phrase on `chainId`, since when (unix
+ *  seconds) and where it applies. The service never returns the phrase
+ *  itself. `unknown` when it could not be asked. */
+export type AlertPhraseStatus =
+  | { kind: 'set'; setAt: number; scope: AlertPhraseScope | null }
+  | { kind: 'none' }
+  | { kind: 'unknown' };
+
+function phraseScopeOf(v: unknown): AlertPhraseScope | null {
+  return v === 'all' || v === 'network' ? v : null;
+}
+
+export async function fetchAlertPhraseStatus(wallet: string, chainId: number): Promise<AlertPhraseStatus> {
+  const origin = agentOrigin();
+  if (!origin) return { kind: 'unknown' };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${origin}/telegram/phrase?wallet=${encodeURIComponent(wallet)}&chainId=${chainId}`, {
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return { kind: 'unknown' };
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (data?.set === true && typeof data.setAt === 'number') return { kind: 'set', setAt: data.setAt, scope: phraseScopeOf(data.scope) };
+    if (data?.set === false) return { kind: 'none' };
+    return { kind: 'unknown' };
+  } catch {
+    return { kind: 'unknown' };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** What setting the phrase did. `set` says whether a group chat is linked
+ *  too (a group is never shown the phrase) and where the phrase applies (the
+ *  service decides from how the wallet signed; null from a service that does
+ *  not say); `no-private-chat` means a private chat must be linked first
+ *  (on this network, for a contract wallet), and nothing changed. */
+export type AlertPhraseOutcome =
+  | { kind: 'set'; groupLinked: boolean; scope: AlertPhraseScope | null }
+  | { kind: 'no-private-chat' };
+
+/** The rule a typed phrase breaks, or null. The same rule the service
+ *  applies: a phrase is never cleaned, only accepted or refused. */
+export { alertPhraseProblem };
+
+/**
+ * Set the wallet's alert phrase. The wallet signs a text naming the phrase's
+ * fingerprint, never the phrase, so a contract wallet's approval (which its
+ * other owners and the chain may see) never shows it. A request that waits
+ * for such an approval is kept in this browser WITHOUT the phrase: to finish
+ * it, the owner types the phrase again and it must match what was signed
+ * ({@link pendingPhraseMatches}).
+ */
+export async function setAlertPhrase(
+  wallet: `0x${string}`,
+  chainId: number,
+  phrase: string,
+  signMessage: (message: string) => Promise<string>,
+  resume?: PendingAlertRequest,
+): Promise<AlertPhraseOutcome> {
+  if (alertPhraseProblem(phrase)) throw new Error(copy.alerts.phraseInvalid);
+  let req: PendingAlertRequest;
+  if (resume?.kind === 'set-phrase') {
+    if (!pendingPhraseMatches(resume, phrase)) throw new Error(copy.alerts.phraseMismatch);
+    req = resume;
+  } else {
+    req = newAlertRequest('set-phrase', wallet, chainId, '/telegram/phrase', { wallet, chain_id: chainId }, () => '');
+    const fingerprint = alertPhraseFingerprint(req.requestKey, phrase);
+    req = {
+      ...req,
+      message: buildAlertPhraseMessage(wallet, chainId, fingerprint, req.issuedAt, requestKeyHash(req.requestKey)),
+      context: { fingerprint },
+    };
+  }
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start', { phrase });
+  if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat' };
+  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `setting the alert phrase failed (${res.status})`);
+  return { kind: 'set', groupLinked: res.data?.groupLinked === true, scope: phraseScopeOf(res.data?.scope) };
+}
+
+/** Whether `phrase` is the one a waiting set request signed for. */
+export function pendingPhraseMatches(pending: PendingAlertRequest, phrase: string): boolean {
+  const fingerprint = (pending.context as { fingerprint?: unknown } | undefined)?.fingerprint;
+  return typeof fingerprint === 'string' && alertPhraseFingerprint(pending.requestKey, phrase) === fingerprint;
+}
+
+/** Remove the wallet's alert phrase (its own signed text). Returns where
+ *  the removal applied (null from a service that does not say). */
+export async function clearAlertPhrase(
+  wallet: `0x${string}`,
+  chainId: number,
+  signMessage: (message: string) => Promise<string>,
+  resume?: PendingAlertRequest,
+): Promise<AlertPhraseScope | null> {
+  const req =
+    resume?.kind === 'clear-phrase'
+      ? resume
+      : newAlertRequest('clear-phrase', wallet, chainId, '/telegram/phrase/clear', { wallet, chain_id: chainId }, (issuedAt, keyHash) =>
+          buildAlertPhraseClearMessage(wallet, chainId, issuedAt, keyHash),
+        );
+  const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
+  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `removing the alert phrase failed (${res.status})`);
+  return phraseScopeOf(res.data?.scope);
 }

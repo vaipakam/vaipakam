@@ -478,6 +478,15 @@ type ChannelCatalogue = {
   removalApplied: (list: string) => string;
   /** To the old chat when a move took effect. */
   moveApplied: (list: string) => string;
+  /** #3346 — to the old chat when an unprotected account's unlink took
+   *  effect at once (no wait, so no earlier notice reached it). */
+  removalNow: (list: string) => string;
+  /** #3346 — to the old chat when an unprotected account linked a different
+   *  chat in its place, at once. */
+  moveNow: (list: string) => string;
+  /** #3346 — to a chat already linked for the wallet when another chat was
+   *  linked for it on `list`'s network. */
+  addedNow: (list: string) => string;
 };
 
 const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
@@ -499,6 +508,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: 'CANCEL could not be recorded just now, so the pending change still stands. Send CANCEL again, and lock the vault in the Vaipakam app if you did not ask for this change.',
     removalApplied: (list) => `As requested, this chat no longer gets alerts for ${list}.`,
     moveApplied: (list) => `As requested, the alerts for ${list} now go to a different Telegram chat. This chat no longer gets them.`,
+    removalNow: (list) => `This chat no longer gets alerts for ${list}: the wallet asked to stop them. If you did not ask for this, someone may hold your wallet key: check the wallet in the Vaipakam app now. With protected mode on, a change like this waits and this chat can cancel it.`,
+    moveNow: (list) => `The alerts for ${list} now go to a different Telegram chat: the wallet linked another chat. This chat no longer gets them. If you did not ask for this, someone may hold your wallet key: check the wallet in the Vaipakam app now. With protected mode on, a change like this waits and this chat can cancel it.`,
+    addedNow: (list) => `Another Telegram chat now also gets the alerts for ${list}. If you did not link it, someone may hold your wallet key: check the wallet in the Vaipakam app now.`,
   },
   es: {
     removalPending: (list, when) =>
@@ -518,6 +530,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: 'No se pudo registrar CANCEL en este momento, así que el cambio pendiente sigue en pie. Envía CANCEL de nuevo y bloquea la bóveda en la app de Vaipakam si no pediste este cambio.',
     removalApplied: (list) => `Como se pidió, este chat ya no recibe alertas de ${list}.`,
     moveApplied: (list) => `Como se pidió, las alertas de ${list} ahora van a otro chat de Telegram. Este chat ya no las recibe.`,
+    removalNow: (list) => `Este chat ya no recibe alertas de ${list}: la billetera pidió detenerlas. Si no lo pediste tú, alguien podría tener la clave de tu billetera: revísala ahora en la app de Vaipakam. Con el modo protegido activado, un cambio así espera y este chat puede cancelarlo.`,
+    moveNow: (list) => `Las alertas de ${list} ahora van a otro chat de Telegram: la billetera vinculó otro chat. Este chat ya no las recibe. Si no lo pediste tú, alguien podría tener la clave de tu billetera: revísala ahora en la app de Vaipakam. Con el modo protegido activado, un cambio así espera y este chat puede cancelarlo.`,
+    addedNow: (list) => `Otro chat de Telegram ahora también recibe las alertas de ${list}. Si no lo vinculaste tú, alguien podría tener la clave de tu billetera: revísala ahora en la app de Vaipakam.`,
   },
   fr: {
     removalPending: (list, when) =>
@@ -537,6 +552,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: "CANCEL n'a pas pu être enregistré pour l'instant, le changement en attente est donc maintenu. Envoyez CANCEL à nouveau et verrouillez le coffre dans l'application Vaipakam si vous n'avez pas demandé ce changement.",
     removalApplied: (list) => `Comme demandé, ce chat ne reçoit plus les alertes de ${list}.`,
     moveApplied: (list) => `Comme demandé, les alertes de ${list} vont maintenant vers un autre chat Telegram. Ce chat ne les reçoit plus.`,
+    removalNow: (list) => `Ce chat ne reçoit plus les alertes de ${list} : le portefeuille a demandé de les arrêter. Si ce n'est pas vous, quelqu'un détient peut-être la clé de votre portefeuille : vérifiez-le maintenant dans l'app Vaipakam. Avec le mode protégé activé, un tel changement attend et ce chat peut l'annuler.`,
+    moveNow: (list) => `Les alertes de ${list} vont maintenant vers un autre chat Telegram : le portefeuille a lié un autre chat. Ce chat ne les reçoit plus. Si ce n'est pas vous, quelqu'un détient peut-être la clé de votre portefeuille : vérifiez-le maintenant dans l'app Vaipakam. Avec le mode protégé activé, un tel changement attend et ce chat peut l'annuler.`,
+    addedNow: (list) => `Un autre chat Telegram reçoit désormais aussi les alertes de ${list}. Si ce n'est pas vous qui l'avez lié, quelqu'un détient peut-être la clé de votre portefeuille : vérifiez-le maintenant dans l'app Vaipakam.`,
   },
   de: {
     removalPending: (list, when) =>
@@ -556,6 +574,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: 'CANCEL konnte gerade nicht erfasst werden, die ausstehende Änderung bleibt also bestehen. Senden Sie CANCEL erneut und sperren Sie den Tresor in der Vaipakam-App, wenn Sie diese Änderung nicht angefordert haben.',
     removalApplied: (list) => `Wie verlangt erhält dieser Chat keine Warnungen mehr für ${list}.`,
     moveApplied: (list) => `Wie verlangt gehen die Warnungen für ${list} jetzt an einen anderen Telegram-Chat. Dieser Chat erhält sie nicht mehr.`,
+    removalNow: (list) => `Dieser Chat erhält keine Warnungen mehr für ${list}: Die Wallet hat verlangt, sie zu beenden. Wenn du das nicht warst, hat vielleicht jemand deinen Wallet-Schlüssel: Prüfe die Wallet jetzt in der Vaipakam-App. Mit aktivem Schutzmodus wartet eine solche Änderung, und dieser Chat kann sie abbrechen.`,
+    moveNow: (list) => `Die Warnungen für ${list} gehen jetzt an einen anderen Telegram-Chat: Die Wallet hat einen anderen Chat verknüpft. Dieser Chat erhält sie nicht mehr. Wenn du das nicht warst, hat vielleicht jemand deinen Wallet-Schlüssel: Prüfe die Wallet jetzt in der Vaipakam-App. Mit aktivem Schutzmodus wartet eine solche Änderung, und dieser Chat kann sie abbrechen.`,
+    addedNow: (list) => `Ein weiterer Telegram-Chat erhält jetzt auch die Warnungen für ${list}. Wenn du ihn nicht verknüpft hast, hat vielleicht jemand deinen Wallet-Schlüssel: Prüfe die Wallet jetzt in der Vaipakam-App.`,
   },
   ja: {
     removalPending: (list, when) =>
@@ -575,6 +596,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: '現在 CANCEL を記録できなかったため、保留中の変更は有効なままです。もう一度 CANCEL を送信し、この変更に心当たりがなければ Vaipakam アプリで保管庫をロックしてください。',
     removalApplied: (list) => `ご依頼どおり、このチャットは ${list} のアラートを受け取らなくなりました。`,
     moveApplied: (list) => `ご依頼どおり、${list} のアラートは別の Telegram チャットに届くようになりました。このチャットにはもう届きません。`,
+    removalNow: (list) => `このチャットは ${list} のアラートを受け取らなくなりました。ウォレットから停止の依頼がありました。心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでウォレットを確認してください。保護モードがオンなら、このような変更は待機となり、このチャットから取り消せます。`,
+    moveNow: (list) => `${list} のアラートは別の Telegram チャットに届くようになりました。ウォレットが別のチャットを連携しました。このチャットにはもう届きません。心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでウォレットを確認してください。保護モードがオンなら、このような変更は待機となり、このチャットから取り消せます。`,
+    addedNow: (list) => `別の Telegram チャットも ${list} のアラートを受け取るようになりました。心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでウォレットを確認してください。`,
   },
   zh: {
     removalPending: (list, when) =>
@@ -593,6 +617,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: '目前无法记录 CANCEL，因此待处理的更改仍然有效。请再次发送 CANCEL；如果你没有请求此更改，请在 Vaipakam 应用中锁定保管库。',
     removalApplied: (list) => `按你的请求，此聊天不再收到 ${list} 的提醒。`,
     moveApplied: (list) => `按你的请求，${list} 的提醒现在发送到另一个 Telegram 聊天。此聊天不再收到。`,
+    removalNow: (list) => `此聊天不再收到 ${list} 的提醒：该钱包请求停止发送。如果不是你本人操作，可能有人持有你的钱包密钥：请立即在 Vaipakam 应用中检查该钱包。开启保护模式后，此类更改需要等待，且此聊天可以取消。`,
+    moveNow: (list) => `${list} 的提醒现在发送到另一个 Telegram 聊天：该钱包关联了另一个聊天。此聊天不再收到。如果不是你本人操作，可能有人持有你的钱包密钥：请立即在 Vaipakam 应用中检查该钱包。开启保护模式后，此类更改需要等待，且此聊天可以取消。`,
+    addedNow: (list) => `另一个 Telegram 聊天现在也会收到 ${list} 的提醒。如果不是你关联的，可能有人持有你的钱包密钥：请立即在 Vaipakam 应用中检查该钱包。`,
   },
   ko: {
     removalPending: (list, when) =>
@@ -612,6 +639,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: '지금은 CANCEL을 기록할 수 없어 대기 중인 변경이 그대로 유지됩니다. CANCEL을 다시 보내고, 이 변경을 요청하지 않았다면 Vaipakam 앱에서 금고를 잠그세요.',
     removalApplied: (list) => `요청하신 대로 이 채팅은 더 이상 ${list}의 알림을 받지 않습니다.`,
     moveApplied: (list) => `요청하신 대로 ${list}의 알림은 이제 다른 Telegram 채팅으로 갑니다. 이 채팅은 더 이상 받지 않습니다.`,
+    removalNow: (list) => `이 채팅은 더 이상 ${list}의 알림을 받지 않습니다. 지갑에서 중지를 요청했습니다. 직접 요청하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 지갑을 확인하세요. 보호 모드가 켜져 있으면 이런 변경은 대기하며 이 채팅에서 취소할 수 있습니다.`,
+    moveNow: (list) => `${list}의 알림은 이제 다른 Telegram 채팅으로 갑니다. 지갑이 다른 채팅을 연결했습니다. 이 채팅은 더 이상 받지 않습니다. 직접 요청하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 지갑을 확인하세요. 보호 모드가 켜져 있으면 이런 변경은 대기하며 이 채팅에서 취소할 수 있습니다.`,
+    addedNow: (list) => `다른 Telegram 채팅도 이제 ${list}의 알림을 받습니다. 직접 연결하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 지갑을 확인하세요.`,
   },
   hi: {
     removalPending: (list, when) =>
@@ -631,6 +661,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: 'CANCEL अभी दर्ज नहीं हो सका, इसलिए लंबित बदलाव अब भी बना हुआ है। CANCEL फिर से भेजें, और अगर आपने यह बदलाव नहीं माँगा था तो Vaipakam ऐप में वॉल्ट लॉक करें।',
     removalApplied: (list) => `आपके अनुरोध के अनुसार, इस चैट को अब ${list} के अलर्ट नहीं मिलेंगे।`,
     moveApplied: (list) => `आपके अनुरोध के अनुसार, ${list} के अलर्ट अब किसी दूसरे Telegram चैट पर जाते हैं। इस चैट को अब वे नहीं मिलेंगे।`,
+    removalNow: (list) => `इस चैट को अब ${list} के अलर्ट नहीं मिलेंगे: वॉलेट ने उन्हें रोकने को कहा। अगर यह आपने नहीं किया, तो किसी के पास आपकी वॉलेट की कुंजी हो सकती है: अभी Vaipakam ऐप में वॉलेट जांचें। संरक्षित मोड चालू होने पर ऐसा बदलाव प्रतीक्षा करता है और यह चैट उसे रद्द कर सकती है।`,
+    moveNow: (list) => `${list} के अलर्ट अब किसी दूसरे Telegram चैट पर जाते हैं: वॉलेट ने दूसरी चैट जोड़ी। इस चैट को अब वे नहीं मिलेंगे। अगर यह आपने नहीं किया, तो किसी के पास आपकी वॉलेट की कुंजी हो सकती है: अभी Vaipakam ऐप में वॉलेट जांचें। संरक्षित मोड चालू होने पर ऐसा बदलाव प्रतीक्षा करता है और यह चैट उसे रद्द कर सकती है।`,
+    addedNow: (list) => `अब एक और Telegram चैट को भी ${list} के अलर्ट मिलते हैं। अगर आपने इसे नहीं जोड़ा, तो किसी के पास आपकी वॉलेट की कुंजी हो सकती है: अभी Vaipakam ऐप में वॉलेट जांचें।`,
   },
   ta: {
     removalPending: (list, when) =>
@@ -650,6 +683,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: 'இப்போது CANCEL ஐப் பதிவு செய்ய முடியவில்லை, எனவே நிலுவையில் உள்ள மாற்றம் தொடர்கிறது. CANCEL ஐ மீண்டும் அனுப்புங்கள்; இந்த மாற்றத்தை நீங்கள் கேட்கவில்லை என்றால் Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள்.',
     removalApplied: (list) => `கேட்டபடி, இந்த அரட்டை இனி ${list} க்கான எச்சரிக்கைகளைப் பெறாது.`,
     moveApplied: (list) => `கேட்டபடி, ${list} க்கான எச்சரிக்கைகள் இப்போது வேறு Telegram அரட்டைக்குச் செல்கின்றன. இந்த அரட்டை இனி அவற்றைப் பெறாது.`,
+    removalNow: (list) => `இந்த அரட்டை இனி ${list} க்கான எச்சரிக்கைகளைப் பெறாது: வாலட் அவற்றை நிறுத்தக் கேட்டது. இதை நீங்கள் கேட்கவில்லை என்றால், யாரோ உங்கள் வாலட் சாவியை வைத்திருக்கலாம்: இப்போதே Vaipakam செயலியில் வாலட்டைச் சரிபார்க்கவும். பாதுகாப்பு முறை இயக்கத்தில் இருந்தால், இதுபோன்ற மாற்றம் காத்திருக்கும், இந்த அரட்டை அதை ரத்து செய்யலாம்.`,
+    moveNow: (list) => `${list} க்கான எச்சரிக்கைகள் இப்போது வேறு Telegram அரட்டைக்குச் செல்கின்றன: வாலட் வேறு அரட்டையை இணைத்தது. இந்த அரட்டை இனி அவற்றைப் பெறாது. இதை நீங்கள் கேட்கவில்லை என்றால், யாரோ உங்கள் வாலட் சாவியை வைத்திருக்கலாம்: இப்போதே Vaipakam செயலியில் வாலட்டைச் சரிபார்க்கவும். பாதுகாப்பு முறை இயக்கத்தில் இருந்தால், இதுபோன்ற மாற்றம் காத்திருக்கும், இந்த அரட்டை அதை ரத்து செய்யலாம்.`,
+    addedNow: (list) => `இப்போது மற்றொரு Telegram அரட்டையும் ${list} க்கான எச்சரிக்கைகளைப் பெறுகிறது. இதை நீங்கள் இணைக்கவில்லை என்றால், யாரோ உங்கள் வாலட் சாவியை வைத்திருக்கலாம்: இப்போதே Vaipakam செயலியில் வாலட்டைச் சரிபார்க்கவும்.`,
   },
   ar: {
     removalPending: (list, when) =>
@@ -669,6 +705,9 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
     cancelNotRecorded: 'تعذّر تسجيل CANCEL الآن، لذا ما زال التغيير المعلّق قائمًا. أرسل CANCEL مرة أخرى، وأقفل الخزنة في تطبيق Vaipakam إن لم تكن قد طلبت هذا التغيير.',
     removalApplied: (list) => `كما طُلب، لم تعد هذه المحادثة تتلقى تنبيهات ${list}.`,
     moveApplied: (list) => `كما طُلب، تذهب تنبيهات ${list} الآن إلى محادثة Telegram أخرى. لم تعد هذه المحادثة تتلقاها.`,
+    removalNow: (list) => `لم تعد هذه المحادثة تتلقى تنبيهات ${list}: طلبت المحفظة إيقافها. إن لم تطلب ذلك، فقد يملك أحدهم مفتاح محفظتك: تحقق من المحفظة الآن في تطبيق Vaipakam. عند تفعيل الوضع المحمي ينتظر تغيير كهذا ويمكن لهذه المحادثة إلغاؤه.`,
+    moveNow: (list) => `تذهب تنبيهات ${list} الآن إلى محادثة Telegram أخرى: ربطت المحفظة محادثة أخرى. لم تعد هذه المحادثة تتلقاها. إن لم تطلب ذلك، فقد يملك أحدهم مفتاح محفظتك: تحقق من المحفظة الآن في تطبيق Vaipakam. عند تفعيل الوضع المحمي ينتظر تغيير كهذا ويمكن لهذه المحادثة إلغاؤه.`,
+    addedNow: (list) => `أصبحت محادثة Telegram أخرى تتلقى أيضًا تنبيهات ${list}. إن لم تربطها أنت، فقد يملك أحدهم مفتاح محفظتك: تحقق من المحفظة الآن في تطبيق Vaipakam.`,
   },
 };
 
@@ -698,4 +737,172 @@ export const channelCopy = {
     CHANNEL_CAT[resolveLocale(locale)].removalApplied(channelList(locale, entries)),
   moveApplied: (locale: string | null | undefined, entries: readonly Entry[]) =>
     CHANNEL_CAT[resolveLocale(locale)].moveApplied(channelList(locale, entries)),
+  removalNow: (locale: string | null | undefined, entries: readonly Entry[]) =>
+    CHANNEL_CAT[resolveLocale(locale)].removalNow(channelList(locale, entries)),
+  moveNow: (locale: string | null | undefined, entries: readonly Entry[]) =>
+    CHANNEL_CAT[resolveLocale(locale)].moveNow(channelList(locale, entries)),
+  addedNow: (locale: string | null | undefined, entries: readonly Entry[]) =>
+    CHANNEL_CAT[resolveLocale(locale)].addedNow(channelList(locale, entries)),
 };
+
+// ─── #3346 — the alert phrase ─────────────────────────────────────────────
+//
+// The phrase the owner chose leads every message the bot sends about the
+// wallet, so a message without it is not ours. `list` names wallet-and-chain
+// entries, as the channel notices do.
+
+type PhraseCatalogue = {
+  /** The first line of a message: the phrase (or phrases, when one chat
+   *  gets alerts for wallets with different phrases), already quoted. */
+  phraseLine: (quoted: string) => string;
+  /** To each private chat linked for `list`: the phrase now in force. */
+  phraseSet: (list: string, quoted: string) => string;
+  /** To each private chat linked for `list`: the phrase was removed. */
+  phraseRemoved: (list: string) => string;
+};
+
+/** What to do if the owner did not make the change; the second form for a
+ *  protected account, which can be locked. */
+const CHECK: Record<Locale, readonly [string, string]> = {
+  en: [
+    'If you did not do this, someone may hold your wallet key: check the wallet in the Vaipakam app now.',
+    'If you did not do this, someone may hold your wallet key: lock the vault now in the Vaipakam app, then check it there.',
+  ],
+  es: [
+    'Si no lo hiciste tú, alguien podría tener la clave de tu billetera: revísala ahora en la app de Vaipakam.',
+    'Si no lo hiciste tú, alguien podría tener la clave de tu billetera: bloquea la bóveda ahora en la app de Vaipakam y revísala allí.',
+  ],
+  fr: [
+    "Si ce n'est pas vous, quelqu'un détient peut-être la clé de votre portefeuille : vérifiez-le maintenant dans l'app Vaipakam.",
+    "Si ce n'est pas vous, quelqu'un détient peut-être la clé de votre portefeuille : verrouillez le coffre maintenant dans l'app Vaipakam, puis vérifiez-le.",
+  ],
+  de: [
+    'Wenn du das nicht warst, hat vielleicht jemand deinen Wallet-Schlüssel: Prüfe die Wallet jetzt in der Vaipakam-App.',
+    'Wenn du das nicht warst, hat vielleicht jemand deinen Wallet-Schlüssel: Sperre den Tresor jetzt in der Vaipakam-App und prüfe ihn dort.',
+  ],
+  ja: [
+    '心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでウォレットを確認してください。',
+    '心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでボールトをロックし、そこで確認してください。',
+  ],
+  zh: [
+    '如果不是你本人操作，可能有人持有你的钱包密钥：请立即在 Vaipakam 应用中检查该钱包。',
+    '如果不是你本人操作，可能有人持有你的钱包密钥：请立即在 Vaipakam 应用中锁定金库，然后在那里检查。',
+  ],
+  ko: [
+    '직접 하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 지갑을 확인하세요.',
+    '직접 하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 볼트를 잠그고 그곳에서 확인하세요.',
+  ],
+  hi: [
+    'अगर यह आपने नहीं किया, तो किसी के पास आपकी वॉलेट की कुंजी हो सकती है: अभी Vaipakam ऐप में वॉलेट जांचें।',
+    'अगर यह आपने नहीं किया, तो किसी के पास आपकी वॉलेट की कुंजी हो सकती है: अभी Vaipakam ऐप में वॉल्ट लॉक करें, फिर वहीं जांचें।',
+  ],
+  ta: [
+    'இதை நீங்கள் செய்யவில்லை என்றால், யாரோ உங்கள் வாலட் சாவியை வைத்திருக்கலாம்: இப்போதே Vaipakam செயலியில் வாலட்டைச் சரிபார்க்கவும்.',
+    'இதை நீங்கள் செய்யவில்லை என்றால், யாரோ உங்கள் வாலட் சாவியை வைத்திருக்கலாம்: இப்போதே Vaipakam செயலியில் பெட்டகத்தைப் பூட்டி, அங்கே சரிபார்க்கவும்.',
+  ],
+  ar: [
+    'إن لم تفعل ذلك، فقد يملك أحدهم مفتاح محفظتك: تحقق من المحفظة الآن في تطبيق Vaipakam.',
+    'إن لم تفعل ذلك، فقد يملك أحدهم مفتاح محفظتك: اقفل الخزنة الآن في تطبيق Vaipakam، ثم تحقق منها هناك.',
+  ],
+};
+
+const PHRASE_CAT: Record<Locale, PhraseCatalogue> = {
+  en: {
+    phraseLine: (q) => `Your alert phrase: ${q}`,
+    phraseSet: (list, q) => `The alert phrase for ${list} is now ${q}. Our alerts for it lead with it from now on.`,
+    phraseRemoved: (list) => `The alert phrase for ${list} was removed, so our alerts for it no longer lead with a phrase.`,
+  },
+  es: {
+    phraseLine: (q) => `Tu frase de alerta: ${q}`,
+    phraseSet: (list, q) => `La frase de alerta de ${list} ahora es ${q}. Desde ahora nuestras alertas empiezan con ella.`,
+    phraseRemoved: (list) => `Se quitó la frase de alerta de ${list}, así que nuestras alertas ya no empiezan con una frase.`,
+  },
+  fr: {
+    phraseLine: (q) => `Votre phrase d'alerte : ${q}`,
+    phraseSet: (list, q) => `La phrase d'alerte de ${list} est désormais ${q}. Nos alertes commencent par elle à partir de maintenant.`,
+    phraseRemoved: (list) => `La phrase d'alerte de ${list} a été supprimée : nos alertes ne commencent plus par une phrase.`,
+  },
+  de: {
+    phraseLine: (q) => `Deine Warnphrase: ${q}`,
+    phraseSet: (list, q) => `Die Warnphrase für ${list} ist jetzt ${q}. Unsere Warnungen dafür beginnen ab jetzt damit.`,
+    phraseRemoved: (list) => `Die Warnphrase für ${list} wurde entfernt, unsere Warnungen dafür beginnen also nicht mehr mit einer Phrase.`,
+  },
+  ja: {
+    phraseLine: (q) => `あなたのアラートフレーズ: ${q}`,
+    phraseSet: (list, q) => `${list} のアラートフレーズは ${q} になりました。今後、当社のアラートはこのフレーズで始まります。`,
+    phraseRemoved: (list) => `${list} のアラートフレーズが削除されました。当社のアラートはフレーズで始まらなくなります。`,
+  },
+  zh: {
+    phraseLine: (q) => `你的提醒短语：${q}`,
+    phraseSet: (list, q) => `${list} 的提醒短语现在是 ${q}。今后我们的提醒将以它开头。`,
+    phraseRemoved: (list) => `${list} 的提醒短语已移除，我们的提醒将不再以短语开头。`,
+  },
+  ko: {
+    phraseLine: (q) => `내 알림 문구: ${q}`,
+    phraseSet: (list, q) => `${list}의 알림 문구는 이제 ${q}입니다. 이제부터 저희 알림은 이 문구로 시작합니다.`,
+    phraseRemoved: (list) => `${list}의 알림 문구가 삭제되어 저희 알림은 더 이상 문구로 시작하지 않습니다.`,
+  },
+  hi: {
+    phraseLine: (q) => `आपका अलर्ट वाक्यांश: ${q}`,
+    phraseSet: (list, q) => `${list} का अलर्ट वाक्यांश अब ${q} है। अब से हमारे अलर्ट इसी से शुरू होंगे।`,
+    phraseRemoved: (list) => `${list} का अलर्ट वाक्यांश हटा दिया गया, इसलिए हमारे अलर्ट अब किसी वाक्यांश से शुरू नहीं होंगे।`,
+  },
+  ta: {
+    phraseLine: (q) => `உங்கள் எச்சரிக்கை சொற்றொடர்: ${q}`,
+    phraseSet: (list, q) => `${list} க்கான எச்சரிக்கை சொற்றொடர் இப்போது ${q}. இனி எங்கள் எச்சரிக்கைகள் இதனுடன் தொடங்கும்.`,
+    phraseRemoved: (list) => `${list} க்கான எச்சரிக்கை சொற்றொடர் நீக்கப்பட்டது, எனவே எங்கள் எச்சரிக்கைகள் இனி சொற்றொடருடன் தொடங்காது.`,
+  },
+  ar: {
+    phraseLine: (q) => `عبارة التنبيه الخاصة بك: ${q}`,
+    phraseSet: (list, q) => `عبارة التنبيه لـ ${list} الآن هي ${q}. من الآن تبدأ تنبيهاتنا بها.`,
+    phraseRemoved: (list) => `أُزيلت عبارة التنبيه لـ ${list}، لذا لم تعد تنبيهاتنا تبدأ بعبارة.`,
+  },
+};
+
+/** A phrase as it appears in a message: in guillemets, so where it starts
+ *  and ends is plain. */
+const quote = (p: string) => `«${p}»`;
+
+/** #3346 — the phrase line and the phrase notices. */
+export const phraseCopy = {
+  /** `text` led by the phrase line, in its one fixed place: the first line.
+   *  `phrases` are what the chat was told for each wallet the message is
+   *  for; unchanged when none. */
+  mark: (locale: string | null | undefined, phrases: readonly (string | null)[], text: string): string => {
+    const distinct = [...new Set(phrases.filter((p): p is string => p !== null))];
+    if (distinct.length === 0) return text;
+    return `${PHRASE_CAT[resolveLocale(locale)].phraseLine(distinct.map(quote).join(' · '))}\n\n${text}`;
+  },
+  /** The notice of a change: `phrase` now in force (null: removed), with
+   *  what to do if the owner did not make it (`protectedAccount`: lock). */
+  changed: (locale: string | null | undefined, entries: readonly Entry[], phrase: string | null, protectedAccount: boolean): string => {
+    const l = resolveLocale(locale);
+    const list = channelList(locale, entries);
+    const body = phrase === null ? PHRASE_CAT[l].phraseRemoved(list) : PHRASE_CAT[l].phraseSet(list, quote(phrase));
+    return `${body} ${CHECK[l][protectedAccount ? 1 : 0]}`;
+  },
+};
+
+/**
+ * #3346 — the Push notice when a wallet's Telegram alert chat changes. It
+ * names the network and nothing else: no phrase, no chat, and the only link
+ * the notification carries is the app's own origin.
+ */
+const CHAT_CHANGED_PUSH: Record<Locale, { title: string; body: (network: string) => string }> = {
+  en: { title: 'Telegram alert chat changed', body: (n) => `The Telegram chat that gets this wallet's alerts on ${n} changed. If you did not do this, check the wallet in the Vaipakam app now.` },
+  es: { title: 'Cambió el chat de alertas de Telegram', body: (n) => `Cambió el chat de Telegram que recibe las alertas de esta billetera en ${n}. Si no fuiste tú, revisa la billetera ahora en la app de Vaipakam.` },
+  fr: { title: 'Chat d’alertes Telegram modifié', body: (n) => `Le chat Telegram qui reçoit les alertes de ce portefeuille sur ${n} a changé. Si ce n'est pas vous, vérifiez le portefeuille maintenant dans l'app Vaipakam.` },
+  de: { title: 'Telegram-Warnchat geändert', body: (n) => `Der Telegram-Chat, der die Warnungen dieser Wallet auf ${n} erhält, hat sich geändert. Wenn du das nicht warst, prüfe die Wallet jetzt in der Vaipakam-App.` },
+  ja: { title: 'Telegram のアラート先チャットが変更されました', body: (n) => `${n} でこのウォレットのアラートを受け取る Telegram チャットが変更されました。心当たりがない場合は、今すぐ Vaipakam アプリでウォレットを確認してください。` },
+  zh: { title: 'Telegram 提醒聊天已更改', body: (n) => `在 ${n} 上接收此钱包提醒的 Telegram 聊天已更改。如果不是你操作的，请立即在 Vaipakam 应用中检查该钱包。` },
+  ko: { title: 'Telegram 알림 채팅이 변경됨', body: (n) => `${n}에서 이 지갑의 알림을 받는 Telegram 채팅이 변경되었습니다. 직접 하지 않았다면 지금 Vaipakam 앱에서 지갑을 확인하세요.` },
+  hi: { title: 'Telegram अलर्ट चैट बदली', body: (n) => `${n} पर इस वॉलेट के अलर्ट पाने वाली Telegram चैट बदल गई है। अगर यह आपने नहीं किया, तो अभी Vaipakam ऐप में वॉलेट जांचें।` },
+  ta: { title: 'Telegram எச்சரிக்கை அரட்டை மாறியது', body: (n) => `${n} இல் இந்த வாலட்டின் எச்சரிக்கைகளைப் பெறும் Telegram அரட்டை மாறியுள்ளது. இதை நீங்கள் செய்யவில்லை என்றால், இப்போதே Vaipakam செயலியில் வாலட்டைச் சரிபார்க்கவும்.` },
+  ar: { title: 'تغيّرت محادثة تنبيهات Telegram', body: (n) => `تغيّرت محادثة Telegram التي تتلقى تنبيهات هذه المحفظة على ${n}. إن لم تفعل ذلك أنت، فتحقق من المحفظة الآن في تطبيق Vaipakam.` },
+};
+
+/** The Push title and body for a changed Telegram alert chat on `network`. */
+export function chatChangedPush(locale: string | null | undefined, network: string): { title: string; body: string } {
+  const c = CHAT_CHANGED_PUSH[resolveLocale(locale)];
+  return { title: c.title, body: c.body(network) };
+}

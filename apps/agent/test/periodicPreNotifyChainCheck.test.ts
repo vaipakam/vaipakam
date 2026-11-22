@@ -495,6 +495,10 @@ function tgStateFake() {
         return typeof chat === 'string' ? chat : null;
       });
     },
+    async chatMarksOf(pairs: { wallet: string; chainId: number }[]) {
+      const chats = await stub.chatsOf(pairs);
+      return chats.map((chatId) => ({ chatId, mark: null }));
+    },
   };
   return { idFromName: () => 'global', get: () => stub };
 }

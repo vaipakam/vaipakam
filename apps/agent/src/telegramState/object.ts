@@ -77,6 +77,41 @@ export class TelegramState extends DurableObject {
     return this.store.linksOfChat(chatId);
   }
 
+  // ─── Alert phrase (#3346) ─────────────────────────────────────────────
+  recordChatType(chatId: string, isPrivate: boolean, now: number): void {
+    this.store.recordChatType(chatId, isPrivate, now);
+  }
+  phraseMarksOf(items: { wallet: string; chatId: string; chainId: number }[]): (string | null)[] {
+    return this.store.phraseMarksOf(items);
+  }
+  chatMarksOf(pairs: { wallet: string; chainId: number }[]): { chatId: string | null; mark: string | null }[] {
+    return this.store.chatMarksOf(pairs);
+  }
+  phraseStatus(wallet: string, chainId: number): ReturnType<TelegramStateStore['phraseStatus']> {
+    return this.store.phraseStatus(wallet, chainId);
+  }
+  setPhrase(
+    wallet: string,
+    chainId: number | null,
+    phrase: string | null,
+    issuedAt: number,
+    now: number,
+  ): ReturnType<TelegramStateStore['setPhrase']> {
+    return this.store.setPhrase(wallet, chainId, phrase, issuedAt, now);
+  }
+  duePhraseNotices(retryBefore: number, limit: number): ReturnType<TelegramStateStore['duePhraseNotices']> {
+    return this.store.duePhraseNotices(retryBefore, limit);
+  }
+  phraseNoticeSent(wallet: string, chatId: string, chainId: number, id: number, accepted: boolean, now: number): void {
+    this.store.phraseNoticeSent(wallet, chatId, chainId, id, accepted, now);
+  }
+  chatNoticeSent(id: number, accepted: boolean, now: number): void {
+    this.store.chatNoticeSent(id, accepted, now);
+  }
+  dueChatNotices(retryBefore: number, now: number, limit: number): ReturnType<TelegramStateStore['dueChatNotices']> {
+    return this.store.dueChatNotices(retryBefore, now, limit);
+  }
+
   // ─── Channel changes (#3246) ──────────────────────────────────────────
   commit(
     wallet: string,
