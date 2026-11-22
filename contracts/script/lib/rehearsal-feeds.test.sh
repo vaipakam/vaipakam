@@ -100,7 +100,7 @@ RH_FEED_LIST="FEED $NOTAFEED broken" rh_feeds_restamp base-sepolia "$URL" "$GUAR
 # The list script itself, when this tree's build has it.
 if [ -f "$CONTRACTS_DIR/out/ListPriceFeeds.s.sol/ListPriceFeeds.json" ]; then
   listed=$(cd "$CONTRACTS_DIR" && FOUNDRY_NO_STORAGE_CACHING=true forge script script/rehearsal/ListPriceFeeds.s.sol --sig 'list(address)' "$GUARD" --rpc-url "$URL" 2>&1)
-  grep -q "FEED $REAL eth-numeraire" <<<"$listed" && grep -q "SKIP $SEQ sequencer-status" <<<"$listed" && grep -q "FEED $MOCK stable-ref-USDC" <<<"$listed" \
+  grep -qi "FEED $REAL eth-numeraire" <<<"$listed" && grep -qi "SKIP $SEQ sequencer-status" <<<"$listed" && grep -qi "FEED $MOCK stable-ref-USDC" <<<"$listed" \
     && ok "the list script reads every source from the guard" || bad "list script: $listed"
   send "$GUARD" 'setPyth(address)' "$MOCK"
   listed=$(cd "$CONTRACTS_DIR" && FOUNDRY_NO_STORAGE_CACHING=true forge script script/rehearsal/ListPriceFeeds.s.sol --sig 'list(address)' "$GUARD" --rpc-url "$URL" 2>&1)
