@@ -1545,8 +1545,13 @@ Each item is also assigned to the domain that answers for it.
 does not cover it. So for the four lists read from the contracts nobody
 maps by hand: a function is covered through its input table (section
 8.3), an event through the map of facts to events, a refusal through the
-"Refused as" line that names its error, and a setting through its row of
-the parameters table. For the other lists the drafter writes the outcome,
+error catalogue, and a setting through its row of the parameters table.
+A statement never names an error (section 3.1), so the link runs the other
+way: each error's entry in the catalogue under `packages/contracts/errors/`
+cites the statement whose "Refused as" reason it raises, and the ledger
+reads the entry. An error whose entry cites no statement, or a statement
+that does not exist or has no "Refused as" line, is an item with no
+outcome. For the other lists the drafter writes the outcome,
 and the conflict read checks a sample of them against their sources.
 
 **The check** refuses:

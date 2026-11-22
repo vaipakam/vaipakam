@@ -179,16 +179,23 @@ nothing else. The record holds:
   count of tests run and passed, in the form the shard verifier accepts;
 - the exact versions: the compiler and its settings, the build tool, and
   the pinned commit of every vendored library;
-- the hash of the source tree it was built from.
+- the digest of the source tree it was built from, taken with the baseline
+  records themselves left out.
 
-A file cannot name the commit that contains it. So the record names its
-source tree, the tag's message carries the record's hash, and the tag names
-the commit. Each binds the other two.
+A file cannot name the commit that contains it, and it cannot carry a hash
+of a tree that contains it either. So the record's digest covers every
+tracked file of the tagged commit except those under `contracts/baseline/`,
+by one written rule: the sorted list of each such file's path and content
+hash, hashed once. The record names that digest, the tag's message carries
+the record's hash, and the tag names the commit. Each binds the other two,
+and the record is bound to the commit through the tag and never through
+itself.
 
 **The baseline check** rebuilds the tagged commit with the recorded versions
 and refuses when a runtime code hash, a size or an interface hash differs
-from the record, or when the source tree or the tag's message does not
-match. Anyone with the repository can reproduce the reference, and no stored
+from the record, or when the tag's message does not match the record's
+hash, or when the digest it computes from the tagged commit by the same
+rule, baseline records left out, differs from the one the record names. Anyone with the repository can reproduce the reference, and no stored
 copy of a build has to be trusted.
 
 **Who reads the record.**
@@ -482,9 +489,10 @@ what ships.
     it with no second edit.
 13. The baseline check passes on a clean build of the tagged commit. It
     refuses a record with one altered hash, a build made with another
-    compiler version (naming the version), a record whose source tree is
-    not the tagged commit's, and a tag whose message does not carry the
-    record's hash.
+    compiler version (naming the version), a record whose source-tree digest
+    is not the tagged commit's by the written rule (baseline records left
+    out), and a tag whose message does not carry the record's hash. A
+    record committed in the tagged commit itself passes.
 14. The differential run refuses to start when its reference build fails
     the baseline check.
 15. The launch check reads the repository's rules and refuses when the
