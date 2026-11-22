@@ -40,7 +40,7 @@ import { type Env } from './env';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, requestedChainId } from './servedChain';
 import { CURSOR_KIND } from './chainIndexer';
-import { rentalActiveAt } from './rentalRights';
+import { RENTAL_SEED_CURSOR_KIND, rentalActiveAt } from './rentalRights';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const TOKEN_ID_RE = /^\d{1,78}$/;
@@ -92,23 +92,44 @@ interface RentalAsOf {
   chainTime: number | null;
 }
 
+/** The answer while the chain's rental table is not yet seeded from history. */
+function notSeeded(): Response {
+  return json(
+    {
+      error: 'rentals-index-building',
+      reason: 'The rental table for this network is still being filled from the rental events already indexed, so a list now could leave rentals out.',
+    },
+    503,
+    0,
+  );
+}
+
 /**
- * The block the clearings are known through, and the latest chain time the
- * index recorded at or below it. Read before the rentals, so every clearing
- * at or below `block` is in the answer.
+ * The block the clearings are known through (`block`), and the latest block
+ * time the index has recorded on this network at or below it (`chainTime`;
+ * a floor of that block's own time, which the index does not store). Read
+ * before the rentals, so every clearing at or below `block` is in the answer.
+ * Null when the rental table is not yet seeded (`seedRentalRights`).
+ *
+ * `activity_events` is read for that one value only: the largest block time
+ * for the network at or below the cursor. No row, participant, loan or offer
+ * column is selected or filtered on, and nothing from it meets a rental row;
+ * `rentalRights.test.ts` holds that.
  */
-async function readAsOf(env: Env, chainId: number): Promise<RentalAsOf> {
+async function readAsOf(env: Env, chainId: number): Promise<RentalAsOf | null> {
   const row = await env.DB.prepare(
     `SELECT c.last_block AS last_block,
             (SELECT a.block_at FROM activity_events a
               WHERE a.chain_id = c.chain_id AND a.block_number <= c.last_block AND a.block_at IS NOT NULL
-              ORDER BY a.block_number DESC LIMIT 1) AS chain_time
+              ORDER BY a.block_number DESC LIMIT 1) AS chain_time,
+            (SELECT 1 FROM indexer_cursor s WHERE s.chain_id = c.chain_id AND s.kind = ?) AS seeded
        FROM indexer_cursor c
       WHERE c.chain_id = ? AND c.kind = ?`,
   )
-    .bind(chainId, CURSOR_KIND)
-    .first<{ last_block: number; chain_time: number | null }>();
-  return { block: row?.last_block ?? null, chainTime: row?.chain_time ?? null };
+    .bind(RENTAL_SEED_CURSOR_KIND, chainId, CURSOR_KIND)
+    .first<{ last_block: number; chain_time: number | null; seeded: number | null }>();
+  if (!row || row.seeded !== 1) return null;
+  return { block: row.last_block, chainTime: row.chain_time };
 }
 
 interface RentalDbRow {
@@ -148,6 +169,7 @@ export async function handleRentalsByCollection(req: Request, env: Env): Promise
 
   try {
     const asOf = await readAsOf(env, chainId);
+    if (!asOf) return notSeeded();
     const activeAt = rentalActiveAt(Date.now() / 1000, asOf.chainTime);
     const res = await env.DB.prepare(
       `SELECT loan_id, token_id, owner, user, expires, quantity
@@ -200,6 +222,7 @@ export async function handleRentalsMayUse(req: Request, env: Env): Promise<Respo
 
   try {
     const asOf = await readAsOf(env, chainId);
+    if (!asOf) return notSeeded();
     const activeAt = rentalActiveAt(Date.now() / 1000, asOf.chainTime);
     const res = await env.DB.prepare(
       `SELECT loan_id, token_id, owner, user, expires, quantity

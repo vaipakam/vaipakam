@@ -121,7 +121,18 @@ answer states `asOf` (`block`, the block the clearings are known through, and
 behind the chain therefore cannot show a rental the chain already treats as
 ended. An expiry fires no event, so a rental past its expiry is left out even
 when the indexer has seen no block since. The feed can say "ended" a few
-seconds before the chain's newest block does; that is the safe side. For an ERC-1155
+seconds before the chain's newest block does; that is the safe side.
+`chainTime` is a floor of the `asOf` block's own time, which the index does
+not store. To read it the rental routes read `activity_events` for that one
+value only, the network's largest recorded block time at or below `asOf`;
+they read the rental table, the cursor and that value, and every one of
+those is rebuilt from chain events.
+
+When rentals first reach a network the indexer has already scanned, the
+rental table is filled once from the rental events already indexed. Until
+that has finished, both rental reads answer `503` with
+`{"error": "rentals-index-building"}` rather than a list that could leave
+rentals out. For an ERC-1155
 item several rentals of one token can be active at once, one row each.
 
 The rental reads refuse a repeated `collection` or `user`, a list, and a

@@ -63,7 +63,7 @@ import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 import { recordLoanLifecycle } from './loanLifecycleGuard';
-import { recordRentalRights } from './rentalRights';
+import { recordRentalRights, seedRentalRights } from './rentalRights';
 import {
   quarantineStatements,
   discloseQuarantineReleases,
@@ -2348,6 +2348,16 @@ async function runChainPass(
       ? { block: BigInt(cursorRow.anchor_block), hash: cursorRow.anchor_hash }
       : null;
   const scanFrom = lastBlock + 1n;
+
+  // #3882 — once per chain, seed the rental table from the rental events
+  // already recorded below the cursor (rentalRights.ts). Blocks above it are
+  // the scan's. A failure leaves the chain unseeded, its rental reads
+  // answering 503, and the next pass tries again.
+  try {
+    await seedRentalRights(env.DB, chainId, Number(lastBlock), Math.floor(Date.now() / 1000));
+  } catch (err) {
+    console.warn(`[chainIndexer] chain ${chainId}: rental seed failed`, redactedError(err));
+  }
 
   // #2201 — no settled head: hold the scan (see above). Said every tick,
   // with the provider's own bounded reason, because a hold that repeats is a

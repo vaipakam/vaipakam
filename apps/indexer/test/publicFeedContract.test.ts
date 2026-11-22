@@ -69,6 +69,8 @@ function insert(db: { prepare(sql: string): { run(...a: unknown[]): unknown } },
 function seeded() {
   const h = createSqliteD1(MIGRATIONS);
   insert(h.db, 'indexer_cursor', { chain_id: CHAIN, kind: 'diamond', last_block: 500, updated_at: NOW - 10 });
+  // The rental table is seeded from history (#3882), so the rental reads answer.
+  insert(h.db, 'indexer_cursor', { chain_id: CHAIN, kind: 'rental_rights_seed', last_block: 500, updated_at: NOW - 10 });
   for (const id of [1, 2]) {
     insert(h.db, 'offers', {
       chain_id: CHAIN,

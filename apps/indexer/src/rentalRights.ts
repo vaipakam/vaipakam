@@ -11,7 +11,9 @@
  * WRITE RULE. An update lands only when its (block, log index) is later than
  * the row's, so a re-scan of an overlapping range or an out-of-order batch
  * never puts an older state back. A clearing (zero user and quantity) keeps
- * the row with quantity '0'. Nothing else writes the table, and it reads
+ * the row with quantity '0'. The scan's hook and the one-time seed from
+ * recorded history (`seedRentalRights`) both write through it; nothing else
+ * writes the table, and it reads
  * nothing but the event, so it is replay-derived: a rebuild or a new
  * deployment clears it with the chain's other rows and the replay writes it
  * again (deploymentEpoch.ts).
@@ -21,6 +23,8 @@
  * (`expires >= block.timestamp`). An expiry fires no event, so a row stops
  * being active by time alone; `isActiveRental` is the one statement of that.
  */
+
+import type { Env } from './env';
 
 /** The decoded log fields this module reads. */
 export interface RentalLog {
@@ -146,4 +150,79 @@ export async function recordRentalRights(
     ),
   );
   return rows.length;
+}
+
+/** The cursor kind that marks a chain's rental table as seeded from history. */
+export const RENTAL_SEED_CURSOR_KIND = 'rental_rights_seed';
+/** Rows read per page while seeding. */
+const SEED_PAGE = 500;
+
+
+/**
+ * Seed `rental_rights` once per chain from the rental events the indexer
+ * already recorded (`activity_events`), up to the scan cursor `through`.
+ *
+ * WHY. The table arrives on chains the indexer has already scanned, and the
+ * scan resumes past the blocks that carried the existing rentals, so its hook
+ * alone would leave every earlier rental out until that rental's next update.
+ * The seed replays those events through the same mapping and the same
+ * later-update-wins write as the hook, so the order of the two never matters.
+ * Blocks above `through` are the scan's: this pass and later ones feed them
+ * to the hook.
+ *
+ * Until the mark is written the rental reads answer 503 rather than an
+ * apparently complete list (`rentalRoutes.ts`). A failure part-way leaves no
+ * mark, and the next pass seeds again; the write rule makes that harmless. A
+ * new deployment epoch clears the mark with the chain's other rows, and the
+ * seed then runs over the cleared history.
+ *
+ * Returns the number of events replayed, or null when the chain was already
+ * seeded.
+ */
+export async function seedRentalRights(
+  db: Env['DB'],
+  chainId: number,
+  through: number,
+  now: number,
+): Promise<number | null> {
+  const done = await db
+    .prepare('SELECT 1 AS seeded FROM indexer_cursor WHERE chain_id = ? AND kind = ?')
+    .bind(chainId, RENTAL_SEED_CURSOR_KIND)
+    .first<{ seeded: number }>();
+  if (done) return null;
+  let replayed = 0;
+  let afterBlock = -1;
+  let afterLog = -1;
+  for (;;) {
+    const page = await db
+      .prepare(
+        `SELECT block_number, log_index, args_json FROM activity_events
+          WHERE chain_id = ? AND kind = 'VaultRentalUpdated' AND block_number <= ?
+            AND (block_number > ? OR (block_number = ? AND log_index > ?))
+          ORDER BY block_number, log_index
+          LIMIT ?`,
+      )
+      .bind(chainId, through, afterBlock, afterBlock, afterLog, SEED_PAGE)
+      .all<{ block_number: number; log_index: number; args_json: string }>();
+    const rows = page.results ?? [];
+    const logs: RentalLog[] = rows.map((r) => ({
+      eventName: 'VaultRentalUpdated',
+      args: JSON.parse(r.args_json) as Record<string, unknown>,
+      blockNumber: BigInt(r.block_number),
+      logIndex: r.log_index,
+    }));
+    await recordRentalRights(db as unknown as RentalDb, chainId, logs, now);
+    replayed += rows.length;
+    if (rows.length < SEED_PAGE) break;
+    afterBlock = rows[rows.length - 1].block_number;
+    afterLog = rows[rows.length - 1].log_index;
+  }
+  await db
+    .prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (chain_id, kind) DO NOTHING`,
+    )
+    .bind(chainId, RENTAL_SEED_CURSOR_KIND, through, now)
+    .run();
+  return replayed;
 }
