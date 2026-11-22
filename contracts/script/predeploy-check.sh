@@ -302,6 +302,25 @@ else
   FAIL=1
 fi
 
+# ── 1e2. Refactor reports (#3914) ─────────────────────────────────────
+# The five refactor reports (silent functions, swallowed failures, ambiguous
+# errors, write-only storage, event categories) compared with the committed
+# results in contracts/refactor-reports/. Until the refactor pass ends a new
+# finding is a warning (refactor-reports/config.json "blocking": false); a
+# malformed ledger fails. Same AST artifacts as 1d.
+echo
+echo "[predeploy 1e2/4] refactor reports (#3914)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/refactor-reports.mjs" check; then
+  : # the script prints its own lines
+else
+  echo "  ✗ refactor reports failed — fix the ledger, or the new finding while" >&2
+  echo "    contracts/refactor-reports/config.json says blocking (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1f. Error raisers ─────────────────────────────────────────────────
 # The error catalogue's "raised by" lists come from the same AST artifacts
 # as 1d/1e (#3916). The catalogue itself (names, values, meanings) is checked

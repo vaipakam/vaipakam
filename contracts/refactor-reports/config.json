@@ -1,0 +1,4 @@
+{
+  "_readme": "Whether a new refactor-report finding fails the check. False until the refactor pass ends (RefactorRulesDesign section 9, #3914): until then a new finding is a warning. Turning this on is the owner's decision at the end of the pass.",
+  "blocking": false
+}

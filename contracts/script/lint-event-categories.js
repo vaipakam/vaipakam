@@ -11,8 +11,10 @@
 // downstream consumers (watcher D1 dispatcher, frontend cache-merge,
 // subgraph handler) to load directly.
 //
-// Run after `forge build`. Reads `contracts/out/<Facet>.sol/<Facet>.json`
-// artifacts directly — no foundry CLI invocations from inside this script.
+// Reads the AST artifacts check-measured-delivery.mjs builds
+// (`contracts/out-measured-delivery/`, `forge build --force --ast`), or the
+// directory `--out` names: event declarations and their natspec tags from the
+// AST, the deployed event surface from the ABIs. No source text (#3914).
 //
 // Failure modes (non-zero exit + diagnostic):
 //   - MISSING_TAG    event in ABI without `@custom:event-category` in devdoc
@@ -20,13 +22,12 @@
 //   - UNKNOWN_LEAF   leaf not in §1.5.1 allow-list
 //
 // Usage:
-//   node contracts/script/lint-event-categories.js
-//       # exit 0 + writes contracts/out/event-categories.json on success
+//   node contracts/script/lint-event-categories.js [--out <dir>] [--warn]
+//       # exit 0 + writes <dir>/event-categories.json on success
 //       # exit 1 + prints diagnostics on any violation
-//
-// CI integration:
-//   - Pre-commit hook (husky) on staged `contracts/src/**/*.sol` changes.
-//   - GitHub Actions step after the `forge build` job.
+//       # --warn: print the count and exit 0 (the pre-deploy gate, until the
+//       #   refactor pass ends; refactor-reports.mjs holds the violations as
+//       #   a result that may not grow, #3914)
 
 'use strict';
 
@@ -34,9 +35,10 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'contracts', 'out');
-const SOURCE_DIR = path.join(REPO_ROOT, 'contracts', 'src');
-const OUTPUT_FILE = path.join(ARTIFACTS_DIR, 'event-categories.json');
+// The AST build the measured-delivery guard makes (`forge build --force
+// --ast`, src/ only), which the pre-deploy gate already pays for (#3914).
+// `--out <dir>` reads another artifact directory built with `--ast`.
+const DEFAULT_ARTIFACTS_DIR = path.join(REPO_ROOT, 'contracts', 'out-measured-delivery');
 
 // §1.5.1 — closed allow-list. Adding a new leaf REQUIRES updating both
 // EventSourcingAudit.md §1.5.1 AND this list in the same PR. The closed
@@ -99,9 +101,6 @@ const ALLOWED_CATEGORIES = new Set([
 
 const TAG_PATTERN = /^(state-change|informational)\/[a-z][a-z-]*$/;
 
-// Errors collected then reported in one pass — better DX than fail-fast
-// for repos with many violations on first run.
-const violations = [];
 
 /**
  * Recursively walk a directory and yield every file matching `predicate`.
@@ -143,41 +142,46 @@ function abiEventSignature(eventAbi) {
 }
 
 /**
- * Scan `contracts/src/**\/*.sol` for `event Foo(...)` declarations + their
- * preceding natspec block. Returns { sourceFile, contractName, eventName,
- * categoryTag } records. We parse source rather than relying solely on
- * the compiler's `devdoc` because Foundry's natspec emission for
- * `@custom:` event tags has been historically inconsistent across solc
- * minor versions; reading the source string is robust.
+ * Every event declared in a `src/` file, with the category tag of its natspec,
+ * read from the compiler's AST (`EventDefinition.documentation`) in the
+ * artifacts, never from source text (#3914). Returns { sourceFile,
+ * contractName, eventName, categoryTag } records.
  */
-function scanSourceEvents() {
+function scanSourceEvents(artifactsDir) {
+  const customTagRegex = /@custom:event-category\s+([^\s*]+)/;
   const events = [];
-  const eventDeclRegex =
-    /(\/\*\*[\s\S]*?\*\/|(?:\/\/\/[^\n]*\n[ \t]*)+)\s*event\s+([A-Za-z_]\w*)\s*\(/g;
-  const customTagRegex =
-    /@custom:event-category\s+([^\s*]+)/;
-  const contractDeclRegex =
-    /(?:contract|library|interface)\s+([A-Za-z_]\w*)/;
-
-  for (const file of walk(SOURCE_DIR, (f) => f.endsWith('.sol'))) {
-    const src = fs.readFileSync(file, 'utf8');
-    const contractMatch = src.match(contractDeclRegex);
-    const contractName = contractMatch ? contractMatch[1] : path.basename(file, '.sol');
-
-    let m;
-    eventDeclRegex.lastIndex = 0;
-    while ((m = eventDeclRegex.exec(src)) !== null) {
-      const docBlock = m[1] || '';
-      const eventName = m[2];
-      const tagMatch = docBlock.match(customTagRegex);
-      events.push({
-        sourceFile: path.relative(REPO_ROOT, file),
-        contractName,
-        eventName,
-        categoryTag: tagMatch ? tagMatch[1].trim() : null,
-      });
+  const seenUnits = new Set();
+  for (const file of walk(artifactsDir, (f) => f.endsWith('.json') && !f.includes(`${path.sep}build-info${path.sep}`))) {
+    let artifact;
+    try {
+      artifact = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) {
+      continue;
     }
+    const unit = artifact.ast;
+    if (!unit || typeof unit.absolutePath !== 'string' || !unit.absolutePath.startsWith('src/')) continue;
+    if (seenUnits.has(unit.absolutePath)) continue;
+    seenUnits.add(unit.absolutePath);
+    const visit = (node, contractName) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) return node.forEach((n) => visit(n, contractName));
+      if (node.nodeType === 'ContractDefinition') contractName = node.name;
+      if (node.nodeType === 'EventDefinition') {
+        const doc = node.documentation?.text ?? '';
+        const tagMatch = doc.match(customTagRegex);
+        events.push({
+          sourceFile: path.join('contracts', unit.absolutePath),
+          contractName: contractName ?? path.basename(unit.absolutePath, '.sol'),
+          eventName: node.name,
+          categoryTag: tagMatch ? tagMatch[1].trim() : null,
+        });
+        return;
+      }
+      for (const [k, v] of Object.entries(node)) if (k !== 'nodeType' && v && typeof v === 'object') visit(v, contractName);
+    };
+    visit(unit, undefined);
   }
+  if (!seenUnits.size) throw new Error(`${artifactsDir} carries no AST — build it with \`forge build --ast\` (check-measured-delivery.mjs does)`);
   return events;
 }
 
@@ -191,9 +195,9 @@ function scanSourceEvents() {
  * compile but their events aren't part of our deployed surface; tagging
  * them is impossible and the lint should not block on them.
  */
-function scanArtifactEvents() {
+function scanArtifactEvents(artifactsDir) {
   const events = [];
-  for (const file of walk(ARTIFACTS_DIR, (f) => f.endsWith('.json'))) {
+  for (const file of walk(artifactsDir, (f) => f.endsWith('.json') && !f.includes(`${path.sep}build-info${path.sep}`))) {
     let artifact;
     try {
       artifact = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -233,16 +237,15 @@ function scanArtifactEvents() {
   return events;
 }
 
-function main() {
-  if (!fs.existsSync(ARTIFACTS_DIR)) {
-    console.error(
-      `lint-event-categories: contracts/out/ missing — run 'forge build' first.`
-    );
-    process.exit(2);
-  }
-
-  const sourceEvents = scanSourceEvents();
-  const artifactEvents = scanArtifactEvents();
+/**
+ * Lint the events of the artifacts in `artifactsDir`. Returns { violations,
+ * categoriesBySignature }. Exported for the refactor reports (#3914), which
+ * keep its violations as a result with the warn-then-block rule.
+ */
+function lintEvents(artifactsDir) {
+  const violations = [];
+  const sourceEvents = scanSourceEvents(artifactsDir);
+  const artifactEvents = scanArtifactEvents(artifactsDir);
 
   // Map (contractName, eventName) → category tag from source.
   const tagBySrcKey = new Map();
@@ -341,26 +344,43 @@ function main() {
     seenSignatures.add(ev.signature);
   }
 
-  if (violations.length > 0) {
-    console.error('lint-event-categories: FAILED — fix the violations below.\n');
-    for (const v of violations) {
-      console.error(`  [${v.kind}] ${v.message}`);
-    }
-    console.error(`\n${violations.length} violation(s).`);
-    process.exit(1);
-  }
-
-  fs.writeFileSync(
-    OUTPUT_FILE,
-    JSON.stringify(categoriesBySignature, null, 2) + '\n',
-    'utf8'
-  );
-
-  const eventCount = Object.keys(categoriesBySignature).length;
-  console.log(
-    `lint-event-categories: OK — ${eventCount} events validated, ` +
-      `wrote ${path.relative(REPO_ROOT, OUTPUT_FILE)}`
-  );
+  return { violations, categoriesBySignature };
 }
 
-main();
+function main(argv) {
+  let artifactsDir = DEFAULT_ARTIFACTS_DIR;
+  let warn = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--out' && argv[i + 1]) artifactsDir = path.resolve(argv[++i]);
+    else if (argv[i] === '--warn') warn = true;
+    else {
+      console.error(`lint-event-categories: unknown argument ${argv[i]}`);
+      process.exit(2);
+    }
+  }
+  if (!fs.existsSync(artifactsDir)) {
+    console.error(`lint-event-categories: ${path.relative(REPO_ROOT, artifactsDir)} missing — run check-measured-delivery.mjs (or forge build --ast) first.`);
+    process.exit(2);
+  }
+  const { violations, categoriesBySignature } = lintEvents(artifactsDir);
+  if (violations.length > 0) {
+    const byKind = {};
+    for (const v of violations) byKind[v.kind] = (byKind[v.kind] ?? 0) + 1;
+    const summary = Object.entries(byKind).map(([k, n]) => `${n} ${k}`).join(', ');
+    if (warn) {
+      console.log(`lint-event-categories: ${violations.length} violation(s) (${summary}) — a warning until the refactor pass ends; the refactor reports hold the count`);
+      return;
+    }
+    console.error('lint-event-categories: FAILED — fix the violations below.\n');
+    for (const v of violations) console.error(`  [${v.kind}] ${v.message}`);
+    console.error(`\n${violations.length} violation(s) (${summary}).`);
+    process.exit(1);
+  }
+  const outputFile = path.join(artifactsDir, 'event-categories.json');
+  fs.writeFileSync(outputFile, JSON.stringify(categoriesBySignature, null, 2) + '\n', 'utf8');
+  console.log(`lint-event-categories: OK — ${Object.keys(categoriesBySignature).length} events validated, wrote ${path.relative(REPO_ROOT, outputFile)}`);
+}
+
+module.exports = { lintEvents, ALLOWED_CATEGORIES, TAG_PATTERN };
+
+if (require.main === module) main(process.argv.slice(2));

@@ -1,0 +1,10 @@
+{
+  "_readme": "Findings accepted on purpose, per report: \"<entry exactly as the report prints it>\": \"<why it is right, at least 20 characters>\". A listed entry never counts as new. The check names an entry that is listed but no longer found, so remove it then. See contracts/script/refactor-reports.mjs and RefactorRulesDesign section 9.",
+  "silent-functions": {
+    "MulticallFacet.multicall(struct:MulticallFacet.Call[]) (unknown self-call: a low-level delegatecall on this contract in multicall names no selector)": "Each inner call is a delegatecall to a routed Diamond function, which emits its own events; the report cannot name the selectors because the caller supplies them."
+  },
+  "swallowed-failures": {},
+  "ambiguous-errors": {},
+  "write-only-storage": {},
+  "event-categories": {}
+}
