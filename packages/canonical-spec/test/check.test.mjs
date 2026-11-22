@@ -498,3 +498,13 @@ test('a retired id needs the approval that retired it; a folder source needs a d
   const codeSource = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'K', 'The code does this']])]];
   assert.ok(has(run(codeSource), 'record', /a folder entry names a document source/));
 });
+
+test('every row a check keys on has its id in form and its required cells', () => {
+  const extra = '\n| Id | Retired by |\n| --- | --- |\n| vlt-1 | owner approval 2026-11-22 |\n\n| Owed | Cited by |\n| --- | --- |\n| VLT owed: the wait | |\n';
+  const params = '| Id | Name | Value |\n| --- | --- | --- |\n| P-1 | The wait | 3 days |\n';
+  const f = run([['vlt.md', REFUSAL('VLT-012')], ['params.md', params], ['record.md', RECORD([['VLT-012'], ['VLT 13']], extra)]]);
+  assert.ok(has(f, 'record', /a record row needs a statement id \(like VLT-001\) and its mark; read "VLT 13"/), JSON.stringify(f));
+  assert.ok(has(f, 'retired', /a retired row needs a statement id \(like VLT-001\); read "vlt-1"/), JSON.stringify(f));
+  assert.ok(has(f, 'owed', /an owed row needs the owed line and what cites it/), JSON.stringify(f));
+  assert.ok(has(f, 'parameter', /a parameter row needs a parameter id \(like PRM-1\); read "P-1"/), JSON.stringify(f));
+});

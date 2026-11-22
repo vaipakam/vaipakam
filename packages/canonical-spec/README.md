@@ -133,6 +133,12 @@ its domain lists.
 | Parameters | Id, Name, Value | the only place a figure appears; one row per parameter (per-network values are columns) |
 | Glossary | Term, Meaning, Instead of | the words a statement uses instead |
 
+Every row has its header's cell count. A record or retired row's id is a
+statement id (`VLT-001`), a parameter row's id a parameter id (`PRM-1`), and a
+record row's mark, an owed row's two cells and a parameter's name and value
+are never empty: a row a later rule keys on is refused by name, never read as
+a missing entry.
+
 ### Wording list
 
 ```json

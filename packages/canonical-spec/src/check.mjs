@@ -163,6 +163,19 @@ export function checkSpec(parsed, opts = {}) {
   const codes = new Set(statements.map((s) => s.code));
   const complete = opts.completeDomains ?? new Set();
 
+  // Every table the checks read has one row shape, held in one place: an id
+  // a later rule keys on is checked for its form here, so a malformed id is
+  // refused by name rather than read as "no such entry" by every later rule.
+  const STATEMENT_ID = /^[A-Z]{3}-\d{3}$/;
+  const PARAMETER_ID = /^PRM-\d+$/;
+  const shapes = [
+    ...record.entries.map((e) => [e, 'record', STATEMENT_ID.test(e.id) && e.mark.trim(), `a record row needs a statement id (like VLT-001) and its mark; read "${e.id}"`]),
+    ...record.retired.map((r) => [r, 'retired', STATEMENT_ID.test(r.id), `a retired row needs a statement id (like VLT-001); read "${r.id}"`]),
+    ...record.owed.map((o) => [o, 'owed', o.ref.trim() && o.by.trim(), 'an owed row needs the owed line and what cites it']),
+    ...params.map((p) => [p, 'parameter', PARAMETER_ID.test(p.id), `a parameter row needs a parameter id (like PRM-1); read "${p.id}"`]),
+  ];
+  for (const [row, kind, ok, message] of shapes) if (!ok) add(row.file, row.line, kind, message);
+
   // Item 1: ids.
   const byId = new Map();
   for (const s of statements) {
