@@ -183,11 +183,13 @@ for the older-loan period.
 4. **Check.** Once the time has come, anyone runs the check over the assets in use, in pages.
    Each page reads both guards for its assets, records each asset's implied rate with the time
    and with the proposed guard's price version, and publishes the two prices as an event. The
-   old guard is read at each of its price versions not yet retired, since an open loan may be on
-   any of them, and an asset passes only if it passes at each. A page does not stop at an asset
-   that fails a guard: it records the failure and names the asset in its event, and the apply is
-   refused while one stands, so governance can see which asset to act on or re-make the
-   proposal.
+   old guard is read at each of its price versions not yet retired that has a source for the
+   asset, since an open loan may be on any of them, and an asset passes only if it passes at
+   each. A version with no source for an asset prices no loan on it and is not asked. Pages run
+   by asset and version, so no page's cost grows with the number of versions, and retiring older
+   versions first shortens the check. A page does not stop at an asset that fails a guard: it
+   records the failure and names the asset in its event, and the apply is refused while one
+   stands, so governance can see which asset to act on or re-make the proposal.
 5. **Apply.** Anyone runs the final call. It accepts only checks made within the check window (a
    parameter, proposed at one hour) and at the price version the proposed guard has in that
    call, checks any asset that came into use since, reads the wrapped coin and the assets with
@@ -449,17 +451,23 @@ retirement. This design changes none of that. What a loan never has is a guard o
 
 The step records, once, the price version the new guard had at the apply. That is the version
 the checks read (section 3), so the agreement G3 found is an agreement with that version and no
-other. From then on a loan whose record names a guard that is no longer the platform's is read
-on the platform's guard at the version recorded when that guard was applied, and a loan opened
-since is read at its own. A later change of a setting inside the new guard reaches a moved loan
-as it reaches any open loan: by an announced retirement, never by the change itself. The
-retirement of a whole guard in the loan settings design is this step.
+other. One rule then gives the version a loan is read at on any guard: its own, if its record
+names that guard, and otherwise the version that guard was applied at. So a loan whose record
+names a guard that is no longer the platform's is read on the platform's guard at the version it
+was applied at, and a loan opened since is read at its own. A later change of a setting inside
+the new guard reaches a moved loan as it reaches any open loan: by an announced retirement,
+never by the change itself. The retirement of a whole guard in the loan settings design is this
+step.
+
+The settling time and every second key read their guard by the same rule. After a replacement of
+a first guard by a second and of the second by a third, a loan opened on the first holds one key
+on the first at its own version, and one on the second at the version the second was applied at,
+which is how the loan was read just before the third came in. A version number is never carried
+from one guard to another.
 
 No loan and no lien is written by the step (G10), and no lien stores a guard or a price version.
 A vault takes the guard from its own code and the price version from the platform, and the guard
-refuses a version below its floor whoever asks. The settling time and the second key read the
-replaced guard at the version the loan's own record names, as a view of the loan read it before
-the apply.
+refuses a version below its floor whoever asks.
 
 ### 6. More than one network
 
@@ -614,7 +622,9 @@ Precondition: the reward ceiling worked out per unit of the network's coin is re
    steps, the previews, and the separate readers for a proposed guard and for the old guard,
    each with the fixed read budget and the named failure for a read that ran out of it.
 3. The registry: the main address fixed in it when the deployment is wired, with no step that
-   changes it, and the price guard pointer executable by that address alone.
+   changes it, and the price guard pointer executable by that address alone. The Diamond is
+   deployed before the registry, so the registry takes its address when it is built, and a
+   deploy test asserts that the registry names the Diamond as that executor.
 4. The readable set of assets in use, on the pledged total and a new principal total, and
    the rule that closes it during a wait (G15), at the one seam where an asset joins it.
 5. The change number on stored prices. The sizes of the liquidity test as values in the
@@ -654,7 +664,9 @@ Precondition: the reward ceiling worked out per unit of the network's coin is re
     change built on the uncorrected one, with a reward day closed before it and two networks
     correcting on different days; a setting changed inside the new guard after the apply,
     with an older loan's reading unchanged; a check made at one price version and an apply
-    tried at another; a second address tried as the registry's executor; a read
+    tried at another; an asset added at a later version of the old guard while an earlier
+    one is unretired; the keys of a loan across three guards, each read at its own guard's
+    version; a second address tried as the registry's executor; a read
     starved of gas at each guard that reads; a guard replaced on the registry during the
     wait; a small loan opened during the wait on an asset the new guard does not price; a
     same-unit replacement by a guard that disagrees; a change on one network with reward
