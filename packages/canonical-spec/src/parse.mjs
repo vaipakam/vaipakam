@@ -192,9 +192,6 @@ function parseModel(file, lines, start, end) {
       const want = { Steps: ['From', 'Step', 'Who', 'Guarded by', 'To'], 'Refusals out of state': ['Step', 'Refused by'], Dimensions: ['Dimension', 'Values', 'Named by'] }[section];
       if (want.join('|') !== table.header.join('|')) err(n, `the ${section} table's columns must be ${want.join(' | ')}`);
       for (const r of table.rows) {
-        // A row with more or fewer cells than the header would drop or shift
-        // text silently; it is unreadable instead.
-        if (r.cells.length !== want.length) err(r.line, `a ${section} row has ${r.cells.length} cells; the table has ${want.length} columns`);
         const row = Object.fromEntries(want.map((k, j) => [k, r.cells[j] ?? '']));
         row.line = r.line;
         // The cells a figure could hide in; citation cells hold ids only.
@@ -285,7 +282,12 @@ export function parseFile(file, text) {
     if (fenced[i]) continue;
     if (lines[i].t.trim().startsWith('|') && (i === 0 || fenced[i - 1] || !lines[i - 1].t.trim().startsWith('|'))) {
       const table = readTable(lines, i);
-      if (table) out.tables.push({ ...table, line: lines[i].n });
+      if (table) {
+        out.tables.push({ ...table, line: lines[i].n });
+        // A row with more or fewer cells than its header drops or shifts a
+        // value silently; every table read is held to its header.
+        for (const r of table.rows) if (r.cells.length !== table.header.length) out.errors.push({ file, line: r.line, message: `a table row has ${r.cells.length} cells; its header has ${table.header.length}` });
+      }
     }
   }
   return out;
@@ -318,7 +320,7 @@ export function parameterRows(parsed) {
   for (const tbl of parsed.tables) {
     const hdr = tbl.header.map((h) => h.toLowerCase());
     if (hdr[0] === 'id' && hdr[1] === 'name' && hdr[2] === 'value') {
-      for (const r of tbl.rows) out.push({ id: r.cells[0], name: r.cells[1], file: parsed.file, line: r.line });
+      for (const r of tbl.rows) out.push({ id: r.cells[0], name: r.cells[1], value: r.cells[2] ?? '', file: parsed.file, line: r.line });
     }
   }
   return out;

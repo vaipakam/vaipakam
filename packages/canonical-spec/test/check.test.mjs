@@ -347,7 +347,7 @@ test('a fenced code region is an example: no heading or table in it is read', ()
 
 test('a model row with more cells than its header is unreadable, not truncated', () => {
   const p = parseFile('vlt.md', MODEL(['| Not created | Create | Anyone | VLT-013 | Open | The balance is at least 25. |'], ['| Create | VLT-012 |']));
-  assert.ok(p.errors.some((e) => /a Steps row has 6 cells; the table has 5 columns/.test(e.message)), JSON.stringify(p.errors));
+  assert.ok(p.errors.some((e) => /a table row has 6 cells; its header has 5/.test(e.message)), JSON.stringify(p.errors));
 });
 
 test('two mistakes sharing an id are refused', () => {
@@ -414,4 +414,12 @@ test('a --wording file that does not exist is a usage error', () => {
   writeFileSync(join(dir, 'vlt.md'), STMT('VLT-012', 'rule'));
   const quiet = (fn) => { const [l, e] = [console.log, console.error]; console.log = console.error = () => {}; try { return fn(); } finally { console.log = l; console.error = e; } };
   assert.equal(quiet(() => main(['--draft', '--wording', join(dir, 'missing.json'), dir])), 2);
+});
+
+test('a parameter row needs its value, and any table row its header\'s cell count', () => {
+  const params = '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-001 | The wait | |\n';
+  const f = run([['vlt.md', STMT('VLT-012', 'rule', '', 'The wait is PRM-001.')], ['params.md', params], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(has(f, 'parameter', /PRM-001: a parameter row needs its name and its value/), JSON.stringify(f));
+  const short = parseFile('params.md', '| Id | Name | Value |\n| --- | --- | --- |\n| PRM-001 | The wait |\n');
+  assert.ok(short.errors.some((e) => /a table row has 2 cells; its header has 3/.test(e.message)));
 });

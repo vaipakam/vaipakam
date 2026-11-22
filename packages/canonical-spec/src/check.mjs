@@ -262,6 +262,9 @@ export function checkSpec(parsed, opts = {}) {
     if (paramAt.has(p.id)) add(p.file, p.line, 'parameter', `${p.id} has two rows (also ${paramAt.get(p.id).file}:${paramAt.get(p.id).line}); a parameter is defined once`);
     else paramAt.set(p.id, p);
     paramIds.add(p.id);
+    // §3.2: the table is where a parameter's value lives; a row without one
+    // leaves every statement naming it undefined.
+    if (!p.name?.trim() || !p.value.trim()) add(p.file, p.line, 'parameter', `${p.id}: a parameter row needs its name and its value`);
   }
   // A parameter is named by a statement or by a model's text (a state, a step,
   // a dimension value); every name must resolve.
