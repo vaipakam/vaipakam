@@ -190,7 +190,8 @@ export function checkSpec(parsed, opts = {}) {
     if (s.kind === 'never' && s.parts.Against && !s.parts.Against.match(THREAT_ID_RE)) add(s.file, s.partLines.Against, 'part', `${s.id}: **Against:** names no threat id (<CODE>-T<nn>)`);
     if (s.kind === 'setting' && s.parts.Parameter && !s.parts.Parameter.match(PARAM_ID_RE)) add(s.file, s.partLines.Parameter, 'part', `${s.id}: **Parameter:** names no parameter id (PRM-…)`);
     if (s.held && (s.number < HELD_RANGE[0] || s.number > HELD_RANGE[1])) add(s.file, s.line, 'held', `${s.id} is marked held outside the held range ${HELD_RANGE.join(' to ')}`);
-    if (!s.held && s.number >= HELD_RANGE[0]) add(s.file, s.line, 'held', `${s.id} is in the held range but not marked held`);
+    // A held statement released (its mark removed) keeps its id: an id is never
+    // renumbered, so a statement in the held range without the mark is allowed.
     for (const f of textFindings(s, { glossary, refused: refusedList(opts.wording, s.code) })) add(s.file, s.line, f.rule, `${s.id}: ${f.message}`);
   }
 
@@ -235,9 +236,13 @@ export function checkSpec(parsed, opts = {}) {
     const hasSource = e.sources.trim().length > 0;
     const raisedBy = /\b[A-Z]{3}-[MT]\d{2,3}\b|\bmodel\b|\bconflict read\b|\braised by\b/i.test(e.sources);
     const ownerApproval = /\b(owner|approv)\w*\b.*\b\d{4}-\d{2}-\d{2}\b|\b\d{4}-\d{2}-\d{2}\b.*\b(owner|approv)\w*\b/i.test(e.sources);
+    // A document source: a short document code and a quoted section ('OP "3.1"'),
+    // or a quoted date-numbered note ('"2026-11-…"').
+    const documentSource = /\b[A-Z]{2,3} "|"\d/.test(e.sources);
     if (!hasSource) add(e.file, e.line, 'record', `${s.id}: the record entry names no source`);
+    else if (!isNew && mode === 'folder' && !ownerApproval && !documentSource) add(e.file, e.line, 'record', `${s.id}: a folder entry names a document source (a document code and its quoted section) or the owner's approval, by date; what raised a statement (a threat, a mistake, a model row, the conflict read) is a draft note, not a source`);
     else if (isNew && mode === 'folder' && !ownerApproval) add(e.file, e.line, 'record', `${s.id}: a new statement enters the folder only with the owner's approval, by date, as its source`);
-    else if (isNew && mode === 'draft' && !ownerApproval && !raisedBy && !/\b[A-Z]{2,3} "|"\d/.test(e.sources)) add(e.file, e.line, 'record', `${s.id}: a new statement's entry names what raised it (a threat or mistake id, a model row, the conflict read) or a source`);
+    else if (isNew && mode === 'draft' && !ownerApproval && !raisedBy && !documentSource) add(e.file, e.line, 'record', `${s.id}: a new statement's entry names what raised it (a threat or mistake id, a model row, the conflict read) or a source`);
     if (!e.approved && mode === 'folder') add(e.file, e.line, 'approval', `${s.id}: the record entry carries no approval hash; the committed folder holds only approved text (${approvalHash(s)} now)`);
     else if (e.approved && e.approved !== approvalHash(s)) add(s.file, s.line, 'approval', `${s.id}: its text differs from the text the owner approved (record ${e.approved}, now ${approvalHash(s)}); a change needs a new approval`);
   }

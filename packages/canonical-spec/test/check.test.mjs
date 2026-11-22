@@ -317,3 +317,26 @@ test('the README is found when files are named, not only when the folder is', ()
   assert.equal(quiet(() => main(['--draft', dir])), 1);
   assert.equal(quiet(() => main(['--draft', join(dir, 'vlt.md'), join(dir, 'record.md'), join(dir, 'README.md')])), 1, 'the same files, named one by one');
 });
+
+test('a held statement released keeps its id in the held range', () => {
+  const f = run([['vlt.md', STMT('VLT-901', 'rule')], ['record.md', RECORD([['VLT-901']])]]);
+  assert.deepEqual(f.filter((x) => x.rule === 'held'), []);
+});
+
+test('folder mode: every entry names a document source or the owner\'s approval; what raised it is a draft note', () => {
+  const raisedOnly = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'K', 'Raised by VLT-M15']])]];
+  assert.deepEqual(rules(run(raisedOnly, { mode: 'draft' })), []);
+  assert.ok(has(run(raisedOnly, { mode: 'folder' }), 'record', /a folder entry names a document source/));
+  const approved = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'C', 'Owner approval 2026-11-22, question 4']])]];
+  assert.deepEqual(rules(run(approved, { mode: 'folder' })), []);
+});
+
+test('a fenced code region is an example: no heading or table in it is read', () => {
+  const example = '```\n## VLT-099 · rule\n### VLT-098 · rule\n| Id | Mark | Sources | Build |\n| --- | --- | --- | --- |\n| VLT-098 | K | x | built |\n```\n';
+  const p = parseFile('README.md', `# Readme\n\n${example}`);
+  assert.deepEqual(p.errors, []);
+  assert.deepEqual(p.statements, []);
+  assert.deepEqual(p.tables, []);
+  const after = parseFile('vlt.md', `${example}\n${REFUSAL('VLT-012')}`);
+  assert.deepEqual(after.statements.map((s) => s.id), ['VLT-012']);
+});

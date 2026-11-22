@@ -19,7 +19,9 @@ finding prints as `file:line: [rule] message`.
 
 **Draft mode vs folder mode.** In draft mode a new record entry may name what
 raised it and carry no approval. Folder mode needs the owner's approval hash
-on every entry. A domain the README marks `complete` may owe nothing to
+on every entry, and every entry's source is a document (a code and a quoted
+section) or the owner's approval by date; what raised a statement is a draft
+note, not a source. A domain the README marks `complete` may owe nothing to
 another domain.
 
 The parser **fails closed.** It reports any line under a statement or model
@@ -152,7 +154,9 @@ the statement. Folder mode also refuses an entry with no hash at all.
 
 Ids 900 to 999 are held statements, kept in the private records. A check run
 without `--held` never reports a reference to one as missing, in a statement
-or a model. A retired held id is still refused.
+or a model. A retired held id is still refused. A held statement released
+(its `held` mark removed) keeps its id; an id is never renumbered. A heading
+or table inside a fenced code region is an example and is never read.
 
 ### Figures in models
 

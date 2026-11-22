@@ -232,8 +232,23 @@ function parseMistake(file, lines, start, end) {
 export function parseFile(file, text) {
   const lines = linesOf(text);
   const out = { file, lines, statements: [], models: [], mistakes: [], tables: [], errors: [] };
+  // Lines inside a fenced code region (``` or ~~~) are an example, not a
+  // block: no heading, wrong-level heading or table is discovered there.
+  const fenced = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i].t);
+    if (fence === null && f) {
+      fence = f[1];
+      fenced[i] = true;
+    } else if (fence !== null) {
+      fenced[i] = true;
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !lines[i].t.trim().slice(f[1].length).trim()) fence = null;
+    } else fenced[i] = false;
+  }
   const headingAt = [];
   for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
     if (/^#{1,3} /.test(lines[i].t)) headingAt.push(i);
     // A statement, mistake or model heading at any level but the third would
     // otherwise be read as plain prose and its block would vanish unchecked.
@@ -258,7 +273,8 @@ export function parseFile(file, text) {
     }
   }
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].t.trim().startsWith('|') && (i === 0 || !lines[i - 1].t.trim().startsWith('|'))) {
+    if (fenced[i]) continue;
+    if (lines[i].t.trim().startsWith('|') && (i === 0 || fenced[i - 1] || !lines[i - 1].t.trim().startsWith('|'))) {
       const table = readTable(lines, i);
       if (table) out.tables.push({ ...table, line: lines[i].n });
     }
