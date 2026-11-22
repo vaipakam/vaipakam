@@ -1,4 +1,4 @@
-## Deploy rehearsal — the mode, the signer seam and the plan (PR #<n>)
+## Deploy rehearsal — the mode, the signer seam and the plan (PR #3911)
 
 A deploy can now be rehearsed end to end before it touches a real chain. `contracts/script/rehearse.sh` forks every target chain locally, a little behind its head, and runs the real deploy plan against the forks with no key. Each on-chain step is the deploy script's own phase, run with `--rehearse`. The run ends with a report and a verdict. The verdict records the commit, a digest of the tracked tree, a digest of the deploy's inputs and a digest of the plan, so a later gate can tell whether the real deploy is the one that was rehearsed. The design is `docs/DesignsAndPlans/DeployRehearsalDesign.md`.
 
