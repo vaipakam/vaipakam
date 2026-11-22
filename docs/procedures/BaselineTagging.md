@@ -23,14 +23,12 @@ is made this way and checked the same way.
 From a clean checkout of exactly that commit, in `contracts/`:
 
 ```bash
-FOUNDRY_PROFILE=default forge build --skip test --ast
 mkdir -p ../baseline-manifests
 bash script/run-regression.sh --manifest ../baseline-manifests/full.tsv
 ```
 
 The regression runs the gas suite with everything else and writes its figures
-to `out-gas-suite/`. `--ast` changes no code: it lets the record name every
-value a contract fixes at construction. A sharded run works too: put every
+to `out-gas-suite/`. A sharded run works too: put every
 shard's manifest in the same folder, at any depth. Each manifest names the inputs its plan
 was built from (the chunk sizes, and the names of the `FORK_URL_*` variables
 that were set, never a URL), so the check rebuilds the same plan on another
@@ -42,9 +40,12 @@ machine whatever that machine's own settings.
 node script/baseline-record.mjs --tag v0.9-pre-refactor --manifests ../baseline-manifests
 ```
 
-It refuses a working tree with uncommitted changes, a missing gas suite, a
-build without the AST, and manifests that `run-regression.sh --verify-shards`
-does not accept. The record holds every contract compiled from `src/` that
+It builds the commit itself, afresh, in a temporary worktree with its own
+output and cache folders and `--ast` (which changes no code; it lets the record
+name every value a contract fixes at construction), so nothing left in
+`out/` from an earlier build can enter the record. Expect one full compile.
+It refuses a working tree with uncommitted changes, a missing gas suite, and
+manifests that `run-regression.sh --verify-shards` does not accept. The record holds every contract compiled from `src/` that
 has runtime code, read from the build itself, so a contract a deploy script
 creates is in it whether or not an app ships its interface. It writes
 `contracts/baseline/v0.9-pre-refactor.json` and prints the line the tag

@@ -143,7 +143,16 @@ export function immutableNames(artifacts) {
       return;
     }
     const here = node.nodeType === 'ContractDefinition' ? node.name : contract;
-    if (node.nodeType === 'VariableDeclaration' && node.mutability === 'immutable') names.set(node.id, `${here}.${node.name}`);
+    if (node.nodeType === 'VariableDeclaration' && node.mutability === 'immutable') {
+      const name = `${here}.${node.name}`;
+      // One compilation gives each declaration one id. Two names for one id
+      // mean the folder mixes compilations (an incremental or stale build), and
+      // a reference could take the wrong name, so it is refused, never guessed.
+      if (names.has(node.id) && names.get(node.id) !== name) {
+        throw new Error(`baseline: AST id ${node.id} names both ${names.get(node.id)} and ${name}; the build folder mixes compilations, build afresh`);
+      }
+      names.set(node.id, name);
+    }
     for (const k of Object.keys(node)) if (node[k] && typeof node[k] === 'object') walk(node[k], here);
   };
   for (const { artifact } of artifacts) if (artifact.ast) walk(artifact.ast, null);

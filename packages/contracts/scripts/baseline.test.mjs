@@ -17,6 +17,7 @@ import {
   contractEntry,
   deployables,
   gasCompleteness,
+  immutableNames,
   interfaceHash,
   readArtifacts,
   recordHash,
@@ -366,4 +367,10 @@ test('a record or build without its toolchain is refused', () => {
   assert.ok(d.some((x) => /the record names no compiler and settings/.test(x)), d.join('\n'));
   const d2 = compareBuild({ contracts: structuredClone(built.contracts), versions: { build: built.build } }, { ...built, build: undefined });
   assert.ok(d2.some((x) => /this build reports no compiler and settings/.test(x)), d2.join('\n'));
+});
+
+test('an AST id carrying two immutable names is refused: the folder mixes compilations', () => {
+  const imm = (contract, name) => ({ nodeType: 'SourceUnit', nodes: [{ nodeType: 'ContractDefinition', name: contract, nodes: [{ nodeType: 'VariableDeclaration', id: 7, name, mutability: 'immutable' }] }] });
+  assert.throws(() => immutableNames([{ artifact: { ast: imm('A', 'A_VALUE') } }, { artifact: { ast: imm('B', 'B_VALUE') } }]), /AST id 7 names both A\.A_VALUE and B\.B_VALUE/);
+  assert.equal(immutableNames([{ artifact: { ast: imm('A', 'A_VALUE') } }, { artifact: { ast: imm('A', 'A_VALUE') } }]).get(7), 'A.A_VALUE');
 });

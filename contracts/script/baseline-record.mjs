@@ -2,13 +2,13 @@
 /**
  * The baseline record generator (#3964, RefactorRulesDesign §3.2).
  *
- * Writes `contracts/baseline/<tag>.json` from the build of the current commit,
- * which must be clean. It runs no build and no test itself; it reads what the
- * steps before it already produced, so nothing is run twice:
+ * Writes `contracts/baseline/<tag>.json` for the current commit, which must be
+ * clean. The contracts come from a FRESH build of that commit in a temporary
+ * worktree, with its own output and cache folders (the check's `buildAt`), so
+ * no artifact left over from an earlier build of another tree can enter the
+ * record, and every AST id belongs to one compilation. It reads the rest from
+ * what the steps before it produced:
  *
- *   - `--out DIR`: the forge build of this commit (default `contracts/out`,
- *     from `FOUNDRY_PROFILE=default forge build --skip test --ast`; the AST
- *     names every immutable);
  *   - `--gas DIR`: the gas suite's figures (default `contracts/out-gas-suite`,
  *     written by the full regression, #3915);
  *   - `--manifests DIR`: the full regression's `--manifest` files, which this
@@ -23,7 +23,7 @@
  * is the check.
  *
  * CLI: node contracts/script/baseline-record.mjs --tag <tag> --manifests <dir>
- *        [--out <dir>] [--gas <dir>] [--allow-dirty-for-test]
+ *        [--gas <dir>] [--allow-dirty-for-test]
  * Prints `record sha256 <hex>`, the line the tag message carries.
  */
 import { execFileSync } from 'node:child_process';
@@ -47,6 +47,7 @@ import {
   regressionAgreement,
 } from './lib/baseline.mjs';
 import { librariesAt, treeEntries } from './lib/baseline-git.mjs';
+import { buildAt } from './baseline-check.mjs';
 
 const CONTRACTS_DIR = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const REPO = resolve(CONTRACTS_DIR, '..');
@@ -75,10 +76,10 @@ export function buildRecord({ tag, outDir, gasDir, manifestsDir, source, forge, 
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const opt = { out: join(CONTRACTS_DIR, 'out'), gas: join(CONTRACTS_DIR, 'out-gas-suite') };
+  const opt = { gas: join(CONTRACTS_DIR, 'out-gas-suite') };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (['--tag', '--out', '--gas', '--manifests'].includes(a) && argv[i + 1]) opt[a.slice(2)] = argv[++i];
+    if (['--tag', '--gas', '--manifests'].includes(a) && argv[i + 1]) opt[a.slice(2)] = argv[++i];
     else if (a === '--allow-dirty-for-test') opt.dirtyOk = true;
     else {
       console.error(`baseline-record: unknown argument ${a}`);
@@ -117,16 +118,23 @@ export function main(argv = process.argv.slice(2)) {
     console.error('baseline-record: run-regression.sh --verify-shards refused the manifests; the record carries a verified regression only');
     return 1;
   }
-  const record = buildRecord({
-    tag: opt.tag,
-    outDir: opt.out,
-    gasDir: opt.gas,
-    manifestsDir: opt.manifests,
-    source: { commit: git(['rev-parse', 'HEAD']), digest: sourceDigest(treeEntries(REPO, 'HEAD')), digestRule: SOURCE_DIGEST_RULE },
-    forge: forgeVersion(),
-    libraries: librariesAt(REPO, 'HEAD'),
-    layoutText: readFileSync(LAYOUT_FILE),
-  });
+  const commit = git(['rev-parse', 'HEAD']);
+  const { outDir, cleanup } = buildAt(REPO, commit);
+  let record;
+  try {
+    record = buildRecord({
+      tag: opt.tag,
+      outDir,
+      gasDir: opt.gas,
+      manifestsDir: opt.manifests,
+      source: { commit, digest: sourceDigest(treeEntries(REPO, 'HEAD')), digestRule: SOURCE_DIGEST_RULE },
+      forge: forgeVersion(),
+      libraries: librariesAt(REPO, 'HEAD'),
+      layoutText: readFileSync(LAYOUT_FILE),
+    });
+  } finally {
+    cleanup();
+  }
   // The same rule the check applies: a record carries a green regression whose
   // totals are what its manifests add up to.
   const regressionGaps = regressionAgreement(record.regression);
