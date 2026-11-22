@@ -670,18 +670,16 @@ phase_preflight() {
   # ingress stays fail-closed dark on this mirror (day figures still
   # flow on the kind-5 wire) until the operator arms it.
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_REWARD_DEPLOYMENT:-}" ]; then
-    echo "  ⚠ BASE_REWARD_DEPLOYMENT unset — the V3 (kind-10) broadcast"
-    echo "    ingress will stay DARK on this mirror (no day clocks; the"
-    echo "    P2 lapse machinery cannot arm) until setBaseRewardDeployment"
-    echo "    is called with canonical Base's Diamond address."
+    echo "  · BASE_REWARD_DEPLOYMENT unset — configure takes canonical Base's"
+    echo "    Diamond from its record (#3891); with no record the V3 (kind-10)"
+    echo "    broadcast ingress stays DARK on this mirror."
   fi
   # #1434 P2-w3 (#1636 r4) — the canonical-side reciprocal. WARN-only
   # on testnet (lanes come up incrementally); mainnet HARD-FAILS.
   if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
-    echo "  ⚠ MIRROR_REWARD_DEPLOYMENTS unset — the compensation-quote"
-    echo "    (kind-11) ingress will stay DARK per lane (fail-closed,"
-    echo "    CompQuoteMirrorEraUnset) until setMirrorRewardDeployment is"
-    echo "    called with each mirror's Diamond address."
+    echo "  · MIRROR_REWARD_DEPLOYMENTS unset — configure takes each mirror's"
+    echo "    Diamond from its record (#3891); a mirror with no record keeps"
+    echo "    its compensation-quote (kind-11) ingress DARK."
   fi
   if [ ${#MISSING[@]} -ne 0 ]; then
     echo "FAIL: required env vars missing in .env:"

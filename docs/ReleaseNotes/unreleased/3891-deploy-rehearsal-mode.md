@@ -14,3 +14,5 @@ After a clock step, every price feed the chain's guard holds is brought to the n
 
 > Caveat: a deploy that binds a Pyth cross-check or a secondary query oracle cannot be rehearsed past a clock step until that source has a mechanism of its own.
 > Caveat: cross-chain messages are not delivered until the relay is wired in; until then, relay steps are reported as not covered.
+
+On a fresh redeploy the reward identities each chain trusts (the canonical Diamond a mirror accepts broadcasts from, and each mirror Diamond the canonical chain accepts quotes from) now come from the chains' own records, which the contracts phase just wrote. A value left in `.env` from the deployment being replaced is refused rather than installed, and the operator no longer copies the new addresses into `.env` by hand. A rehearsal also never seeds the real indexer database, and the plan reads `.env` through the deploy's own loader.

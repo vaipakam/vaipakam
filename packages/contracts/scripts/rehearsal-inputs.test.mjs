@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkReads, envFileNames, envReadsIn, inputDigest, readInputs } from '../../../contracts/script/rehearsal-inputs.mjs';
+import { checkReads, envFileNames, envReadsIn, envPrefixLiteralsIn, inputDigest, readInputs } from '../../../contracts/script/rehearsal-inputs.mjs';
 
 const spec = readInputs();
 const lit = (value) => ({ nodeType: 'Literal', kind: 'string', value });
@@ -63,4 +63,26 @@ test('env file names are read without values', () => {
 
 test('every left-out pattern has a reason', () => {
   for (const e of spec.leftOut) assert.ok(e.reason.length > 20, e.pattern);
+});
+
+test('a name a script builds at run time is in the set when only exported', () => {
+  const base = inputDigest(realEnv, fileNames, spec).digest;
+  assert.notEqual(inputDigest({ ...realEnv, DEPLOYER_ADDRESS: '0xd' }, fileNames, spec).digest, base);
+  assert.notEqual(inputDigest({ ...realEnv, BASE_SEPOLIA_ETH_USD_FEED: '0xf' }, fileNames, spec).digest, base);
+  assert.notEqual(inputDigest({ ...realEnv, ARB_SEPOLIA_ZEROX_PROXY: '0xz' }, fileNames, spec).digest, base);
+});
+
+test('a key literal in a file that builds names must be covered', () => {
+  const ast = { nodeType: 'SourceUnit', nodes: [read({ nodeType: 'FunctionCall' }), lit('SOME_NEW_KEY'), lit('KEEPER_ROLE')] };
+  const listed = { ...spec, dynamicSites: [{ path: 'script/Y.s.sol', patterns: ['*_*'], reason: 'chain-prefixed keys' }] };
+  const p = checkReads(new Map([['script/Y.s.sol', ast]]), listed);
+  assert.equal(p.length, 1);
+  assert.match(p[0], /SOME_NEW_KEY/);
+});
+
+test('chainPrefixes must be the prefixes envPrefix returns', () => {
+  const dep = { nodeType: 'FunctionDefinition', name: 'envPrefix', body: [lit('BASE_SEPOLIA_'), lit('NEW_CHAIN_')] };
+  assert.deepEqual([...envPrefixLiteralsIn(dep)].sort(), ['BASE_SEPOLIA_', 'NEW_CHAIN_']);
+  const p = checkReads(new Map([['script/lib/Deployments.sol', { nodeType: 'SourceUnit', nodes: [dep] }]]), { ...spec, dynamicSites: [] });
+  assert.ok(p.some((x) => /chainPrefixes/.test(x)), p.join('\n'));
 });

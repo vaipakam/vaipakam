@@ -2,7 +2,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CARRIED,
@@ -11,7 +12,7 @@ import {
   derivedLanes,
   derivedRewardSources,
   envDisagreements,
-  envValues,
+  loaderValues,
   keeperFlags,
   termsVersions,
   todayAnchor,
@@ -47,9 +48,14 @@ test('an env that disagrees with the derived topology is named', () => {
   assert.match(p.join('\n'), /one-run override/);
 });
 
-test('env values: later lines win, quotes and export are stripped, other names ignored', () => {
-  const v = envValues('export A="1,2"\nB=3\n# A=9\nA=\'4\'\nC_PRIVATE_KEY=0xsecret\n', ['A', 'B']);
-  assert.deepEqual(v, { A: '4', B: '3' });
+test('env values come from the deploy loader: quotes, inline comments, later lines, no keys', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plan-env-'));
+  const f = join(dir, '.env');
+  writeFileSync(f, 'export A="1,2"\nB=3 # mirrors\nD="97,421614" # mirrors\n# A=9\nA=\'4\'\nC_PRIVATE_KEY=0xsecret\n');
+  const { values } = loaderValues(f, ['A', 'B', 'D', 'C_PRIVATE_KEY', 'E'], { PATH: process.env.PATH, E: 'exported' });
+  assert.deepEqual(values, { A: '4', B: '3', D: '97,421614', E: 'exported' });
+  writeFileSync(f, 'A="unterminated\n');
+  assert.match(loaderValues(f, ['A'], { PATH: process.env.PATH }).error, /unterminated/);
 });
 
 test('validation refuses the mistakes the file invites', () => {
@@ -118,6 +124,8 @@ test('the canonical chain closes, finalizes and broadcasts the day before the ar
   const bc = at(/'broadcastGlobal\(uint256\)' "\$P" --value "\$F"/);
   assert.ok(at(/^step base-sepolia launch/) < close && close < wait && wait < fin && fin < bc && bc < at(/^relay /));
   assert.ok([close, fin, bc].every((i) => lines[i].startsWith('cmd base-sepolia ')));
+  // The grace wait can cross midnight: the day comes from the armed day, never the current day.
+  assert.ok([close, fin, bc].every((i) => lines[i].includes("'getGovernorCommitState()") && !lines[i].includes('getInteractionCurrentDay')));
 });
 
 test('the sanctions clearance is rewired attestor first, after every chain is configured', () => {

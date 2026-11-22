@@ -171,9 +171,11 @@ Keys and accounts:
   (default 50,000 VPFI), `CCIP_RATE_REFILL` (default 5.8 VPFI/s).
 - `BASE_CHAIN_ID` — required on mirrors by preflight (=84532); the configure
   phase derives it itself.
-- `BASE_REWARD_DEPLOYMENT` — mirrors: the NEW Base Diamond (known only after
-  Base's contracts phase). `MIRROR_REWARD_DEPLOYMENTS` — Base:
-  `421614:<new arb diamond>,97:<new bnb diamond>`.
+- `BASE_REWARD_DEPLOYMENT` (mirrors) and `MIRROR_REWARD_DEPLOYMENTS` (Base):
+  leave them unset. The configure phase takes each from the chains' own
+  records, which the contracts phases wrote, and refuses a value in `.env`
+  that names any other Diamond (a stale one from the deployment being
+  replaced).
   `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — Base: `84532,421614,97` (**must include
   Base itself**; FreshDeployHardeningPlan lesson 4). Optional
   `REWARD_GRACE_SECONDS` (default 14400; precedent restored 43200 on Base),
@@ -381,7 +383,7 @@ bash contracts/script/deploy-testnet.sh bnb-testnet  --phase preflight
 ```
 
 Checks RPC chain id, required vars, deployer balance (`phase_preflight`).
-Mirror WARN for `BASE_REWARD_DEPLOYMENT` unset is expected at this point.
+A WARN for `BASE_REWARD_DEPLOYMENT` unset is expected; configure takes it from the records.
 
 ### 3.2 contracts (all three chains)
 
@@ -429,8 +431,8 @@ cast call $D 'getTreasury()(address)' --rpc-url "$<RPC_VAR>"    # TREASURY_ADDRE
 jq -r .monorepoCommit contracts/deployments/<slug>/deployment_source.json  # no " (dirty)"
 ```
 
-Then put the new Diamond addresses in `.env`: `BASE_REWARD_DEPLOYMENT`
-(mirrors) and `MIRROR_REWARD_DEPLOYMENTS` (Base).
+Nothing to copy into `.env`: configure reads the new Diamonds from these
+records.
 
 Known traps: an Arbitrum diamond cut sent with a too-low gas estimate left a
 half-built Diamond in the precedent (hardening lesson 1) — raise
@@ -950,7 +952,7 @@ markers (lines 333–416) — read both halves.
 - [ ] Recorded the old operating settings (§2.4 item 5); `--fresh` carries `keeperAddress` and the sanctions records and archives `reward-custody-activated.json` itself.
 - [ ] `preflight` ×3.
 - [ ] `contracts --fresh` Base, Arb, BNB; paused; treasury; clean stamp.
-- [ ] `.env`: `BASE_REWARD_DEPLOYMENT`, `MIRROR_REWARD_DEPLOYMENTS`, `REWARD_EXPECTED_SOURCE_CHAIN_IDS`, lane lists.
+- [ ] `.env`: `REWARD_EXPECTED_SOURCE_CHAIN_IDS`, lane lists (reward deployments come from the records).
 - [ ] `ccip-wire` ×3; limiter reads per lane.
 - [ ] BNB `swap-adapters`.
 - [ ] `testnet-mocks` ×3; mocks Liquid.

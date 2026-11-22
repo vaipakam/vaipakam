@@ -362,6 +362,9 @@ for c in "${CHAINS[@]}"; do
   fi
 done
 [ -f "$CONTRACTS_DIR/deployments/archive-manifest.json" ] && cp "$CONTRACTS_DIR/deployments/archive-manifest.json" "$SCRATCH/"
+# The exporter's chain allow-list: without it the export falls back to every
+# directory with records, so the run's bundle would name retired chains.
+[ -f "$CONTRACTS_DIR/deployments/.active-chains" ] && cp "$CONTRACTS_DIR/deployments/.active-chains" "$SCRATCH/"
 # Records of chains outside the plan stay readable (ConfigureCcip reads each
 # lane's peer); they are copied too, so a step reads the scratch copy and the
 # committed file is never opened for writing.

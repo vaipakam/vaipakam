@@ -28,6 +28,7 @@
  * unset and each command falls back to the chain's own RPC variable.
  */
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -173,18 +174,23 @@ export function derivedRewardSources(d) {
 
 const idSet = (v) => String(v ?? '').split(',').map((x) => x.trim()).filter(Boolean).map(Number).sort((a, b) => a - b).join(',');
 
-/** Values of the named variables in an env file (later lines win; quotes stripped). Pure. */
-export function envValues(text, names) {
-  const want = new Set(names);
-  const out = {};
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/\r$/, '').trim();
-    if (!line || line.startsWith('#')) continue;
-    const m = line.replace(/^export\s+/, '').match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!m || !want.has(m[1])) continue;
-    out[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
-  }
-  return out;
+/**
+ * Values of the named variables as the deploy resolves them: the env file is
+ * read by the deploy scripts' own loader (`lib/load-env.sh`), in a child
+ * shell, over this process's environment, with key variables dropped. One
+ * parser, so quoting, inline comments and an exported value the file
+ * replaces are taken exactly as the deploy takes them. Returns
+ * `{ values }`, or `{ error }` when the loader refuses the file.
+ */
+export function loaderValues(envFile, names, env = process.env) {
+  const script = '__lenv_baseline="$(compgen -v)"; source "$1" || exit 3; load_env_file "$2" --drop-key-vars >&2 || exit 4; shift 2; '
+    + 'for n in "$@"; do if [ -n "${!n+set}" ]; then printf \'%s\\0%s\\0\' "$n" "${!n}"; fi; done';
+  const r = spawnSync('bash', ['-c', script, 'deploy-plan', join(HERE, 'lib', 'load-env.sh'), envFile, ...names], { encoding: 'utf8', env });
+  if (r.status !== 0) return { error: (r.stderr || '').trim().split('\n').filter((l) => /^Error/.test(l)).join('; ') || `the loader refused ${envFile}` };
+  const parts = r.stdout.split('\0');
+  const values = {};
+  for (let i = 0; i + 1 < parts.length; i += 2) values[parts[i]] = parts[i + 1];
+  return { values };
 }
 
 /** Disagreements between the derived topology and the operator's env. Pure. */
@@ -332,7 +338,10 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
     const graceSetting = (d.settings ?? []).find((x) => x.setter === 'setRewardGraceSeconds(uint64)' && settingChains(x, d).includes(canon));
     const grace = Number(graceSetting?.value ?? DEFAULT_REWARD_GRACE_SECONDS);
     say(`Close, finalize and broadcast the day before the armed day on ${canon}, so the mirrors learn it (guide 5.5 step 5).`);
-    const prev = `P=$(( $(cast call "$D" 'getInteractionCurrentDay()(uint256,bool)' --rpc-url "$R" | head -1 | cut -d' ' -f1) - 1 ));`;
+    // The closed day is the day before the ARMED day, read from the chain's
+    // commit state each time: the current day can move on during the grace
+    // wait, the armed day cannot.
+    const prev = `P=$(( $(cast call "$D" 'getGovernorCommitState()(uint256,uint256,uint256,uint256)' --rpc-url "$R" | head -1 | cut -d' ' -f1) - 1 ));`;
     cmd(canon, `${on(canon)} ${prev} vk_cast_send ADMIN "$D" 'closeDay(uint256)' "$P" --rpc-url "$R"`);
     L.push(`clock +${grace + 1}`);
     cmd(canon, `${on(canon)} ${prev} vk_cast_send ADMIN "$D" 'finalizeDay(uint256)' "$P" --rpc-url "$R"`);
@@ -403,12 +412,12 @@ export function main(argv = process.argv.slice(2), { now = () => Math.floor(Date
   const ei = rest.indexOf('--env-file');
   let values = Object.fromEntries(names.map((n) => [n, env[n]]));
   if (ei >= 0) {
-    try {
-      values = { ...values, ...envValues(readFileSync(rest[ei + 1], 'utf8'), names) };
-    } catch {
-      console.error(`  ✗ cannot read ${rest[ei + 1]}`);
+    const r = loaderValues(rest[ei + 1], names, env);
+    if (r.error) {
+      console.error(`  ✗ ${rest[ei + 1]}: ${r.error}`);
       return 1;
     }
+    values = r.values;
   }
   const dis = envDisagreements(d, values);
   for (const p of dis) console.error(`  ✗ ${p}`);

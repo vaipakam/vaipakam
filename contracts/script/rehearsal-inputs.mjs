@@ -11,14 +11,21 @@
  *       pattern (keys, RPC values, the rehearsal's declared differences and
  *       forge's moved folders, each with its reason). An unset input is hashed
  *       as unset, so setting one later is a different deploy. Run it inside
- *       the deploy's environment, after `.env` is loaded.
+ *       the deploy's environment, after `.env` is loaded. Names a script builds
+ *       at run time are in the set too: every variable matching a
+ *       `hashedPatterns` entry (role addresses, per-symbol feeds) and every
+ *       chain-prefixed form (`chainPrefixes`) of a listed input.
  *
  *   check [--solc <path>]
  *       Fails when an operator script reads a variable by a literal name that
  *       is in neither `inputs` nor `leftOut`, or builds a variable name at run
  *       time in a file `dynamicSites` does not list. Scope and parse are the
  *       signer guard's (`check-signer-seam.mjs`): every script outside its
- *       test-actor exemptions, by the parser's AST.
+ *       test-actor exemptions, by the parser's AST. In a file that builds names,
+ *       every UPPER_SNAKE string literal is taken as a key a name may be built
+ *       from, and must be an input, left out, matched by `hashedPatterns`, or
+ *       listed under `notInputs` with its reason. `chainPrefixes` must be the
+ *       prefixes `Deployments.envPrefix()` returns.
  *
  * The digest never prints a value: only the hash and, with --names, the names.
  */
@@ -55,7 +62,10 @@ export function envFileNames(text) {
 export function inputDigest(env, envFileNameList, spec) {
   const left = spec.leftOut.map((e) => globToRe(e.pattern));
   const isLeft = (n) => left.some((re) => re.test(n));
-  const names = [...new Set([...envFileNameList, ...spec.inputs])].filter((n) => !isLeft(n)).sort();
+  const hashed = (spec.hashedPatterns ?? []).map((e) => globToRe(e.pattern));
+  const prefixed = (spec.chainPrefixes ?? []).flatMap((p) => spec.inputs.map((n) => p + n));
+  const built = Object.keys(env).filter((n) => hashed.some((re) => re.test(n)));
+  const names = [...new Set([...envFileNameList, ...spec.inputs, ...prefixed, ...built])].filter((n) => !isLeft(n)).sort();
   const h = createHash('sha256');
   for (const n of names) {
     const v = env[n];
@@ -91,11 +101,46 @@ export function envReadsIn(ast) {
   return { literals, dynamic };
 }
 
+const KEY_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+
+/** Every UPPER_SNAKE string literal in one AST: the keys a built name may come from. Pure. */
+export function keyLiteralsIn(ast) {
+  const out = new Set();
+  const visit = (n) => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach(visit);
+    if (n.nodeType === 'Literal' && typeof n.value === 'string' && KEY_RE.test(n.value)) out.add(n.value);
+    for (const v of Object.values(n)) if (v && typeof v === 'object') visit(v);
+  };
+  visit(ast);
+  return out;
+}
+
+/** The string literals `function envPrefix` returns in one AST. Pure. */
+export function envPrefixLiteralsIn(ast) {
+  const out = new Set();
+  let inside = 0;
+  const visit = (n) => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach(visit);
+    const enter = n.nodeType === 'FunctionDefinition' && n.name === 'envPrefix';
+    if (enter) inside++;
+    if (inside && n.nodeType === 'Literal' && typeof n.value === 'string' && /^[A-Z0-9_]+_$/.test(n.value)) out.add(n.value);
+    for (const v of Object.values(n)) if (v && typeof v === 'object') visit(v);
+    if (enter) inside--;
+  };
+  visit(ast);
+  return out;
+}
+
 /** Problems over a map of ASTs. Pure. */
 export function checkReads(asts, spec) {
   const known = new Set(spec.inputs);
   const left = spec.leftOut.map((e) => globToRe(e.pattern));
+  const hashed = (spec.hashedPatterns ?? []).map((e) => globToRe(e.pattern));
+  const notInputs = (spec.notInputs ?? []).map((e) => globToRe(e.pattern));
   const dynamicFiles = new Set(spec.dynamicSites.map((d) => d.path));
+  const covered = (n) => known.has(n) || notInputs.some((re) => re.test(n)) || left.some((re) => re.test(n)) || hashed.some((re) => re.test(n));
   const problems = [];
   for (const [p, ast] of asts) {
     if (isExempt(p)) continue;
@@ -104,7 +149,20 @@ export function checkReads(asts, spec) {
       if (!known.has(n) && !left.some((re) => re.test(n))) problems.push(`${p} reads ${n}, which is in neither inputs nor leftOut of ${INPUTS_FILE}`);
     }
     if (dynamic && !dynamicFiles.has(p)) problems.push(`${p} builds a variable name at run time (${dynamic} read(s)); list it under dynamicSites with the names it can read`);
+    if (dynamicFiles.has(p)) {
+      for (const n of keyLiteralsIn(ast)) {
+        if (!covered(n)) problems.push(`${p} builds names and carries the key ${n}, which is not an input, left out, hashed by pattern or listed under notInputs`);
+      }
+    }
   }
+  const dep = asts.get('script/lib/Deployments.sol');
+  if (dep) {
+    const want = [...envPrefixLiteralsIn(dep)].sort().join(',');
+    const have = [...(spec.chainPrefixes ?? [])].sort().join(',');
+    if (want !== have) problems.push(`chainPrefixes (${have}) is not the prefixes Deployments.envPrefix() returns (${want})`);
+  }
+  for (const e of spec.hashedPatterns ?? []) if (!e.reason || e.reason.length < 20) problems.push(`hashedPatterns ${e.pattern}: needs a reason`);
+  for (const e of spec.notInputs ?? []) if (!e.reason || e.reason.length < 20) problems.push(`notInputs ${e.pattern}: needs a reason`);
   for (const d of spec.dynamicSites) {
     if (!asts.has(d.path)) problems.push(`dynamicSites names ${d.path}, which is not a script file`);
     if (!d.reason || !Array.isArray(d.patterns) || !d.patterns.length) problems.push(`dynamicSites ${d.path}: needs patterns and a reason`);

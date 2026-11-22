@@ -106,6 +106,10 @@ out=$(forge script script/X.s.sol --sig "preflight()")
 expect_true "rehearsal: a simulation is unchanged" '[ "$out" = "forge script script/X.s.sol --sig preflight()" ]'
 out=$(vk_cast_send ADMIN 0xd "f()")
 expect_true "rehearsal: cast send goes from the impersonated address, no key" '[ "$out" = "cast send --unlocked --from $ADMIN_ADDRESS 0xd f()" ]'
+# shellcheck source=retired-deployment.sh
+source "$(dirname "$LIB")/retired-deployment.sh"
+out=$(seed_retired_deployments_now "$WORK/no-repo")
+expect_true "rehearsal: the real indexer database is never seeded" '[[ "$out" == *"not seeded"* ]]'
 
 echo
 if [ "$fails" -gt 0 ]; then echo "$fails rehearsal case(s) failed." >&2; exit 1; fi

@@ -215,8 +215,15 @@ contract ConfigureRewardReporter is Script {
         // Kind 10 is the only broadcast wire (#1944), so until it is set no
         // day figures or day clocks reach this mirror at all.
         // Canonical chains never receive broadcasts and need no value.
-        address baseRewardDeployment =
-            vm.envOr("BASE_REWARD_DEPLOYMENT", address(0));
+        //
+        // #3891 — the value comes from the canonical chain's own record, the
+        // Diamond its contracts phase wrote. A fresh redeploy configures the
+        // mirrors after every chain's contracts phase, while `.env` may still
+        // name the Diamond being replaced: an env value is accepted only when
+        // it agrees with the record, and is used only where no record exists.
+        address baseRewardDeployment = canonical
+            ? address(0)
+            : _agreeWithRecord("BASE_REWARD_DEPLOYMENT", baseChainId, vm.envOr("BASE_REWARD_DEPLOYMENT", address(0)));
         if (!canonical && baseRewardDeployment == address(0)) {
             console.log(
                 "WARNING: BASE_REWARD_DEPLOYMENT unset - the V3 (kind-10) "
@@ -299,8 +306,17 @@ contract ConfigureRewardReporter is Script {
             // CCIP messages) — so zeroed-day compensation on that lane is
             // unreachable until this registration lands. Format:
             // "42161:0xabc...,10:0xdef..." (chainId:diamondAddress).
+            //
+            // #3891 — unset, the registry is taken from each expected source
+            // chain's own record; set, every pair must agree with the record
+            // (checked in {_applyMirrorDeployments}).
             string memory mirrorCsv =
                 vm.envOr("MIRROR_REWARD_DEPLOYMENTS", string(""));
+            if (bytes(mirrorCsv).length == 0) {
+                mirrorCsv = _mirrorDeploymentsFromRecords(
+                    vm.envOr("REWARD_EXPECTED_SOURCE_CHAIN_IDS", string(""))
+                );
+            }
             if (bytes(mirrorCsv).length == 0) {
                 console.log(
                     "WARNING: canonical chain but MIRROR_REWARD_DEPLOYMENTS "
@@ -393,7 +409,9 @@ contract ConfigureRewardReporter is Script {
                 for (uint256 j = colon + 1; j < i; j++) {
                     addrStr[j - colon - 1] = b[j];
                 }
-                address dep = vm.parseAddress(string(addrStr));
+                address dep = _agreeWithRecord(
+                    "MIRROR_REWARD_DEPLOYMENTS", acc, vm.parseAddress(string(addrStr))
+                );
                 require(
                     dep != address(0),
                     "ConfigureRewardReporter: zero mirror deployment"
@@ -404,6 +422,61 @@ contract ConfigureRewardReporter is Script {
                 console.log("Mirror reward deployment set:", acc, dep);
                 start = i + 1;
             }
+        }
+    }
+
+    /// @dev #3891 — the Diamond chain `cid`'s own record names, or zero
+    ///      when the chain has no record (or no Diamond in it) under the
+    ///      run's artifact root.
+    function _recordedDiamond(uint256 cid) internal view returns (address) {
+        string memory path = Deployments.pathForChainId(cid);
+        if (!vm.isFile(path)) return address(0);
+        string memory json = vm.readFile(path);
+        if (!vm.keyExistsJson(json, ".diamond")) return address(0);
+        return vm.parseJsonAddress(json, ".diamond");
+    }
+
+    /// @dev #3891 — the record wins: a stated value must equal the
+    ///      Diamond chain `cid`'s record names, and is returned as is only
+    ///      where no record exists.
+    function _agreeWithRecord(string memory name, uint256 cid, address stated)
+        internal
+        view
+        returns (address)
+    {
+        address recorded = _recordedDiamond(cid);
+        if (recorded == address(0)) return stated;
+        if (stated != address(0) && stated != recorded) {
+            revert(
+                string.concat(
+                    "ConfigureRewardReporter: ", name, " names ", vm.toString(stated),
+                    " for chain ", vm.toString(cid), ", but its record names ", vm.toString(recorded),
+                    " - remove the value from .env (the record is used) or correct it"
+                )
+            );
+        }
+        return recorded;
+    }
+
+    /// @dev #3891 — "chainId:diamond,..." for every expected source chain
+    ///      other than this one that has a record. A chain with no record is
+    ///      named in a warning and left unregistered (its kind-11 ingress
+    ///      stays dark, fail-closed).
+    function _mirrorDeploymentsFromRecords(string memory sourcesCsv)
+        internal
+        view
+        returns (string memory out)
+    {
+        if (bytes(sourcesCsv).length == 0) return "";
+        uint32[] memory ids = _parseChainIdCsv(sourcesCsv);
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] == block.chainid) continue;
+            address dep = _recordedDiamond(ids[i]);
+            if (dep == address(0)) {
+                console.log("WARNING: no record for mirror chain", uint256(ids[i]), "- its reward deployment is not registered");
+                continue;
+            }
+            out = string.concat(out, bytes(out).length == 0 ? "" : ",", vm.toString(uint256(ids[i])), ":", vm.toString(dep));
         }
     }
 

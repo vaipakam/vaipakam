@@ -29,6 +29,9 @@ else
 fi
 if [[ "$out" == *" and 0"* ]]; then ok "a pinned zero key does not blank the log"; else bad "short values were replaced: $out"; fi
 unset BASE_SEPOLIA_RPC_URL ARB_SEPOLIA_RPC_URL
+# With no secret in the environment (keys still only in .env) the line passes through.
+out=$(timeout 10 env -i PATH="$PATH" bash -c "source '$HERE/rehearsal-forks.sh'; printf 'plain line\n' | rh_redact")
+[ "$out" = "plain line" ] && ok "with no secrets set, the redactor passes the line through" || bad "no-secret redact: '$out'"
 
 # ── the launcher, from a local source chain ──
 anvil --port "$SRC_PORT" --chain-id 84532 --silent &

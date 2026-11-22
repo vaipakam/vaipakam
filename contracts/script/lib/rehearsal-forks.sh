@@ -45,7 +45,9 @@ rh_redact() {
     BEGIN {
       n = split(ENVIRON["RH_PAIRS"], kv, "\037")
       m = 0
-      for (i = 1; i + 1 <= n; i += 2) { m++; name[m] = kv[i]; val[m] = kv[i + 1] }
+      # An empty list still splits into empty fields; an empty value would
+      # never advance the scan below, so only non-empty values are kept.
+      for (i = 1; i + 1 <= n; i += 2) if (kv[i + 1] != "") { m++; name[m] = kv[i]; val[m] = kv[i + 1] }
       # longest value first
       for (i = 1; i <= m; i++) for (j = i + 1; j <= m; j++)
         if (length(val[j]) > length(val[i])) { t = val[i]; val[i] = val[j]; val[j] = t; t = name[i]; name[i] = name[j]; name[j] = t }

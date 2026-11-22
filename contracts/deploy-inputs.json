@@ -1,16 +1,28 @@
 {
   "_comment": "The deploy's input set for a rehearsal verdict and the real deploy's gate (#3891, design section 18). The input digest hashes the name and value of every variable in the deploy's environment that is named in the operator .env file or listed under inputs, less the leftOut patterns. check-deploy-inputs (rehearsal-inputs.mjs check) refuses a variable an operator script reads by a literal name that is in neither list, and a script that builds a variable name at run time unless dynamicSites names it with the patterns it can read.",
   "inputs": [
+    "AAVE_V3_POOL",
     "ADDRESSES_JSON_PATH",
     "ADMIN_ADDRESS",
     "ALLOWANCE_HOLDER_OVERRIDE",
     "ANCHOR_RECORD_DESCRIBES_CHAIN",
     "ANVIL_WETH",
+    "ARB_AAVE_V3_POOL",
+    "ARB_BALANCER_V2_VAULT",
     "ARB_L2_DEPLOY_BLOCK",
+    "ARB_SEPOLIA_AAVE_V3_POOL",
+    "ARB_SEPOLIA_BALANCER_V2_VAULT",
     "ARB_SEPOLIA_WETH_ADDRESS",
+    "BALANCER_V2_VAULT",
+    "BASE_AAVE_V3_POOL",
+    "BASE_BALANCER_V2_VAULT",
     "BASE_CHAIN_ID",
     "BASE_REWARD_DEPLOYMENT",
+    "BASE_SEPOLIA_AAVE_V3_POOL",
+    "BASE_SEPOLIA_BALANCER_V2_VAULT",
     "BASE_SEPOLIA_WETH_ADDRESS",
+    "BNB_AAVE_V3_POOL",
+    "BNB_TESTNET_AAVE_V3_POOL",
     "BNB_TESTNET_WETH_ADDRESS",
     "CCIP_DEST_GAS_LIMIT",
     "CCIP_GUARDIAN",
@@ -27,6 +39,8 @@
     "DEPLOY_SKIP_ARTIFACTS",
     "DIAMOND_ADDRESS",
     "EMERGENCY_REVOKER_ADDRESS",
+    "ETH_AAVE_V3_POOL",
+    "ETH_BALANCER_V2_VAULT",
     "FAUCET_ILLIQUID_TOKEN",
     "FAUCET_ILLIQUID_TOKEN_2",
     "FAUCET_LIQUID_TOKEN",
@@ -68,8 +82,15 @@
     "NFT_IMAGE_LENDER_OFFER_CREATED",
     "NFT_IMAGE_LENDER_REPAID",
     "ONEINCH_ROUTER_OVERRIDE",
+    "OP_AAVE_V3_POOL",
+    "OP_BALANCER_V2_VAULT",
+    "OP_SEPOLIA_AAVE_V3_POOL",
+    "OP_SEPOLIA_BALANCER_V2_VAULT",
     "OP_SEPOLIA_WETH_ADDRESS",
+    "PAA_QUOTE_ASSETS",
     "PAUSER_ADDRESS",
+    "POLYGON_AAVE_V3_POOL",
+    "POLYGON_BALANCER_V2_VAULT",
     "PRICE_GUARD_DELAY_SECONDS",
     "REHEARSAL_ALLOW_CHAIN_ID",
     "REWARD_CUSTODY_FUND_LIVE_FRESH",
@@ -101,12 +122,16 @@
     "SANCTIONS_STANDIN_CARRY_FROM_BLOCK",
     "SANCTIONS_STANDIN_LOG_CHUNK",
     "SANCTIONS_STANDIN_REFRESHER",
+    "SEPOLIA_AAVE_V3_POOL",
+    "SEPOLIA_BALANCER_V2_VAULT",
     "SEPOLIA_WETH_ADDRESS",
     "TIMELOCK_CANCELLER",
     "TIMELOCK_EXECUTOR",
     "TIMELOCK_MIN_DELAY",
     "TIMELOCK_PROPOSER",
     "TREASURY_ADDRESS",
+    "UNISWAP_V3_FACTORY",
+    "UNISWAP_V3_ROUTER",
     "VAULT_LISTING_CONDUIT_KEY",
     "VAULT_ORDER_PROTOCOL",
     "VAULT_SEAPORT",
@@ -117,6 +142,7 @@
     "VESTING_START",
     "VPFI_AMOUNT_EACH",
     "VPFI_BUY_WEI_PER_VPFI",
+    "VPFI_DISCOUNT_ETH_PRICE_ASSET",
     "VPFI_DISCOUNT_RATE",
     "VPFI_RECIPIENT_1",
     "VPFI_RECIPIENT_2",
@@ -125,7 +151,9 @@
     "VPFI_STABLE_FEED_SYMBOLS",
     "VPFI_TOKEN_FORCE_REDEPLOY",
     "VPFI_TOKEN_FRESH",
-    "VPFI_TOKEN_REUSE_ADDRESS"
+    "VPFI_TOKEN_REUSE_ADDRESS",
+    "ZEROX_ALLOWANCE_TARGET",
+    "ZEROX_PROXY"
   ],
   "dynamicSites": [
     {
@@ -275,6 +303,37 @@
     {
       "pattern": "EXPECT_CHANGED",
       "reason": "An assertion input of the changed-facet refresh, which is an in-place refresh (#3897), not a fresh-deploy step."
+    }
+  ],
+  "hashedPatterns": [
+    {
+      "pattern": "*_ADDRESS",
+      "reason": "Role and bot addresses: Signers.sol builds <ROLE>_ADDRESS from the role name, Handover reads the bot holders' names from a list."
+    },
+    {
+      "pattern": "*_FEED",
+      "reason": "Per-symbol price feeds: PriceGuardDeployment builds <SYMBOL>_FEED from VPFI_STABLE_FEED_SYMBOLS."
+    }
+  ],
+  "chainPrefixes": [
+    "ANVIL_",
+    "ARBITRUM_",
+    "ARB_SEPOLIA_",
+    "BASE_",
+    "BASE_SEPOLIA_",
+    "BNB_",
+    "BNB_TESTNET_",
+    "ETHEREUM_",
+    "OPTIMISM_",
+    "OP_SEPOLIA_",
+    "POLYGON_",
+    "POLYGON_AMOY_",
+    "SEPOLIA_"
+  ],
+  "notInputs": [
+    {
+      "pattern": "*_ROLE",
+      "reason": "Access-control role names, hashed into role ids; never an environment name."
     }
   ]
 }

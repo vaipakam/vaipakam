@@ -28,7 +28,7 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,6 +81,27 @@ export function validateLeftOut(list) {
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
+/**
+ * Hash a regular file through one descriptor: opened without following a
+ * link and checked on the descriptor itself, so what is hashed is the file
+ * that was classified (a swap between the check and the read is reported as
+ * a link or as no longer a file, never hashed as something else).
+ */
+function hashFile(abs) {
+  let fd;
+  try {
+    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    return 'unreadable';
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return 'not-a-file';
+    return sha256(readFileSync(fd));
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Walk `root`, hashing every file not under a left-out path. */
 export function snapshot(root, leftOut, leftOutNames = []) {
   const skip = leftOut.map((p) => p.replace(/\/+$/, ''));
@@ -96,7 +117,7 @@ export function snapshot(root, leftOut, leftOutNames = []) {
       const st = lstatSync(abs);
       if (st.isSymbolicLink()) files[rel] = `link:${readlinkSync(abs)}`;
       else if (st.isDirectory()) walk(abs);
-      else if (st.isFile()) files[rel] = sha256(readFileSync(abs));
+      else if (st.isFile()) files[rel] = hashFile(abs);
     }
   };
   walk(root);
