@@ -43,11 +43,11 @@ All three apply to **new loans only**, judged when the loan opens. An open loan 
 2. **At or above caution: no reserve eligibility.** A loan opened while its collateral asset is at or above caution is not eligible for the shortfall reserve, whatever its tiers. This is recorded on the loan at opening with the tiers the reserve design already records.
 3. **At or above high: a lower loan-to-value cap.** The loan-opening cap for that collateral is the cap of the next lower liquidity tier. For an asset already in the lowest liquid tier, that tier's cap is reduced by a governed step. Borrowing against the asset stays possible with more cushion.
 
-**How rule 3 applies in each state of the tier-cap switch (design decision 2026-11-16, restated 2026-11-22).** A tier's cap holds whether the tier caps are on or off (`RiskFiguresDesign.md`, section 4), so at High the next lower tier's cap replaces it in both states, and no health floor is changed:
+**How rule 3 applies in each state of the tier-cap switch (design decision 2026-11-16, restated 2026-11-22).** A tier's cap holds whether the tier caps are on or off (`RiskFiguresDesign.md`, section 4), so at High the next lower tier's cap replaces it in both states, and no health floor is changed. The next lower tier's cap is never above the tier's own (`RiskFiguresDesign.md`, section 3), so High never raises a cap:
 
 - *Where the lowered cap does not bind:* with the caps off a loan is also held to the higher health floor, and the loan-to-value that floor allows is the tier's liquidation line divided by the floor. Where the lowered cap is not below what the loan is held to already, it lowers nothing.
 - *The lowest liquid tier:* its cap less the step, 10 percentage points to start, bounded 5 to 25.
-- *Collateral with no tier* (liquid by the floor test alone) backs a loan on the figures of `RiskFiguresDesign.md`, section 6, and its concentration is measured against the floor size. At High its cap is the cap already given less the step once more, and never below the least cap.
+- *Collateral with no tier* (liquid by the floor test alone) backs a loan on the figures of `RiskFiguresDesign.md`, section 6, and its concentration is measured against the floor size. At High its cap is the cap already given less the step once more, never below the least cap and never above the cap already given.
 
 The per-asset view and the loan-opening cap read both say whether the lowered cap actually binds. The app's High warning must not claim a lower cap where it does not bind; at High with no binding cap it says only that much of the asset is pledged.
 
@@ -113,7 +113,7 @@ Decided with the design thread on 2026-11-16 (recorded in section 3):
 - Thresholds are stored in hundredths of a multiple.
 - The level is recorded per loan at opening, for the reserve to read.
 
-Built later, not here: the reserve itself (#3641). A rate-priced token's one-step-tighter start (#3683) is dropped with the per-asset thresholds; whether that class has a tighter threshold by a rule of its own is an open item of `RiskFiguresDesign.md`. Until #3437 stamps loan settings, the check reads the live price and tier the loan-opening check already reads.
+Built later, not here: the reserve itself (#3641). A rate-priced token's one-step-tighter start (#3683) is dropped with the per-asset thresholds, and that class has no tighter threshold by a rule of its own (`RiskFiguresDesign.md`, section 16). Until #3437 stamps loan settings, the check reads the live price and tier the loan-opening check already reads.
 
 A refinance's carried-over collateral is still in the pledged total when the replacement loan is judged, because the old lien moves to the new loan inside the same transaction. The replacement therefore sees its own collateral counted once. This is conservative and is left as is.
 

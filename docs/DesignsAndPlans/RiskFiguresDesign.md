@@ -67,6 +67,12 @@ Governance sets one kind of figure for all tiers in one step, and a step that
 breaks that order is refused. Each figure is read from the lower of the
 asset's measured tier and its confidence tier.
 
+The order holds for the caps a loan reads as well, where a peer reading may
+stand in place of a default (section 4). Where a reading puts a deeper tier's
+cap below a shallower tier's, the shallower tier's cap is cut to it. So no
+shallower tier is lent against at a higher cap than a deeper one, and every
+rule below that takes a shallower tier's cap takes one that is no higher.
+
 ## 4. The cap on a new loan
 
 **The switch.** One switch of governance says whether the tier caps are on.
@@ -89,7 +95,8 @@ is a way to add the higher health floor at once.
 - A reading that stops being usable leaves the lower of it and the default,
   until a new usable reading or a change of the default that has waited. An
   old reading so never raises a cap by falling away.
-- Whichever applies is cut to the tier's ceiling when a loan reads it.
+- Whichever applies is cut to the tier's ceiling when a loan reads it, and to
+  the cap of every deeper tier (section 3).
 - A reading past half the usable age raises a notice while it still applies.
 
 **The peer reading.** Anyone may refresh it.
@@ -97,8 +104,10 @@ is a way to add the higher health floor at once.
 - It is made from what other lending platforms that governance names lend
   against the reference assets that governance names for the tier.
 - A reference asset counts only where at least two platforms agree within the
-  agreement band. Its value is the lowest of those that agree, so one platform
-  that loosens its own figure never raises a cap here.
+  agreement band. Its value is the lowest of those that agree. So a reference
+  asset's value is never above what a second platform lends at, and one
+  platform that loosens its own figure lifts nothing past the others that
+  agree.
 - A tier gets a reading only where at least two reference assets count. The
   reading is their median less the tier's haircut, stored as found, however
   low.
@@ -110,10 +119,11 @@ is a way to add the higher health floor at once.
   of its own. It is read like any other asset.
 
 **What never happens.** No cap that a loan reads is above its tier's ceiling,
-and none is above the hard ceiling. One platform alone never raises a cap. No
-quick step raises one: turning the caps off, a pause of peer reads and a
-reading that grows old each leave every cap at or below what it was. A cap
-rises only by a new usable reading, or by a setting that has waited.
+and none is above the hard ceiling. One platform alone never raises a cap past
+what a second platform lends at. No quick step raises one: turning the caps
+off, a pause of peer reads and a reading that grows old each leave every cap
+at or below what it was. A cap rises only by a new usable reading, or by a
+setting that has waited.
 
 ## 5. The liquidation line
 
@@ -130,15 +140,17 @@ any tier's:
 
 | Figure | For collateral with no tier |
 | --- | --- |
-| The cap | The lowest cap that applies to any tier then, a peer reading counted, less the step. Never below the least cap |
+| The cap | The lowest cap that applies to any tier then, a peer reading counted, less the step. Never below the least cap, and never above that lowest cap |
 | The health floor | The higher one, also with the tier caps on |
 | The liquidation line | The lowest any tier has |
 | The floor of a forced sale | The full floor, while the asset has no tier |
 | The discounted route | Closed for the loan's life |
 | Concentration | Measured against the floor size |
 
-The loan records that it had no tier, with its cap, its health floor and its
-line.
+The least cap stops the step from taking the cap to nothing. It never lifts
+the cap above a tier's: where the lowest cap of any tier is itself at or below
+the least cap, collateral with no tier has that lowest cap. The loan records
+that it had no tier, with its cap, its health floor and its line.
 
 **The margin below the line.** Every cap for collateral with no tier, the
 least cap included, lies below the lowest liquidation line of any tier by at
@@ -209,9 +221,11 @@ This design adds four rules to it.
   tier and its proven tier, which does not lapse. So no loan is marked for its
   life because the keeper was silent.
 - **High, for the shallowest tier and for no tier.** At or above the high
-  threshold the cap is the next shallower tier's. For the shallowest tier, and
-  for collateral with no tier, it is the cap already given less the step, and
-  never below the least cap. This holds whether the tier caps are on or off,
+  threshold the cap is the next shallower tier's, which is never above its
+  own (section 3). For the shallowest tier, and for collateral with no tier,
+  it is the cap already given less the step, never below the least cap and
+  never above the cap already given. So High never raises a cap. This holds
+  whether the tier caps are on or off,
   and no health floor changes. Where the lowered cap is not below what the
   loan is held to already, nothing is lowered, and the reading and the
   interface say so.
@@ -325,10 +339,13 @@ parameters table.
 - A peer reading below and above the default and above the ceiling. A reading
   one second before and after the usable age. Peer reads paused with a reading
   below and above the default. A low reading grown old. A ceiling lowered
-  between a refresh and a loan.
+  between a refresh and a loan. A reading that puts a deeper tier's cap below
+  a shallower tier's, read by a loan of each tier and of none, below High and
+  at High. A lowest tier cap at and below the least cap.
 - One platform alone, two that disagree past the band, one reference asset, a
-  failed read, a frozen asset, and one platform raised far above the other. A
-  refresh in a pause. A reference asset's own tier and cap.
+  failed read, a frozen asset, one platform raised far above the other, and
+  the lowest platform raised alone, up to and past the second. A refresh in a
+  pause. A reference asset's own tier and cap.
 - Collateral with no tier, with the tiers' figures set so that each tier in
   turn is the most conservative. Every setting of a line and of a cap changed
   in turn so the margin would be broken.
@@ -357,8 +374,8 @@ parameters table.
 2. **An old peer reading falls back to the default.** Not taken: where the
    reading was below the default, the cap would rise because nobody refreshed.
 3. **Take the median of the platforms for a reference asset.** Not taken. The
-   lowest of those that agree costs a little room and removes the case of one
-   platform that loosens its own figure.
+   lowest of those that agree costs a little room, and bounds what one
+   platform that loosens its own figure can do by the figure of a second.
 4. **Keep the three per-asset settings.** Not taken. Each gives a named asset
    terms of its own, and the pause and the confidence tier already make one
    asset more careful without choosing its figures.
@@ -391,6 +408,11 @@ section 12 confirmed first.
   close-out rules are written.
 - `RatePricedCollateralDesign.md` gave rate-priced tokens thresholds of
   concentration one step tighter, set for each token. That setting goes with
-  the per-asset thresholds. Whether the class of rate-priced tokens has a
-  tighter threshold by a rule of its own is open. The proposal is that it does
-  not, since a rate source has its own guards.
+  the per-asset thresholds, and the class of rate-priced tokens has no tighter
+  threshold by a rule of its own either, since a rate source has its own
+  guards. This is settled.
+- Whether rate-priced collateral is measured a second time on its underlying
+  is open for the refactor: the value pledged across every token that names
+  one underlying, set against that underlying's tested size, with the same
+  thresholds and the same response, read on the higher of the two ratios. It
+  would name no asset.
