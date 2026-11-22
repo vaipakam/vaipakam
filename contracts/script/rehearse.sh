@@ -23,6 +23,9 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #                                         reward day armed on <chain> (its
 #                                         launch timestamp + armed day x 1
 #                                         day); no move when already past it
+#   clock grace <chain>                   move every fork past <chain>'s
+#                                         reward grace from now (its
+#                                         getRewardGraceSeconds() + 1)
 #   cmd <chain> -- <command...>           a hand step, as its exact command
 #                                         text, run in the chain's rehearsal
 #                                         environment
@@ -265,10 +268,10 @@ while IFS= read -r line || [ -n "$line" ]; do
       STEP_LINES+=("$lineno|$line")
       ;;
     clock)
-      if [ "${words[1]:-}" = "armed" ]; then
-        [ "${#words[@]}" -eq 3 ] || { log "✗ plan:$lineno: clock armed takes one chain"; exit 1; }
+      if [ "${words[1]:-}" = "armed" ] || [ "${words[1]:-}" = "grace" ]; then
+        [ "${#words[@]}" -eq 3 ] || { log "✗ plan:$lineno: clock ${words[1]} takes one chain"; exit 1; }
       else
-        [[ "${words[1]:-}" =~ ^[+@][0-9]+$ ]] || { log "✗ plan:$lineno: clock takes +<seconds>, @<unix> or armed <chain>"; exit 1; }
+        [[ "${words[1]:-}" =~ ^[+@][0-9]+$ ]] || { log "✗ plan:$lineno: clock takes +<seconds>, @<unix>, armed <chain> or grace <chain>"; exit 1; }
       fi
       STEP_LINES+=("$lineno|$line")
       ;;
@@ -296,7 +299,7 @@ done < "$PLAN"
 for s in "${STEP_LINES[@]}"; do
   read -r -a words <<<"${s#*|}"
   case "${words[0]}" in step | cmd | manual | relay | clock)
-    [ "${words[0]}" = clock ] && [ "${words[1]}" != armed ] && continue
+    [ "${words[0]}" = clock ] && [ "${words[1]}" != armed ] && [ "${words[1]}" != grace ] && continue
     named=("${words[1]}")
     [ "${words[0]}" = relay ] && named+=("${words[2]}")
     [ "${words[0]}" = clock ] && named=("${words[2]}")
@@ -432,22 +435,29 @@ for s in "${STEP_LINES[@]}"; do
     clock)
       arg="${words[1]}"
       first="${CHAINS[0]}"
-      if [ "$arg" = "armed" ]; then
-        # The start of the armed reward day, read from the chain itself, so a
-        # future anchor or an arming made late in a day still lands at the
-        # day's start instead of a fixed distance from now.
+      if [ "$arg" = "armed" ] || [ "$arg" = "grace" ]; then
+        # Read from the chain itself, never a fixed distance: the armed day's
+        # start (a future anchor or a late-day arming would miss it), or the
+        # reward grace as installed (whatever set it).
         ac="${words[2]}"
-        [ -n "${FORK_URL[$ac]:-}" ] || { FAILED_STAGE="steps (plan:$ln clock armed: $ac is not forked)"; exit 1; }
         ad=$(jq -r '.diamond // empty' "$SCRATCH/$ac/addresses.json" 2>/dev/null)
-        [ -n "$ad" ] || { FAILED_STAGE="steps (plan:$ln clock armed: no Diamond recorded on $ac)"; exit 1; }
-        launch=$(cast call "$ad" 'getInteractionLaunchTimestamp()(uint256)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | cut -d' ' -f1 || true)
-        armed=$(cast call "$ad" 'getGovernorCommitState()(uint256,uint256,uint256,uint256)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | head -1 | cut -d' ' -f1 || true)
-        if ! [[ "$launch" =~ ^[0-9]+$ && "$armed" =~ ^[0-9]+$ ]] || [ "$launch" = 0 ] || [ "$armed" = 0 ]; then
-          FAILED_STAGE="steps (plan:$ln clock armed: $ac has no launch timestamp or armed day)"; exit 1
+        [ -n "$ad" ] || { FAILED_STAGE="steps (plan:$ln clock $arg: no Diamond recorded on $ac)"; exit 1; }
+        now=$(cast block latest --field timestamp --rpc-url "${FORK_URL[$first]}" 2>/dev/null || true)
+        if [ "$arg" = "armed" ]; then
+          launch=$(cast call "$ad" 'getInteractionLaunchTimestamp()(uint256)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | cut -d' ' -f1 || true)
+          armed=$(cast call "$ad" 'getGovernorCommitState()(uint256,uint256,uint256,uint256)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | head -1 | cut -d' ' -f1 || true)
+          if ! [[ "$launch" =~ ^[0-9]+$ && "$armed" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || [ "$launch" = 0 ] || [ "$armed" = 0 ]; then
+            FAILED_STAGE="steps (plan:$ln clock armed: $ac has no launch timestamp or armed day)"; exit 1
+          fi
+          target=$((launch + armed * 86400))
+          [ "$target" -ge "$now" ] || target="$now"
+        else
+          grace=$(cast call "$ad" 'getRewardGraceSeconds()(uint64)' --rpc-url "${FORK_URL[$ac]}" 2>/dev/null | cut -d' ' -f1 || true)
+          if ! [[ "$grace" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]]; then
+            FAILED_STAGE="steps (plan:$ln clock grace: $ac's reward grace is unreadable)"; exit 1
+          fi
+          target=$((now + grace + 1))
         fi
-        target=$((launch + armed * 86400))
-        now=$(cast block latest --field timestamp --rpc-url "${FORK_URL[$first]}")
-        [ "$target" -ge "$now" ] || target="$now"
       elif [ "${arg:0:1}" = "@" ]; then target="${arg:1}"; else
         now=$(cast block latest --field timestamp --rpc-url "${FORK_URL[$first]}")
         target=$((now + ${arg:1}))

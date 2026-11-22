@@ -125,6 +125,10 @@ drive armed $'chains base-sepolia\nclock armed base-sepolia'
 [ "$RC" -ne 0 ] && grep -q "plan:2 clock armed: base-sepolia has no launch timestamp or armed day\|plan:2 clock armed: no Diamond recorded on base-sepolia" "$RUNDIR/verdict.json" \
   && ok "clock armed reads the armed day from the chain; unreadable, the run stops there" || bad "clock armed unreadable: rc $RC $(grep failedStage "$RUNDIR/verdict.json")"
 
+drive grace $'chains base-sepolia\nclock grace base-sepolia'
+[ "$RC" -ne 0 ] && grep -q "plan:2 clock grace: base-sepolia's reward grace is unreadable\|plan:2 clock grace: no Diamond recorded on base-sepolia" "$RUNDIR/verdict.json" \
+  && ok "clock grace reads the grace from the chain; unreadable, the run stops there" || bad "clock grace unreadable: rc $RC $(grep failedStage "$RUNDIR/verdict.json")"
+
 drive cmdmark $'chains base-sepolia\ncmd base-sepolia -- echo reached'
 [ "$RC" -ne 0 ] && ! grep -q "^reached" "$RUNDIR/logs/001-base-sepolia-cmd.log" \
   && ok "a hand step enters rehearsal mode first (a node without the marker is refused)" || bad "a hand step ran against a node without the marker"
@@ -137,6 +141,8 @@ for bad_plan in 'step base-sepolia preflight' \
   $'chains base-sepolia\nclock armed' \
   $'chains base-sepolia\nclock armed arb-sepolia' \
   $'chains base-sepolia\nclock armed base-sepolia extra' \
+  $'chains base-sepolia\nclock grace' \
+  $'chains base-sepolia\nclock grace arb-sepolia' \
   $'chains base-sepolia\nwhatever x' \
   $'chains base-sepolia\nrelay base-sepolia arb-sepolia' \
   $'chains base-sepolia\nmanual base-sepolia' \

@@ -132,7 +132,7 @@ test('the canonical chain closes, finalizes and broadcasts the day before the ar
   const lines = plan().split('\n');
   const at = (re) => lines.findIndex((l) => re.test(l));
   const close = at(/'closeDay\(uint256\)'/);
-  const wait = at(/^clock \+43201$/);
+  const wait = at(/^clock grace base-sepolia$/);
   const fin = at(/'finalizeDay\(uint256\)'/);
   const bc = at(/'broadcastGlobal\(uint256\)' "\$P" --value "\$F"/);
   assert.ok(at(/^step base-sepolia launch/) < close && close < wait && wait < fin && fin < bc && bc < at(/^relay /));

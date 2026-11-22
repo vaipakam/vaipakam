@@ -215,8 +215,6 @@ export function envDisagreements(d, env) {
   return p;
 }
 
-/** ConfigureRewardReporter's default when REWARD_GRACE_SECONDS is unset. */
-const DEFAULT_REWARD_GRACE_SECONDS = 14400;
 const PAUSABLE_SLOT = '0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400';
 const VPFI_DECIMALS = 18n;
 
@@ -343,15 +341,16 @@ export function buildPlan(d, { anchor, terms, desiredDigest, desiredPath }) {
     // armed day has landed. The mirrors are still paused, so they send no
     // report, and the canonical chain finalizes the closed day only after the
     // reward grace has run from its own report (guide 5.5 step 5).
-    const graceSetting = (d.settings ?? []).find((x) => x.setter === 'setRewardGraceSeconds(uint64)' && settingChains(x, d).includes(canon));
-    const grace = Number(graceSetting?.value ?? DEFAULT_REWARD_GRACE_SECONDS);
     say(`Close, finalize and broadcast the day before the armed day on ${canon}, so the mirrors learn it (guide 5.5 step 5).`);
     // The closed day is the day before the ARMED day, read from the chain's
     // commit state each time: the current day can move on during the grace
     // wait, the armed day cannot.
     const prev = `P=$(( $(cast call "$D" 'getGovernorCommitState()(uint256,uint256,uint256,uint256)' --rpc-url "$R" | head -1 | cut -d' ' -f1) - 1 ));`;
     cmd(canon, `${on(canon)} ${prev} vk_cast_send ADMIN "$D" 'closeDay(uint256)' "$P" --rpc-url "$R"`);
-    L.push(`clock +${grace + 1}`);
+    // The grace is read from the chain when the wait starts, so whatever
+    // installed it (a desired-state row in either form, REWARD_GRACE_SECONDS
+    // or the configure default) is the figure waited for.
+    L.push(`clock grace ${canon}`);
     cmd(canon, `${on(canon)} ${prev} vk_cast_send ADMIN "$D" 'finalizeDay(uint256)' "$P" --rpc-url "$R"`);
     cmd(canon, `${on(canon)} ${prev} F=$(cast call "$D" 'quoteBroadcastGlobal(uint256)(uint256)' "$P" --rpc-url "$R" | cut -d' ' -f1); vk_cast_send ADMIN "$D" 'broadcastGlobal(uint256)' "$P" --value "$F" --rpc-url "$R"`);
   }
