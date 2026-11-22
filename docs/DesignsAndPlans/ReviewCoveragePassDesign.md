@@ -6,8 +6,8 @@ coverage record and the trial on 2026-11-22, and decided the same day that
 the review-only pull requests run in a private review repository and that
 every finding is fixed or explicitly closed before mainnet (section 8).
 He also confirmed the refactor's structure (a new structure built fresh,
-the rules carried across), which settles stage 3 of section 6, and
-approved a canonical specification that the reader pass checks the code
+the rules carried across), decided that today's facets are reviewed as
+well as the new ones (stage 3 of section 6), and approved a canonical specification that the reader pass checks the code
 against (section 3.5) and a cross review that cuts the same code a second
 way (section 3.6).
 Companion: [`RefactorRulesDesign.md`](RefactorRulesDesign.md).
@@ -415,8 +415,8 @@ file, and once with the user action that runs through it.**
 
 | Code | First review | Cross review |
 | --- | --- | --- |
-| Standalone contracts and rule libraries (stages 1 and 2) | By file or slice | By user action: each action that runs through them, followed from its entry to the last change of a balance |
-| The refactor's new facets (stage 3) | By user action, since the refactor is built one action at a time | By file: each finished facet read whole |
+| Standalone contracts, rule libraries and today's facets (stages 1, 2 and 3a) | By file or slice | By user action: each action that runs through them, followed from its entry to the last change of a balance |
+| The refactor's new facets (stage 3b) | By user action, since the refactor is built one action at a time | By file: each finished facet read whole |
 | A file reviewed in slices | By slice | A closing read of the whole file by one reader, for what fell between slices and for slices that disagree |
 
 **A review by action** follows one user action through every facet and
@@ -496,47 +496,69 @@ repository, whose copy only follows `main`.
 
 The refactor design (section 3.1 there, confirmed by the owner on
 2026-11-22) builds a new structure in a new directory and carries the rules
-across. Reviewing code
-the refactor is about to rewrite would be a review done twice. The ledger
-makes the fit simple: **carried code keeps its hash and stays covered, and
-rewritten code arrives in small reviewed pull requests that count by
-themselves.**
+across. The ledger makes the fit simple: **carried code keeps its hash and
+stays covered, and rewritten code arrives in small reviewed pull requests
+that count by themselves.**
 
 | Stage | What is reviewed | When | Counts after the refactor |
 | --- | --- | --- | --- |
 | 0 | The trial (section 7) | Now | It is a real unit |
 | 1 | Standalone contracts: the vault and backstop implementations, the token and cross-chain contracts, the price guard, the sanctions lists, the governance contracts, the listing executor | Now, where the batch does not touch them | Yes: the refactor does not recut them |
 | 2 | The rule libraries: the interest ledger, the loan clock, the numeraire rule, the vault outflow policy, the encumbrance and custody writers, the fee host's rules, the reward and recycling rules | Each after the wave that touches it has landed | Yes, declaration by declaration. A declaration the refactor edits is reviewed again in the pull request that edits it, and only that one |
-| 3 | The facets | With the refactor pass, as each new facet is written | See below |
-| 4 | Read-only facets and metrics | Last | As stage 3 |
+| 3a | Today's facets | Each after the wave that touches it has landed, beside the refactor | Declaration by declaration, where the refactor carries the text unchanged. See below |
+| 3b | The refactor's new facets | With the refactor pass, as each is written | Yes: they are the launched code |
+| 4 | Read-only facets and metrics, today's and the new | Last | As stage 3 |
 
 Inside every stage, code that moves funds goes first, and code the batch
 touches waits for its wave.
 
-**Stage 3, the facets.** The refactor builds a new structure, so the old
-facets are not put through the pass. Each new facet is written in pull
-requests that meet the coverage rule themselves: inside the size limit,
-with the rules checklist in the description, a reader pass by a thread that
-did not write it, and a converged `full security-critical` loop. Every line
-of the new tree is covered as it is written, and the pass then has nothing
-left to do for the facets but confirm the report reads 100%.
+**Stage 3, the facets: today's code and the new code are both reviewed.**
+The first form of this design left today's facets out, because the
+refactor writes a new structure and a review of code about to be rewritten
+looked like a review done twice. The owner decided on 2026-11-22 that
+today's code is reviewed too. The reasons are sound ones:
 
-Three things keep that honest:
+- **Today's facets are what runs.** They are live on the testnets until
+  the switch, and they are the reference the refactor is compared against.
+- **The comparison run proves the new code behaves like the old. It does
+  not prove the old was right.** A fault carried faithfully passes the
+  comparison. A finding in today's facet is fixed in the rule before it is
+  carried, and becomes a test the new code must pass.
+- **The reading is not thrown away.** A declaration carried unchanged
+  keeps its hash and its marks. For one that is rewritten, the reader of
+  the new facet starts from the old unit's findings and trace table.
+
+**3a, today's facets.** Each is a unit like any other: by file, inside the
+size limit, with the rules checklist and the statements in the
+description, a reader pass by a thread that did not write it and a
+converged `full security-critical` loop. Its cross review is by user
+action (section 3.6). A facet the batch touches waits for its wave.
+
+**3b, the new facets.** Each is written in pull requests that meet the
+coverage rule themselves: inside the size limit, with the checklist and
+the statements in the description, a reader pass by a thread that did not
+write it, and a converged loop. Every line of the new tree is covered as
+it is written. Their cross review is by file.
+
+Three things keep 3b honest:
 
 - **A new facet's pull request counts only if it is small.** A refactor
   step that arrives as one large change is cut into units by the pass like
   any other uncovered code.
-- **The comparison run proves the new code behaves like the old. It does
-  not prove the old was right.** A fault carried faithfully passes the
-  comparison. The review of the new facet is what reads the rule itself,
-  which is why it is a full review and not a check of the move.
-- **The old facets stay live on the testnets until the switch.** The gate
-  check of section 3.4 runs on them too, since it is mechanical and costs
-  nothing, and anything it or anyone else finds there is fixed in the rule
-  that is carried.
+- **A finding of 3a on a rule is carried as a test.** The new facet's
+  review confirms the test is present and passes, so a fixed finding
+  cannot reopen in the move.
+- **The gate check of section 3.4 runs on both trees**, since it is
+  mechanical and costs nothing.
+
+**Which tree the report is read on.** The audit tag and a mainnet are
+gated on the tree that is launched. Today's tree has its own report, read
+beside it, and its findings are closed by the same rule (section 8)
+wherever they were found.
 
 Stages 0 to 2 hold about half the lines and most of the rules that move
-funds, and run beside the batch.
+funds, and run beside the batch. Stage 3a adds the other half once, at
+about the cost of the first half.
 
 **What is not in the pass**, each listed in the order list with its reason:
 
@@ -848,8 +870,10 @@ one the launch was judged on.
    stays.
 4. **Ask for a review of whole files outside a pull request.** Rejected:
    no rounds, no threads, no record of convergence.
-5. **Review everything now, facets included.** Rejected: the refactor
-   rewrites the facets, about half the lines, within weeks.
+5. **Leave today's facets out, since the refactor rewrites them.** This
+   design's first form. Overruled by the owner on 2026-11-22: today's
+   facets are what runs and what the new code is compared against, and a
+   fault carried faithfully passes a comparison (section 6, stage 3a).
 6. **Skip the pass and rely on the refactor.** Rejected: the rule libraries
    are carried, not rewritten, and they hold the rules that move funds.
 7. **One facet with all its libraries per review.** Rejected: one facet
@@ -917,8 +941,8 @@ one the launch was judged on.
 Adopt the coverage rule and the ledger, with the specification as the
 reader's sixth lens and the cross review as a second cut, each with its own
 mark. Run the pass in the private review repository.
-Start stages 1 and 2 beside the batch. Stage 3 happens inside the refactor
-pass, facet by facet. Block the audit tag on the report, and a mainnet on the launch
+Start stages 1 and 2 beside the batch. Review today's facets as their
+waves land, and the new facets inside the refactor pass, facet by facet. Block the audit tag on the report, and a mainnet on the launch
 check of section 8.
 
 ## 14. Build split
@@ -936,7 +960,8 @@ check of section 8.
 | The weekly sweep | Issue hygiene | When the ledger exists |
 | The launch check `review findings closed`, the findings report, the `review-finding` label | Governance, with test tooling | Before the pass starts |
 | The policy text: the rule, the size limit, the closing lines, the freeze gate | Governance | With the ledger |
-| Stage 3 | The threads that write the new facets, each read by another | With the refactor pass (#3926) |
+| Stage 3a, today's facets | Security leads, with readers from threads that did not write each facet | After each facet's wave has landed |
+| Stage 3b, the new facets | The threads that write the new facets, each read by another | With the refactor pass (#3926) |
 | The cross review: the unit tool's cut by action, the fourth mark, the list of declarations on no path | Test tooling builds. Security leads the reading, with a second reader for each unit | After the first reviews of stage 1 |
 | The stored-value table and its check | Test tooling. Design rules on a disputed writer | With the gate check (#3944) |
 | The specification lens: statements in the description, the trace table, the specification mark, the counts in the report | Security reads. Test tooling builds the table's check and the description | With the first approved domain |
