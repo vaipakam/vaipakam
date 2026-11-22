@@ -25,6 +25,10 @@
       "types": "./src/ccipLane.ts",
       "default": "./src/ccipLane.ts"
     },
+    "./forkRelay": {
+      "types": "./src/forkRelay.ts",
+      "default": "./src/forkRelay.ts"
+    },
     "./devKeys": {
       "types": "./src/devKeys.ts",
       "default": "./src/devKeys.ts"
@@ -55,7 +59,8 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p . --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
@@ -67,6 +72,7 @@
   "devDependencies": {
     "@types/node": "^22",
     "typescript": "~6.0.2",
-    "viem": "^2.48.4"
+    "viem": "^2.48.4",
+    "vitest": "^4.1.4"
   }
 }

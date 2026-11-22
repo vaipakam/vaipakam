@@ -17,6 +17,21 @@ export {
   type FixtureDeployment,
 } from './fixture';
 export { CcipRelay, compileLocalLane, deployLocalLane, type LaneEnd, type LocalLane, type RelayedMessage } from './ccipLane';
+export {
+  chooseOffRamp,
+  compileForkRelay,
+  ForkCcipRelay,
+  FORK_RELAY_LIMITS,
+  OFF_RAMP_VERSION,
+  ON_RAMP_VERSION,
+  requireVersion,
+  selectSentMessages,
+  type ForkEnd,
+  type ForkRelayedMessage,
+  type ForkRelayReport,
+  type LaneRamps,
+  type SentMessage,
+} from './forkRelay';
 export { ANVIL_DEV_KEYS } from './devKeys';
 export { explainMinedRevert } from './minedRevert';
 export { ScenarioChain, TOKEN_ABI, type ChainFixture, type ClockPin, type DecodedEvent, type Party, type ScenarioChainOptions, type ScenarioNode } from './scenarioChain';

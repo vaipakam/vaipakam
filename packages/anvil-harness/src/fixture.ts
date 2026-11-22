@@ -223,7 +223,7 @@ function foundry(args: string[], env: Record<string, string> = {}): string {
  * so a same-named file from another library can never be installed in its
  * place.
  */
-function compiledArtifact(
+export function compiledArtifact(
   source: string,
   contract: string,
 ): { creation: `0x${string}`; runtime: `0x${string}` } {
