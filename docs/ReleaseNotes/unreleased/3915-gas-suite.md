@@ -4,16 +4,16 @@ A new gas suite measures one transaction for each user action. It covers 31 acti
 
 `contracts/gas-suite/budgets.json` holds a budget and a stated reason for each action. The pre-deploy gate's full run now checks every measurement against its budget. An action over budget is a warning until the refactor pass ends, and a failure after it. A budget raised without a changed reason is always refused. An action well under its budget gets a note asking for a lower budget, so the budgets follow the code.
 
-The suite also checks the instant market's source rule from the design ruling on the instant borrow source cap. For a fill bound and the longest list of sources a borrow may carry, the rule adds three costs: the first fill, each further fill up to the bound, and a skip for every other source. The total must stay within 80% of the smallest per-transaction gas cap among the networks listed. It is checked for the bound the deploy sets, the code's default and the top of the range governance may set, with each price-guard read counted at the full gas the guard is given. The first measurement breaks it everywhere.
+The suite also checks the instant market's source rule from the design ruling on the instant borrow source cap. For a fill bound and the longest list of sources a borrow may carry, the rule adds three costs: the first fill, each further fill up to the bound, and a skip for every other source. The total must stay within 80% of the smallest per-transaction gas cap among the networks listed. It is checked for the bound the deploy sets, the code's default and the top of the range governance may set, with each guard read that prices an asset counted at its mainnet-shaped cost. The first measurement breaks it everywhere.
 
-- One fill makes 44 guard reads.
-- At the full read budget, one fill needs about 28 million gas, over Ethereum's whole cap of 2^24.
-- At the cost a read was measured at on Base Sepolia, one fill needs about 8.9 million gas and each further fill about 7.4 million.
-- A skipped source costs about 64 thousand gas when it is refused early and about 1.6 million when it is refused at loan creation.
+- One fill makes 72 calls to the price guard, 28 of which price an asset.
+- Counted at the cost of a mainnet-shaped read (about 304 thousand gas, on the most expensive path, through a pivot asset), one fill needs about 15.5 million gas and each further fill about 15.7 million.
+- A skipped source costs about 3.4 million gas.
+- With the deploy's bound of two fills and one skip, a borrow can need about 35 million gas. That is over the 13.4 million allowed, which is 80% of Ethereum's cap of 2^24.
 
-These are findings, which warn until the refactor pass ends. The deploy settings now set the bound to 2.
+These are findings, which warn until the refactor pass ends. The deploy settings set the bound to 2.
 
-The figures are for comparing one build with the next, not a network gas quote. Prices, liquidity tiers and the swap venue are answered by test mocks, so an action that reads prices measures low by the cost of those reads. The health factor and the loan-to-value ratio are computed for real.
+The figures are for comparing one build with the next, not a network gas quote. Every price read runs the price guard's own code, from feeds the suite sets up, and each action records the guard calls it makes. Liquidity tiers and the swap venue are answered by test mocks. The health factor and the loan-to-value ratio are computed for real.
 
 The suite needed one root fix to compile: a deploy library's frame was too deep once the gas tests pulled it in. Unchanged behaviour.
 
