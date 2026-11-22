@@ -19,6 +19,8 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibBackstopDailyLimit} from "../src/libraries/LibBackstopDailyLimit.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {VaipakamTimelock} from "../src/governance/VaipakamTimelock.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -223,6 +225,27 @@ contract BackstopDailyLimitTest is SetupTest {
             )
         );
         _fill(ids[1]);
+    }
+
+    /// @dev Codex #3842 — the intent preview reports the limit, so an Ok
+    ///      preview is never a backstop fill the limit refuses.
+    function test_previewIntent_reportsTheDailyLimit() public {
+        _setBps(500); // limit = 500 = one offer
+        uint256[] memory ids = _optedIn(mockCollateralERC20, PRINCIPAL, 2);
+        _ready(mockCollateralERC20);
+        LibOfferMatch.IntentPreviewResult memory r = IntentPreviewFacet(address(diamond)).previewIntent(
+            vault, makeAddr("fresh-1"), vault, mockERC20, mockCollateralERC20,
+            LibVaipakam.PROTOCOL_INTENT_SLOT, ids[1], PRINCIPAL
+        );
+        assertTrue(r.ok, "room left: the preview clears");
+        _fill(ids[0]);
+        r = IntentPreviewFacet(address(diamond)).previewIntent(
+            vault, makeAddr("fresh-2"), vault, mockERC20, mockCollateralERC20,
+            LibVaipakam.PROTOCOL_INTENT_SLOT, ids[1], PRINCIPAL
+        );
+        assertFalse(r.ok, "day spent: the preview refuses");
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.BackstopDailyLimit));
+        assertFalse(r.spendsPriorityCredit);
     }
 
     function test_totalResetsWithTheUtcDay() public {

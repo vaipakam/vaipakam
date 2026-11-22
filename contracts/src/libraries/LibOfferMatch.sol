@@ -220,7 +220,13 @@ library LibOfferMatch {
         // it. APPENDED.
         PairNoCheckpoint,
         PairNotCalm,
-        PairUnpriced
+        PairUnpriced,
+        // #3849 — the fill is the backstop's (its vault lending from the
+        // protocol slot) and would take the backstop's lending in the asset
+        // today past its daily limit (`BackstopDailyLimitExceeded`). Checked
+        // last, after the capacity charge, where the fill records the slot
+        // loan. APPENDED.
+        BackstopDailyLimit
     }
 
     /// @notice Structured outcome of `IntentPreviewFacet.previewIntent`. `ok` is

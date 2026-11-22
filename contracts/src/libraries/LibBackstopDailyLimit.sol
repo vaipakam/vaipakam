@@ -11,7 +11,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         capital in that asset, where the capital is the funded capital
  *         waiting across the asset's pairs plus the principal out on its open
  *         loans.
- * @dev    Inlined in two facets:
+ * @dev    Inlined in three facets:
  *         - `MarketLedgerFacet`, the one place every loan opened from an
  *           Auto-lend slot's capital passes (`onSlotFilled`: an intent match,
  *           an instant fill and a takeover into a slot), which counts a
@@ -21,6 +21,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *           ({syncPair}). So the capital is a running total and no fill
  *           iterates pairs or loans.
  *         - `BackstopFacet`, for the setting, the opt-in refusal and the view.
+ *         - `IntentPreviewFacet`, whose `previewIntent` reports a backstop
+ *           fill the limit would refuse ({wouldExceed}).
  *
  *         A fill moves capital from waiting to out and leaves the sum
  *         unchanged, so a fill never moves the day's limit. A seed, a
@@ -83,6 +85,13 @@ library LibBackstopDailyLimit {
         LibVaipakam.BackstopDayUse storage u = s.backstopDayUse[asset];
         (uint64 day, ) = today();
         return u.day == day ? u.used : 0;
+    }
+
+    /// @notice Whether a backstop opening of `amount` in `asset` now would
+    ///         pass the day's limit: the read-only twin of {consume}, for the
+    ///         previews, so a preview and the fill cannot disagree.
+    function wouldExceed(LibVaipakam.Storage storage s, address asset, uint256 amount) internal view returns (bool) {
+        return usedToday(s, asset) + amount > limitOf(s, asset);
     }
 
     /// @notice Count a backstop opening of `amount` in `asset` against today,

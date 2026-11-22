@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibBackstopDailyLimit} from "../libraries/LibBackstopDailyLimit.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -248,6 +249,19 @@ contract IntentPreviewFacet {
                 res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
                 res.ok = false;
             }
+        }
+        // #3849 (Codex #3842) — after the charge, the fill records the slot
+        // loan (`MarketLedgerFacet.onSlotFilled`), which refuses a backstop
+        // opening past the day's limit. Same rule, read only, so an Ok preview
+        // is never a fill the limit refuses.
+        if (
+            res.ok && lender == s.backstopVault && lender != address(0)
+                && slot == LibVaipakam.PROTOCOL_INTENT_SLOT
+                && LibBackstopDailyLimit.wouldExceed(s, lendingAsset, res.matchAmount)
+        ) {
+            res.intentError = LibOfferMatch.IntentError.BackstopDailyLimit;
+            res.spendsPriorityCredit = false;
+            res.ok = false;
         }
     }
 }
