@@ -218,7 +218,7 @@ test('test 9 and 38: a reference to a retired id is refused; an owed reference n
 });
 
 test('test 17: a mistake with no answer, with two, or with a warn-only answer with no reason is refused', () => {
-  const mistakes = `## 1\n\n### VLT-M01 · A zero amount\n\n**Who:** the owner.\n\n### VLT-M02 · Wrong unit\n\n**Who:** the owner.\n\n### VLT-M03 · Approving the vault\n\n**Who:** the owner.\n`;
+  const mistakes = `## 1\n\n### VLT-M01 · A zero amount\n\n**Who:** the owner.\n\n### VLT-M02 · Wrong unit\n\n**Who:** the owner.\n\n### VLT-M03 · Approving the vault\n\n**Who:** the owner.\n**Answered by:** VLT-014.\n`;
   const a = STMT('VLT-012', 'refusal', '- **Refused as:** zero.\n- **For the mistake:** VLT-M02, refuse.\n');
   const b = STMT('VLT-013', 'rule', '- **For the mistake:** VLT-M02, bound.\n');
   const c = STMT('VLT-014', 'rule', '- **For the mistake:** VLT-M03, warn only.\n');
@@ -243,7 +243,7 @@ test('a mistake waiting for a section: accepted while unanswered and its domain 
 });
 
 test('a mistake answer "VLT-M15, M18 and M21, refuse" answers all three', () => {
-  const mistakes = '### VLT-M15 · a\n\n### VLT-M18 · b\n\n### VLT-M21 · c\n';
+  const mistakes = '### VLT-M15 · a\n\n**Answered by:** VLT-012.\n\n### VLT-M18 · b\n\n**Answered by:** VLT-012.\n\n### VLT-M21 · c\n\n**Answered by:** VLT-012.\n';
   const a = STMT('VLT-012', 'refusal', '- **Refused as:** more.\n- **For the mistake:** VLT-M15, M18 and M21, refuse.\n');
   assert.deepEqual(run([['vlt.md', a], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]), []);
 });
@@ -485,7 +485,7 @@ test('a model\'s domain does not depend on the order of its guards', () => {
 });
 
 test('an abbreviated mistake id belongs to the nearest full id before it', () => {
-  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n\n### LON-M02 · b\n\n**Who:** the owner.\n\n### LON-M03 · c\n\n**Who:** the owner.\n';
+  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-012.\n\n### LON-M02 · b\n\n**Who:** the owner.\n**Answered by:** VLT-012.\n\n### LON-M03 · c\n\n**Who:** the owner.\n**Answered by:** VLT-012.\n';
   const fmLine = 'VLT-M01, refuse; LON-M02 and M03, bound.';
   const f = run([['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', `- **For the mistake:** ${fmLine}\n- **Tests owed:**`)], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
   assert.ok(!has(f, 'mistake', /LON-M03|VLT-M03/), JSON.stringify(f));
@@ -497,4 +497,60 @@ test('a retired id needs the approval that retired it; a folder source needs a d
   assert.ok(has(f1, 'retired', /VLT-001: a retired id names the owner's approval/), JSON.stringify(f1));
   const codeSource = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'K', 'The code does this']])]];
   assert.ok(has(run(codeSource), 'record', /a folder entry names a document source/));
+});
+
+test('every row a check keys on has its id in form and its required cells', () => {
+  const extra = '\n| Id | Retired by |\n| --- | --- |\n| vlt-1 | owner approval 2026-11-22 |\n\n| Owed | Cited by |\n| --- | --- |\n| VLT owed: the wait | |\n';
+  const params = '| Id | Name | Value |\n| --- | --- | --- |\n| P-1 | The wait | 3 days |\n';
+  const f = run([['vlt.md', REFUSAL('VLT-012')], ['params.md', params], ['record.md', RECORD([['VLT-012'], ['VLT 13']], extra)]]);
+  assert.ok(has(f, 'record', /a record row needs a statement id \(like VLT-001\) and its mark; read "VLT 13"/), JSON.stringify(f));
+  assert.ok(has(f, 'retired', /a retired row needs a statement id \(like VLT-001\); read "vlt-1"/), JSON.stringify(f));
+  assert.ok(has(f, 'owed', /an owed row needs the owed line and what cites it/), JSON.stringify(f));
+  assert.ok(has(f, 'parameter', /a parameter row needs a parameter id \(like PRM-1\); read "P-1"/), JSON.stringify(f));
+});
+
+test('an Answered by line agrees with the answering statement both ways, and never stands beside Waits for', () => {
+  const stmts = STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M01, bound.\n') + STMT('VLT-013', 'rule');
+  const rec = ['record.md', RECORD([['VLT-012'], ['VLT-013']])];
+  const ok = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-012.\n';
+  assert.ok(!has(run([['vlt.md', stmts], ['mistakes.md', ok], rec]), 'mistake', /./));
+  const wrong = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-013.\n';
+  const f = run([['vlt.md', stmts], ['mistakes.md', wrong], rec]);
+  assert.ok(has(f, 'mistake', /VLT-M01 names VLT-013 as its answer, but VLT-013's \*\*For the mistake:\*\* does not name VLT-M01/), JSON.stringify(f));
+  assert.ok(has(f, 'mistake', /VLT-012 answers VLT-M01, but VLT-M01's \*\*Answered by:\*\* does not name it/), JSON.stringify(f));
+  const absent = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-099.\n';
+  assert.ok(has(run([['vlt.md', stmts], ['mistakes.md', absent], rec]), 'mistake', /VLT-M01 is answered by VLT-099, which does not exist/));
+  const both = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-012.\n**Waits for:** vault section 5\n';
+  assert.ok(has(run([['vlt.md', stmts], ['mistakes.md', both], rec]), 'mistake', /VLT-M01 carries both \*\*Answered by:\*\* and \*\*Waits for:\*\*/));
+  const none = '### VLT-M01 · a\n\n**Who:** the owner.\n';
+  assert.ok(has(run([['vlt.md', stmts], ['mistakes.md', none], rec]), 'mistake', /VLT-M01: an answered mistake names its answer \(\*\*Answered by:\*\* VLT-012\)/));
+  assert.ok(!has(run([['vlt.md', stmts], ['mistakes.md', none], rec], { mode: 'draft' }), 'mistake', /names its answer/), 'a draft list may leave it out');
+});
+
+test('an owed line to another domain that has entered the checked set is a notice, never a refusal', () => {
+  const vlt = STMT('VLT-012', 'rule', '', 'The treasury is elsewhere (DPL owed: where the treasury is).');
+  const dpl = STMT('DPL-001', 'rule');
+  const owedTable = '\n| Owed | Cited by |\n| --- | --- |\n| DPL owed: where the treasury is | VLT-012 |\n';
+  const f = run([['vlt.md', vlt], ['dpl.md', dpl], ['record.md', RECORD([['VLT-012'], ['DPL-001']], owedTable)]]);
+  const n = f.filter((x) => x.rule === 'owed');
+  assert.equal(n.length, 1, JSON.stringify(f));
+  assert.ok(n[0].notice && /DPL statements are in the checked set now/.test(n[0].message));
+  const own = STMT('VLT-012', 'rule', '', 'The wait is set elsewhere (VLT owed: the wait).');
+  const ownTable = '\n| Owed | Cited by |\n| --- | --- |\n| VLT owed: the wait | VLT-012 |\n';
+  assert.ok(!has(run([['vlt.md', own], ['record.md', RECORD([['VLT-012']], ownTable)]]), 'owed', /./), 'a domain\'s own owed lines name its later sections');
+});
+
+test('a short record row is refused by name, never a crash', () => {
+  const extra = '\n| Id | Mark | Sources | Build |\n| --- | --- | --- | --- |\n| VLT-013 |\n';
+  const f = run([['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012']], extra)]]);
+  assert.ok(has(f, 'record', /a record row needs a statement id \(like VLT-001\) and its mark; read "VLT-013"/), JSON.stringify(f));
+});
+
+test('a held statement named as an answer is checked when it is loaded', () => {
+  const stmts = STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M01, bound.\n') + STMT('VLT-900', 'rule');
+  const mistakes = '### VLT-M01 · a\n\n**Who:** the owner.\n**Answered by:** VLT-012, VLT-900.\n';
+  const f = run([['vlt.md', stmts], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012'], ['VLT-900']])]]);
+  assert.ok(has(f, 'mistake', /VLT-M01 names VLT-900 as its answer, but VLT-900's/), JSON.stringify(f));
+  const unloaded = run([['vlt.md', STMT('VLT-012', 'rule', '- **For the mistake:** VLT-M01, bound.\n')], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
+  assert.ok(!has(unloaded, 'mistake', /VLT-900/), JSON.stringify(unloaded));
 });

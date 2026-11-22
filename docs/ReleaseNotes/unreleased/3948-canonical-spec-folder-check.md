@@ -6,4 +6,6 @@ The check fails closed. If it cannot read a line under a statement or a model, i
 
 The wording list holds only salted hashes, so the refused words never appear in the public tree. CI runs the check's own tests, and runs the check over the folder whenever the folder exists.
 
-Closes #3948
+A follow-up makes three things stricter or clearer. Every table the check keys on has one row shape: a malformed id or an empty required cell is refused by name, not read as a missing entry. A mistake list names each answer on an "Answered by" line, which must agree with the answering statement both ways and never stands beside "Waits for". And a promise owed to another domain that has since entered the checked set prints a notice, which never fails the check, so a stale promise is seen.
+
+Closes #3948, #4032

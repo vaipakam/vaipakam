@@ -73,6 +73,10 @@ The withdrawal is refused, and nothing moves.   ← the body, at most 8 lines
   reference to a domain not drafted yet takes the owed form,
   `(DPL owed: where the treasury is)`, and is listed in that file's Owed
   table.
+  Once statements of the owed domain are in the checked set and the domain is
+  not complete, the check prints a **notice** (it never fails on one): the
+  promised statement may exist now and the line may be due its id. A domain's
+  own owed lines name its later sections and get no notice.
 
 ### Mistake
 
@@ -87,6 +91,13 @@ so it cannot drop out of sight. It is accepted while nothing answers it, and
 the mark is refused once a statement does. In folder mode a domain the README
 marks `complete` may hold no waiting mistake, so the mistake list lands in
 the folder with its domain and the domain cannot close with one waiting.
+
+A mistake answered by a statement names it on the list:
+`**Answered by:** VLT-102.` The line must agree with the statements' own
+**For the mistake** parts both ways: every id it names exists and answers that
+mistake, and every statement answering it is named. A mistake carries
+**Answered by** or **Waits for**, never both. In folder mode an answered
+mistake must carry the line; a draft list may leave it out.
 
 ### Lifecycle model
 
@@ -132,6 +143,12 @@ its domain lists.
 | Owed | Owed, Cited by | every owed reference |
 | Parameters | Id, Name, Value | the only place a figure appears; one row per parameter (per-network values are columns) |
 | Glossary | Term, Meaning, Instead of | the words a statement uses instead |
+
+Every row has its header's cell count. A record or retired row's id is a
+statement id (`VLT-001`), a parameter row's id a parameter id (`PRM-1`), and a
+record row's mark, an owed row's two cells and a parameter's name and value
+are never empty: a row a later rule keys on is refused by name, never read as
+a missing entry.
 
 ### Wording list
 

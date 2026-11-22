@@ -135,6 +135,8 @@ export function checkSpec(parsed, opts = {}) {
   const mode = opts.mode ?? 'folder';
   const findings = [];
   const add = (file, line, rule, message) => findings.push({ file, line, rule, message });
+  // A notice is reported and never fails the check.
+  const note = (file, line, rule, message) => findings.push({ file, line, rule, message, notice: true });
 
   for (const p of parsed) for (const e of p.errors) add(e.file, e.line, 'unreadable', e.message);
 
@@ -162,6 +164,19 @@ export function checkSpec(parsed, opts = {}) {
   const glossary = parsed.flatMap(glossaryRows);
   const codes = new Set(statements.map((s) => s.code));
   const complete = opts.completeDomains ?? new Set();
+
+  // Every table the checks read has one row shape, held in one place: an id
+  // a later rule keys on is checked for its form here, so a malformed id is
+  // refused by name rather than read as "no such entry" by every later rule.
+  const STATEMENT_ID = /^[A-Z]{3}-\d{3}$/;
+  const PARAMETER_ID = /^PRM-\d+$/;
+  const shapes = [
+    ...record.entries.map((e) => [e, 'record', STATEMENT_ID.test(e.id) && e.mark.trim(), `a record row needs a statement id (like VLT-001) and its mark; read "${e.id}"`]),
+    ...record.retired.map((r) => [r, 'retired', STATEMENT_ID.test(r.id), `a retired row needs a statement id (like VLT-001); read "${r.id}"`]),
+    ...record.owed.map((o) => [o, 'owed', o.ref.trim() && o.by.trim(), 'an owed row needs the owed line and what cites it']),
+    ...params.map((p) => [p, 'parameter', PARAMETER_ID.test(p.id), `a parameter row needs a parameter id (like PRM-1); read "${p.id}"`]),
+  ];
+  for (const [row, kind, ok, message] of shapes) if (!ok) add(row.file, row.line, kind, message);
 
   // Item 1: ids.
   const byId = new Map();
@@ -205,10 +220,19 @@ export function checkSpec(parsed, opts = {}) {
   // statement is read the same way: a statement's own text and a model's prose
   // (states, steps, dimension values); a model's citation columns are checked
   // with the model below.
+  // A model belongs to the domain of the statements beside it; a model in a
+  // file of its own (§3.5 lets a domain split its files) belongs to the domain
+  // most of its guards come from, whatever their order, ties by code.
+  const modelCode = (m) => {
+    const tally = new Map();
+    for (const r of m.steps) for (const id of statementIds(r['Guarded by'])) tally.set(id.slice(0, 3), (tally.get(id.slice(0, 3)) ?? 0) + 1);
+    const byGuards = [...tally].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
+    return (statements.find((s) => s.file === m.file) ?? {}).code ?? byGuards;
+  };
   const citers = [
-    ...statements.map((s) => ({ who: s.id, self: s.id, key: s.id, file: s.file, line: s.line, text: statementText(s) })),
+    ...statements.map((s) => ({ who: s.id, self: s.id, code: s.code, key: s.id, file: s.file, line: s.line, text: statementText(s) })),
     // A model is named in an owed row's "Cited by" as "Model: <name>".
-    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, self: null, key: `Model: ${m.name}`, file: m.file, line: x.line, text: x.text }))),
+    ...models.flatMap((m) => m.texts.map((x) => ({ who: `model "${m.name}"`, self: null, code: modelCode(m), key: `Model: ${m.name}`, file: m.file, line: x.line, text: x.text }))),
   ];
   for (const c of citers) {
     for (const m of c.text.matchAll(ID_RE)) {
@@ -229,6 +253,10 @@ export function checkSpec(parsed, opts = {}) {
       if (complete.has(code)) add(c.file, c.line, 'owed', `${c.who}: "(${code} owed: ${phrase})" names a domain that is complete; cite its statement by id`);
       const listed = record.owed.some((o) => normaliseOwed(o.ref) === `${code} owed: ${phrase}` && o.by.includes(c.key));
       if (!listed) add(c.file, c.line, 'owed', `${c.who}: "(${code} owed: ${phrase})" is not listed in its domain's record (a row "| ${code} owed: ${phrase} | ${c.key} |" in a table "| Owed | Cited by |")`);
+      // Another domain, owed while it was not drafted, has entered the checked
+      // set but is not complete: the promised statement may exist now, so the
+      // line may be due an id. A domain's own owed lines name its later sections.
+      if (code !== c.code && codes.has(code) && !complete.has(code)) note(c.file, c.line, 'owed', `${c.who}: "(${code} owed: ${phrase})": ${code} statements are in the checked set now; cite the statement by id once it exists`);
     }
   }
 
@@ -343,13 +371,7 @@ export function checkSpec(parsed, opts = {}) {
   }
   const accountsByCode = new Map();
   for (const m of models) {
-    // A model belongs to the domain of the statements beside it; a model in a
-    // file of its own (§3.5 lets a domain split its files) belongs to the domain
-    // most of its guards come from, whatever their order, ties by code.
-    const tally = new Map();
-    for (const r of m.steps) for (const id of statementIds(r['Guarded by'])) tally.set(id.slice(0, 3), (tally.get(id.slice(0, 3)) ?? 0) + 1);
-    const byGuards = [...tally].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
-    const code = (statements.find((s) => s.file === m.file) ?? {}).code ?? byGuards;
+    const code = modelCode(m);
     if (!code) continue;
     if (!accountsByCode.has(code)) accountsByCode.set(code, new Set());
     for (const a of m.accounts) accountsByCode.get(code).add(a.toLowerCase().replace(/\.$/, ''));
@@ -416,6 +438,21 @@ export function checkSpec(parsed, opts = {}) {
     // marked complete in the README: a domain cannot be complete with one.
     if (waits && mode !== 'draft' && complete.has(mk.code)) add(mk.file, mk.line, 'mistake', `${mk.id} still waits for ${waits}, but ${mk.code} is marked complete; a complete domain holds no waiting mistake`);
     else if (waits && a.length) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${a.join(', ')} but still marked as waiting for ${waits}: remove the mark`);
+    // `**Answered by:** <id>`: the mistake list names its answer, and it must
+    // agree with the statement's own **For the mistake:** line both ways.
+    if ('Answered by' in mk.fields) {
+      const named = statementIds(mk.fields['Answered by']);
+      if (waits) add(mk.file, mk.line, 'mistake', `${mk.id} carries both **Answered by:** and **Waits for:**; a mistake is answered or waits, never both`);
+      if (!named.length) add(mk.file, mk.line, 'mistake', `${mk.id}: **Answered by:** names no statement`);
+      for (const id of named) {
+        // A held statement the public check does not hold is exempt; one that
+        // is loaded (--held, or released) is checked like any other.
+        if (!byId.has(id)) {
+          if (!isHeldId(id)) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${id}, which does not exist`);
+        } else if (!a.includes(id)) add(mk.file, mk.line, 'mistake', `${mk.id} names ${id} as its answer, but ${id}'s **For the mistake:** does not name ${mk.id}`);
+      }
+      for (const id of a) if (!named.includes(id)) add(mk.file, mk.line, 'mistake', `${id} answers ${mk.id}, but ${mk.id}'s **Answered by:** does not name it`);
+    } else if (mode !== 'draft' && a.length) add(mk.file, mk.line, 'mistake', `${mk.id}: an answered mistake names its answer (**Answered by:** ${a.join(', ')})`);
     if (waits && !a.length) continue;
     if (!a.length) add(mk.file, mk.line, 'mistake', `${mk.id} (${mk.title}) has no answering statement`);
     else if (a.length > 1) add(mk.file, mk.line, 'mistake', `${mk.id} is answered by ${a.length} statements (${a.join(', ')}); a mistake has exactly one answer`);
