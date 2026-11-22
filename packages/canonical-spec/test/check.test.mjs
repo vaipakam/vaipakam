@@ -490,3 +490,11 @@ test('an abbreviated mistake id belongs to the nearest full id before it', () =>
   const f = run([['vlt.md', REFUSAL('VLT-012').replace('- **Tests owed:**', `- **For the mistake:** ${fmLine}\n- **Tests owed:**`)], ['mistakes.md', mistakes], ['record.md', RECORD([['VLT-012']])]]);
   assert.ok(!has(f, 'mistake', /LON-M03|VLT-M03/), JSON.stringify(f));
 });
+
+test('a retired id needs the approval that retired it; a folder source needs a document or an approval', () => {
+  const emptyRetired = '\n| Id | Retired by |\n| --- | --- |\n| VLT-001 | |\n';
+  const f1 = run([['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012'], ['VLT-001']], emptyRetired)]]);
+  assert.ok(has(f1, 'retired', /VLT-001: a retired id names the owner's approval/), JSON.stringify(f1));
+  const codeSource = [['vlt.md', REFUSAL('VLT-012')], ['record.md', RECORD([['VLT-012', 'K', 'The code does this']])]];
+  assert.ok(has(run(codeSource), 'record', /a folder entry names a document source/));
+});

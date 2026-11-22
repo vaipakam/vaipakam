@@ -178,6 +178,10 @@ export function checkSpec(parsed, opts = {}) {
     return n >= HELD_RANGE[0] && n <= HELD_RANGE[1];
   };
   const missing = (id) => !byId.has(id) && !isHeldId(id);
+  // §3.4: a retired id carries the approval that retired it, by date.
+  for (const r of record.retired) {
+    if (!/\b(owner|approv)\w*\b/i.test(r.by) || !/\b\d{4}-\d{2}-\d{2}\b/.test(r.by)) add(r.file, r.line, 'retired', `${r.id}: a retired id names the owner's approval that retired it, by date`);
+  }
   for (const s of statements) if (retired.has(s.id)) add(s.file, s.line, 'retired', `${s.id} is a retired id (retired by ${retired.get(s.id).by}); an id is never reused`);
 
   // Item 2: the parts each kind requires, the body, the mistake answer.
@@ -251,7 +255,7 @@ export function checkSpec(parsed, opts = {}) {
     // ('VLT-M15') is not a document code.
     const documentSource = /^\s*Same\b|(?:^|[\s(,;])[A-Z][A-Z0-9]{1,2}(?=[\s,:.]|$)|"\d/.test(e.sources);
     if (!hasSource) add(e.file, e.line, 'record', `${s.id}: the record entry names no source`);
-    else if (!isNew && mode === 'folder' && !ownerApproval && raisedBy && !documentSource) add(e.file, e.line, 'record', `${s.id}: a folder entry names a document source (a document code and its quoted section) or the owner's approval, by date; what raised a statement (a threat, a mistake, a model row, the conflict read) is a draft note, not a source`);
+    else if (!isNew && mode === 'folder' && !ownerApproval && !documentSource) add(e.file, e.line, 'record', `${s.id}: a folder entry names a document source (a document code and its quoted section) or the owner's approval, by date; what raised a statement (a threat, a mistake, a model row, the conflict read) is a draft note, not a source`);
     else if (isNew && mode === 'folder' && !ownerApproval) add(e.file, e.line, 'record', `${s.id}: a new statement enters the folder only with the owner's approval, by date, as its source`);
     else if (isNew && mode === 'draft' && !ownerApproval && !raisedBy && !documentSource) add(e.file, e.line, 'record', `${s.id}: a new statement's entry names what raised it (a threat or mistake id, a model row, the conflict read) or a source`);
     if (!e.approved && mode === 'folder') add(e.file, e.line, 'approval', `${s.id}: the record entry carries no approval hash; the committed folder holds only approved text (${approvalHash(s)} now)`);
