@@ -164,3 +164,10 @@ test('reach: a call in a modifier argument is code the entry runs', () => {
   const { names } = reachedErrors('EntryFacet', 'guarded');
   assert.ok(names.has('Prepared'), 'LibArg.prepare runs before the body');
 });
+
+test('silent functions: a standalone contract\'s self-call lands in its own code, not in a facet with the same selector', () => {
+  const r = runReports(UNITS, { facets: ['AFacet', 'BFacet'], standalone: ['Standalone'] }, CATALOGUE, undefined);
+  const listed = (k) => r['silent-functions'].entries.some((e) => e.startsWith(k));
+  assert.ok(!listed('Standalone.run()'), 'run reaches its own ping, which emits');
+  assert.ok(listed('Standalone.shadow()'), 'shadow reaches its own silent loud, not BFacet.loud');
+});

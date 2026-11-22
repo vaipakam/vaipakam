@@ -1,7 +1,7 @@
 {
   "report": "silent-functions",
   "counts": {
-    "entries": 57,
+    "entries": 55,
     "checked": 986
   },
   "entries": [
@@ -28,8 +28,6 @@
     "FlashLoanLiquidator.liquidateViaAaveV3(uint256,uint256,uint256,address,bytes)",
     "FlashLoanLiquidator.liquidateViaBalancerV2(uint256,uint256,uint256,address,bytes)",
     "InteractionRewardsFacet.transferLenderRewardEntry(uint256,address)",
-    "KeeperBackupUpkeep.checkUpkeep(bytes)",
-    "KeeperBackupUpkeep.isDue(uint8,uint256)",
     "LenderIntentFacet.releaseIntentExposure(uint256)",
     "MarketLedgerFacet.onSlotFilled(uint256)",
     "MarketLedgerFacet.onSlotLoanPrincipal(uint256,uint256,uint256)",

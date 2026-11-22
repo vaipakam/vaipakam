@@ -260,7 +260,7 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         e = e.expression;
       }
       if (e?.nodeType === 'MemberAccess' && visit(e.expression, conditional, depth, inModifier) === true) return true;
-      const routed = routedCallAt(n, ctx);
+      const routed = routedCallAt(n, ctx, ctx.selfRoutes ? ctx.selfRoutes(lineage) : ctx.routes);
       const d = ctx.byId.get(e?.referencedDeclaration);
       const typeString = e?.typeDescriptions?.typeString ?? '';
       if (routed && e?.nodeType === 'MemberAccess' && /\bexternal\b/.test(typeString)) {
@@ -270,7 +270,7 @@ export function readEntry(fn, contract, ctx, gateLabels = new Set()) {
         // A modifier is exempt only for its own lock writes: a call out of
         // it is a boundary like any other.
         if (!view && !gateLabels.has(l)) {
-          stoppedAt = `a call back into the Diamond (${l})`;
+          stoppedAt = `${ctx.facetIds?.has(lineage?.[0]) === false ? 'a call back into this contract' : 'a call back into the Diamond'} (${l})`;
           return true;
         }
         return false;

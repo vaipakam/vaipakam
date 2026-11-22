@@ -502,8 +502,12 @@ function directCallees(fn, ctx, walk) {
         if (!ext || lib) ids.add(d.id);
       }
     }
-    const r = routedCallAt(n, ctx);
-    if (r) selectors.add(`${r.contract.name}.${r.fn.name}`);
+    // A self-call of a standalone contract lands in its own code (part of the
+    // unit); a facet's goes through the Diamond.
+    const owner = ctx.contractOf.get(fn.id);
+    const r = routedCallAt(n, ctx, ctx.selfRoutes ? ctx.selfRoutes(owner?.linearizedBaseContracts) : ctx.routes);
+    if (r && ctx.selfRoutes && ctx.selfRoutes(owner?.linearizedBaseContracts) !== ctx.routes) ids.add(r.fn.id);
+    else if (r) selectors.add(`${r.contract.name}.${r.fn.name}`);
     return undefined;
   });
   return { ids, selectors };

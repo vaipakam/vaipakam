@@ -180,10 +180,8 @@ export function makeContext(units, facetNames) {
       for (const m of n.nodes ?? []) contractOf.set(m.id, n);
     }
   }
-  const routes = new Map();
-  for (const name of facetNames) {
-    const c = contracts.get(name);
-    if (!c) continue;
+  // selector → the function a contract runs for it (most derived first).
+  const addRoutes = (routes, c) => {
     for (const baseId of c.linearizedBaseContracts ?? [c.id]) {
       for (const n of byId.get(baseId)?.nodes ?? []) {
         if (n.nodeType !== 'FunctionDefinition' || !n.implemented || !n.functionSelector) continue;
@@ -191,8 +189,33 @@ export function makeContext(units, facetNames) {
         if (!routes.has(n.functionSelector)) routes.set(n.functionSelector, { fn: n, contract: c });
       }
     }
+  };
+  // The Diamond's routing table: every facet's selectors.
+  const routes = new Map();
+  const facetIds = new Set();
+  for (const name of facetNames) {
+    const c = contracts.get(name);
+    if (!c) continue;
+    for (const b of c.linearizedBaseContracts ?? [c.id]) facetIds.add(b);
+    addRoutes(routes, c);
   }
-  return { byId, contracts, contractOf, routes };
+  // Where a contract's calls to itself land: a facet's (or code of a base a
+  // facet inherits) go through the Diamond, so to whichever facet routes the
+  // selector; any other contract's stay in that contract, so to its own
+  // function. Library code (its caller unknown here) reads the Diamond's
+  // table, as before.
+  const own = new Map();
+  const selfRoutes = (lineage) => {
+    const c = lineage?.[0] === undefined ? undefined : byId.get(lineage[0]);
+    if (!c || facetIds.has(c.id) || c.contractKind === 'library') return routes;
+    if (!own.has(c.id)) {
+      const r = new Map();
+      addRoutes(r, c);
+      own.set(c.id, r);
+    }
+    return own.get(c.id);
+  };
+  return { byId, contracts, contractOf, routes, facetIds, selfRoutes };
 }
 
 export function mostDerived(decl, lineage, ctx) {
@@ -207,10 +230,10 @@ export function mostDerived(decl, lineage, ctx) {
 }
 
 /** The function a selector expression names, when the Diamond routes it. */
-function routedTarget(declId, ctx) {
+function routedTarget(declId, ctx, routes) {
   const d = ctx.byId.get(declId);
   if (d?.nodeType !== 'FunctionDefinition' || !d.functionSelector) return undefined;
-  return ctx.routes.get(d.functionSelector);
+  return routes.get(d.functionSelector);
 }
 
 /**
@@ -219,16 +242,16 @@ function routedTarget(declId, ctx) {
  * `bytes4(keccak256("<signature>"))`. Returns `{ known, target }`: `known` is
  * true when the constant's value could be read, whether or not it is routed.
  */
-function constantTarget(declId, ctx) {
+function constantTarget(declId, ctx, routes = ctx.routes) {
   const d = ctx.byId.get(declId);
   if (d?.nodeType !== 'VariableDeclaration' || !d.constant || !d.value) return { known: false };
   const v = d.value;
   if (v.nodeType === 'MemberAccess' && v.memberName === 'selector') {
-    return { known: true, target: routedTarget(v.expression?.referencedDeclaration, ctx) };
+    return { known: true, target: routedTarget(v.expression?.referencedDeclaration, ctx, routes) };
   }
   const hex = constantSelectorHex(d);
   if (hex === undefined) return { known: false };
-  return { known: true, target: ctx.routes.get(hex) };
+  return { known: true, target: routes.get(hex) };
 }
 
 /**
@@ -237,20 +260,24 @@ function constantTarget(declId, ctx) {
  * by `reach` and the review-coverage unit tool: a call on `this` to an
  * external function, `abi.encodeCall(X.f, ...)`,
  * `abi.encodeWithSignature("f(...)")`, `X.f.selector`, or a selector constant
- * (see {constantTarget}). Returns `{ fn, contract }`.
+ * (see {constantTarget}). Returns `{ fn, contract }`. `routes` is the table
+ * a call on `this` lands in (`ctx.selfRoutes(lineage)`): the Diamond's for a
+ * facet, the contract's own otherwise. The other forms name a selector, which
+ * the code sends to the Diamond whichever contract builds it, so they always
+ * read the Diamond's table.
  */
-export function routedCallAt(n, ctx) {
+export function routedCallAt(n, ctx, routes = ctx.routes) {
   if (n.nodeType === 'FunctionCall') {
     let e = n.expression;
     while (e?.nodeType === 'FunctionCallOptions') e = e.expression; // `this.f{value: v}(...)`
     if (e?.nodeType === 'MemberAccess' && isSelf(e.expression)) {
       const d = ctx.byId.get(e.referencedDeclaration);
-      if (d?.nodeType === 'FunctionDefinition' && ['external', 'public'].includes(d.visibility)) return routedTarget(d.id, ctx);
+      if (d?.nodeType === 'FunctionDefinition' && ['external', 'public'].includes(d.visibility)) return routedTarget(d.id, ctx, routes);
     }
     if (e?.nodeType === 'MemberAccess' && e.expression?.name === 'abi') {
       const a = n.arguments?.[0];
       if (e.memberName === 'encodeCall' && (a?.nodeType === 'MemberAccess' || a?.nodeType === 'Identifier')) {
-        return routedTarget(a.referencedDeclaration, ctx);
+        return routedTarget(a.referencedDeclaration, ctx, ctx.routes);
       }
       if (e.memberName === 'encodeWithSignature' && a?.nodeType === 'Literal' && a.kind === 'string') {
         return ctx.routes.get(keccak256Hex(a.value).slice(0, 8));
@@ -258,7 +285,7 @@ export function routedCallAt(n, ctx) {
     }
     return undefined;
   }
-  if (n.nodeType === 'MemberAccess' && n.memberName === 'selector') return routedTarget(n.expression?.referencedDeclaration, ctx);
+  if (n.nodeType === 'MemberAccess' && n.memberName === 'selector') return routedTarget(n.expression?.referencedDeclaration, ctx, ctx.routes);
   if ((n.nodeType === 'Identifier' || n.nodeType === 'MemberAccess') && n.referencedDeclaration !== undefined) {
     return constantTarget(n.referencedDeclaration, ctx).target;
   }
@@ -334,7 +361,7 @@ export function reach(rootFn, rootContract, ctx, visitNode, { selfCalls = true }
           }
         }
         if (selfCalls) {
-          const r = routedCallAt(n, ctx);
+          const r = routedCallAt(n, ctx, ctx.selfRoutes ? ctx.selfRoutes(lineage) : ctx.routes);
           if (r) queue.push({ fn: r.fn, lineage: r.contract.linearizedBaseContracts });
         }
         return undefined;

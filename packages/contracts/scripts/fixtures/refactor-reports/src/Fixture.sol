@@ -233,3 +233,22 @@ contract EntryFacet {
 
     function guarded() external guard(LibArg.prepare()) {}
 }
+
+// A standalone contract: its self-calls land in its own code, never in a facet.
+contract Standalone {
+    event Pinged();
+
+    function run() external {
+        this.ping();
+    }
+
+    function ping() public {
+        emit Pinged();
+    }
+
+    function shadow() external {
+        this.loud();
+    }
+
+    function loud() public {}
+}
