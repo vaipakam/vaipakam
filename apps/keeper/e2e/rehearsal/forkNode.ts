@@ -41,6 +41,8 @@ export interface BotGrant {
   /** Who sent the grant, impersonated. */
   grantedBy: Address;
   tx: Hex;
+  /** The fork block the grant was mined in. */
+  block: string;
 }
 
 export interface BotKeys {
@@ -100,7 +102,7 @@ export async function grantBotRoles(url: string, diamond: Address, candidates: r
       const tx = await control.rpc<Hex>('eth_sendTransaction', [{ from: granter, to: diamond, data }]);
       const receipt = await client.waitForTransactionReceipt({ hash: tx });
       if (receipt.status !== 'success') throw new Error(`rehearsal: granting ${role} reverted`);
-      grants.push({ role, holder, grantedBy: granter, tx });
+      grants.push({ role, holder, grantedBy: granter, tx, block: receipt.blockNumber.toString() });
     } finally {
       await control.rpc('anvil_stopImpersonatingAccount', [granter]);
     }
