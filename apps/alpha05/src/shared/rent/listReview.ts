@@ -94,7 +94,7 @@ export async function readListReview(own: OwnStateClient, diamond: Hex, draft: L
   ]);
   const holding: ListHolding = draft.standard === 'erc721' ? { kind: 'erc721', state: held as Erc721State } : { kind: 'erc1155', state: held as Erc1155State };
   const covers = !needsMove({ holding, diamond });
-  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params, await chainValidUntil(c)], account }));
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params, await chainValidUntil(c, 'postRentalListing')], account }));
   return {
     identity,
     account,

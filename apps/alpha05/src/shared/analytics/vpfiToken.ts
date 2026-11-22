@@ -10,6 +10,7 @@
  * facts say the cap belongs to the home network, never zero.
  */
 import { parseAbi, type PublicClient } from 'viem';
+import { cleanTokenLabel } from '@vaipakam/lib/tokenLabel';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { SUPPORTED_CHAINS, type SupportedChain } from '../../chain/chains';
 import { readVpfiHome } from '../rewards/vpfiFacts';
@@ -63,6 +64,14 @@ function reason(e: unknown): string {
   return msg.split('\n')[0]!.slice(0, 160);
 }
 
+/** The shared label rule; a label that cleans to nothing is a failed read,
+ *  so the page states it unread instead of showing a blank. */
+function label(raw: string, kind: 'name' | 'symbol'): string {
+  const v = cleanTokenLabel(raw, kind);
+  if (v === '') throw new Error(`The token's ${kind} has no characters this app can show.`);
+  return v;
+}
+
 async function fact<T>(p: Promise<T>): Promise<Fact<T>> {
   try {
     return { ok: true, value: await p };
@@ -80,8 +89,9 @@ export async function readVpfiToken(c: PublicClient, chain: SupportedChain, bloc
   const at = { address: token, abi: TOKEN, blockNumber } as const;
   const [home, name, symbol, decimals, supply, owner, paused] = await Promise.all([
     readVpfiHome(c, chain.diamondAddress, blockNumber).catch(() => null),
-    fact(c.readContract({ ...at, functionName: 'name' })),
-    fact(c.readContract({ ...at, functionName: 'symbol' })),
+    // The shared label rule, as for every token the app names.
+    fact(c.readContract({ ...at, functionName: 'name' }).then((n) => label(n, 'name'))),
+    fact(c.readContract({ ...at, functionName: 'symbol' }).then((n) => label(n, 'symbol'))),
     fact(c.readContract({ ...at, functionName: 'decimals' }).then(Number)),
     fact(c.readContract({ ...at, functionName: 'totalSupply' })),
     fact(c.readContract({ ...at, functionName: 'owner' })),

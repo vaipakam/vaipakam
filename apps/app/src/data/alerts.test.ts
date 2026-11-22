@@ -8,7 +8,7 @@
  * in a subscription), and permitting a held wallet to switch one on.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildAlertSettingsMessage } from '@vaipakam/lib/alertsMessage';
+import { buildAlertSettingsMessage, isRequestKey, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import {
   DEFAULT_PREFS,
   FLOOR_BANDS,
@@ -191,10 +191,13 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
           84532,
           { bands: FLOOR_BANDS, dueDateReminders: false },
           1_800_000_000,
+          requestKeyHash(bodies[0]!.requestKey as `0x${string}`),
         ),
       ]);
       expect(bodies[0]!.issuedAt).toBe(1_800_000_000);
       expect(bodies[0]!.signature).toBe('0xsig1');
+      // #3836 — the body carries the key whose hash the signed text names.
+      expect(isRequestKey(bodies[0]!.requestKey)).toBe(true);
     } finally {
       vi.useRealTimers();
     }

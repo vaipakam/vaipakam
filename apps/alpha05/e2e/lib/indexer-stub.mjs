@@ -563,6 +563,10 @@ let posture = 'live';
  *  live test networks the keeper does not rank. */
 let rankings = new Map();
 let rankingsDown = false;
+/** What `/vaults/:chainId/:owner/unrecognised` answers (#3435), by
+ *  `chainId:owner` (lowercase): a spec stores an answer in the index's shape,
+ *  or `{ status }` for a refusal. Unset, the owner has no vault (404). */
+let arrivals = new Map();
 /** What `/rates/curve` and `/rates/curve/history` answer (#3751), by
  *  `chainId:asset` (lowercase) and `chainId:asset:days`: a spec stores an
  *  answer in the index's shape, or a refusal status (429 for the request
@@ -976,6 +980,7 @@ const server = http.createServer(async (req, res) => {
           '/__stub/notifications',
           '/activity?wallet=, /__stub/activity',
           '/assets/rankings, /__stub/rankings',
+          '/vaults/:chainId/:owner/unrecognised, /__stub/arrivals',
           '/rates/curve, /rates/curve/history, /__stub/rates',
           '/signed-offers, /__stub/signed-offers',
           '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
@@ -995,6 +1000,7 @@ const server = http.createServer(async (req, res) => {
       agent = freshAgent();
       rankings = new Map();
       rankingsDown = false;
+      arrivals = new Map();
       rateCurves = new Map();
       rateHistories = new Map();
       rateCurveStatus = null;
@@ -1037,6 +1043,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === '/__stub/arrivals' && req.method === 'POST') {
+      // { chainId, owner, answer } stores the route's answer; { chainId, owner, status } a refusal.
+      const next = JSON.parse(await readBody(req));
+      if (!Number.isSafeInteger(next.chainId) || typeof next.owner !== 'string' || (next.answer === undefined && !Number.isSafeInteger(next.status))) {
+        json(res, 400, { error: 'arrivals needs { chainId, owner, answer } or { chainId, owner, status }' });
+        return;
+      }
+      arrivals.set(`${next.chainId}:${next.owner.toLowerCase()}`, next.answer !== undefined ? { answer: next.answer } : { status: next.status });
+      json(res, 200, { ok: true });
+      return;
+    }
+    const arrivalsPath = url.pathname.match(/^\/vaults\/(\d+)\/(0x[0-9a-fA-F]{40})\/unrecognised$/);
+    if (arrivalsPath && req.method === 'GET') {
+      const stored = arrivals.get(`${arrivalsPath[1]}:${arrivalsPath[2].toLowerCase()}`);
+      if (!stored) json(res, 404, { error: 'no-vault' });
+      else if (stored.status !== undefined) json(res, stored.status, { error: 'refused' });
+      else json(res, 200, stored.answer);
       return;
     }
     if (url.pathname === '/__stub/rates' && req.method === 'POST') {
@@ -1272,7 +1297,9 @@ const server = http.createServer(async (req, res) => {
         }
         const now = Math.floor(Date.now() / 1000);
         if ((agent.lastTest.get(w) ?? 0) > now - 60) {
-          json(res, 429, { error: 'rate-limited' });
+          // The agent names this limit apart from `rate-limited` (#3836):
+          // it applies after the request was recorded as used.
+          json(res, 429, { error: 'test-alert-cooldown' });
           return;
         }
         agent.lastTest.set(w, now);

@@ -39,6 +39,7 @@ import type {
   CommitResult,
   LinkedRow as StoreLinkedRow,
   PendingChange as StorePendingChange,
+  RequestOrder,
 } from './telegramState/store';
 
 /** One (wallet, chain) with a chat linked, and the locale its notices use. */
@@ -145,7 +146,14 @@ export async function protectionByRow(
 export interface TelegramStatePort {
   linkedRows(wallet: string, chainId: number | null): Promise<StoreLinkedRow[]>;
   linksOfChat(chatId: string): Promise<{ wallet: string; chainId: number }[]>;
-  commit(wallet: string, chainId: number | null, observed: StoreLinkedRow[], ops: ChannelOp[], now: number): Promise<CommitResult>;
+  commit(
+    wallet: string,
+    chainId: number | null,
+    observed: StoreLinkedRow[],
+    ops: ChannelOp[],
+    now: number,
+    order?: RequestOrder,
+  ): Promise<CommitResult>;
   markNotified(ids: number[], now: number): Promise<void>;
   markNoticeAttempt(ids: number[], now: number): Promise<void>;
   unnotifiedChanges(retryBefore: number, limit: number): Promise<StorePendingChange[]>;

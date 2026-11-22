@@ -4,20 +4,21 @@ import { useAccount } from 'wagmi';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { pageHandoff, PAGES, currentAppHref } from '../../routes/pageMap';
-import { readVpfiToken } from '../../shared/claims/rewards';
+import { usePlatformToken } from '../../shared/consent/holdDiscount';
 import { readPaused } from '../../shared/claims/sellerClaim';
 import { useCopy } from '../../shared/copy/useCopy';
 import type { CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { usePositionBook } from '../../shared/positions/usePositionBook';
 import { readOpenOffers } from '../../shared/positions/reads';
-import { useChainRead } from '../../shared/reads/chainRead';
 import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { SafetyCard } from '../../shared/protection/SafetyCard';
 import { EscapeNotice } from '../../shared/vault/EscapeNotice';
+import { UnrecognisedItems } from '../../shared/vault/UnrecognisedItems';
+import type { UnrecognisedItem } from '../../shared/vault/unrecognised';
 import { balanceLines, readSlotCapital } from '../../shared/vault/balances';
 import { holdingFigures, positionAssets, readVaultHoldings, shownRows, type HoldingRow, type HoldingSource } from '../../shared/vault/holdings';
 import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault';
@@ -77,7 +78,7 @@ export function VaultPage() {
   });
   const slots = useOwnRead(['vault', 'slotCapital', diamond], (c) => readSlotCapital(c, diamond, account), { enabled: chain !== null });
   const lent = (book.loans.data?.rows ?? []).filter((r) => !r.borrowerSide).map((r) => r.loan);
-  const vpfi = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { enabled: chain !== null, immutable: true });
+  const vpfi = usePlatformToken(chain).read;
   const data = holdings.data;
   const meta = useTokenMeta(data ? [...data.rows.map((r) => r.asset), ...data.collections.map((c) => c.asset)] : []).data;
   const frozen = useFrozenState(diamond, served && own ? own.account : null);
@@ -294,6 +295,7 @@ export function VaultPage() {
                 <p className="tier-b">{text('vault.discoveryNote')}</p>
                 <WhyLink summaryKey="vault.whySummary" detailKey="vault.why" />
               </section>
+              {data.vault !== null && <UnrecognisedItems chain={chain} account={account} action={(i) => <RecoverLink item={i} />} />}
             </>
           )}
           {/* Read on its own facts, never behind holdings discovery, so a failed
@@ -381,6 +383,20 @@ function HoldingCard({
         </div>
       )}
     </li>
+  );
+}
+
+/** #3435 — an unrecognised item's way to Recover, which states the
+ *  protocol's figure and both choices; the link names neither. */
+function RecoverLink({ item }: { item: UnrecognisedItem }) {
+  const { text } = useCopy();
+  const page = pageHandoff('/recover');
+  const to: ReturnType<typeof pageHandoff> =
+    page.kind === 'here' ? { kind: 'here', to: `/recover?asset=${item.asset}${item.tokenId === null ? '' : `&id=${item.tokenId.toString()}`}` } : page;
+  return (
+    <p className="tier-b">
+      <HandoffLink to={to} label={text('unrecognised.decide')} />
+    </p>
   );
 }
 

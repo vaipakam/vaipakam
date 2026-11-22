@@ -1,11 +1,10 @@
 import { Link } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
-import { readVpfiToken } from '../claims/rewards';
+import { usePlatformToken } from '../consent/holdDiscount';
 import { readPaused } from '../claims/sellerClaim';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
-import { useChainRead } from '../reads/chainRead';
 import { tokenAmount, useTokenMeta } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
 import { useFrozenState } from '../sanctions/FrozenNotice';
@@ -17,8 +16,6 @@ import { OwnStamp } from '../ui/OwnStamp';
 import { DepositVault, useDepositHeld } from '../vault/DepositVault';
 import { useWithdrawHeld, WithdrawVault } from '../vault/WithdrawVault';
 import { readVpfiBalances, vpfiFigures, withdrawClosed } from './vpfiBalances';
-
-const ZERO = '0x0000000000000000000000000000000000000000';
 
 /** The store keys the Rewards page's VPFI deposit and withdrawal keep their
  *  state under, apart from the Vault page's. */
@@ -43,8 +40,7 @@ export function VpfiVault({ chain, own }: { chain: SupportedChain; own: OwnState
   const { text, format } = useCopy();
   const diamond = chain.diamondAddress;
   const account = own.account;
-  const tokenRead = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { immutable: true });
-  const token = tokenRead.data && tokenRead.data.toLowerCase() !== ZERO ? tokenRead.data : null;
+  const { read: tokenRead, hold, token } = usePlatformToken(chain);
   const balances = useOwnRead(['rewards', 'vpfiBalances', diamond, token], (c) => readVpfiBalances(c, diamond, account, token!), {
     enabled: token !== null,
     perBlock: true,
@@ -63,7 +59,7 @@ export function VpfiVault({ chain, own }: { chain: SupportedChain; own: OwnState
       <WhyLink summaryKey="rewardsVault.lead" detailKey="rewardsVault.why" />
     </>
   );
-  if (tokenRead.data === null && tokenRead.state !== 'failed')
+  if (token === null && hold === 'reading')
     return (
       <section className="home-section" aria-labelledby="rewards-vpfi-title" data-testid="rewards-vpfi">
         {head}
@@ -75,7 +71,7 @@ export function VpfiVault({ chain, own }: { chain: SupportedChain; own: OwnState
       <section className="home-section" aria-labelledby="rewards-vpfi-title" data-testid="rewards-vpfi" data-vpfi="unavailable">
         {head}
         <p className="tier-a" data-testid="rewards-vpfi-unavailable">
-          {tokenRead.data ? text('rewardsVault.unset') : format('rewardsVault.tokenFailed', { reason: tokenRead.error ?? 'no answer' })}
+          {hold === 'none' ? text('rewardsVault.unset') : format('rewardsVault.tokenFailed', { reason: tokenRead.error ?? 'no answer' })}
         </p>
       </section>
     );

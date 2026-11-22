@@ -306,6 +306,8 @@ describe('storage-prefix coverage', () => {
     // remembers it was collapsed, so later visits open it closed.
     'src/pages/Desk.tsx': ['app.deskHowItWorksSeen'],
     'src/data/alerts.ts': ['app.alerts.'],
+    // #3836 — the request a wallet has not answered yet, until it is.
+    'src/data/alertRequest.ts': ['vaipakam.alerts.pendingRequest.'],
     'src/lib/notifSeen.ts': ['app.notif.lastseen.'],
     'src/contracts/useTosNotice.ts': ['app.tosNotice.later.'],
     'src/lib/pendingMarker.ts': [

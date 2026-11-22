@@ -9,7 +9,11 @@
  * from (`@vaipakam/lib/alertsMessage`), so the prompt the wallet shows and
  * the text the service checks cannot differ. A save carries only what it
  * changes; an absent setting keeps its stored value. The service accepts a
- * signed request once, inside a ten-minute window.
+ * signed request once: inside ten minutes for a wallet's own key, inside
+ * seven days for a wallet whose contract approves it (a multi-signature
+ * wallet, whose owners can take days). Each request names a key only the
+ * requesting browser holds (#3836): the signed text carries its hash and
+ * the request carries the key, so only that browser can finish it.
  *
  * The service does not tell the app what it has stored. So the app states
  * what THIS browser has done ({@link KnownAlerts}, kept in `known.ts`) and
@@ -91,12 +95,13 @@ export function pushChannelUrl(channel: Hex): string {
 /** One signed action: one of the three fixed ones, or a settings save. */
 export type AlertAction = 'link' | 'unlink' | 'test-alert' | { save: AlertSettingsChange };
 
-/** The exact message the wallet signs for `action`. */
-export function alertMessage(action: AlertAction, wallet: Hex, chainId: number, issuedAt: number): string {
-  if (action === 'link') return buildTelegramLinkMessage(wallet, chainId, issuedAt);
-  if (action === 'unlink') return buildTelegramUnlinkMessage(wallet, chainId, issuedAt);
-  if (action === 'test-alert') return buildTelegramTestMessage(wallet, chainId, issuedAt);
-  return buildAlertSettingsMessage(wallet, chainId, action.save, issuedAt);
+/** The exact message the wallet signs for `action`; `keyHash` is the hash
+ *  of the request's key (#3836). */
+export function alertMessage(action: AlertAction, wallet: Hex, chainId: number, issuedAt: number, keyHash: string): string {
+  if (action === 'link') return buildTelegramLinkMessage(wallet, chainId, issuedAt, keyHash);
+  if (action === 'unlink') return buildTelegramUnlinkMessage(wallet, chainId, issuedAt, keyHash);
+  if (action === 'test-alert') return buildTelegramTestMessage(wallet, chainId, issuedAt, keyHash);
+  return buildAlertSettingsMessage(wallet, chainId, action.save, issuedAt, keyHash);
 }
 
 /** Where each action is sent, and how. */
@@ -107,16 +112,18 @@ export function alertRoute(action: AlertAction): { method: 'POST' | 'PUT'; path:
   return { method: 'PUT', path: '/thresholds' };
 }
 
-/** The request body for `action`: the signed fields, and for a save the
- *  values the message names (and nothing it does not). */
-export function alertBody(action: AlertAction, wallet: Hex, chainId: number, issuedAt: number, signature: Hex): Record<string, unknown> {
-  const signed = { wallet, chain_id: chainId, issuedAt, signature };
+/** The request body for `action`: the signed fields, the request's key, and
+ *  for a save the values the message names (and nothing it does not). */
+export function alertBody(action: AlertAction, wallet: Hex, chainId: number, issuedAt: number, signature: Hex, requestKey: Hex): Record<string, unknown> {
+  const signed = { wallet, chain_id: chainId, issuedAt, signature, requestKey };
   if (typeof action === 'string') return signed;
-  const { bands, dueDateReminders, pushAlerts } = action.save;
+  const { bands, dueDateReminders, pushAlerts, vaultOutflowAlerts } = action.save;
   return {
     ...signed,
     ...(bands ? { warn_hf: bands.warnHf, alert_hf: bands.alertHf, critical_hf: bands.criticalHf } : {}),
     ...(dueDateReminders !== undefined ? { notify_maturity_approaching: dueDateReminders } : {}),
+    // #3434 — the service reads `null` as "back to the default".
+    ...(vaultOutflowAlerts !== undefined ? { notify_vault_outflow: vaultOutflowAlerts === 'default' ? null : vaultOutflowAlerts === 'on' } : {}),
     ...(pushAlerts ? { push_channel: 'subscribed' } : {}),
   };
 }
@@ -128,6 +135,9 @@ export function alertBody(action: AlertAction, wallet: Hex, chainId: number, iss
 export type AlertProblem =
   /** The signed request was already accepted once: sign again. */
   | 'used'
+  /** A request for the same change, signed later, was already applied
+   *  (#3836): this older one changes nothing. */
+  | 'superseded'
   /** The signature did not prove the wallet, or the request was too old. */
   | 'refused'
   /** The service could not check a smart account's signature right now. */
@@ -215,13 +225,14 @@ export function readAlertAnswer(action: AlertAction, status: number, data: Recor
     return { ok: true, action: 'save', push };
   }
   if (status === 409 && error === 'request-already-used') return { ok: false, problem: 'used', status };
+  if (status === 409 && error === 'request-superseded') return { ok: false, problem: 'superseded', status };
   if (status === 409 && error === 'push-unavailable') return { ok: false, problem: 'push-unavailable', status };
   if (status === 503 && error === 'verification-unavailable') return { ok: false, problem: 'verify-down', status };
-  if (status === 503 && error === 'optout-unavailable') return { ok: false, problem: 'storage-pending', status };
+  if (status === 503 && (error === 'optout-unavailable' || error === 'order-unavailable')) return { ok: false, problem: 'storage-pending', status };
   if (status === 503 && error === 'protection-unknown') return { ok: false, problem: 'protection-unknown', status };
   if (status === 503 && error === 'bot-not-configured') return { ok: false, problem: 'bot-off', status };
   if (status === 404 && error === 'not-linked') return { ok: false, problem: 'not-linked', status };
-  if (status === 429 && error === 'rate-limited' && kind === 'test-alert') return { ok: false, problem: 'cooldown', status };
+  if (status === 429 && error === 'test-alert-cooldown') return { ok: false, problem: 'cooldown', status };
   if (status === 429) return { ok: false, problem: 'busy', status };
   if (status === 502 && error === 'send-failed') return { ok: false, problem: 'send-failed', status };
   if (status === 400 && error === 'chain-not-configured') return { ok: false, problem: 'chain-not-watched', status };

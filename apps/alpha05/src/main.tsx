@@ -15,6 +15,8 @@ import { TxStoreProvider } from './shared/tx/txStore';
 import { App } from './App';
 import { WalletNeeded } from './shared/wallet/WalletNeeded';
 import { startInstall } from './shared/install/install';
+import { confirmFrameOrigin, frameState, type FrameWindow } from './chain/safeOrigins';
+import { FramedRefusal } from './app/FramedRefusal';
 // i18n bootstrap: a side-effect import BEFORE the app renders so the
 // detection chain has resolved and <html lang>/dir are right by first paint.
 import './i18n';
@@ -71,30 +73,50 @@ function ConnectKitThemed({ children }: { children: React.ReactNode }) {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <WagmiProvider config={wagmiConfig}>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            <ConnectKitThemed>
-              <ModeProvider>
-                <CapabilityProvider>
-                  <WorldRailProvider>
-                    <HelpProvider>
-                      <TxStoreProvider>
-                        <BrowserRouter>
-                          <App />
-                        </BrowserRouter>
-                      </TxStoreProvider>
-                    </HelpProvider>
-                  </WorldRailProvider>
-                </CapabilityProvider>
-              </ModeProvider>
-            </ConnectKitThemed>
-          </ThemeProvider>
-        </QueryClientProvider>
-      </WagmiProvider>
-    </ErrorBoundary>
-  </StrictMode>,
-);
+const root = createRoot(document.getElementById('root')!);
+
+function mountApp() {
+  root.render(
+    <StrictMode>
+      <ErrorBoundary>
+        <WagmiProvider config={wagmiConfig}>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider>
+              <ConnectKitThemed>
+                <ModeProvider>
+                  <CapabilityProvider>
+                    <WorldRailProvider>
+                      <HelpProvider>
+                        <TxStoreProvider>
+                          <BrowserRouter>
+                            <App />
+                          </BrowserRouter>
+                        </TxStoreProvider>
+                      </HelpProvider>
+                    </WorldRailProvider>
+                  </CapabilityProvider>
+                </ModeProvider>
+              </ConnectKitThemed>
+            </ThemeProvider>
+          </QueryClientProvider>
+        </WagmiProvider>
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+}
+
+// #3770 — framed by anything but the listed Safe origin: the refusal alone,
+// so no wallet provider or step is ever mounted there. A browser that hides
+// the ancestors keeps the refusal until a listed parent answers the
+// handshake; nothing mounts on a guess.
+const framing = frameState(window as unknown as FrameWindow);
+if (framing === 'top' || framing === 'allowed') {
+  mountApp();
+} else {
+  root.render(
+    <StrictMode>
+      <FramedRefusal />
+    </StrictMode>,
+  );
+  if (framing === 'unconfirmed') void confirmFrameOrigin(window as unknown as FrameWindow, crypto.randomUUID()).then(mountApp);
+}

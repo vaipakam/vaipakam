@@ -77,6 +77,7 @@ import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
 import { handleKeeperSteps } from './keeperSteps';
+import { handleAssetIssuerPowers } from './issuerPowers';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -589,6 +590,16 @@ export default {
     if (url.pathname === '/keeper/steps') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleKeeperSteps(req, earlyRouteEnv(env).DB);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /assets/issuer-powers ──────────────────────────────────
+    // #3433 — what the keeper's issuer-power checker found per token or
+    // collection (what was checked, when, and the evidence). D1 only, like
+    // /assets/rankings beside it.
+    if (url.pathname === '/assets/issuer-powers') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleAssetIssuerPowers(req, earlyRouteEnv(env).DB);
       return new Response('Not found', { status: 404 });
     }
 

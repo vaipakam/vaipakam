@@ -1,6 +1,6 @@
 # A borrowing: one record over a borrower's loans on a pair
 
-**Status:** the owner approved these changes on 2026-11-19, as the "parent position" of the instant market. Card #3808. Design first, no code yet. Reaches a chain by fresh deploy. Section 9 (one close-out for several loans) was reviewed in outline by the security thread on 2026-11-19; its conditions are written in, and it is built last. Section 11 (one borrower token) is a check for the builder, not a decision.
+**Status:** the owner approved these changes on 2026-11-19, as the "parent position" of the instant market. Card #3808. Design first, no code yet. Reaches a chain by fresh deploy. Section 9 (one close-out for several loans) was reviewed in outline by the security thread on 2026-11-19; its conditions are written in, and it is built last. Section 11 (one borrower token) is a check for the builder, not a decision. Eight points the builder of step 1 raised were ruled on 2026-11-20 and are written in where they apply (sections 4, 5, 6, 14 and 16).
 
 **Related:** `InstantMarketDesign.md` (#3656; this replaces its group label and amends its sections 5, 6, 6.1 and 15), `StandingInstructionsDesign.md` (#3681; this moves its reserve and its settings from the loan to the borrowing), `DueDatePlanDesign.md` (#3785), `ExitBeforeLiquidationDesign.md` (#3752), `RateAuctionDesign.md` (whose loans share the same record), `DefaultPathsDesign.md`, `PositionSaleStateGuardDesign.md` (#3710).
 
@@ -40,13 +40,14 @@ So a borrower with eight loans funds eight payment reserves, sets eight plans, a
 
 **Fields.** The owner (a wallet), the lending asset, the collateral asset, the list of its loans, a settings version, and the settings of section 6. The reserves of section 5 are rows keyed by the borrowing and the depositor.
 
-**Its own numbering.** Borrowing ids replace the group ids. The label's two storage fields are replaced by the borrowing record and `borrowingOf[loanId]`. The platform is pre-live and the next deploy is fresh, so nothing is kept beside the new record.
+**Its own numbering.** Borrowing ids replace the group ids. The label's two storage fields are replaced by the borrowing record and `borrowingOf[loanId]`. The platform is pre-live and the next deploy is fresh, so nothing is kept beside the new record. One reader used the label for a second question, whether a loan is an instant-market loan. That question does not move to `borrowingOf`, because a loan that is not an instant-market loan can be in a borrowing: it is answered by the instant mark on the loan's lent record, the one the takeover reads, through a view of its own (ruled 2026-11-20).
 
 **How a borrowing is opened.**
 
 - By `borrowInstant`, for the loans it opens, unless the borrower names an existing borrowing (section 8). The settings the call carries (the renewal limits, the plan for the due date) become the new borrowing's.
 - By a rate auction's settle, for the loans of that auction. The first loan settled opens it and the rest join it.
 - By the first fill of a request that carries renewal limits and is filled by a slot (`InstantMarketDesign.md` 6.1, last paragraph). The limits the request carried become the new borrowing's settings.
+- A request may instead name an existing borrowing its creator owns (`BorrowInPartsDesign.md` 3.1, added 2026-11-20). It then carries no settings of its own and opens no borrowing: each loan it opens joins the one it names.
 - By the holder, for one loan that has none, when they first fund a reserve or set anything of section 6. The funding and setting entries take a borrowing, or a loan that has none, and open the borrowing in the same call.
 
 A loan in no borrowing has no reserve and no settings. Nothing is lost by that: a loan needs neither until its holder wants one.
@@ -61,9 +62,9 @@ A loan in no borrowing has no reserve and no settings. Nothing is lost by that: 
 
 **The list is pruned lazily, and what leaves is dropped whether or not it went anywhere.** A loan that has closed, or whose borrower token has moved, is dropped from the list by the next action on the borrowing, by the next add or gather, or by a prune that anyone may run. It does not wait for the new holder to open a borrowing: another holder's choice must not keep an entry on this list. A loan that is Active or in the liquidation fallback counts as open. No close-out path touches the list (rule 6).
 
-**A cap on the list, not only on the loans that count.** A governed setting. Its value is set from a measurement (section 16, item 1): the largest count at which a run over the whole borrowing fits comfortably in one transaction. Opening, adding and gathering each prune first and then check the cap against the stored list, and refuse before anything moves if it would pass. Nothing else adds an entry, so the stored list never holds more than the cap, and every walk, which reads the stored list and drops what it finds closed or moved, is bounded by the cap whatever other holders do.
+**A cap on the list, not only on the loans that count.** A governed setting, 8 to start, bounded 1 to 16 (ruled 2026-11-20). Its value is set from a measurement (section 16, item 1): the largest count at which a run over the whole borrowing fits comfortably in one transaction. Lowering it refuses new entries and never cuts a list, so a walk is bounded by the upper bound whatever the setting has been. The measurement must therefore show that a walk of 16 fits one transaction on the network with the smallest limit, or the upper bound is lowered before the deploy. Opening, adding and gathering each prune first and then check the cap against the stored list, and refuse before anything moves if it would pass. Nothing else adds an entry, so the stored list never holds more than the cap, and every walk, which reads the stored list and drops what it finds closed or moved, is bounded by the cap whatever other holders do.
 
-**Protected accounts.** A lock or a replacement freezes the borrowing's reserve and settings with the rest of the account. What a replacement does with the record is an open item (section 16).
+**Protected accounts.** A lock or a replacement freezes the borrowing's reserve and settings with the rest of the account. **The record stays with the account** (ruled 2026-11-20). A replacement moves no token by itself: it retires the account, holds its position tokens where they are and names a controller as the account's manager. So the borrowing stays keyed by the account, as every per-user record is, and the rules the per-loan records follow today carry over by borrowing: every step skips a locked or retired account with that reason, only the account's manager writes settings or withdraws (a withdrawal waits the account's delay and is paid to the controller), and a recovered account's unused reserve may be returned to its own vault by anyone. A borrower token that is moved later leaves under the rule above, and its new holder opens a borrowing. The alternative, moving the record to the controller's wallet, was not chosen: the loans and the vault stay with the account, so the record would name a wallet that holds neither.
 
 ## 5. One reserve per borrowing
 
@@ -85,10 +86,10 @@ This reverses the settlement of 2026-11-15 ("renewal uses the one per-loan reser
   1. Only for the earliest-due loan of the borrowing that is inside its window and still needs a charge, ties to the lower loan id.
   2. Only from what is left of the reserve after setting aside everything the payment step could pay now, across every loan that counts as in the borrowing: whole repayments inside their window and interest due now.
 
-  What the reserve does not give comes from the owner's other free balance in that asset, as an extension's charge already can. If the two together do not cover the charge, the renewal does not run and the loan keeps its due date. The set-aside is computed by the payment step's own sizing read, never a copy of it, in one walk of the borrowing bounded by the cap. The fence is on the payment reserve only; the collateral reserve and the top-up are untouched. Because the amount is set aside and not merely checked, no one has to run the payment step first, and a renewal the reserve can afford is never held back.
+  What the reserve does not give comes from the owner's other free balance in that asset, as an extension's charge already can. If the two together do not cover the charge, the renewal does not run and the loan keeps its due date. The set-aside is computed by the payment step's own sizing read, never a copy of it, in one walk of the borrowing bounded by the cap. The fence is on the payment reserve only; the collateral reserve and the top-up are untouched. Because the amount is set aside and not merely checked, no one has to run the payment step first, and a renewal the reserve can afford is never held back. The fence is built with the shared reserve, in step 1 of section 18 (ruled 2026-11-20): it applies to the extension entry as it stands, and the continuation entry inherits it. The shared reserve is never built without it.
 - **What that fence costs.** A loan whose own lender gives no renewal and that no other lender takes stays the earliest-due loan in its window until it is repaid or its grace ends. While it does, a later-due loan of the same borrowing renews from the owner's free balance or not at all. The card for a borrowing says so, and the owner's remedies are to keep free balance in the asset or to move a loan to a borrowing of its own.
 
-**The exit before liquidation** (`ExitBeforeLiquidationDesign.md`) takes a borrowing the same way and sells loan by loan, lowest health factor first. A joint sale waits for section 9.
+**The exit before liquidation** (`ExitBeforeLiquidationDesign.md`) reads its settings from the borrowing, and its executors keep naming one loan (ruled 2026-11-20, replacing "takes a borrowing and sells loan by loan, lowest health factor first"). Rule 4 binds where the shared reserve is spent. A run spends only the named loan's own collateral, through a route its caller brings for that loan, so no loan's outcome depends on which loan is run first, and a walk with one route per loan would add about 20 KB of facet code by the builder's estimate and nothing for the holder. Lowest health factor first is the keeper's order. One condition: the exit's skip "a top-up should act first" asks the top-up step, through that step's own sizing read, what its walk would add to this loan now from the shared collateral reserve, and skips only if that lifts the loan to the level. It keeps no copy of that sizing. The repayment from collateral at the due date (`DueDatePlanDesign.md` 4.5, 4.6) names one loan the same way, and its yield to a repayment the reserve could make now asks the payment step's own sizing for that loan. A joint sale waits for section 9.
 
 ## 6. One set of settings per borrowing
 
@@ -102,7 +103,7 @@ Stored once per borrowing, written by the borrowing's owner or that owner's prot
 | Repay from my collateral at the due date, with its tolerance and time | per loan | per borrowing |
 | Sell and repay before liquidation, with its level, target and tolerance | per loan | per borrowing |
 
-What stays per loan: everything on the lender's side (a slot's consents, a lender's extension limits), and each loan's own run state, such as the time of its last top-up.
+What stays per loan: everything on the lender's side (a slot's consents, a lender's extension limits), and each loan's own run state, such as the time of its last top-up. **The limits on a refinance request stay per loan too** (ruled 2026-11-20): a request names one loan, the loan it opens is a new record outside the borrowing until it is gathered, and `DueDatePlanDesign.md` 4.6 keeps those limits a separate setting. The per-user defaults for them are unchanged and are still copied to a new loan. Nothing per-user feeds a borrowing's settings except inside the owner's own call that opens the borrowing, where the owner sees them. A third party's fill or settle never reads a per-user default.
 
 - **The settings version** rises by one on every change. An add (section 8) states the version it read.
 - **Stopping.** The borrower's "Stop renewals" clears the borrowing's limits and so stops every loan of it. A borrower who wants one loan to end repays that loan, which interest by time allows at any moment, or moves it to a borrowing of its own.
@@ -132,6 +133,8 @@ The holder's own actions may name loans, because the holder may choose. A step t
 - **The cap** is checked first, against the stored list after a prune (section 4).
 - Each new loan is an ordinary new loan: its own term from its own opening, its own collateral, its own fee. Fees stay as decided on 2026-11-17 for every loan, with no fee by kind or by route.
 - **"Borrowed X of Y"** is an app figure. Y is what the borrower said they wanted; the contracts hold no target and promise none.
+
+**A request may name the borrowing too** (added 2026-11-20, `BorrowInPartsDesign.md` 3.1). Each fill of such a request is an add, by these same rules, checked when the request is posted and again at each fill: the settings version the request recorded, the borrowing's limit against the request's stated rate, and the cap after a prune, counted at posting against the most loans the request can open. A fill that fails one is refused with its reason and the request stays open. This is how an instant borrow leaves what did not fit in one transaction as a request whose loans land in the same borrowing.
 
 A rate auction's loans must fit the cap. That is an item for its builder (section 16).
 
@@ -219,17 +222,17 @@ Decided by the owner on 2026-11-19 with these changes:
 
 | Where | Change |
 | --- | --- |
-| Storage | The borrowing record (with each loan's borrower token and transfer count at the add), `borrowingOf[loanId]`, the governed cap. The group label's two fields go. Reserve rows, instruction records, borrower renewal limits, the due-date plan and the exit level are keyed by borrowing. Run the storage-layout guard's `write`. |
+| Storage | The borrowing record (with each loan's borrower token and transfer count at the add), `borrowingOf[loanId]`, the governed cap. The group label's two fields and its view go; a view of the loan's instant mark replaces the label's second use (section 4). Reserve rows, instruction records, borrower renewal limits, the due-date plan and the exit level are keyed by borrowing. Run the storage-layout guard's `write`. |
 | Reserve library | Lien and release by borrowing and depositor. One writer, as now. |
 | Standing instructions facet | Fund, withdraw, set and clear by borrowing (opening one for a loan that has none). The top-up executor takes a borrowing and walks it. The interest and due-repayment executors become one payment step with one walk (section 5). Views by borrowing. Split along a seam if it nears the size limit. |
 | New facet for borrowings | Open, gather, separate, prune, the views (a borrowing's loans, totals and settings version), and the actions of section 7. |
 | Instant borrow | Takes an optional borrowing and the settings version; opens a borrowing otherwise. |
 | Rate auction settle | Opens or joins a borrowing in place of stamping the label. |
 | Renewal and continuation entry | Reads the limits from the borrowing; applies the ceiling of section 10; draws its charge from the borrowing's reserve. |
-| Exit before liquidation | Level and tolerance by borrowing; the executor walks the borrowing. |
+| Exit before liquidation | Level, target, tolerance and the fast-market switch by borrowing. The executors keep naming one loan; the top-up-first skip asks the top-up step's sizing read (section 5). |
 | Joint close-out | A new entry beside the single liquidation, on its own facet (the risk and forced-sale facets have no room): one quote per loan, one sale, the two floor checks, per-loan opening and settling by self-call, and a whole-call revert in place of the fallback (section 9). Built last. |
 | Permissionless-steps ledger | Rows for the top-up step, the one payment step and the prune, replacing the per-loan rows. |
-| Keeper | The standing-instruction pass and the exit pass read borrowings; the pass's interest and repayment steps become one step with one arming flag. The renewal pass applies the ceiling: own lender first, then the cheapest lender under the ceiling. |
+| Keeper | The standing-instruction pass and the exit pass read borrowings, and the exit pass runs loan by loan, lowest health factor first, as its own order; the pass's interest and repayment steps become one step with one arming flag. The renewal pass applies the ceiling: own lender first, then the cheapest lender under the ceiling. |
 | Indexer | Borrowing opened, loan added, loan removed, settings set, reserve funded and withdrawn, action run. A borrowing table; a loan's row names its borrowing. |
 | App | One line per borrowing with its loans beneath; one "Reserve and instructions" panel and one "At the due date" card per borrowing; the add flow; the source list of section 12; the statements of sections 6, 8 and 10. |
 
@@ -246,17 +249,18 @@ Decided by the owner on 2026-11-19 with these changes:
 9. A fixed loan that continues as floating stays in its borrowing and reads the highest margin from then on.
 10. Gather and separate: only the holder; the loan uses the new borrowing's reserve and settings from that moment; no fund moves; a gather is refused where the destination carries a setting the loan cannot; on a protected account a gather into a borrowing with a live collateral-sale instruction, a higher highest rate or a floating rate waits the delay, the loan keeps its old settings meanwhile, no instruction of the destination runs on it before the delay ends, and a gather that only lessens is immediate.
 11. The renewal fence: with two loans in their renewal windows, only the earlier-due loan's renewal draws on the reserve, whichever is called first, and the other uses free balance or does not run; with a reserve of 100, a repayment of 100 inside its window on one loan and a renewal charge on another, the renewal takes nothing from the reserve in either order of calls, and the same with interest due now in place of the repayment; with a reserve that covers both, both complete in either order; a charge may be met partly from what is left of the reserve and partly from free balance.
-12. Joint close-out: one quote per loan, each refused outside its own range; the least output is the sum of the loans' own floors; a share under its loan's own floor reverts the call; a named loan that is not liquidatable reverts the call; a failed sale reverts and no loan enters the fallback; each per-loan guard fires as in a single liquidation; the bookings equal those of single liquidations at the same price.
+12. The exit before liquidation on a borrowing: a run names one loan and spends only that loan's collateral; with the top-up instruction on and a collateral reserve that the walk would give to a lower-health loan first, the exit of the other loan is not skipped, and where the walk would lift the named loan to the level the exit is skipped; a locked or retired account's steps all skip with that reason, and its manager may still withdraw the unused reserve.
+13. Joint close-out: one quote per loan, each refused outside its own range; the least output is the sum of the loans' own floors; a share under its loan's own floor reverts the call; a named loan that is not liquidatable reverts the call; a failed sale reverts and no loan enters the fallback; each per-loan guard fires as in a single liquidation; the bookings equal those of single liquidations at the same price.
 
 ## 16. Open items for the builder to raise, not decide silently
 
 1. **The gas of an eight-loan instant borrow, a repay-all, and a whole-borrowing top-up and payment run**, measured. The cap per borrowing and the per-transaction limit of section 7 are set from it.
 2. **The renewal entry's draw order** (section 5). Settled by the security review on 2026-11-19: the two limits written there. The builder confirms the walk fits the entry's size and gas, and that the set-aside calls the payment step's own sizing read.
-3. **A refinance's replacement loan:** added to the borrowing inside the refinance, or by the holder afterwards with the app prompting. The refinance facet is near the size limit, so the second is the default unless the first is cheap.
-4. **A protected account's replacement:** whether the borrowing record moves to the replacement owner with the tokens, or is opened again there.
+3. **A refinance's replacement loan:** added to the borrowing inside the refinance, or by the holder afterwards with the app prompting. The refinance facet is near the size limit, so the second is the default unless the first is cheap. Ruled 2026-11-20: the second. The holder gathers the new loan afterwards, under the gather's checks; until then it has no reserve and no settings, and the refinance review and the new loan's page say so.
+4. **A protected account's replacement:** whether the borrowing record moves to the replacement owner with the tokens, or is opened again there. Ruled 2026-11-20: neither, the record stays with the account (section 4).
 5. **The rate auction's bound** on the number of loans against the cap of section 4, for the auction's builder.
 6. **The one borrower token** (section 11): the report on the three cases.
-7. **Whether every ERC-20 loan should be given a borrowing at origination** rather than at first use. It would remove the "loan in no borrowing" case at the cost of a write on every origination, in facets already near the size limit. This design opens borrowings at first use.
+7. **Whether every ERC-20 loan should be given a borrowing at origination** rather than at first use. It would remove the "loan in no borrowing" case at the cost of a write on every origination, in facets already near the size limit. This design opens borrowings at first use. Ruled 2026-11-20: at first use. An ordinary accept or match writes nothing. The calls section 4 lists still write in the call.
 
 ## 17. Alternatives considered
 
@@ -274,7 +278,7 @@ Decided by the owner on 2026-11-19 with these changes:
 
 Build it, behind the instant market's master switch, in this order:
 
-1. The borrowing record, the reserve and the settings keyed by borrowing, with the borrowing-keyed executors. Everything after depends on it.
+1. The borrowing record, the reserve and the settings keyed by borrowing, with the borrowing-keyed executors, the renewal fence of section 5, and gather, separate and prune. Everything after depends on it.
 2. The actions of section 7 and the add of section 8, with the gas measurement that sets the cap.
 3. The rising ceiling, with the continuation step it bounds (#3763) and the renewal pass.
 4. The app's borrowing view, panels and source list; the indexer's borrowing table.

@@ -95,10 +95,13 @@ export interface StoredCheck {
   checkerVersion: string;
 }
 
+/** Why the pass declines before the store's migration. */
+export const STORE_MISSING_REASON = 'the issuer powers tables do not exist yet (shared migration 0117 is not applied)';
+
 /** A store table that does not exist yet (the migration is not applied). */
 export class StoreMissing extends Error {
   constructor() {
-    super('the issuer powers tables do not exist yet (shared migration 0117 is not applied)');
+    super(STORE_MISSING_REASON);
     this.name = 'StoreMissing';
   }
 }
@@ -437,7 +440,7 @@ export async function runIssuerPowers(env: Env, tick: PassTick): Promise<void> {
         noteScan(chain.id, Date.now(), report);
         console.log(describeChainReport(report));
       } catch (err) {
-        if (err instanceof StoreMissing) console.log(`[keeper] issuerPowers chain=${chain.id} declined: ${err.message}`);
+        if (err instanceof StoreMissing) console.log(`[keeper] issuerPowers chain=${chain.id} declined: ${STORE_MISSING_REASON}`);
         else console.error(`[keeper] issuerPowers chain=${chain.id} failed: ${shortErr(err)}`);
       }
     }),

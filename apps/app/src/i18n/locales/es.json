@@ -396,7 +396,22 @@
       "paidAgreed": "Guardado: has aceptado pagar hasta {{fee}} VPFI por lado del préstamo en {{chain}}.",
       "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}.",
       "signatureCheckUnavailable": "No se guardó tu configuración: el servicio de alertas no pudo comprobar tu firma en este momento. Inténtalo de nuevo en un momento.",
-      "requestAlreadyUsed": "No se guardó tu configuración: esa firma ya se usó. Guarda de nuevo para firmar una nueva solicitud."
+      "requestAlreadyUsed": "No se guardó tu configuración: esa firma ya se usó. Guarda de nuevo para firmar una nueva solicitud.",
+      "requestUsedAgain": "No se cambió nada: esa solicitud firmada ya se usó. Empieza de nuevo para firmar una nueva.",
+      "requestSuperseded": "No se cambió nada: ya se aplicó una solicitud para este cambio firmada más tarde. Empieza de nuevo si aún quieres esta.",
+      "requestCheckUnavailable": "Aún no se cambió nada: el servicio de alertas no pudo comprobar la firma ahora mismo. Vuelve a terminar la solicitud dentro de un rato.",
+      "serviceUpgrading": "No se guardó nada: el servicio de alertas se está actualizando. Inténtalo de nuevo dentro de un rato.",
+      "multisigNote": "Cada solicitud indica una clave que solo tiene este navegador, así que solo este navegador puede terminarla. Una billetera que necesita la aprobación de varios propietarios tiene hasta {{days}} días; después la solicitud caduca y empiezas de nuevo.",
+      "pendingTitle": "Una solicitud espera a tu billetera",
+      "pendingBody": "{{action}}: iniciada en este navegador el {{started}}. Solo este navegador puede terminarla, hasta el {{expires}}. Al terminarla se pide a tu billetera la misma aprobación otra vez y luego se envía.",
+      "pendingFinish": "Terminarla",
+      "pendingDiscard": "Descartarla",
+      "pendingKindLink": "Vincular Telegram",
+      "pendingKindUnlink": "Desvincular Telegram",
+      "pendingKindTest": "Enviar una alerta de prueba",
+      "pendingKindSave": "Guardar la configuración de alertas",
+      "awaitingOwners": "Esperando a que los demás propietarios de esta billetera aprueben la solicitud. Puedes dejar esta página abierta, o cerrarla y terminar la solicitud aquí más tarde.",
+      "walletMovedWhileAwaiting": "No se envió nada: la billetera conectada o la red cambió mientras se esperaba la aprobación. La solicitud se conserva; vuelve a conectar la misma billetera en la misma red para terminarla."
     },
     "notifications": {
       "bellLabel": "Notificaciones",
@@ -4075,9 +4090,6 @@
       "latestEndHint": "Contado hasta el final de ese día: {{at}}.",
       "extensionFee": "Una extensión hasta esa fecha añade {{fee}} a tu comisión de apertura del préstamo, por el plazo adicional, tomada de tu vault. Es lo máximo que permiten tus límites; si la comisión sube por encima, la extensión no se realiza hasta que guardes nuevos límites.",
       "extensionFeeNone": "Una extensión hasta esa fecha no añade comisión de apertura: el plazo ya está pagado.",
-      "extensionFeeUnknown": "No se pudo leer la comisión de apertura añadida para esa fecha, así que aún no se pueden guardar los límites.",
-      "extensionFee": "Una extensión hasta esa fecha añade {{fee}} a tu comisión de apertura del préstamo, por el plazo adicional, tomada de tu vault. Es lo máximo que permiten tus límites; si la comisión sube por encima, la extensión no se realiza hasta que guardes nuevos límites.",
-      "extensionFeeNone": "Una extensión hasta esa fecha no añade comisión de apertura: el plazo ya está pagado.",
       "extensionFeeUnknown": "No se pudo leer la comisión de apertura adicional para esa fecha, así que aún no se pueden guardar los límites.",
       "save": "Guardar límites",
       "turnOff": "Desactivar",
@@ -4352,6 +4364,8 @@
     "OfferTermsTooFresh": "Esta oferta se publicó o cambió hace unos segundos, y una oferta solo puede aceptarse cuando sus términos llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
     "IntentTermsTooFresh": "Esta oferta permanente se fijó o cambió hace unos segundos, y solo puede aceptarse cuando sus términos llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
     "SaleNetBelowReviewed": "Esta venta ahora te pagaría menos que el mínimo que revisaste (quizá se devolvió parte del préstamo). No se vendió nada. Revisa la venta de nuevo para ver la cifra actual.",
-    "SaleHeldAboveReviewed": "Desde que revisaste la venta se ha reservado más para el prestamista en este préstamo. No se vendió nada. Revisa la venta de nuevo para ver las cifras actuales."
+    "SaleHeldAboveReviewed": "Desde que revisaste la venta se ha reservado más para el prestamista en este préstamo. No se vendió nada. Revisa la venta de nuevo para ver las cifras actuales.",
+    "InstantSourceRepeated": "Este préstamo nombra la misma fuente más de una vez. Cada fuente solo puede cubrir una vez, así que no se envió nada. Revise el préstamo y vuelva a enviarlo.",
+    "IntentCapitalInsufficient": "El Auto-lend que asume este préstamo no tiene suficientes fondos sin prestar para pagar su principal. No se envió nada."
   }
 }

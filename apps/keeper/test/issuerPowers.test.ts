@@ -19,17 +19,6 @@ import {
   type ChainReport,
 } from '../src/issuerPowers';
 
-// Shared migration 0117's two tables (#3877). IF NOT EXISTS, so this is a
-// no-op once the migration is in the harness's shared schema.
-const STORE_DDL = `
-CREATE TABLE IF NOT EXISTS asset_issuer_check (
-  chain_id INTEGER NOT NULL, address TEXT NOT NULL, kind TEXT NOT NULL, checked_at INTEGER NOT NULL,
-  block_number INTEGER NOT NULL, checker_version TEXT NOT NULL, complete INTEGER NOT NULL, detail TEXT,
-  PRIMARY KEY (chain_id, address));
-CREATE TABLE IF NOT EXISTS asset_issuer_finding (
-  chain_id INTEGER NOT NULL, address TEXT NOT NULL, check_id TEXT NOT NULL, result TEXT NOT NULL,
-  evidence TEXT, checked_at INTEGER NOT NULL, PRIMARY KEY (chain_id, address, check_id));`;
-
 const CHAIN = 84532;
 const T0 = 1_800_000_000;
 const a = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
@@ -49,9 +38,10 @@ function seed(h: SqliteD1, table: string, row: Record<string, unknown>): void {
   h.db.prepare(`INSERT INTO ${table} (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`).run(...(Object.values(full) as never[]));
 }
 
+/** The shared schema, with or without migration 0117's two tables. */
 function store(withTables = true): SqliteD1 {
   const h = createSharedD1();
-  if (withTables) h.db.exec(STORE_DDL);
+  if (!withTables) h.db.exec('DROP TABLE asset_issuer_finding; DROP TABLE asset_issuer_check;');
   return h;
 }
 

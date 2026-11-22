@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. §3.7 was refreshed on 2026-11-19 for Stage B3, which is not built yet, and its one user-facing question (sign, then send) is with the owner. This builds on [#3204's central vault code
+settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. §3.7 was refreshed on 2026-11-19 for Stage B3, which is not built yet. Its one user-facing question was decided by the owner on 2026-11-20: sign, then send. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
 ## 1. The problem, measured
@@ -238,7 +238,9 @@ another lender, a takeover, a keeper run. The payout rule (2026-11-19,
 offer owes a party lands in that party's vault. That makes the end state of §8 Q5 reachable, where every release is
 checked by the vaults. This section restates the vault's own records and its own checks for the platform as it now is.
 The decisions of §2 and of §8 Q1, Q5 and Q6 stand. Stages A, B1 and B2 are built (the build notes after §8); this is
-the design for Stage B3, which is not built yet.
+the design for Stage B3, which is not built yet. The builder scouted the code against this section on 2026-11-20, and
+the rulings that followed are written in: the computed ceiling and one lien per loan (§3.7.2 item 3), the one class of
+fee a vault pays the Diamond (§3.7.4), and the answered open items at the end of this section.
 
 **What the vault promises after B3.** Nothing leaves a vault unless its owner committed it. What was committed leaves
 only to a party the vault can establish itself, within an amount the vault can bound itself. The vault does not compute
@@ -324,10 +326,54 @@ beyond the bounds its owner signed. The same statement has to carry what those b
 
    Lowering or cancelling a commitment is the owner's own call and takes effect at once for what is not yet drawn.
 3. **Liens**, one per position side this vault backs: the `ref`, the asset, token id and amount, this side's position
-   token, the other side's position token and the class budgets. A collateral lien also records four figures from the
-   terms its owner signed: the principal still owed, the loan-to-value limit it opened under, **the most the loan can
-   ever owe** (the principal plus the most interest and fees those terms allow, called the ceiling below), and **the
-   earliest time the collateral may be taken for a missed due date**. The principal still owed falls only by the
+   token, the other side's position token and the class budgets. A collateral lien also records, from the terms its
+   owner signed: the principal still owed, the loan-to-value limit it opened under, what the vault needs to work out
+   **the most the loan can owe at a given moment** (called the ceiling below, and defined in the next paragraph), and
+   **the earliest time the collateral may be taken for a missed due date**.
+
+   **The ceiling is computed at the moment of each step. It is not a number fixed at signing** (ruled 2026-11-20).
+   Interest accrues per second for as long as a loan is open, with no stop at the due date or at the end of grace, so
+   no figure fixed at signing can bound a loan whose default is run late or after a pause. A fixed figure would then
+   refuse a step the Diamond's rules allow and short the lender, which this section forbids. The lien therefore
+   records the loan's **highest rate**, the late-fee cap and the fees the signed terms allow, the time it opened, the
+   signed term, and whether the terms carry a full-term interest minimum.
+   The ceiling at a moment is the principal still owed, plus interest at the highest rate over the real time elapsed,
+   plus the late-fee cap, plus those fees. It is kept across part repayments by a running interest bound that
+   is stamped whenever the principal still owed changes. Interest this lien has itself paid may be subtracted,
+   counted once, and nothing else. It reads only block time, so a pause, a sequencer outage and a late default need
+   no special case.
+
+   **A loan with a full-term interest minimum owes that minimum before real time reaches it.** Where the signed terms
+   carry one, a settlement before the term's end charges interest over the longer of the time elapsed and the rest of
+   the term, and the rest of the term is measured to an end that a pause before that point has moved later. The vault
+   cannot see pause time, so for such a loan the interest of the current segment is bounded over the longer of the
+   real time elapsed since its stamp and **the whole signed term**. The whole term is never less than the minimum the
+   Diamond charges, because a pause can move the end by no more than the time that has passed. This bound is looser
+   than the debt after a part repayment made late in the term, by at most one term's interest on what is still owed,
+   and that slack is part of the difference between the debt and the ceiling that §3.7.8 states.
+
+   **The highest rate is one signed field for every kind of loan:** a fixed loan's rate, or a floating
+   loan's highest possible rate (its cap level plus the margin, or with no cap its series' own ceiling plus the
+   margin, [FloatingRateLoansDesign.md](FloatingRateLoansDesign.md) section 6). **The signed field is an upper
+   bound, not the loan's own figure.** A standing offer is signed before its counterparty is known: a borrower's
+   offer states the most it pays, and a match opens the loan at the midpoint with the lender's least, which can be
+   lower. So the Diamond refuses an opening when the loan's highest possible rate, as the one floating-rate library
+   returns it for the loan that opens, is above the signed field, and admits one at or below it. The lien records the
+   signed field, because that is the figure the vault can establish itself, and the vault reads nothing else. Where
+   the loan opens below the signed bound, the ceiling is looser than the debt by that difference in rate, and this
+   too is part of the slack §3.7.8 states. On a direct accept in the owner's own call the two are equal.
+
+   What the owner reads at signing is the highest rate, the late-fee cap and the date, with the amount at the due
+   date plus grace shown as an illustration and named as one, because interest runs until a loan is closed.
+
+   **A borrowing holds no lien** (ruled 2026-11-20). Each loan in a borrowing
+   ([BorrowingDesign.md](BorrowingDesign.md)) has its own collateral lien with its own principal still owed, highest
+   rate, date and ceiling. The borrowing's two reserves are reserve commitments keyed by the borrowing, and a draw
+   from its collateral reserve is a top-up into one named loan's lien. One lien for a whole borrowing would be the
+   shared collateral holding the owner rejected on 2026-11-19 and again on 2026-11-20: one lender's liquidation could
+   reach collateral that stands behind another lender's loan.
+
+   The principal still owed falls only by the
    principal part of a repayment (items 4 and 5), read in the transaction that made it and counted once. No other
    payment lowers it: not an opening, and not the purchase of the lender's side. A lien opens in exactly
    two ways: under the owner's own authorization in that transaction (a post, an accept), or as a draw on a mandate, a
@@ -443,7 +489,7 @@ This table restates layer 2 of §3.3 for Stage B3. Where the two differ, this on
 | An integrator's or a referred user's share | The budget set from the opening fee when the lien was recorded, to a genuine vault. |
 | A seller's claim (#1209) | Only the seller the signed sale terms record, up to that claim. |
 | Lending for one transaction (#3748) | The mandate's consent, the part not lent, and the balance check at the end of the call. |
-| The full tariff in the platform token | A fee authorization. It is the one payment a vault still makes to the Diamond, which holds the recycled amount by design. |
+| A fee in the platform token paid into the Diamond's recycle custody: the full tariff, a perk bought, the notification fee | The one class of payment a vault still makes to the Diamond, which holds the recycled amount by design (ruled 2026-11-20). The vault checks three things itself: the asset is the platform token, the destination is the Diamond address fixed in the vault code, and the amount is inside an authorization its owner gave (the owner's own call for a perk, a fee authorization for the tariff and the notification fee). The notification fee's most-per-loan-side consent is that fee authorization, held by the vault and nowhere else. No other asset and no other purpose reaches the Diamond. |
 | A side's custody moved to its new holder's vault | Only to the vault of whoever holds this side's position token now, and it stays under a lien there. |
 | A grant to a marketplace conduit, a listing escrow, recovery | As built in stages A to B2. |
 
@@ -529,6 +575,14 @@ only to a loan whose borrower-side token is held by whoever holds the old loan's
 - **When a payment is delivered and when it is held.** A faulty Diamond could hold a payment that could have been
   delivered, or leave an amount held. It cannot send the amount anywhere but to the position's holder, so the loss is
   delay.
+- **A signature given to a fake site (added 2026-11-20).** After B3 a wallet approves the one shared permit contract
+  once for a token and then signs for each action. A fake site can ask for a signature that names a spender of its own,
+  and no vault check sees it, because those tokens never reach a vault. Any platform that uses signed permits has this
+  limit. B3 makes signing the ordinary step here, so the habit is what an attacker leans on. Three app rules bound it:
+  the app asks for a signature only as the step directly before its own send, never on connect or on page load; the
+  sign screen names the user's own vault, with its address, as the only party that may take the tokens; and the app
+  offers an approval for the exact amount beside the standing one. A user who signs somewhere else is protected by none
+  of these, and the threat model lists that as a residual.
 - A bad price through a legitimate route stays covered by the price guard's own rules (§7).
 
 #### 3.7.9 The owner record and protected mode
@@ -619,7 +673,23 @@ reaches a chain by fresh deploy, as every stage has.
   An internal-match leg is held to the same floor on both loans.
 - With the Diamond's checks stubbed out, the lender side of a loan never receives more than the ceiling from its
   collateral, and collateral with no price cannot be taken before the lien's date. Across the lifecycle suites the
-  ceiling is never below what the loan owes, and the date is never after the time the Diamond allows a default.
+  ceiling is never below what the loan owes at any moment, including after a long pause and for a default run months
+  late, and the date is never after the time the Diamond allows a default.
+- For a loan with a full-term interest minimum, the ceiling is never below what an early settlement charges: at
+  opening, after a part repayment, and after a pause that moved the term's end.
+- A backstop buyout hands over no more than the lender side's slice, only against the backstop vault's payment in
+  the same call, and replaces no position token. It passes when the collateral's price has risen since fallback
+  entry, and when a part match at a fallen price has left the due below the principal the lien records. The slice
+  never reaches any address but the backstop vault.
+- An opening is refused when the loan's highest possible rate, by the floating-rate library, is above the highest
+  rate its borrower signed, and admitted when it is at or below it: a match at the midpoint of two margins opens
+  under a borrower's standing offer with no fresh signature.
+- In a borrowing of several loans, a liquidation of one loan can take nothing from another loan's lien, and a draw
+  from the borrowing's collateral reserve raises exactly one named loan's lien.
+- A fee to the Diamond is refused in any asset but the platform token, to any address but the one fixed in the vault
+  code, and above the owner's authorization.
+- The vault code, the protected-mode code and each code contract the vault delegates to are each within the
+  24,576-byte limit, checked by a test of their own.
 - A non-party is paid no more than its class budget. A liquidator is paid only against the proof of the repayment it
   made, and no more collateral than that repayment is worth at the widest discount.
 - An order whose price leg pays anyone but this vault, or whose price is below the committed lowest price or the
@@ -633,46 +703,122 @@ reaches a chain by fresh deploy, as every stage has.
 - The vault's free figure plus what it holds under liens never exceeds its token balance after every step of the
   lifecycle suites, and the Diamond holds no second figure.
 
-#### Open items for the builder to raise, not decide silently
+#### The open items, as the builder's scout answered them (2026-11-20)
 
-- The mapping of each held-amount family in `LibEncumbrance` (lender proceeds, seller interest, held for lender,
-  borrower proceeds, the parked refinance leg, the fallback custody row) to a lien kind, to an amount held for a
-  position (§3.7.2 item 5), or to nothing under the payout rule. The claim-custody class of §3.3 is one of them.
-- The Diamond's own balance figures (the tracked ledger, the depository holding): which retire and which become reads
-  of the vault. The fee-discount record keeps its day history and reads the live figure.
-- Each payment that passes through the Diamond today, with the direct form that replaces it. Any that cannot be made
-  direct is raised with its reason, never bounded silently.
-- Which vault makes the pull for a payer that is no party to the loan (a liquidator, a buyer). Designed: its own.
-- The vault's outer slippage figure: the setting's ceiling (25% today) or a tighter figure fixed in code. The
-  internal-match leg is confirmed against it on both loans.
-- How the ceiling and the date are computed from the signed terms, so that neither can ever refuse a legitimate step:
-  the highest rate over the whole term and its grace, the late-fee ceiling, time added by a pause, a renewal or a
-  continuation under a plan, a floating rate with no cap, and a loan that ends by notice (#3813), whose date comes
-  from the notice the lender side's vault recorded.
-- The gas of a lien change that moves no tokens, of the receipt call, and of the price read on a fill.
-- The class budgets (§8 Q4), read from the configuration bounds.
-- Where the lien code lives: the vault code was measured at about 16.8 KB of the 24,576-byte limit on 2026-11-15, and
-  protected mode already runs as fixed code the vault delegates to. The lien code likely needs the same form.
-- Whether a borrowing's shared collateral record ([BorrowingDesign.md](BorrowingDesign.md)) is one lien or one per
-  loan.
-- The NFT rental mapped onto these records: the renter's right, the prepayment and its buffer, the daily deduction and
-  the close-out. A rental's prepayment carries no lien today.
-- Which NFT deliveries the vault's receive hooks still accept once the Diamond no longer moves an NFT as a wallet's
-  operator.
-- The backstop's buyout mapped onto a purchase: the backstop vault as a payer a receipt accepts, at the address fixed
-  in the vault code.
-- How a buyer's payment for a registered order is recorded as held for the loan when it arrives. A marketplace pays
-  the price leg by a plain transfer, so the fill callback is where the vault can measure and record it. Today the
-  price leg pays the Diamond, which splits it.
+This list was "open items for the builder to raise, not decide silently". The builder scouted the code on 2026-11-20
+and raised each one with a proposal. The answers are below. Where the builder asked for a ruling, the alternatives
+considered are stated with it. The build notes for Stage B3 record the details the build settles.
 
-#### For the owner (open)
+- **Where the lien code lives.** The 2026-11-15 measurement of about 16.8 KB was out of date. The vault code is 23,900
+  bytes, 676 under the 24,576-byte limit, and the protected-mode code is 23,995 bytes, 581 under. B3 therefore adds
+  two code contracts in the same form as the protected-mode code: fixed in the vault code, called by delegation,
+  holding no storage of their own, each with its own storage namespace recorded by the storage-layout guard with a
+  root and a probe. `VaultLedger` holds the balance record, the liens, the receipts, the amounts held, the release
+  rules and the queued payout rows of §3.7.9. `VaultCommitments` holds the commitments, `authorize`, the NFT-send
+  authorization and the order check. The vault keeps thin entries and its outflow checks, which read the ledger.
+  Conditions: each of the four contracts has its own size test, since the facet size test covers none of them; the
+  lock still cancels queued payout rows in the same call, and if the protected-mode code cannot carry that call it is
+  split along a seam of its own first; and the build states the gas of the extra delegated call for an opening, a
+  repayment and a liquidation. *Alternatives considered:* trimming the vault code (no seam gives the room needed);
+  keeping the records in the Diamond (the trust B3 removes); one new contract (it would open near the limit).
+- **Each payment that passes through the Diamond today.** Fourteen do: the consolidation of an NFT, the
+  standing-instruction draws, the repayment leg, the partial swap-to-repay, a rental prepayment on default, the sale
+  and takeover principal, the sanctioned-lock leg, and two fees in the platform token. All become payments from one
+  vault to another except the last two, which join the full tariff as one class (the payments table of §3.7.4).
+  *Alternatives considered:* a recycle vault fixed in the vault code (a new holder for no gain); the tariff alone to
+  the Diamond and the other two elsewhere (two rules for one custody).
+- **Which vault makes the pull for a payer that is no party to the loan.** Its own, as designed. A vault is created
+  for such a payer at its first payment, only for the caller and only in the caller's own call, never for a third
+  party, and the sanctions check on creating a vault stays. So "no step creates a vault for a holder who did not ask
+  for one" (§3.7.2 item 5) holds: the payer asked by making the call. A vault's address is known before the vault
+  exists, so a permit can name it. A contract caller is not forced to sign: it may send the tokens to its vault's
+  address in the same transaction and pay from free balance under its own call. A non-party is still paid at its
+  wallet. *Alternatives considered:* requiring a vault before a liquidation (an extra step at the worst moment, and
+  fewer liquidators); letting the receiving vault pull from the payer's wallet (a vault would then be paid by
+  something that is neither a genuine vault nor its owner).
+- **The held-amount families.** Lender proceeds, amounts held for the lender and borrower proceeds become an amount
+  held for that side's position token. Seller interest (#1209) is **not** one of these. It is a seller's
+  claim (§3.7.4): recorded for the seller that the sale terms name, paid only to that seller's vault and only up to
+  the claim. It is never held for a position token, so it does not follow the replacement record of §3.7.5. That
+  record moves what is held for the replaced token to the buyer's token, and a claim keyed to the token would hand
+  the seller's earned interest to the buyer. The parked refinance leg goes, because the payoff is paid vault to vault
+  (§3.7.3). The fallback custody row stays under the collateral lien. The offer-token hold is the offer lien. The two
+  loan reserves are reserve commitments. The intent-capital lien is the lending mandate. The claim-custody class
+  retires into "held for a position".
+- **The Diamond's own balance figures.** The tracked ledger and the depository holding both become reads of the vault.
+  The fee-discount record keeps its day history. Every vault change of the platform-token figure still reaches the
+  one seam that record is refreshed through, with the balance after the change, and a test walks every vault route
+  that moves that token: a missed refresh would lose a same-day dip, which the day minimum exists to catch.
+- **The outer slippage figure.** 25%, fixed in the vault code and equal to the configuration's ceiling, with a test
+  that the two are equal. A tighter figure could refuse a liquidation the settings allow. An internal-match leg is
+  held to the same figure on both loans.
+- **The ceiling and the date.** The date is the due date plus grace as signed; a pause only moves the real date later.
+  A renewal or a continuation carries fresh terms. The ceiling is computed at each step (§3.7.2 item 3).
+  *Alternatives considered:* a fixed figure with an allowance for pause time (it can still be too low after a longer
+  pause or a late default); stopping interest at the end of grace so that a fixed figure holds (that changes what a
+  lender earns and is not a vault matter); a second signed rate ceiling for floating loans beside the cap (two
+  figures that could disagree); a rate ceiling fixed in code for uncapped floating loans (looser than the series'
+  own ceiling, and a second rule). A loan that ends by notice (#3813) takes its date from the notice the lender
+  side's vault recorded, as stated before.
+- **The class budgets** (§8 Q4). Each is read once when the lien is created and fixed in the lien, from a hard bound
+  in the code or from a figure the loan itself records at opening. Never from a live setting that an open loan keeps
+  following, or a later, permitted change would make the vault refuse a step the Diamond allows.
+- **A borrowing's collateral.** One lien per loan (§3.7.2 item 3). *Alternative considered:* one lien per borrowing
+  with a summed ceiling, which is fewer records and is the shared holding the owner rejected.
+- **The NFT rental.** The renter's right is recorded by the lender's vault, as today. The prepayment and its buffer
+  become a lien in the borrower's vault bound on that record. The daily deduction is a repayment receipt to the
+  lender side. The close-out releases what is left.
+- **The receive hooks** accept the owner's own send, with or without a commitment; a genuine vault (a custody move, a
+  consolidation); the vault's own listing escrow and the rental return; and a swap adapter's output, measured as
+  today. Anything else is refused, and the build notes list each delivery today's routes make that is refused.
+- **The backstop's buyout** is not a purchase of §3.7.5. It replaces no position token and the loan ends with it.
+  When a loan is in fallback, the collateral rests in the borrower's vault under the lien, split by a row written when
+  the loan entered fallback: a slice for the lender side, sized to cover what the lender is due, and the rest. The
+  buyout pays the lender side that due in cash from the backstop vault, at its address fixed in the vault code, and
+  the backstop vault receives the lender side's slice in the lender's place. So it changes **who receives the slice
+  and never how much leaves the lien**. Each vault checks its own side:
+  - *The borrower's vault* hands over the lender side's slice as the fallback row records it, and no more, only
+    against the proof of the backstop vault's payment to the lender side's holder's vault in the same call. The
+    slice is the one an in-kind claim would hand the lender side. The valuation against the ceiling (§3.7.4) is made
+    once, when the split is recorded at fallback entry, and not again at a claim or a buyout: a later rise in the
+    collateral's price must not make a vault refuse a slice the Diamond's rules already fixed.
+  - *The lender side's vault* gives up nothing in a buyout: the slice was never in it. It receives the payment as a
+    receipt for its position, from the backstop vault and from no one else.
+  - **How much cash the lender side is due is the Diamond's figure, and the vault sets no floor on it.** The due is
+    fixed when the loan enters fallback (principal, interest and the fallback's own addition) and is scaled down when
+    an internal match closes part of the loan, by the share of collateral that remains. It can be above the principal
+    the lien records, and after a match at a fallen price it can be below it. No figure a vault holds bounds it from
+    either side, so it joins what §3.7.8 states the vault does not check: what a loan owes on the day. What the vaults
+    do establish bounds the harm of a wrong figure. The slice can reach only the backstop vault, which is the
+    platform's own, and never a caller, and only against a payment proven to have reached the lender side's holder.
+  - The Diamond's par check (the slice is worth at least what the backstop pays) protects the backstop. It is not a
+    floor for the lender and the vault adds no upper limit on what the slice is worth: after a price rise the slice
+    may be worth more than the due, and the buyout the Diamond permits must still pass.
+
+  *Alternatives considered:* mapping it onto a purchase of the lender's position (it would need a replacement token
+  for a position that ends in the same call); holding the payment to the outer floor of a forced sale (after a price
+  rise that floor exceeds the fixed cash due, and the vault would refuse a buyout the Diamond allows); a floor at the
+  principal the lien still records (after a part match at a fallen price the due is below it, with the same result).
+  Each numeric floor tried here refused a buyout the Diamond permits, which is why none is set.
+- **A buyer's payment for a registered order** is recorded by the vault in the fill callback, measured and held for
+  the `ref`. The price leg names the vault, not the Diamond.
+- **Still to be measured by the build:** the gas of a lien change that moves no tokens, of the receipt call, of the
+  price read on a fill, and of the delegated call above.
+
+**Order of build.** Part 1 is the records, the two code contracts and the outflow library. Part 2 is commitments at
+openings, which waits for the lending balance's first part and the borrowing record. Part 3 is the payments, the
+receipts and the replacement record. Part 4 is the registered orders and the queued payouts. With one lien per loan,
+part 2 depends on the borrowing's reserve keys and not on the shape of its record.
+
+#### Decided by the owner: sign, then send (2026-11-20)
 
 One user-facing change. On a plain wallet a funded action becomes sign, then send. Today an action funded from the
 wallet is a first approval of the token and then one send, and an action funded from the vault is one send. A wallet
 that sends several calls as one keeps one prompt, and no wallet gives the Diamond a standing approval any more. An NFT
 is sent to the vault by its owner where today it is approved to the platform: two prompts before and after.
 Alternative 4 would keep one prompt on every wallet, at the cost named there. Alternative 5 would keep one prompt for
-payments only, at the cost named there. Recommended: accept sign, then send.
+payments only, at the cost named there. The recommendation was to accept sign, then send, and the owner chose it on
+2026-11-20 (relayed by the coordinator). Alternatives 4 and 5 stay rejected.
 
 ### 3.8 What stays as it is
 
@@ -1279,9 +1425,10 @@ decisions 2026-11-10 (delegatecall split; the vault is the only writer).
 
 ### Build notes, part 2 Stage B3: owner-authorized commitments and the vault's own bounds
 
-Not built yet. The design is §3.7 as refreshed on 2026-11-19. The build
-records here the choices it made where §3.7 left room, starting with that
-section's open items.
+Not built yet. The design is §3.7 as refreshed on 2026-11-19 and as ruled on
+2026-11-20 after the builder's scout of the code (the lien record's ceiling,
+the fee class, and the answered open items at the end of §3.7). The build
+records here the choices it made where §3.7 left room.
 
 ## 9. Order of work
 

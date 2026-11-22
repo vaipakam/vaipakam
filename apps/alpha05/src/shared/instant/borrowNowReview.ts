@@ -20,7 +20,13 @@ import {
   instantRequest,
   offerCandidate,
   orderSources,
+  sourceChoice,
+  DEFAULT_SPREAD_BPS,
+  withOrder,
   planFrom,
+  previewBorrowCall,
+  previewFrom,
+  type BorrowPreview,
   readInstantConfig,
   slotCandidates,
   walletDrawCeiling,
@@ -29,6 +35,7 @@ import {
   type BorrowNowTerms,
   type Candidate,
   type InstantSource,
+  type SourceChoice,
 } from './borrowNow';
 
 type Hex = `0x${string}`;
@@ -46,7 +53,7 @@ const OFFER_PAGE = 20;
  *  Auto-lend list up to its view cap, the pair's first offers), so
  *  `complete` is false when either list is longer than what was read: the
  *  review then never says no lender can take the borrow. */
-export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTerms, borrower: Hex): Promise<{ sources: InstantSource[]; complete: boolean }> {
+export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTerms, borrower: Hex): Promise<{ sources: InstantSource[]; complete: boolean; choice: SourceChoice }> {
   const [intents, offers] = await Promise.all([readLenderIntents(c, diamond), readPairOfferIds(c, diamond, t.lending, t.collateral, OFFER_PAGE)]);
   const slots = slotCandidates(intents.intents, t.lending, t.collateral, intents.at, borrower, t.termDays, t.maxRateBps);
   let unread = 0;
@@ -63,7 +70,13 @@ export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTer
   const found = [...consented, ...fromOffers].filter((x): x is Candidate => x !== null);
   if (found.length === 0 && unread > 0) throw new Error(`${unread} borrow source(s) could not be read`);
   const complete = BigInt(intents.scanned) >= intents.total && BigInt(offers.ids.length) >= offers.total;
-  return { sources: orderSources(found).map((x) => x.source), complete };
+  return { sources: orderSources(found, t.order).map((x) => x.source), complete, choice: sourceChoice(found, t.amount, t.order, spreadForOther(t)) };
+}
+
+/** The spread the other order is estimated at: the borrower's own when
+ *  fewest lenders is chosen (best rate needs none), else the default. */
+function spreadForOther(t: BorrowNowTerms): bigint {
+  return t.order.kind === 'fewest-lenders' ? t.order.spreadBps : DEFAULT_SPREAD_BPS;
 }
 
 /** The collateral the vault can supply now, as the instant fill draws it:
@@ -93,7 +106,7 @@ export async function askPlan(
   blockNumber?: bigint,
 ): Promise<BorrowNowState> {
   const asked = await askThrough(own, async (c) => {
-    const req = instantRequest(t, 0n, await chainValidUntil(c));
+    const req = instantRequest(t, 0n, await chainValidUntil(c, 'borrowInstant'));
     return c.simulateContract({ address: diamond, ...borrowNowCall(req, sources), account: own.account, stateOverride: override, blockNumber });
   });
   if (asked.kind === 'answered') {
@@ -108,7 +121,8 @@ export async function askPlan(
   throw new Error(asked.reason);
 }
 
-export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: BorrowNowTerms, identity: string): Promise<BorrowNowReview> {
+export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, given: BorrowNowTerms, identity: string): Promise<BorrowNowReview> {
+  const t = withOrder(given);
   const account = own.account;
   const [config, found, free, allowance, walletHas, risk, lif] = await Promise.all([
     own.read((c) => readInstantConfig(c, diamond)).then((x) => x.value),
@@ -122,7 +136,7 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
       () => null,
     ),
   ]);
-  const { sources, complete: searchComplete } = found;
+  const { sources, complete: searchComplete, choice } = found;
   const fromVault = free < t.collateralOffered ? free : t.collateralOffered;
   const walletPart = t.collateralOffered - fromVault;
   const approvalNeeded = walletPart > 0n && allowance < walletPart;
@@ -132,7 +146,7 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
     ? (await allowanceSteps({ accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, t.collateral, account, diamond, amount)).then((x) => x.value) }, allowance, walletPart))
         .length
     : 0;
-  const base = { terms: t, sources, searchComplete, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, lif, readAt: Date.now() };
+  const base = { terms: t, sources, searchComplete, choice, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, lif, readAt: Date.now() };
   if (!config.enabled) return { ...base, state: { kind: 'market-off' } };
   if (sources.length === 0) return { ...base, state: { kind: searchComplete ? 'no-source' : 'none-found' } };
   // A wallet short of the whole collateral may still cover a part fill: each
@@ -144,7 +158,10 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
     const found = await own.read((c) => findAllowanceOverride(c, t.collateral, account, diamond, walletPart)).then((x) => x.value);
     // Without a way to ask before the approval exists, the approval comes
     // first, unless the wallet holds none of the collateral at all.
-    if (found === null) return { ...base, state: short !== null && walletHas === 0n ? short : { kind: 'needs-approval' } };
+    if (found === null) {
+      if (short !== null && walletHas === 0n) return { ...base, state: short };
+      return { ...base, state: { kind: 'needs-approval', preview: await readBorrowPreview(own, diamond, t, sources) } };
+    }
     override = found;
   }
   const asked = await askPlan(own, diamond, t, sources, override);
@@ -154,10 +171,30 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
   return { ...base, state: short !== null && state.kind !== 'plan' ? short : state };
 }
 
+/** The protocol's preview of this borrow, which needs no approval; null
+ *  when it cannot be read (the review then says the figure waits for the
+ *  approval, as before). A request-level refusal is the borrow's own and is
+ *  read again by the simulation after the approval. */
+export async function readBorrowPreview(own: OwnStateClient, diamond: Hex, t: BorrowNowTerms, sources: readonly InstantSource[]): Promise<BorrowPreview | null> {
+  try {
+    return (
+      await own.read(async (c) => {
+        const req = instantRequest(t, 0n, await chainValidUntil(c, 'borrowInstant'));
+        const r = await c.readContract({ address: diamond, ...previewBorrowCall(req, sources, own.account) });
+        return previewFrom(r, sources);
+      })
+    ).value;
+  } catch {
+    return null;
+  }
+}
+
 /** What a review shows, as one key: a re-read that differs is a change. */
 export function borrowNowKey(r: BorrowNowReview): string {
   const s = r.state;
-  const state = s.kind === 'plan' ? `plan:${s.plan.total}:${s.plan.collateralLocked}:${s.plan.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}` : s.kind;
+  const fills = (p: { total: bigint; collateralLocked: bigint; fills: readonly { amount: bigint; rateBps: bigint }[] }) =>
+    `${p.total}:${p.collateralLocked}:${p.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}`;
+  const state = s.kind === 'plan' ? `plan:${fills(s.plan)}` : s.kind === 'needs-approval' && s.preview !== null ? `needs-approval:${fills(s.preview.plan)}` : s.kind;
   const lif = r.lif === null ? 'lif?' : `lif:${r.lif.baseBps}:${r.lif.baseTermDays}:${r.lif.yearlyBps}:${r.lif.yearDays}`;
   return [state, r.walletPart, walletDrawCeiling(r), r.approvalSteps, r.sources.length, r.searchComplete ? 'all' : 'some', r.risk ?? '', lif].join('|');
 }

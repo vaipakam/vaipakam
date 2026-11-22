@@ -10,7 +10,7 @@
  */
 import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
 import type { LocaleReader } from './alertChannelChange';
-import type { ChainDeployment, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
+import type { ChainDeployment, IssueResult, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
 import { lockUnanswered } from './i18n';
 import { newLinkCode, type TelegramOutcome } from './telegram';
 import { shortWallet } from './alertChannelChange';
@@ -25,7 +25,7 @@ export const LINK_CODE_TTL_SEC = 600;
 
 /** The state methods these steps use. */
 export interface LinkStatePort {
-  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number): Promise<boolean>;
+  issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number, issuedAt: number): Promise<IssueResult>;
   consumeLinkCode(code: string, now: number): Promise<{ wallet: string; chainId: number } | null>;
   chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
   recordLockRequests(
@@ -54,6 +54,11 @@ export const LOCK_UNANSWERED_BATCH = 20;
 
 export type { PendingChange };
 
+/** What a link request got (#3836): a code, or `superseded` when a
+ *  later-signed link or unlink request for the wallet and chain was already
+ *  applied, in which case no code exists. */
+export type LinkCodeOutcome = { kind: 'issued'; code: string } | { kind: 'superseded' };
+
 /** Issue a handshake code for (`wallet`, `chainId`), good for ten minutes.
  *  The code is the 120-bit `newLinkCode()` (#2753), so a collision is not a
  *  practical event; one retry stays so a clash reads as a retry, never as a
@@ -71,11 +76,14 @@ export async function issueTelegramLinkCode(
   wallet: string,
   chainId: number,
   now: number,
-): Promise<string> {
+  issuedAt: number,
+): Promise<LinkCodeOutcome> {
   await ensureRow(wallet, chainId);
   for (let attempt = 0; attempt < 2; attempt++) {
     const code = newLinkCode();
-    if (await state.issueLinkCode(code, wallet, chainId, now + LINK_CODE_TTL_SEC)) return code;
+    const result = await state.issueLinkCode(code, wallet, chainId, now + LINK_CODE_TTL_SEC, issuedAt);
+    if (result === 'issued') return { kind: 'issued', code };
+    if (result === 'superseded') return { kind: 'superseded' };
   }
   throw new Error('link code collision twice');
 }

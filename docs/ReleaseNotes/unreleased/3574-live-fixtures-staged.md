@@ -1,9 +1,0 @@
-## Thread — The two live testnet fixtures post each offer one stage before filling it (branch, no PR yet)
-
-The seller-claim fixture and the internal-match fixture set up real positions on a testnet Diamond for checking the app by hand. Each opened a loan by posting an offer and accepting it in the same broadcast. Since the offer-age rule, an offer can be filled only once its terms have stood a few seconds, and one broadcast cannot wait between its own transactions, so on a Diamond carrying that rule both fixtures stopped before sending anything.
-
-Each offer is now posted in one stage and filled in the next. The seller-claim fixture runs five stages: post the loan offer, accept it, post the buyer's offer, sell into it, repay. The internal-match fixture runs six: post and accept loan A, post and accept loan B, match, and restore. Every filling stage takes the offer id from the previous stage's receipt and refuses unless the offer is this run's, on the expected assets, with nothing of it filled by anyone else.
-
-The extra stage boundary adds no new window for the internal-match run's price move beyond a few seconds: loan A already sat past its liquidation level at the second price while loan B was opened, and it still does, now across one more stage. The fixture's header states that window and says to run the accept as soon as the offer is old enough.
-
-Both fixtures ran end to end against a local Anvil chain: the seller-claim fixture's five stages, and the internal-match fixture's six with the mocks deployed there first. The match stage needed a larger gas allowance than forge estimates, because the trigger's price reads ran short of gas and the transaction reverted after matching had been switched on; the fixture now says to broadcast that stage with a larger allowance and to run its disable stage if it fails. The app's live-review notes describe the new stages. Advances #3574.

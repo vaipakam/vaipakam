@@ -11,18 +11,33 @@
  * open never sends a deadline that has already run down.
  */
 import type { PublicClient } from 'viem';
-import { txValidUntil } from '@vaipakam/lib/txDeadline';
+import { admittedWindow, txValidUntil, type DeadlineWallet, type TxStep } from '@vaipakam/lib/txDeadline';
 import type { OwnStateClient } from '../../chain/ownRail';
 
 export { TX_DEADLINE_SECONDS, txValidUntil } from '@vaipakam/lib/txDeadline';
+export type { TxStep } from '@vaipakam/lib/txDeadline';
 
-/** The `validUntil` for a call built now, from this client's latest block. */
-export async function chainValidUntil(c: PublicClient): Promise<bigint> {
-  const block = await c.getBlock({ blockTag: 'latest' });
-  return txValidUntil(block.timestamp);
+/** A contract wallet's chosen approval window (#3770). Absent: a key
+ *  wallet, or no choice, which is the step's thirty minutes. */
+export interface WindowChoice {
+  wallet: DeadlineWallet;
+  window: number | null;
 }
 
-/** The `validUntil` for a call built now, read through the own rail. */
-export async function readValidUntil(own: Pick<OwnStateClient, 'read'>): Promise<bigint> {
-  return (await own.read(chainValidUntil)).value;
+/** The window `step` carries for this choice: the one rule
+ *  (`admittedWindow`), so a short step is never lengthened. */
+export function stepWindow(step: TxStep, choice?: WindowChoice): number {
+  return admittedWindow(step, choice?.wallet ?? { kind: 'key' }, choice?.window ?? null);
+}
+
+/** The `validUntil` for `step` built now, from this client's latest block.
+ *  Every step names itself, so its class (`TX_STEPS`) decides the window. */
+export async function chainValidUntil(c: PublicClient, step: TxStep, choice?: WindowChoice): Promise<bigint> {
+  const block = await c.getBlock({ blockTag: 'latest' });
+  return txValidUntil(block.timestamp, stepWindow(step, choice));
+}
+
+/** The same, read through the own rail. */
+export async function readValidUntil(own: Pick<OwnStateClient, 'read'>, step: TxStep, choice?: WindowChoice): Promise<bigint> {
+  return (await own.read((c) => chainValidUntil(c, step, choice))).value;
 }

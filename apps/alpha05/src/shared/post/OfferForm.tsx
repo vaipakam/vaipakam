@@ -145,7 +145,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   const input: PostInput = { ...DEFAULT_INPUT, ...stored };
   const set = (patch: Partial<PostInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
-  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'part' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling' | 'guard', boolean>>({
+  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'part' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'rateOther' | 'term' | 'expiry' | 'ceiling' | 'guard', boolean>>({
     ceiling: false,
     guard: false,
     part: false,
@@ -155,6 +155,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     collateral: false,
     tokenId: false,
     rate: false,
+    rateOther: false,
     term: false,
     expiry: false,
   });
@@ -227,6 +228,10 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   // the smallest part one match may lend, the amount typed staying the
   // whole amount locked.
   const ranged = input.ranged && !named;
+  // #2525: a range's other rate, for a match only; a direct take is at `rate`.
+  const rateOther = ranged && input.rateOther.trim() !== '' ? parseRateBps(input.rateOther) : null;
+  const rateOtherOrder =
+    rateOther?.ok && rate.ok ? (lender ? (rateOther.value < rate.value ? 'below' : null) : rateOther.value > rate.value ? 'above' : null) : null;
   /** The Full tariff, chosen on either side. */
   const tariffChosen = input.tariff;
   const amountMax = ranged && !lender && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
@@ -282,6 +287,45 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
             : text('request.errInvalid');
 
   const show = (field: keyof typeof touched) => touched[field] || asked;
+
+  // #2525: the other end of the rate for a match, under a range.
+  const rateOtherField = (
+    <FormField
+      label={text(lender ? 'request.rateMaxLabel' : 'request.rateMinLabel')}
+      hint={text(lender ? 'request.rateMaxHint' : 'request.rateMinHint')}
+      error={
+        show('rateOther')
+          ? rateOther !== null && !rateOther.ok
+            ? rateOther.error === 'high'
+              ? text(k.errRateHigh)
+              : rateOther.error === 'decimals'
+                ? text('request.errRateDecimals')
+                : rateOther.error === 'zero'
+                  ? text('request.errRateZero')
+                  : text('request.errInvalid')
+            : rateOtherOrder === 'below'
+              ? text('request.errRateMaxBelow')
+              : rateOtherOrder === 'above'
+                ? text('request.errRateMinAbove')
+                : null
+          : null
+      }
+    >
+      {({ id, describedBy, invalid }) => (
+        <input
+          id={id}
+          inputMode="decimal"
+          autoComplete="off"
+          aria-describedby={describedBy}
+          aria-invalid={invalid}
+          value={input.rateOther}
+          onChange={(e) => set({ rateOther: e.target.value })}
+          onBlur={() => leave('rateOther')}
+          data-testid="request-rate-other"
+        />
+      )}
+    </FormField>
+  );
   const leave = (field: keyof typeof touched) => setTouched((t) => ({ ...t, [field]: true }));
 
   // Only the terms the protocol has open are offered; a term kept from
@@ -408,7 +452,10 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   /** The largest amount, for the live summary of a range. */
   const largest = ranged && !lender && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
-  const rangeOk = !ranged || (lender ? minPart?.ok === true && partShape === null : amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
+  const rangeOk =
+    !ranged ||
+    ((lender ? minPart?.ok === true && partShape === null : amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null) &&
+      (rateOther === null || (rateOther.ok && rateOtherOrder === null)));
   const valid =
     amount?.ok === true &&
     collateralOk &&
@@ -472,6 +519,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           tariff: tariffChosen && ceilingValue !== null ? { maxCStar: ceilingValue, allowDowngrade: input.tariffDowngrade } : null,
           guardBps: input.guard ? guardBps : null,
           rateBps: rate.value,
+          rateOtherBps: rateOther?.ok ? rateOther.value : null,
           durationDays,
           expiry: input.expiry,
           fullTerm: input.fullTerm,
@@ -1029,6 +1077,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
                     />
                   )}
                 </FormField>
+                {rateOtherField}
               </div>
             )}
             <WhyLink summaryKey={k.rangeSummary} detailKey={k.rangeWhy} />
@@ -1104,6 +1153,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
                     />
                   )}
                 </FormField>
+                {rateOtherField}
               </div>
             )}
             <WhyLink summaryKey={k.rangeSummary} detailKey={k.rangeWhy} />
@@ -1127,7 +1177,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
               type="button"
               className="btn"
               onClick={() =>
-                set({ ranged: false, amountMax: '', minPart: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false, guard: false, guardPercent: '' })
+                set({ ranged: false, amountMax: '', minPart: '', collateralFloor: '', rateOther: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false, guard: false, guardPercent: '' })
               }
               data-testid="request-advanced-clear"
             >
