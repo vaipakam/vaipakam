@@ -92,10 +92,16 @@ Section 4.3 stores the explanation of every failed transaction at the time,
 so an old failure does not depend on that. A successful transaction is not
 stored there, and explaining an old one needs a node that keeps old state.
 
-**Which code a selector belonged to.** The explainer resolves each function
-through the Diamond's own routing at that block and the facet history of
-section 4.5, never through today's interface alone, so a transaction from
-before a refresh is explained with the code that ran.
+**Which code ran.** The explainer names code from the trace itself. Each
+call the Diamond forwards appears in the trace with the address of the code
+it was forwarded to, and that address is what ran. The facet history of
+section 4.5 turns the address into a name and a build. The explainer never
+looks up a function's route "at that block": a refresh later in the same
+block would give the code that replaced it. A rebuild forwards its calls at
+the transaction's own place in the block, so its trace is read the same way.
+Where there is no trace and no rebuild, the output says the code that ran is
+not known, and gives the routes in force at the start and at the end of the
+block when they differ.
 
 It lives in the shared library as a pure function from a trace to the
 explanation, with a thin operator command around it. It sends nothing and
@@ -112,28 +118,60 @@ not only the platform's own.
 record: the Diamond, the position token, the VPFI token and its pools, the
 reward and remittance contracts, the liquidation helper and the rest.
 
-**Finding them.** Two modes, chosen per network from what its node offers:
+**Finding them.** The mode is chosen per network from what its node offers
+and from what each mode was measured to cost there.
 
-| Mode | How | Sees |
-| --- | --- | --- |
-| **Trace filter** | One request per block range for every call into the watched contracts that failed | Direct calls and calls made through another contract |
-| **Block scan** | Read each block's transactions, keep those sent to a watched contract, read the receipt of each | Direct calls only |
+| Mode | How | Sees | Cost |
+| --- | --- | --- | --- |
+| **Trace filter** | One request per block range for every call into the watched contracts that failed | Direct calls and calls made through another contract | A few thousand requests a day |
+| **List and audit** | Three sources, below | Direct calls, with the miss rate measured | A few thousand requests a day |
+| **Block scan** | Read every block's transactions, keep those sent to a watched contract, read the receipt of each | Direct calls only | Measured on the public test networks at 190,000 to 430,000 requests and 2 to 4 GB a day for one network |
 
-The first card of this design is a **node capability check** per network:
-whether the node answers a trace filter, a transaction trace and a call at a
-past block, how far back each reaches, and what a full block scan costs on
-that node. Its result is committed per network and selects the mode.
+A trace filter is used wherever the node has one. A continuous block scan is
+used only where its measured cost is inside a stated bound (**Default**
+20,000 requests and 200 MB a day for a network). Everywhere else the mode is
+**list and audit**:
+
+- **The keeper's own sends.** Section 4.4 records every one, so a failed one
+  is known at once.
+- **The network explorer's list** of transactions sent to each watched
+  contract, read every few minutes and kept where the transaction failed.
+  It covers direct calls by anyone, which is what a block scan covers. It
+  is an outside source of **where to look**. What is stored is read from
+  the network's own node: the receipt and the explanation.
+- **A sampled audit.** Each day one window of blocks chosen at random
+  (**Default** 30 minutes) is scanned in full and compared with what the two
+  sources above found in it. A failure they missed is recorded, raises an
+  alert and becomes a card. The health route shows the miss rate measured so
+  far. Completeness in this mode is a measured figure, never a claim.
+
+Every record names the source that found it.
+
+The first card of this design is a **node capability check** per network,
+run against the nodes the services use and not only public ones. It
+reports: whether the node answers a trace filter, a transaction trace and a
+call at a past block. How far back each reaches. What each mode costs there
+in requests and data a day. Whether the explorer's list needs a key, how
+late it runs behind the chain, and whether it lists failed calls made
+through another contract. Its result is committed per network and selects
+the mode.
 
 **Decoding, and what is kept of it.** The explanation is taken while the
 node can still give it, and the **whole** of it is stored. A later reader
 never has to ask a node for an old trace. For each failed transaction the
-pass uses the best of three sources and the record says which:
+record holds the best of the sources below and says which:
 
 | Source | What the record keeps | What it cannot hold |
 | --- | --- | --- |
 | The node's trace | The explainer's complete output as data: every function entered with its arguments, every event emitted before the failure, the error and its values, the gas at each step | Nothing |
-| The rebuild of section 4.2, where the capability check says the machine can run one, and it matches the receipt | The same complete output, marked as rebuilt | Nothing. A rebuild that does not match is not stored as the explanation |
+| The rebuild of section 4.2, when it matches the receipt. The pass cannot run one, since it needs a local copy of the chain. An operator runs it with the explainer while the state is still reachable, and the result is added to the record through the same route | The same complete output, marked as rebuilt | Nothing. A rebuild that does not match is not stored as the explanation |
 | A replay of the call at the parent block | The error and its values only, marked as a replay. It runs against the state just before the block, not at the transaction's place in it | The call path, the arguments of inner calls, the events before the failure and the gas by step. The record lists these as "not available for this transaction", and they cannot be recovered later |
+| None: the node no longer holds that block's state when the failure is found | The receipt's facts: that it failed, the function called and the gas | The error and everything above. The record says "state no longer reachable" |
+
+The last row matters in list and audit mode, where a failure is found some
+minutes after it happened. The capability check sets each node's reach
+beside each source's delay, so a network where this row would be common is
+known before launch and gets a node that reaches further.
 
 If the replay succeeds where the transaction failed, the record says "not
 reproduced", and adds whether the transaction used all the gas it was given.
@@ -151,15 +189,18 @@ stated size (**Default** 256 KB a record). Above it the call path, the
 error and the events are kept and the longest argument values are cut, each
 with a mark that says so.
 
-**Where it runs.** On the always-on machine, as its own read-only service
-beside the keeper, with its own unit and memory cap and **no signing key**.
-The indexer cannot host it: it runs inside a limit of 50 outside requests
-per run, and a block scan needs one request per block. The service does not
-hold the database token. It writes through a route on the indexer, under
-its own token, that accepts three things and nothing else: a record, the
-pass's cursor and checkpoints, and a statement that a block range was
-replaced. That statement marks records and deletes none. So the service can
-add to and mark the failed-transaction record and can touch no other table.
+**Where it runs.** As a small Worker of its own, on its own schedule, with
+**no signing key** and **no database binding**. At the volumes of the trace
+filter and of list and audit, its work fits inside a Worker's limit on
+outside requests per run, and the audit window is spread over the runs of a
+day. It is kept out of the indexer so that the indexer's own limit is not
+shared. It writes through a route on the indexer, under its own token, that
+accepts three things and nothing else: a record, the pass's cursor and
+checkpoints, and a statement that a block range was replaced. That statement
+marks records and deletes none. So the pass can add to and mark the
+failed-transaction record and can touch no other table. No user reaches this
+Worker. A network that is given a continuous block scan inside the bound
+runs it the same way.
 
 **Completeness is stated.** The pass keeps a cursor per network. The health
 route shows the cursor, the mode and the age of the newest block scanned,
@@ -170,8 +211,8 @@ silently skipped.
 **A replaced block.** A height alone cannot tell that a scanned block was
 later replaced. So:
 
-- The pass scans only up to the network's settled head, the same one the
-  indexer reads, never the newest block.
+- In every mode the pass takes only blocks at or below the network's
+  settled head, the same one the indexer reads, never the newest block.
 - Every record carries its block's hash. Each scanned range leaves a
   **checkpoint**: its top block and that block's hash.
 - Each run reads the newest checkpoint's block again before it scans. It
@@ -199,7 +240,8 @@ records answer it.
 
 **Pass runs.** One row per run of a pass: the pass, the network, whether its
 switch was on, when it started and ended, how it ended, what it read (which
-feed, how many subjects, from where to where) and the build. A pass that was
+feed, the block or the indexer position it was read at, how many subjects,
+from where to where, and whether a cap cut the read short) and the build. A pass that was
 switched off writes a row that says so, at most once an hour. The table of
 passes already wraps every pass in one place, so the run row is written
 there and no pass can forget it.
@@ -234,9 +276,21 @@ from the chain when a case needs them.
 the subject that caused it, through the shared sender, so a send cannot go
 unrecorded.
 
-A subject the pass never looked at is explained by the run row: it shows
-what the pass read, so a loan missing from that read is a finding about the
-feed, not a silence.
+**In the read or not, by change.** A decision row counts the runs that saw
+the subject. It cannot show a run that did not. So presence is recorded too,
+the same way: the keeper compares each run's subjects with the run before
+and writes a row only for a subject that **entered** the read or **left**
+it, with the run. Leaving closes the subject's open decision row, and a
+return opens a new one, so "seen 30 times, from 13:50 to 14:20" never spans
+a gap. When a cap cut the run short, a subject past the cap is recorded as
+"not reached", which is a different answer from "not in the feed". After a
+restart the keeper loads the open rows before its first run, so the
+comparison does not start empty.
+
+For any subject and any time the case file then gives one of four answers:
+in the read (with the decision), not in the feed, not reached, or **not
+known** because no run covered that time. The run rows show which. A loan
+missing from a read is a finding about the feed, not a silence.
 
 The records live in the keeper's private database. Nothing outside the
 keeper reads them except the operator's case file.
@@ -248,17 +302,22 @@ Four small histories, each written when the thing changes.
 - **Settings.** Today the indexer keeps one current copy of the protocol's
   settings and reads it again when a governance event passes. It now also
   appends a row per change, read at the block of the change, with the event
-  and the transaction that caused it. Settings at any block are the last row
-  at or before it.
+  and the transaction that caused it.
 - **Facets.** Every change to the Diamond's routing is recorded from its
-  event: which code serves which function, from which block. Together with
-  the code hashes recorded at deploy, this gives the code that ran at any
-  block.
+  event: which code, at which address, serves which function. Together with
+  the code hashes recorded at deploy, this names the code at any address.
 - **Builds.** Each service notes its build commit when it first runs under
   it. The app's and the public site's builds are noted from their deploy
   stamps.
 - **Keeper switches.** The keeper notes its set of switches at start and
   whenever the set changes: each switch's name and whether it is on.
+
+**Order inside a block.** A settings row and a facet row carry the block,
+the transaction's place in the block and the event's place in the
+transaction. "What was true" is asked for a transaction, not only for a
+block: the answer is the last row placed before that transaction. Asked for
+a block alone, the answer is given for the start of the block, and the case
+file lists any change made inside it.
 
 The pause log already exists and is read as it is.
 
@@ -395,8 +454,11 @@ the record does not reach far enough.
   the platform's own contract or the subject's asset.
 - A public page of failed transactions by wallet. These records are for
   operators.
-- A dependence on an outside monitoring service for any record. The alert
-  presets the repository already carries stay as a second view.
+- A dependence on an outside service for what any record holds. The alert
+  presets the repository already carries stay as a second view. One outside
+  source does tell the pass where to look on a network with no trace filter
+  (4.3). What it misses is measured by the audit, and what is stored comes
+  from the network's own node.
 
 ## 8. Tests (acceptance)
 
@@ -410,14 +472,15 @@ the record does not reach far enough.
 2. The failed transaction pass, run over a block range holding a failed
    direct call, a failed call through another contract, a successful call
    and a failed call to an unrelated contract, records the first, records
-   the second in trace-filter mode and states it as unseen in block-scan
-   mode, and records neither of the others.
+   the second in trace-filter mode and states it as unseen in the other
+   modes, and records neither of the others. Each record names the source
+   that found it.
 3. A replay at the parent block is marked as a replay and stores the error
    only. A replay that succeeds is recorded as not reproduced.
 4. A range the pass cannot scan is recorded as a gap and reported by the
    health route.
 5. The record route accepts a well-formed record, a cursor with its
-   checkpoints and a replaced-range statement under the service's token,
+   checkpoints and a replaced-range statement under the pass's token,
    and refuses every other write. A replaced-range statement deletes
    nothing.
 6. A keeper pass that sees the same subject with the same outcome sixty
@@ -454,13 +517,33 @@ the record does not reach far enough.
     arguments and the events before the failure. One recorded from a
     parent-block replay shows the error and the list of what is not
     available.
+18. In list and audit mode with a stubbed list that leaves out one failed
+    direct call, the audit window that holds it finds it, records it, raises
+    the alert and moves the miss rate. A failure found after the node's
+    reach has passed is recorded with the receipt's facts and "state no
+    longer reachable".
+19. A transaction that ran before a refresh made later in the same block is
+    explained with the code at the address its trace shows, not the code
+    that replaced it. Settings asked for that transaction are the ones
+    placed before it in the block.
+20. A subject that leaves a pass's read for five runs and returns with the
+    same decision has two decision rows and one "left" and one "entered"
+    row, and the case file answers "not in the feed" for a time inside the
+    gap, "not reached" for a subject past a cap, and "not known" for a time
+    no run covered.
 
 ## 9. Residuals
 
 - **A call made through another contract** is seen only where the node
-  offers a trace filter. Where it does not, the record says the network is
-  in block-scan mode, and a failed call through a contract wallet or a
-  batching contract is not recorded there.
+  offers a trace filter. Where it does not, the record says which mode the
+  network is in, and a failed call through a contract wallet or a batching
+  contract is not recorded there unless the capability check found that the
+  explorer's list holds such calls.
+- **List and audit depends on an outside list for where to look.** A
+  failure the list leaves out is found only if the audit window holds it.
+  The miss rate is published on the health route, and a rate above zero is
+  the case for giving that network a node with a trace filter, which is a
+  cost for the owner to decide.
 - **A replay is not the trace.** It can differ from what happened inside the
   block. The record never hides which one it holds.
 - **An old attempt replays only while old state is reachable.** Section 4.7
@@ -482,21 +565,32 @@ the record does not reach far enough.
    sees nothing of questions 4 to 6. It stays as a second view.
 3. **Trace old transactions when someone asks.** Rejected: an old trace
    needs a node that keeps old state. Decoding at the time needs none.
-4. **Find failed transactions through a block explorer's list.** Rejected as
-   the source: a third party again, and direct calls only.
-5. **Run the failed transaction pass inside the indexer.** Rejected: its
-   request limit per run cannot cover a block scan.
-6. **Give the scanning service the database token.** Rejected: that token
+4. **A continuous block scan on every network without a trace filter.**
+   Rejected on measurement: 190,000 to 430,000 requests and 2 to 4 GB a day
+   for one test network. It stays only where it fits the bound.
+5. **The explorer's list as the only source.** Rejected: nothing would say
+   what it misses. It is used with the audit, which measures that.
+6. **A paid node with a trace filter on every network.** The best coverage,
+   and the answer where the audit shows misses. Not the default, because it
+   is a running cost the measured need should justify.
+7. **The app hands over the hash of a failed transaction it sent.** Not
+   now: it adds to what leaves the user's device, so it would need a line
+   in the privacy policy. Asked of the owner only if the audit shows need.
+8. **Run the pass inside the indexer, or on the always-on machine.** The
+   indexer's request limit per run is already used by its own work. The
+   machine was the plan while a block scan was the fallback, and is not
+   needed at these volumes.
+9. **Give the pass the database token.** Rejected: that token
    reaches every database on the account. A route that accepts one kind of
-   record keeps the service to its job.
-7. **A keeper log line per subject per run.** Rejected: thousands of
+   record keeps the pass to its job.
+10. **A keeper log line per subject per run.** Rejected: thousands of
    identical rows a minute, and the journal is not kept for a stated time.
    Recording by change holds the same answer in one row.
-8. **Add the block, the error's values and the call's inputs to the app's
+11. **Add the block, the error's values and the call's inputs to the app's
    error record now, or offer a replay bundle the user exports.** Not
    recommended now: each changes what leaves the user's device before a
    drill has shown the need (4.7).
-9. **Log everything from every service for good.** Rejected for cost and for
+12. **Log everything from every service for good.** Rejected for cost and for
    the privacy assessment. Each record states what it holds and for how
    long.
 
@@ -514,7 +608,7 @@ before a mainnet, and treat each miss as a defect of this design.
 | Node capability check per network | Operations | No | Now |
 | Error catalogue (companion design) | Shared library | No | Now |
 | Transaction explainer | Shared library, operator command | No | Now |
-| Failed transaction record: service, route, table, health | Operations and indexer | No | Now, after the capability check |
+| Failed transaction record: the pass as its own Worker, the route, the table, health | Operations and indexer | No | Now, after the capability check |
 | Keeper decision record, pass runs, switch history | Keeper | No | Beside the batch |
 | Settings, facet and build histories; every event kept; a row's last event | Indexer | No | Beside the batch |
 | Request reference and service error record | App, agent, indexer | No | Beside the batch |
