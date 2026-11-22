@@ -130,9 +130,11 @@ in the shell** (BNBTestnetDeploy.md §2; FreshDeployHardeningPlan lesson 4), so
 put per-run topology in `.env`, not on the command line.
 
 Keys and accounts:
-- `DEPLOYER_PRIVATE_KEY` — broadcasts the deploy scripts. `DeployDiamond` hands
-  every role to the admin and the deployer renounces all (DeployDiamond.s.sol
-  "Step 6").
+- `DEPLOYER_PRIVATE_KEY`, `DEPLOYER_ADDRESS` — broadcasts the deploy scripts.
+  `DeployDiamond` hands every role to the admin and the deployer renounces all
+  (DeployDiamond.s.sol "Step 6"). Since #3891 every keyed role needs its
+  `_ADDRESS` beside its key on a real chain: the signer library refuses a key
+  whose address does not match, and a rehearsal signs as the address alone.
 - `ADMIN_PRIVATE_KEY`, `ADMIN_ADDRESS` — the deploy-time admin (must match;
   DeploymentRunbook "0. Pre-flight", #947). Signs every configure/ccip-wire/
   launch call. Holds all roles on a testnet with no handover.
@@ -351,6 +353,22 @@ its own record"). Commit both files with the deploy.
 ---
 
 ## 3. Per-chain deploy
+
+**Rehearse first (#3891).** From `contracts/`, print the plan from the desired
+state and run it against local forks, with no key:
+
+```bash
+node script/deploy-plan.mjs plan deployments/testnets.desired.json \
+  --anchor today --env-file .env > /tmp/plan.txt
+bash script/rehearse.sh --plan /tmp/plan.txt
+```
+
+The run writes a report and a verdict under
+`deployments/.forge-test/rehearsal/<run>/`. The plan is also the order of the
+real deploy below: the phases in sections 3.1 to 3.10, and the steps in
+section 5 as exact commands. Run those commands from `contracts/`, with `.env`
+loaded and `script/lib/rehearsal.sh` sourced. A step the plan lists as
+`manual` has no command yet, and the rehearsal reports it as not covered.
 
 Run each phase per chain and eyeball its output before the next. Do Base first.
 
