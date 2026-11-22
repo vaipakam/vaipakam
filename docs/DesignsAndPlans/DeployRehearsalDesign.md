@@ -138,7 +138,7 @@ One library, `script/lib/Signers.sol`, is the only place a script starts a broad
 - The shell gets the same seam as one function, used for every `cast send`.
 - A guard in the pre-deploy check refuses any operator script that reads a key variable or starts a broadcast outside the library. It reads the compiler's AST, as the other guards do. The scenario fixtures and the flow modules keep their own test keys and are outside the guard by folder.
 - In a rehearsal the driver pins every variable named `*_PRIVATE_KEY` to zero in the environment of each command. A value already in the environment wins over the `.env` file forge loads by itself, so no key reaches forge, and a script that still asked for one would fail on the zero. The loader also refuses to load those names in this mode.
-- Only the role addresses are impersonated, one by one. A transaction from any other sender fails.
+- Only the role addresses are impersonated, one by one. A transaction from any other sender fails. A probe on the pinned forge showed that one script run with unlocked sending broadcasts as both roles, that the journal records each sender, and that the node refuses a sender it was not told to impersonate. So no script is split by role.
 
 The test actors of the flows and the bot keys of the smoke stage are keys made for the run and funded on the fork. Their identity does not matter. This answers the second open question of the outline: impersonation for the roles, keys made for the run for everyone else.
 
@@ -148,8 +148,8 @@ One scratch folder per run, `contracts/deployments/.forge-test/rehearsal/<run>/`
 
 - **Solidity.** `Deployments.artifactRoot()`, the bottom of the path API, gains one rule: outside a test, on a node carrying the marker, the root is the scratch root from the environment, which must pass the two existing total tests (it starts with the scratch prefix and contains no parent segment). On such a node with no scratch root, every write is refused. The environment is read only outside the test context, so the reason it was avoided (parallel tests sharing one process) does not arise. A wrapper's own override still wins, so the scenario suites are unchanged.
 - **Shell.** One variable replaces each hard-coded `contracts/deployments` and `packages/contracts/src` path in the two deploy scripts, the export scripts and the manifest writer. The sibling keeper bot export is skipped in a rehearsal and reported.
-- **Forge.** The broadcast folder and the run cache are set to the scratch folder through forge's own configuration for the command, with the compile cache reused. The receipt check reads the same variable.
-- **The check.** Before the first step the driver records the state of the working tree (tracked, untracked and the ignored `broadcast/` and `cache/` run folders). After the last step it compares. Any difference outside the scratch folder fails the run and is listed. This is one comparison over everything, so a write nobody thought of is still caught.
+- **Forge.** Forge keeps a script's run file under its cache folder, beside the compile cache, with no separate setting. So for each command the broadcast folder and the cache folder are both set to the scratch folder, and the driver seeds the scratch cache with a copy of the real compile cache's index. The real cache is never written, and nothing recompiles, because the driver's build before the first step uses the same profile and flags as the steps. A step that does recompile writes compiled output outside the scratch folder, and the check below fails the run for it. That is the intended result, since it means the tree changed during the run. The receipt check reads the same broadcast variable.
+- **The check.** The driver builds everything first. Then, before the first step, it records every file in the working tree by path and content hash: tracked, untracked and ignored alike. That includes the ignored deployment state a real deploy keeps beside the records (the phase markers, the history, the archives and the carry-forward file under `contracts/deployments/<chain>/`) and forge's `broadcast/` and run cache folders. After the last step it compares. Any difference outside the scratch folder fails the run and is listed. This is one comparison over everything, so a write nobody thought of is still caught. If a tool is found to rewrite a compile output during a run, that path is left out by name in a committed list with its reason. A test refuses a list entry at or under `contracts/deployments`, a broadcast folder or a run cache, so the list can never hide deploy state.
 
 ## 14. The forks, the clock and the prices
 
@@ -186,7 +186,7 @@ The records comparison reads the run's broadcast journals: every created address
 ## 18. The verdict and the gate, exactly
 
 - **Tree digest:** the commit plus a hash of every tracked file as it is on disk, excluding `contracts/deployments`, the one directory boundary the deploy scripts already use for this. The pre-deploy gate records its own verdict against the same digest, so it runs once per tree and not once per chain (hardening lesson 10).
-- **Input digest:** a hash over the names and values of the variables the deploy reads, with every key variable and every RPC value left out by name. A changed address, lane list or gas pin is a different deploy.
+- **Input digest:** a hash over a canonical input set, worked out the same way in a rehearsal and in the real deploy. The set is the names and values of the variables the deploy reads, less three kinds left out by name: the key variables, the RPC values, and the variables the declared differences of section 5 set (the rehearsal flag, the scratch root and the path variable, and forge's broadcast and cache settings). Those last ones differ between a rehearsal and its real deploy by design, so hashing them would make every digest unequal. Addresses, lane lists, gas pins and settings stay in, so a change to any of them is a different deploy. A variable a deploy script reads that is in neither the input set nor the left-out list fails the run, so a new input cannot sit outside the digest unnoticed.
 - **The regression is not run again.** The rehearsal reuses the pre-deploy gate's recorded verdict for the tree and refuses without one.
 - **The gate** is one function in each deploy script, called at the top of the first broadcasting phase of a fresh deploy. It prints which of the five values differ, or the forks' age.
 - **The override** is `--without-rehearsal "<reason>"`. The reason goes into the phase marker and the chain's history record.
@@ -204,25 +204,25 @@ The gate binds refreshes on the testnets as well as on mainnet, with the same ov
 3. On a marker node with no scratch root, a record write reverts.
 4. The signer library: a key whose address differs from the role's address stops a real run. In a rehearsal no key variable is read.
 5. The signer guard fails on a script that reads a key or starts a broadcast outside the library.
-6. The tree check fails when a step writes outside the scratch folder, including under `broadcast/`.
+6. The tree check fails when a step writes outside the scratch folder, including under `broadcast/` and into a chain's ignored markers, history, archive or carry-forward file. The list of compile outputs left out refuses an entry under the deployment records.
 7. The redactor: a log line holding an RPC value comes out with the variable's name.
 8. The relay delivers only emitted messages, applies the message's gas limit, and fails the step on a failed receiver.
 9. The readback fails on each kind of row: a switch off, a role missing, a record dropped, an address not recorded, a chain outside the plan.
-10. The gate refuses on each of the five differing values and on an old fork, and accepts the override only with a reason.
+10. The gate refuses on each of the five differing values and on an old fork, and accepts the override only with a reason. The input digest of a rehearsal equals that of a real run with the same inputs, and a variable read outside the input set and the left-out list fails the run.
 11. The driver's plan and stages are tested with stub commands, as the regression runner's plan is.
 
 ## 21. Build split and order
 
 | Card | What | Suggested builder |
 | --- | --- | --- |
-| #3891 | The mode: the driver, the node tests, the signer library and guard, the output root, the fork launcher, the clock, the report and verdict | governance thread |
+| #3891 | The mode: the driver, the node tests, the signer library and guard, the output root, the fork launcher, the clock, the report and verdict | local testing thread |
 | #3892 | The relay between forks | keeper thread |
-| #3893 | The readback, on #3111's file | governance thread |
+| #3893 | The readback, on #3111's file | local testing thread |
 | #3894 | The indexer and keeper runners for a rehearsal | keeper thread |
 | #3895 | alpha05's rehearsal mode and smoke subset | alpha05 thread |
-| #3896 | The gate on the real deploy, the smoke flows, reuse of the pre-deploy gate's verdict, and the CI companion | governance thread |
-| #3897 | Rehearsing an in-place refresh | governance thread, later |
-| #3111 | The desired-state file, the plan, and the hand steps as phases | governance thread (existing card) |
+| #3896 | The gate on the real deploy, the smoke flows, reuse of the pre-deploy gate's verdict, and the CI companion | local testing thread |
+| #3897 | Rehearsing an in-place refresh | local testing thread, later |
+| #3111 | The desired-state file, the plan, and the hand steps as phases | local testing thread (existing card) |
 | #3109 | The Arbitrum gas fault | governance thread (existing card) |
 
 Order: #3891 first, since everything runs inside it. #3111's file and plan beside it, because #3893 and the arming list read them. #3892 and #3894 can start with #3891. #3893 and #3895 after #3891. #3896 last. #3897 follows once a fresh deploy has been gated. A first useful run needs #3891, #3892, #3893 and the plan with manual steps carried as command text.
@@ -256,8 +256,8 @@ Build #3891 to #3896 and finish #3111 and #3109, in the order of section 21, wit
 
 ## 25. Open items for the builders to raise, not decide silently
 
-1. Whether forge's unlocked sending carries two senders in one script run on the pinned version. If it does not, the affected scripts broadcast each role in its own run.
-2. The forge configuration that moves the run cache without moving the compile cache.
+1. Settled 2026-11-22 by the builder's probe: forge's unlocked sending carries two senders in one script run on the pinned version (section 12).
+2. Settled 2026-11-22: the run file cannot move without the cache folder, so both move and the compile cache's index is copied in (section 13).
 3. The ramp versions on each lane and the message format the stand-in must read.
 4. The mechanism for re-stamping a feed, and which feeds a testnet deploy reads from real aggregators.
 5. The 24 hour age of a verdict, if a mainnet deploy day needs a different figure.
