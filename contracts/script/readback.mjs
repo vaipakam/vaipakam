@@ -99,6 +99,9 @@ export function expectedSelectors(root = REPO_ROOT, out = join(CONTRACTS_DIR, 'o
   return { set, missing };
 }
 
+/** keccak256('eip1967.proxy.implementation') - 1, where an ERC-1967 proxy keeps its code's address. */
+export const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
+
 /**
  * The peer each messenger names per channel, by the remote chain's record key
  * (ConfigureCcip._wireChannelPeers): Base names each mirror's contracts, a
@@ -340,15 +343,29 @@ export function readback(d, ctx) {
       const got = rec.keeperAddress?.toLowerCase();
       R.push(row('records.keeperAddress', s, `bot ${d.records.keeperAddress} ${want}`, got ?? 'none recorded', got && got === want ? MET : NOT_MET, 'addresses.json'));
     }
-    // Accounted for: an address the records name, one the Diamond's swap
-    // registry names (DeployUniV3Adapter registers its adapter there and
-    // writes no record), or a contract the file lists by name with a reason.
+    // Accounted for: an address the records name, the implementation behind a
+    // recorded proxy, one the Diamond's swap registry names (DeployUniV3Adapter
+    // registers its adapter there and writes no record), or a contract the
+    // file lists by name with a reason.
     const known = addressesIn(rec);
     for (const a of swapAdapters) known.add(a);
     if (!created) R.push(row('records.created', s, 'every created address recorded or listed', unscoped, UNREADABLE, 'broadcast journals'));
     else {
       const made = created.get(CHAINS[s].chainId) ?? [];
-      const unrecorded = made.filter((c) => !known.has(c.address.toLowerCase()) && !Object.prototype.hasOwnProperty.call(d.notRecorded ?? {}, c.name));
+      const listed = (c) => known.has(c.address.toLowerCase()) || Object.prototype.hasOwnProperty.call(d.notRecorded ?? {}, c.name);
+      let unrecorded = made.filter((c) => !listed(c));
+      // An implementation behind a recorded ERC-1967 proxy is accounted for by
+      // that proxy: the chain itself says which code the proxy runs, so no
+      // second record is needed (read only when something is left over).
+      if (unrecorded.length && ctx.storageAt) {
+        for (const a of [...addressesIn(rec)]) {
+          try {
+            const w = String(ctx.storageAt(s, a, ERC1967_IMPLEMENTATION_SLOT)).trim().toLowerCase();
+            if (/^0x[0-9a-f]{64}$/.test(w) && !/^0x0{64}$/.test(w)) known.add(`0x${w.slice(26)}`);
+          } catch { /* not readable: the address stays unaccounted for */ }
+        }
+        unrecorded = made.filter((c) => !listed(c));
+      }
       R.push(row('records.created', s, 'every created address recorded or listed', unrecorded.length ? unrecorded.map((c) => `${c.name || '?'} ${c.address}`).join('; ') : `${made.length} created, all accounted for`, unrecorded.length ? NOT_MET : MET, 'broadcast journals'));
     }
     for (const f of ['storage-layout.json', 'storage-layout.anchor.json']) {
@@ -441,6 +458,7 @@ export function main(argv = process.argv.slice(2), { env = process.env, log = co
     return run(['call', to, sig, ...args, '--rpc-url', rpcOf(s)]);
   };
   const code = (s, a) => run(['code', a, '--rpc-url', rpcOf(s)]);
+  const storageAt = (s, a, slot) => run(['storage', a, slot, '--rpc-url', rpcOf(s)]);
   const keccakCache = new Map();
   const keccak = (t) => {
     if (!keccakCache.has(t)) keccakCache.set(t, run(['keccak', t]).toLowerCase());
@@ -459,7 +477,7 @@ export function main(argv = process.argv.slice(2), { env = process.env, log = co
   const a = arg(rest, '--anchor');
 
   const rows = readback(d, {
-    call, code, keccak, records, prior, env: values, terms,
+    call, code, storageAt, keccak, records, prior, env: values, terms,
     roles: grantableRoles(),
     getters: [...getters],
     selectors: expectedSelectors(),

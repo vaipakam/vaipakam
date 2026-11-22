@@ -105,6 +105,7 @@ function fakeCtx(d, w, over = {}) {
   return {
     call,
     code: () => '0x6080',
+    storageAt: (s, a) => w.impls?.[a.toLowerCase()] ?? `0x${'0'.repeat(64)}`,
     keccak: fakeKeccak,
     records: w.records,
     prior: w.prior,
@@ -406,4 +407,15 @@ test('a recorded keeper address that is not the keeper bot fails', () => {
   const w = world(d);
   w.records['bnb-testnet'].keeperAddress = A(0xbad);
   assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['bnb-testnet records.keeperAddress']);
+});
+
+test('an implementation behind a recorded proxy counts as recorded; an orphan does not', () => {
+  const d = desired();
+  const w = world(d);
+  const proxy = w.records['arb-sepolia'].ccipMessenger.toLowerCase();
+  w.impls = { [proxy]: `0x${'0'.repeat(24)}${A(0xd000).slice(2)}` };
+  w.created.get(CHAINS['arb-sepolia'].chainId).push({ address: A(0xd000), name: 'VpfiPoolRateGovernor' });
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), []);
+  w.created.get(CHAINS['arb-sepolia'].chainId).push({ address: A(0xd001), name: 'VPFIMirrorToken' });
+  assert.deepEqual(bad(readback(d, fakeCtx(d, w))), ['arb-sepolia records.created']);
 });
