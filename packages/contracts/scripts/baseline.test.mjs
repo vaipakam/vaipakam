@@ -116,6 +116,10 @@ test('the regression section keeps every manifest, at any depth, and adds up chu
   const r = collectRegression(dir);
   assert.deepEqual([r.planDigest, r.chunks, r.chunksPassed, r.testsRun, r.testsPassed], ['abc', 2, 2, 15, 15]);
   assert.deepEqual(Object.keys(r.manifests), ['machine2/shard-2.tsv', 'shard-1.tsv']);
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\npass\ttest/{B}.t.sol\ncomplete\t1\n');
+  assert.throws(() => collectRegression(dir), /the chunk test\/\{B\}\.t\.sol has no test counts/);
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\npass\ttest/{B}.t.sol\ntests\ttest/{B}.t.sol\t5\tx\ncomplete\t1\n');
+  assert.throws(() => collectRegression(dir), /not two whole numbers/);
   writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tother\nshard\t2/2\n');
   assert.throws(() => collectRegression(dir), /2 plan digests/);
 });

@@ -258,17 +258,29 @@ export function collectRegression(dir) {
   for (const f of files) {
     const text = readFileSync(join(dir, f), 'utf8');
     manifests[f] = text;
+    // Every chunk the manifest records carries exactly one count row, so the
+    // record states measured figures, never a zero for a count it lacks.
+    const ran = [];
+    const counts = new Map();
     for (const line of text.split('\n')) {
       const [k, a, b, c] = line.split('\t');
       if (k === 'plan') digests.add(a);
       else if (k === 'pass' || k === 'fail') {
         chunks++;
         if (k === 'pass') passed++;
+        ran.push(a);
       } else if (k === 'tests') {
-        testsRun += Number(b);
-        testsPassed += Number(c);
+        if (!/^\d+$/.test(b ?? '') || !/^\d+$/.test(c ?? '')) throw new Error(`baseline: ${f}: the count row for ${a} is not two whole numbers`);
+        if (counts.has(a)) throw new Error(`baseline: ${f}: ${a} has two count rows`);
+        counts.set(a, [Number(b), Number(c)]);
       }
     }
+    for (const g of ran) {
+      if (!counts.has(g)) throw new Error(`baseline: ${f}: the chunk ${g} has no test counts; run the regression again with this tree's run-regression.sh`);
+      testsRun += counts.get(g)[0];
+      testsPassed += counts.get(g)[1];
+    }
+    for (const g of counts.keys()) if (!ran.includes(g)) throw new Error(`baseline: ${f}: a count row for ${g}, which the manifest does not record as run`);
   }
   if (digests.size !== 1) throw new Error(`baseline: the manifests name ${digests.size} plan digests; one regression has one plan`);
   return { planDigest: [...digests][0], chunks, chunksPassed: passed, testsRun, testsPassed, manifests };
