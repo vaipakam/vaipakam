@@ -835,6 +835,13 @@ cannot block its own removal. In the meantime the worst
 it can do is cancel other queued operations, which are queued again once the
 removal has run.
 
+Then, after the pause role is revoked and the canceller role's removal has
+run, queue one operation that lifts every pause that has no entry meeting
+the rule ([`IncidentRunbook.md`](IncidentRunbook.md) §3.8, recorded in
+[`AssetPauseLog.md`](AssetPauseLog.md)). The canceller removal is its own
+single-call `schedule`, and the lift waits behind it, so a pause the
+compromised key placed can last two delays.
+
 The same rule cuts the other way, and it is a deliberate trade. If the
 Governance Safe (the proposer) is the one compromised, the canceller cannot
 veto a queued removal of itself. It keeps its veto over everything else until
