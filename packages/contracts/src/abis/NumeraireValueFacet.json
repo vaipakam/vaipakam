@@ -94,6 +94,11 @@
   },
   {
     "type": "error",
+    "name": "PriceReadOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PriceZero",
     "inputs": []
   },

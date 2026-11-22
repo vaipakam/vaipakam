@@ -327,5 +327,10 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriceReadOutOfGas",
+    "inputs": []
   }
 ]
