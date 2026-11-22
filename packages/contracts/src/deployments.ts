@@ -338,6 +338,11 @@ export interface Deployment {
    *  this key, to find the reference in force). Optional until each chain's
    *  next fresh deploy writes it. */
   rateReference?: HexAddress;
+  /** #3337 part 2 — the RateReferenceReads companion the RateReference
+   *  deployed (its `READS()`): the term average, the linked rate, the band,
+   *  the unusual state and the status. Read `READS()` on the reference in
+   *  force rather than this key. Optional until the next fresh deploy. */
+  rateReferenceReads?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;

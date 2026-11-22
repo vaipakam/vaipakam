@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {RateReference} from "../src/oracle/reference/RateReference.sol";
+import {RateReferenceReads} from "../src/oracle/reference/RateReferenceReads.sol";
 import {IRateReference} from "../src/interfaces/IRateReference.sol";
 import {MockRateSource} from "../src/oracle/reference/MockRateSource.sol";
 import {AnnualRayRateReader} from "../src/oracle/reference/AnnualRayRateReader.sol";
@@ -110,8 +111,13 @@ contract RateReferenceTest is Test {
         }
     }
 
+    /// @dev The read side the reference deployed.
+    function _rd() internal view returns (RateReferenceReads) {
+        return RateReferenceReads(rr.READS());
+    }
+
     function _ref() internal view returns (uint256) {
-        return rr.status(ASSET).referenceRate;
+        return _rd().status(ASSET).referenceRate;
     }
 
     // ─── 1. Quorum ───────────────────────────────────────────────────────
@@ -138,7 +144,7 @@ contract RateReferenceTest is Test {
         src[2].setRate(ASSET, 20 * PCT);
         _warp(1 hours);
         rr.update(ASSET);
-        IRateReference.Status memory st = rr.status(ASSET);
+        IRateReference.Status memory st = _rd().status(ASSET);
         assertTrue(st.holding);
         assertEq(st.referenceRate, 5 * PCT);
     }
@@ -149,7 +155,7 @@ contract RateReferenceTest is Test {
         _setAll(9 * PCT);
         _warp(1 hours);
         rr.update(ASSET);
-        assertTrue(rr.status(ASSET).holding);
+        assertTrue(_rd().status(ASSET).holding);
         assertEq(_ref(), 5 * PCT);
     }
 
@@ -159,7 +165,7 @@ contract RateReferenceTest is Test {
         src[3].setFailing(true);
         _warp(1 hours);
         rr.update(ASSET);
-        assertFalse(rr.status(ASSET).holding);
+        assertFalse(_rd().status(ASSET).holding);
     }
 
     function test_Quorum_MuteHoldsWhateverTheOthersSay() public {
@@ -170,7 +176,7 @@ contract RateReferenceTest is Test {
         _setAll(6 * PCT);
         _warp(1 hours);
         rr.update(ASSET);
-        assertTrue(rr.status(ASSET).holding, "agreeing readings are held, not re-read, once one is muted");
+        assertTrue(_rd().status(ASSET).holding, "agreeing readings are held, not re-read, once one is muted");
         assertEq(_ref(), 5 * PCT);
     }
 
@@ -391,7 +397,7 @@ contract RateReferenceTest is Test {
     function test_Mute_UnmuteWaitsAndNewSeriesMovesWhileOldHolds() public {
         uint32 first = _open(4);
         vm.prank(diamond);
-        rr.noteLoanOpened(ASSET);
+        rr.noteLoanOpened(ASSET, 0, 0);
         IRateReference.Source memory s3 = IRateReference.Source(address(src[3]), address(src[3]), bytes32(0));
         vm.prank(guardian);
         rr.mute(ASSET, s3);
@@ -455,7 +461,8 @@ contract RateReferenceTest is Test {
     function test_Series_OldLoanAccruesAsIfNoChange_UpdateWritesLiveOnly() public {
         uint32 first = _open(3);
         vm.prank(diamond);
-        assertEq(rr.noteLoanOpened(ASSET), first);
+        (uint32 got,,) = rr.noteLoanOpened(ASSET, 0, 0);
+        assertEq(got, first);
         IRateReference.SeriesConfig memory c = _cfg(4);
         c.stepBpsPerHour = 100;
         vm.prank(owner);
@@ -468,7 +475,7 @@ contract RateReferenceTest is Test {
         assertEq(rr.seriesOf(second).referenceRate, 6 * PCT, "new series its own");
         // The last loan closes: the old series is no longer written.
         vm.prank(diamond);
-        rr.noteLoanClosed(first);
+        rr.noteLoanClosed(first, 0, 0);
         uint64 last = rr.seriesOf(first).lastUpdate;
         _hourly(1);
         assertEq(rr.seriesOf(first).lastUpdate, last);
@@ -477,13 +484,13 @@ contract RateReferenceTest is Test {
     function test_Series_LiveBoundRefusesOneMore() public {
         _open(3);
         vm.prank(diamond);
-        rr.noteLoanOpened(ASSET);
+        rr.noteLoanOpened(ASSET, 0, 0);
         _open(3);
         vm.prank(diamond);
-        rr.noteLoanOpened(ASSET);
+        rr.noteLoanOpened(ASSET, 0, 0);
         _open(3);
         vm.prank(diamond);
-        rr.noteLoanOpened(ASSET);
+        rr.noteLoanOpened(ASSET, 0, 0);
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(RateReference.TooManyLiveSeries.selector, ASSET, 4, 3));
         rr.proposeSeries(ASSET, _cfg(3));
@@ -492,7 +499,7 @@ contract RateReferenceTest is Test {
     function test_Series_OnlyDiamondMovesLoanCount() public {
         _open(3);
         vm.expectRevert(abi.encodeWithSelector(RateReference.NotDiamond.selector, address(this)));
-        rr.noteLoanOpened(ASSET);
+        rr.noteLoanOpened(ASSET, 0, 0);
     }
 
     // ─── #3713: windows, unusual, term average, band ─────────────────────
@@ -563,40 +570,40 @@ contract RateReferenceTest is Test {
     function test_Unusual_EntersAtDistance_TermAverageAndBand() public {
         _open(3);
         _hourly(24 * 31);
-        assertEq(uint8(rr.unusual(ASSET)), uint8(IRateReference.Unusual.Calm));
+        assertEq(uint8(_rd().unusual(ASSET)), uint8(IRateReference.Unusual.Calm));
         // Spike: 5% -> 15% (step 0.5/h -> 20 hours).
         _setAll(15 * PCT);
         _hourly(48);
-        assertEq(uint8(rr.unusual(ASSET)), uint8(IRateReference.Unusual.Unusual));
+        assertEq(uint8(_rd().unusual(ASSET)), uint8(IRateReference.Unusual.Unusual));
         // Long linked fills pause; short ones proceed.
-        (, IRateReference.LinkRefusal why) = rr.linkedRate(ASSET, 90, IRateReference.LinkKind.Reference);
+        (, IRateReference.LinkRefusal why) = _rd().linkedRate(ASSET, 90, IRateReference.LinkKind.Reference);
         assertEq(uint8(why), uint8(IRateReference.LinkRefusal.ReferenceUnusual));
-        (uint256 r7, IRateReference.LinkRefusal why7) = rr.linkedRate(ASSET, 7, IRateReference.LinkKind.Reference);
+        (uint256 r7, IRateReference.LinkRefusal why7) = _rd().linkedRate(ASSET, 7, IRateReference.LinkKind.Reference);
         assertEq(uint8(why7), uint8(IRateReference.LinkRefusal.None));
         assertGt(r7, 10 * PCT);
         // In a spike the one-year term average sits below the 24-hour average.
-        IRateReference.TermAverage memory y = rr.termAverage(ASSET, 365);
+        IRateReference.TermAverage memory y = _rd().termAverage(ASSET, 365);
         assertTrue(y.available);
         assertEq(y.weightBps, 1_000);
         assertLt(y.rate1e18, y.average24h);
         // Band: 15% for a year against an average near 6% is far above.
-        IRateReference.Band memory b = rr.band(ASSET, 365, 1500);
+        IRateReference.Band memory b = _rd().band(ASSET, 365, 1500);
         assertTrue(b.outside && b.above);
-        IRateReference.Band memory inside = rr.band(ASSET, 7, 1500);
+        IRateReference.Band memory inside = _rd().band(ASSET, 7, 1500);
         assertFalse(inside.outside, "a week's average is today's 15%");
     }
 
     function test_Weights_RowsAndBetween() public view {
-        assertEq(rr.weightBps(1), 10_000);
-        assertEq(rr.weightBps(7), 10_000);
-        assertEq(rr.weightBps(30), 7_500);
-        assertEq(rr.weightBps(60), 6_250);
-        assertEq(rr.weightBps(365), 1_000);
-        assertEq(rr.weightBps(1000), 1_000);
+        assertEq(_rd().weightBps(1), 10_000);
+        assertEq(_rd().weightBps(7), 10_000);
+        assertEq(_rd().weightBps(30), 7_500);
+        assertEq(_rd().weightBps(60), 6_250);
+        assertEq(_rd().weightBps(365), 1_000);
+        assertEq(_rd().weightBps(1000), 1_000);
     }
 
     function test_Band_NoAverageNoBand() public view {
-        IRateReference.Band memory b = rr.band(ASSET, 30, 9_000);
+        IRateReference.Band memory b = _rd().band(ASSET, 30, 9_000);
         assertFalse(b.available);
         assertFalse(b.outside);
     }
@@ -606,14 +613,256 @@ contract RateReferenceTest is Test {
         _setAll(1 * PCT);
         _hourly(24 * 31 + 24 * 60);
         // 2.5% vs 1%: 2.5x but only 1.5 points away -> inside.
-        assertFalse(rr.band(ASSET, 7, 250).outside);
+        assertFalse(_rd().band(ASSET, 7, 250).outside);
         // 3.5% vs 1%: 2.5 points away and over 1.5x -> outside.
-        assertTrue(rr.band(ASSET, 7, 350).outside);
+        assertTrue(_rd().band(ASSET, 7, 350).outside);
     }
 
     function _pack(uint16[5] memory w) internal pure returns (uint256 v) {
         for (uint256 i; i < 5; ++i) {
             v |= uint256(w[i]) << (16 * i);
         }
+    }
+
+    // ─── Cap and floor levels (#3337 part 2, levels design section 9) ────
+
+    function _levelSubject(uint16 rateBps, bool isCap) internal pure returns (bytes32) {
+        return bytes32(uint256(uint160(ASSET)) | (uint256(rateBps) << 160) | (isCap ? uint256(1) << 176 : 0));
+    }
+
+    function _level(uint16 rateBps, bool isCap) internal returns (uint32 id) {
+        vm.prank(owner);
+        rr.proposeLevel(ASSET, rateBps, isCap);
+        rr.executeChange(IRateReference.Kind.AddLevel, _levelSubject(rateBps, isCap));
+        id = rr.levelCount();
+    }
+
+    function _retireLevel(uint32 id) internal {
+        vm.prank(owner);
+        rr.proposeRetireLevel(id);
+        rr.executeChange(IRateReference.Kind.RetireLevel, bytes32(uint256(id)));
+    }
+
+    function _openLoan(uint32 cap, uint32 floor_) internal returns (uint32 id, uint256 snap) {
+        vm.prank(diamond);
+        (id, snap,) = rr.noteLoanOpened(ASSET, cap, floor_);
+    }
+
+    function test_Reads_CompanionNamesThisReference() public view {
+        assertEq(address(_rd().REFERENCE()), address(rr));
+        assertTrue(rr.READS() != address(0));
+    }
+
+    function test_Levels_NoLevelsReadsTheIndex() public {
+        uint32 id = _open(3);
+        _hourly(3);
+        (uint256 c,) = rr.clampedSum(id, 0, 0);
+        assertEq(c, _rd().status(ASSET).index);
+    }
+
+    function test_Levels_CapBelowAndAboveTheReference() public {
+        uint32 id = _open(3);
+        uint32 low = _level(400, true); // 4%: the 5% reference is above it
+        uint32 high = _level(800, true); // 8%: never reached
+        (, uint256 s0) = _openLoan(low, 0);
+        (, uint256 h0) = _openLoan(high, 0);
+        _hourly(10);
+        _warp(30 minutes); // a part interval, carried at the reference in force
+        (uint256 s1,) = rr.clampedSum(id, low, 0);
+        (uint256 h1,) = rr.clampedSum(id, high, 0);
+        assertEq(s1 - s0, 4 * PCT * (10 hours + 30 minutes), "held at the cap");
+        assertEq(h1 - h0, 5 * PCT * (10 hours + 30 minutes), "a cap above the reference changes nothing");
+        (uint256 hTotal,) = rr.levelOnSeries(id, high);
+        assertEq(hTotal, 0, "nothing written for a level the reference is inside");
+    }
+
+    function test_Levels_FloorMirror() public {
+        uint32 id = _open(3);
+        uint32 fl = _level(600, false); // 6%: the reference is below it
+        (, uint256 s0) = _openLoan(0, fl);
+        _hourly(4);
+        (uint256 s1,) = rr.clampedSum(id, 0, fl);
+        assertEq(s1 - s0, 6 * PCT * 4 hours, "held at the floor");
+    }
+
+    function test_Levels_CrossingTheCapIsExactToTheUpdates() public {
+        uint32 id = _open(3);
+        uint32 cap = _level(525, true); // 5.25%
+        (, uint256 s0) = _openLoan(cap, 0);
+        _setAll(6 * PCT);
+        _hourly(1); // accrues 5.00 for the hour, then the reference steps to 5.50
+        _hourly(1); // accrues 5.50 cut to 5.25
+        (uint256 s1,) = rr.clampedSum(id, cap, 0);
+        assertEq(s1 - s0, (5 * PCT + 525 * 1e14) * 1 hours);
+    }
+
+    function test_Levels_CapAndFloorOnOnePath() public {
+        uint32 id = _open(3);
+        uint32 cap = _level(550, true);
+        uint32 fl = _level(450, false);
+        (, uint256 s0) = _openLoan(cap, fl);
+        // Down to 4.0 (below the floor), then up to 6.0 (above the cap).
+        // The step is 0.5 a hour, so the reference in force each hour is
+        // 5.0, 4.5, 4.0, 4.0 | 4.5, 5.0, 5.5, 6.0, and each hour accrues the
+        // one before the update: clamped to 5.0, 4.5, 4.5, 4.5, 4.5, 5.0,
+        // 5.5, 5.5 = 39.0 percent-hours.
+        _setAll(4 * PCT);
+        _hourly(3);
+        _setAll(6 * PCT);
+        _hourly(5);
+        (uint256 s1,) = rr.clampedSum(id, cap, fl);
+        assertEq(s1 - s0, 39 * PCT * 1 hours, "clamped path");
+    }
+
+    function test_Levels_TwoLoansEachFromTheirOwnSnapshot() public {
+        uint32 id = _open(3);
+        uint32 cap = _level(400, true);
+        (, uint256 a0) = _openLoan(cap, 0);
+        _hourly(2);
+        (, uint256 b0) = _openLoan(cap, 0);
+        _hourly(3);
+        (uint256 now1,) = rr.clampedSum(id, cap, 0);
+        assertEq(now1 - a0, 4 * PCT * 5 hours);
+        assertEq(now1 - b0, 4 * PCT * 3 hours);
+        (, uint32 loans) = rr.levelOnSeries(id, cap);
+        assertEq(loans, 2);
+    }
+
+    function test_Levels_RetiredKeepsAccruingUntilTheLastLoanCloses() public {
+        uint32 id = _open(3);
+        uint32 cap = _level(400, true);
+        (, uint256 s0) = _openLoan(cap, 0);
+        _retireLevel(cap);
+        vm.prank(diamond);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelNotOpen.selector, cap));
+        rr.noteLoanOpened(ASSET, cap, 0);
+        _hourly(2);
+        (uint256 s1,) = rr.clampedSum(id, cap, 0);
+        assertEq(s1 - s0, 4 * PCT * 2 hours, "still in force for the open loan");
+        assertEq(rr.trackedLevels(ASSET).length, 1);
+        vm.prank(diamond);
+        rr.noteLoanClosed(id, cap, 0);
+        assertEq(rr.trackedLevels(ASSET).length, 0, "no longer tracked");
+    }
+
+    function test_Levels_AddedLaterStartsAtZero() public {
+        uint32 id = _open(3);
+        _hourly(5);
+        uint32 cap = _level(400, true);
+        (uint256 total,) = rr.levelOnSeries(id, cap);
+        assertEq(total, 0);
+        (uint32 sid, uint256 s0) = _openLoan(cap, 0);
+        assertEq(sid, id);
+        (uint256 c,) = rr.clampedSum(id, cap, 0);
+        assertEq(c, s0, "the snapshot is the clamped sum now");
+        _hourly(1);
+        (c,) = rr.clampedSum(id, cap, 0);
+        assertEq(c - s0, 4 * PCT * 1 hours);
+    }
+
+    function test_Levels_OpenRefusals() public {
+        uint32 id = _open(3);
+        uint32 cap = _level(600, true);
+        uint32 fl = _level(400, false);
+        vm.startPrank(diamond);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.UnknownLevel.selector, uint32(99)));
+        rr.noteLoanOpened(ASSET, 99, 0);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelWrongSide.selector, fl, false));
+        rr.noteLoanOpened(ASSET, fl, 0);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelWrongSide.selector, cap, true));
+        rr.noteLoanOpened(ASSET, 0, cap);
+        vm.stopPrank();
+        // A floor not below the series ceiling, uncapped.
+        IRateReference.SeriesConfig memory c = _cfg(3);
+        c.ceilingBps = 400;
+        vm.prank(owner);
+        rr.proposeSeries(ASSET, c);
+        rr.executeChange(IRateReference.Kind.OpenSeries, bytes32(uint256(uint160(ASSET))));
+        vm.prank(diamond);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.FloorNotBelowCap.selector, uint16(400), uint16(400)));
+        rr.noteLoanOpened(ASSET, 0, fl);
+        id;
+    }
+
+    function test_Levels_OpenRefusesAStaleSeries() public {
+        uint32 id = _open(3);
+        _warp(4 hours); // three intervals is the default limit
+        vm.prank(diamond);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.SeriesStale.selector, id, uint64(now_ - 4 hours), false));
+        rr.noteLoanOpened(ASSET, 0, 0);
+    }
+
+    function test_Levels_OtherAssetsLevelRefused() public {
+        _open(3);
+        address other = address(0xB0B);
+        vm.prank(owner);
+        rr.proposeLevel(other, 600, true);
+        rr.executeChange(
+            IRateReference.Kind.AddLevel,
+            bytes32(uint256(uint160(other)) | (uint256(600) << 160) | (uint256(1) << 176))
+        );
+        uint32 lv = rr.levelCount();
+        vm.prank(diamond);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelForOtherAsset.selector, lv, ASSET));
+        rr.noteLoanOpened(ASSET, lv, 0);
+    }
+
+    function test_Levels_ListRule() public {
+        _level(600, true);
+        _level(400, false);
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(0), true, uint8(1)));
+        rr.proposeLevel(ASSET, 0, true);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(10_001), true, uint8(1)));
+        rr.proposeLevel(ASSET, 10_001, true);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(600), false, uint8(4)));
+        rr.proposeLevel(ASSET, 600, false); // a floor at a tracked cap
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(400), true, uint8(4)));
+        rr.proposeLevel(ASSET, 400, true); // a cap at a tracked floor
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(600), true, uint8(5)));
+        rr.proposeLevel(ASSET, 600, true);
+        vm.stopPrank();
+        _level(700, true);
+        _level(800, true);
+        _level(900, true);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(1000), true, uint8(2)));
+        rr.proposeLevel(ASSET, 1000, true);
+    }
+
+    function test_Levels_TrackedBoundHoldsWithRetiredLoans() public {
+        uint32 id = _open(3);
+        // Four open caps, each with a loan, retired; then four more; then none.
+        for (uint16 i; i < 4; ++i) {
+            uint32 lv = _level(600 + i * 100, true);
+            _openLoan(lv, 0);
+            _retireLevel(lv);
+        }
+        for (uint16 i; i < 4; ++i) {
+            _level(1100 + i * 100, true);
+        }
+        assertEq(rr.trackedLevels(ASSET).length, 8);
+        _retireLevel(rr.levelCount()); // no loan: untracked at once, frees a slot
+        uint32 last = _level(2000, true);
+        _openLoan(last, 0);
+        _retireLevel(last); // three open, eight tracked: the tracked bound binds
+        assertEq(rr.trackedLevels(ASSET).length, 8);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.LevelRefused.selector, ASSET, uint16(2100), true, uint8(3)));
+        rr.proposeLevel(ASSET, 2100, true);
+        id;
+    }
+
+    function test_Levels_OnlyTheDiamondCountsAndOnlyTheOwnerProposes() public {
+        _open(3);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.NotDiamond.selector, address(this)));
+        rr.noteLoanClosed(1, 0, 0);
+        vm.expectRevert();
+        rr.proposeLevel(ASSET, 600, true);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(RateReference.InvalidChange.selector, IRateReference.Kind.AddLevel, bytes32(0), bytes32(0))
+        );
+        rr.proposeChange(IRateReference.Kind.AddLevel, bytes32(0));
     }
 }

@@ -170,6 +170,7 @@
     "VaipakamVaultImplementation",
     "VaultProtection",
     "VaultRecovery",
-    "RateReference"
+    "RateReference",
+    "RateReferenceReads"
   ]
 }

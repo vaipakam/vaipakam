@@ -1501,6 +1501,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writePriceGuard(priceGuard);
         Deployments.writePriceGuardReader(PriceGuard(priceGuard).READER());
         Deployments.writeRateReference(rateReference);
+        Deployments.writeRateReferenceReads(RateReference(rateReference).READS());
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);

@@ -246,6 +246,7 @@ import ProtocolRegistryABI from './ProtocolRegistry.json';
 import PriceGuardABI from './PriceGuard.json';
 // #3337 part 1 — the RateReference (standalone).
 import RateReferenceABI from './RateReference.json';
+import RateReferenceReadsABI from './RateReferenceReads.json';
 // #3379 B2 — the vault code and its protected-mode rules (standalone).
 import VaipakamVaultImplementationABI from './VaipakamVaultImplementation.json';
 import VaultProtectionABI from './VaultProtection.json';
@@ -415,6 +416,7 @@ export {
   ProtocolRegistryABI,
   PriceGuardABI,
   RateReferenceABI,
+  RateReferenceReadsABI,
   VaipakamVaultImplementationABI,
   VaultProtectionABI,
   VaultRecoveryABI,

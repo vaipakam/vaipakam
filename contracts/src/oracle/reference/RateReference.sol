@@ -5,6 +5,7 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 import {IRateReference} from "../../interfaces/IRateReference.sol";
 import {IRateSourceReader} from "../../interfaces/IRateSourceReader.sol";
 import {TestnetChains} from "../../compliance/TestnetChains.sol";
+import {RateReferenceReads} from "./RateReferenceReads.sol";
 
 /**
  * @title  RateReference
@@ -78,11 +79,6 @@ contract RateReference is IRateReference, Ownable2Step {
     /// @notice The protocol's maximum interest rate (100% a year).
     uint16 public constant CEILING_BPS_MAX = 10_000;
 
-    /// @notice The 24-hour average, the "today" figure and the short half of
-    ///         the term average.
-    uint256 public constant DAY_WINDOW = 24 hours;
-    /// @notice The windows the unusual state compares.
-    uint256 public constant MONTH_WINDOW = 30 days;
     /// @notice The long half of the term average, and the longest window any
     ///         averaged read takes.
     uint256 public constant LONG_TERM_WINDOW = 90 days;
@@ -97,6 +93,12 @@ contract RateReference is IRateReference, Ownable2Step {
     ///         through: bounded reads, and more than a 90-day window can
     ///         plausibly cross.
     uint256 public constant MAX_CONTINUE_HOPS = 8;
+
+    /// @notice Cap levels, and floor levels, open for new loans per asset.
+    uint256 public constant MAX_OPEN_LEVELS = 4;
+    /// @notice Cap levels, and floor levels, accrued per asset: open ones and
+    ///         retired ones a loan still reads. Bounds the update's writes.
+    uint256 public constant MAX_TRACKED_LEVELS = 8;
 
     /// @notice The term (days) of each row of the term-average weight table.
     uint256 private constant ROWS = 5;
@@ -127,6 +129,9 @@ contract RateReference is IRateReference, Ownable2Step {
     address public immutable DIAMOND;
     /// @notice True when this chain may set a delay below {MIN_DELAY}.
     bool public immutable TESTNET;
+    /// @notice The read side (term average, linked rate, band), deployed by
+    ///         this contract: a {RateReferenceReads}.
+    address public immutable override READS;
 
     // ─── State ───────────────────────────────────────────────────────────
 
@@ -156,6 +161,17 @@ contract RateReference is IRateReference, Ownable2Step {
     /// @dev The asset a source key belongs to, for the unmute event.
     mapping(bytes32 => address) private _unmuteAsset;
 
+    /// @notice Level count; level ids start at 1 (0 = none).
+    uint32 public levelCount;
+    mapping(uint32 => Level) private _levels;
+    /// @dev Per asset, the levels an update accrues, both sides.
+    mapping(address => uint32[]) private _tracked;
+    /// @dev Per series and level, the running excess (cap) or shortfall
+    ///      (floor), 1e18-scaled rate times seconds.
+    mapping(uint32 => mapping(uint32 => uint256)) private _levelTotal;
+    /// @dev Per series and level, the open loans.
+    mapping(uint32 => mapping(uint32 => uint32)) private _levelLoans;
+
     struct Pending {
         bytes32 value;
         uint64 executableAt;
@@ -183,6 +199,17 @@ contract RateReference is IRateReference, Ownable2Step {
     error SeriesNotLive(uint32 seriesId);
     error NoOpenLoans(uint32 seriesId);
     error WindowOutOfRange(uint256 window);
+    error UnknownLevel(uint32 levelId);
+    error LevelNotOpen(uint32 levelId);
+    error LevelWrongSide(uint32 levelId, bool isCap);
+    error LevelForOtherAsset(uint32 levelId, address asset);
+    error FloorNotBelowCap(uint16 floorBps, uint16 capBps);
+    error SeriesStale(uint32 seriesId, uint64 lastUpdate, bool holding);
+    /// @notice A level addition refused: 1 rate out of range, 2 the side's
+    ///         open list is full, 3 the side's tracked list is full, 4 it
+    ///         would cross a tracked level of the other side, 5 the side
+    ///         already has an open level at that rate.
+    error LevelRefused(address asset, uint16 rateBps, bool isCap, uint8 reason);
     error UnknownSource(address asset, bytes32 sourceKey);
     /// @notice Too little gas was left to give a source read its whole
     ///         budget. Raise the transaction's gas limit; nothing was read.
@@ -198,6 +225,7 @@ contract RateReference is IRateReference, Ownable2Step {
         if (guardian_ == address(0) || diamond_ == address(0)) revert ZeroAddress();
         TESTNET = TestnetChains.isTestnet(block.chainid);
         DIAMOND = diamond_;
+        READS = address(new RateReferenceReads(this));
         _checkDelay(delay_);
         delay = delay_;
         guardian = guardian_;
@@ -248,6 +276,7 @@ contract RateReference is IRateReference, Ownable2Step {
         if (live_) {
             s.index += uint256(s.referenceRate) * dt;
             s.held += uint64(_heldOver(s.holding, dt, c.interval));
+            _accrueLevels(id, s.asset, s.referenceRate, dt);
         }
 
         // 2. The quorum.
@@ -290,6 +319,31 @@ contract RateReference is IRateReference, Ownable2Step {
 
         // 4. Checkpoints, for a series that has an index.
         if (live_) _checkpoint(id, s);
+    }
+
+    /// @dev Accrue every tracked level of `asset` on series `id` over `dt`
+    ///      at the reference in force `r`. Writes only a level the reference
+    ///      is beyond, and the list rule keeps every floor below every cap,
+    ///      so at most one side writes: eight writes at most.
+    function _accrueLevels(uint32 id, address asset, uint256 r, uint256 dt) private {
+        uint32[] storage t = _tracked[asset];
+        uint256 n = t.length;
+        for (uint256 i; i < n; ++i) {
+            uint32 lv = t[i];
+            uint256 add = _beyond(_levels[lv], r) * dt;
+            if (add != 0) {
+                uint256 total = _levelTotal[id][lv] + add;
+                _levelTotal[id][lv] = total;
+                emit LevelAccrued(id, lv, total);
+            }
+        }
+    }
+
+    /// @dev How far `r` is beyond a level: above a cap, or below a floor.
+    function _beyond(Level storage l, uint256 r) private view returns (uint256) {
+        uint256 lv = uint256(l.rateBps) * BPS;
+        if (l.isCap) return r > lv ? r - lv : 0;
+        return lv > r ? lv - r : 0;
     }
 
     /// @dev Seconds of `dt` that count as held: all of them while holding,
@@ -517,24 +571,153 @@ contract RateReference is IRateReference, Ownable2Step {
     // ─── The Diamond's loan counts ───────────────────────────────────────
 
     /// @inheritdoc IRateReference
-    function noteLoanOpened(address asset) external returns (uint32 id) {
+    function noteLoanOpened(address asset, uint32 capId, uint32 floorId)
+        external
+        returns (uint32 id, uint256 clamped, uint16 ceilingBps)
+    {
         if (msg.sender != DIAMOND) revert NotDiamond(msg.sender);
         id = newestSeries[asset];
         if (id == 0) revert NoReference(asset);
         Series storage s = _series[id];
+        if (s.holding || block.timestamp - s.lastUpdate > _staleAfter(id)) {
+            revert SeriesStale(id, s.lastUpdate, s.holding);
+        }
+        ceilingBps = _config[id].ceilingBps;
+        uint16 capBps = ceilingBps;
+        if (capId != 0) capBps = _openLevel(capId, asset, true).rateBps;
+        if (floorId != 0) {
+            uint16 floorBps = _openLevel(floorId, asset, false).rateBps;
+            if (floorBps >= capBps) revert FloorNotBelowCap(floorBps, capBps);
+        }
         uint32 n = ++s.openLoans;
         emit SeriesLoanCount(id, n);
+        _countLevel(id, capId, true);
+        _countLevel(id, floorId, true);
+        (clamped,) = clampedSum(id, capId, floorId);
     }
 
     /// @inheritdoc IRateReference
-    function noteLoanClosed(uint32 id) external {
+    function noteLoanClosed(uint32 id, uint32 capId, uint32 floorId) external {
         if (msg.sender != DIAMOND) revert NotDiamond(msg.sender);
         Series storage s = _series[id];
         if (s.state != SeriesState.Live) revert SeriesNotLive(id);
         if (s.openLoans == 0) revert NoOpenLoans(id);
+        _countLevel(id, capId, false);
+        _countLevel(id, floorId, false);
         uint32 n = --s.openLoans;
         emit SeriesLoanCount(id, n);
         if (n == 0 && newestSeries[s.asset] != id) _retire(s.asset, id);
+    }
+
+    /// @dev A level a new loan may open on: known, of `asset`, on the
+    ///      named side, not retired.
+    function _openLevel(uint32 levelId, address asset, bool isCap) private view returns (Level storage l) {
+        l = _levels[levelId];
+        if (l.asset == address(0)) revert UnknownLevel(levelId);
+        if (l.asset != asset) revert LevelForOtherAsset(levelId, asset);
+        if (l.isCap != isCap) revert LevelWrongSide(levelId, l.isCap);
+        if (l.retired) revert LevelNotOpen(levelId);
+    }
+
+    /// @dev Move a level's open-loan counts (per series and in total) by
+    ///      one. A retired level whose last loan closes stops being tracked.
+    function _countLevel(uint32 id, uint32 levelId, bool opened) private {
+        if (levelId == 0) return;
+        Level storage l = _levels[levelId];
+        uint32 n = _levelLoans[id][levelId];
+        if (opened) {
+            ++n;
+            ++l.openLoans;
+        } else {
+            if (n == 0) revert NoOpenLoans(id);
+            --n;
+            if (--l.openLoans == 0 && l.retired) _untrack(l.asset, levelId);
+        }
+        _levelLoans[id][levelId] = n;
+        emit LevelLoanCount(id, levelId, n);
+    }
+
+    // ─── Levels ──────────────────────────────────────────────────────────
+
+    /// @notice Propose adding a cap or floor level at `rateBps` to `asset`'s
+    ///         list, behind the delay. Checked now and again at execution.
+    function proposeLevel(address asset, uint16 rateBps, bool isCap) external onlyOwner {
+        bytes32 subject = _levelSubject(asset, rateBps, isCap);
+        _checkLevel(asset, rateBps, isCap);
+        _propose(Kind.AddLevel, subject, subject);
+    }
+
+    /// @notice Propose retiring `levelId`, behind the delay.
+    function proposeRetireLevel(uint32 levelId) external onlyOwner {
+        Level storage l = _levels[levelId];
+        if (l.asset == address(0)) revert UnknownLevel(levelId);
+        if (l.retired) revert LevelNotOpen(levelId);
+        bytes32 subject = bytes32(uint256(levelId));
+        _propose(Kind.RetireLevel, subject, subject);
+    }
+
+    function _levelSubject(address asset, uint16 rateBps, bool isCap) private pure returns (bytes32) {
+        return bytes32(uint256(uint160(asset)) | (uint256(rateBps) << 160) | (isCap ? uint256(1) << 176 : 0));
+    }
+
+    /// @dev The list rule (design section 4): a rate within the protocol
+    ///      maximum, room on the side's open and tracked lists, no open twin,
+    ///      and every tracked floor below every tracked cap.
+    function _checkLevel(address asset, uint16 rateBps, bool isCap) private view {
+        if (rateBps == 0 || rateBps > CEILING_BPS_MAX) revert LevelRefused(asset, rateBps, isCap, 1);
+        uint32[] storage t = _tracked[asset];
+        uint256 n = t.length;
+        uint256 open;
+        uint256 tracked;
+        for (uint256 i; i < n; ++i) {
+            Level storage l = _levels[t[i]];
+            if (l.isCap == isCap) {
+                ++tracked;
+                if (!l.retired) {
+                    ++open;
+                    if (l.rateBps == rateBps) revert LevelRefused(asset, rateBps, isCap, 5);
+                }
+            } else if (isCap ? l.rateBps >= rateBps : l.rateBps <= rateBps) {
+                revert LevelRefused(asset, rateBps, isCap, 4);
+            }
+        }
+        if (open >= MAX_OPEN_LEVELS) revert LevelRefused(asset, rateBps, isCap, 2);
+        if (tracked >= MAX_TRACKED_LEVELS) revert LevelRefused(asset, rateBps, isCap, 3);
+    }
+
+    function _addLevel(bytes32 subject) private {
+        uint256 v = uint256(subject);
+        address asset = address(uint160(v));
+        // safe: packed by {_levelSubject}.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint16 rateBps = uint16(v >> 160);
+        bool isCap = (v >> 176) & 1 == 1;
+        _checkLevel(asset, rateBps, isCap);
+        uint32 id = ++levelCount;
+        _levels[id] = Level({asset: asset, rateBps: rateBps, isCap: isCap, retired: false, openLoans: 0});
+        _tracked[asset].push(id);
+        emit LevelAdded(asset, id, rateBps, isCap);
+    }
+
+    function _retireLevel(uint32 levelId) private {
+        Level storage l = _levels[levelId];
+        if (l.retired) revert LevelNotOpen(levelId);
+        l.retired = true;
+        emit LevelRetired(l.asset, levelId);
+        if (l.openLoans == 0) _untrack(l.asset, levelId);
+    }
+
+    function _untrack(address asset, uint32 levelId) private {
+        uint32[] storage t = _tracked[asset];
+        uint256 n = t.length;
+        for (uint256 i; i < n; ++i) {
+            if (t[i] == levelId) {
+                t[i] = t[n - 1];
+                t.pop();
+                emit LevelUntracked(asset, levelId);
+                return;
+            }
+        }
     }
 
     // ─── Mutes ───────────────────────────────────────────────────────────
@@ -576,7 +759,7 @@ contract RateReference is IRateReference, Ownable2Step {
     ///         series opens through {proposeSeries}, an unmute through
     ///         {proposeUnmute}. Checked now and again at execution.
     function proposeChange(Kind kind, bytes32 value) external onlyOwner {
-        if (kind == Kind.OpenSeries || kind == Kind.Unmute) revert InvalidChange(kind, bytes32(0), value);
+        if (kind >= Kind.OpenSeries) revert InvalidChange(kind, bytes32(0), value);
         _propose(kind, bytes32(0), value);
     }
 
@@ -596,6 +779,12 @@ contract RateReference is IRateReference, Ownable2Step {
         } else if (kind == Kind.Unmute) {
             muted[subject] = false;
             emit SourceUnmuted(_unmuteAsset[subject], subject);
+        } else if (kind == Kind.AddLevel) {
+            _addLevel(subject);
+        } else if (kind == Kind.RetireLevel) {
+            // safe: a level id written by {proposeRetireLevel}.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            _retireLevel(uint32(uint256(subject)));
         } else if (kind == Kind.Delay) {
             uint64 d = uint64(uint256(value));
             emit DelaySet(delay, d);
@@ -657,7 +846,7 @@ contract RateReference is IRateReference, Ownable2Step {
             uint256 d = uint256(value);
             if (d >= delay) revert InvalidChange(kind, subject, value);
             _checkDelay(uint64(d));
-        } else if (kind != Kind.OpenSeries && kind != Kind.Unmute) {
+        } else if (kind < Kind.OpenSeries) {
             _validate(kind, value);
         }
         at = uint64(block.timestamp) + delay;
@@ -762,6 +951,53 @@ contract RateReference is IRateReference, Ownable2Step {
     }
 
     /// @inheritdoc IRateReference
+    function clampedSum(uint32 seriesId, uint32 capId, uint32 floorId)
+        public
+        view
+        returns (uint256 clamped, uint16 ceilingBps)
+    {
+        Series storage s = _series[seriesId];
+        if (s.state != SeriesState.Live) revert SeriesNotLive(seriesId);
+        SeriesConfig storage c = _config[seriesId];
+        ceilingBps = c.ceilingBps;
+        (clamped,) = _accruedTo(s, c.interval, block.timestamp);
+        uint256 dt = block.timestamp - s.lastUpdate;
+        uint256 r = s.referenceRate;
+        if (capId != 0) {
+            Level storage l = _seriesLevel(capId, s.asset, true);
+            clamped -= _levelTotal[seriesId][capId] + _beyond(l, r) * dt;
+        }
+        if (floorId != 0) {
+            Level storage l = _seriesLevel(floorId, s.asset, false);
+            clamped += _levelTotal[seriesId][floorId] + _beyond(l, r) * dt;
+        }
+    }
+
+    /// @dev A level of `asset` on the named side, retired or not.
+    function _seriesLevel(uint32 levelId, address asset, bool isCap) private view returns (Level storage l) {
+        l = _levels[levelId];
+        if (l.asset == address(0)) revert UnknownLevel(levelId);
+        if (l.asset != asset) revert LevelForOtherAsset(levelId, asset);
+        if (l.isCap != isCap) revert LevelWrongSide(levelId, l.isCap);
+    }
+
+    /// @notice A level's record.
+    function levelOf(uint32 levelId) external view returns (Level memory) {
+        return _levels[levelId];
+    }
+
+    /// @notice The levels an update accrues for `asset`: open ones and
+    ///         retired ones a loan still reads.
+    function trackedLevels(address asset) external view returns (uint32[] memory) {
+        return _tracked[asset];
+    }
+
+    /// @notice A level's stored running total and open loans on a series.
+    function levelOnSeries(uint32 seriesId, uint32 levelId) external view returns (uint256 total, uint32 openLoans) {
+        return (_levelTotal[seriesId][levelId], _levelLoans[seriesId][levelId]);
+    }
+
+    /// @inheritdoc IRateReference
     function averaged(address asset, uint256 window)
         public
         view
@@ -846,128 +1082,7 @@ contract RateReference is IRateReference, Ownable2Step {
         return (false, none);
     }
 
-    /// @notice The "market unusual" state of `asset`'s reference.
-    function unusual(address asset) public view returns (Unusual) {
-        (bool ok24, uint256 a24,) = averaged(asset, DAY_WINDOW);
-        (bool ok30, uint256 a30,) = averaged(asset, MONTH_WINDOW);
-        if (!ok24 || !ok30) return Unusual.NotKnown;
-        uint256 d = a24 > a30 ? a24 - a30 : a30 - a24;
-        return d > uint256(_settings.unusualDistanceBps) * BPS ? Unusual.Unusual : Unusual.Calm;
-    }
 
-    /// @notice The weight on the 24-hour average for a term of `termDays`:
-    ///         the table's rows at 7, 30, 90, 180 and 365 days, straight
-    ///         lines between them, the first row below 7 days and the last
-    ///         beyond 365.
-    function weightBps(uint256 termDays) public view returns (uint16) {
-        uint16[5] memory w = _settings.weightsBps;
-        uint16[5] memory d = [uint16(7), 30, 90, 180, 365];
-        if (termDays <= d[0]) return w[0];
-        for (uint256 i = 1; i < ROWS; ++i) {
-            if (termDays <= d[i]) {
-                uint256 span = d[i] - d[i - 1];
-                uint256 into = termDays - d[i - 1];
-                // Weights never rise with the term, so w[i-1] >= w[i].
-                // safe: between two uint16 weights.
-                // forge-lint: disable-next-line(unsafe-typecast)
-                return uint16(w[i - 1] - (uint256(w[i - 1] - w[i]) * into) / span);
-            }
-        }
-        return w[ROWS - 1];
-    }
-
-    /// @inheritdoc IRateReference
-    function termAverage(address asset, uint256 termDays) public view returns (TermAverage memory ta) {
-        ta.weightBps = weightBps(termDays);
-        bool ok24;
-        (ok24, ta.average24h,) = averaged(asset, DAY_WINDOW);
-        if (ta.weightBps == 10_000) {
-            ta.available = ok24;
-            ta.rate1e18 = ok24 ? ta.average24h : 0;
-            return ta;
-        }
-        // The 90-day average, or the longest available of 60 and 30 days.
-        uint256[3] memory windows = [LONG_TERM_WINDOW, 60 days, MONTH_WINDOW];
-        for (uint256 i; i < 3; ++i) {
-            (bool ok, uint256 a,) = averaged(asset, windows[i]);
-            if (ok) {
-                ta.averageLong = a;
-                ta.longWindow = windows[i];
-                break;
-            }
-        }
-        if (!ok24 || ta.longWindow == 0) return ta;
-        ta.available = true;
-        ta.rate1e18 = (uint256(ta.weightBps) * ta.average24h + (10_000 - uint256(ta.weightBps)) * ta.averageLong)
-            / 10_000;
-    }
-
-    /// @notice The window a market-linked limit reads for a loan of
-    ///         `termDays` (#3713 section 3).
-    function windowForTerm(uint256 termDays) public view returns (uint256) {
-        if (termDays <= 30) return _settings.shortWindow;
-        if (termDays <= 365) return _settings.mediumWindow;
-        return _settings.longWindow;
-    }
-
-    /// @inheritdoc IRateReference
-    function linkedRate(address asset, uint256 termDays, LinkKind kind)
-        external
-        view
-        returns (uint256 rate1e18, LinkRefusal refusal)
-    {
-        bool available;
-        if (kind == LinkKind.Reference) {
-            (available, rate1e18,) = averaged(asset, windowForTerm(termDays));
-        } else if (kind == LinkKind.TermAverage) {
-            TermAverage memory ta = termAverage(asset, termDays);
-            (available, rate1e18) = (ta.available, ta.rate1e18);
-        }
-        if (!available) return (0, LinkRefusal.ReferenceUnavailable);
-        if (termDays > 30) {
-            Unusual u = unusual(asset);
-            if (u == Unusual.Unusual) return (0, LinkRefusal.ReferenceUnusual);
-            if (u == Unusual.NotKnown) return (0, LinkRefusal.ReferenceUnavailable);
-        }
-        return (rate1e18, LinkRefusal.None);
-    }
-
-    /// @inheritdoc IRateReference
-    function band(address asset, uint256 termDays, uint256 rateBps) external view returns (Band memory b) {
-        TermAverage memory ta = termAverage(asset, termDays);
-        if (!ta.available) return b;
-        b.available = true;
-        b.termAverage1e18 = ta.rate1e18;
-        uint256 r = rateBps * BPS;
-        uint256 avg = ta.rate1e18;
-        uint256 dist = r > avg ? r - avg : avg - r;
-        b.distanceBps = dist / BPS;
-        if (dist < uint256(_settings.bandMinDistanceBps) * BPS) return b;
-        if (r > avg && r * 10_000 > avg * _settings.bandAboveBps) {
-            b.outside = true;
-            b.above = true;
-        } else if (r < avg && r * 10_000 < avg * _settings.bandBelowBps) {
-            b.outside = true;
-        }
-    }
-
-    /// @inheritdoc IRateReference
-    function status(address asset) external view returns (Status memory st) {
-        uint32 id = newestSeries[asset];
-        if (id == 0) return st;
-        Series storage s = _series[id];
-        (uint256 idx, uint256 held) = _accruedTo(s, _config[id].interval, block.timestamp);
-        uint256 limit = _staleAfter(id);
-        st.seriesId = id;
-        st.referenceRate = s.referenceRate;
-        st.index = idx;
-        st.held = held;
-        st.lastUpdate = s.lastUpdate;
-        st.holding = s.holding;
-        st.holdingSince = s.holdingSince;
-        st.stale = block.timestamp - s.lastUpdate > limit || (s.holding && block.timestamp - s.holdingSince > limit);
-        st.unusual = unusual(asset);
-    }
 
     /// @notice A series' measured state.
     function seriesOf(uint32 id) external view returns (Series memory) {
@@ -995,7 +1110,7 @@ contract RateReference is IRateReference, Ownable2Step {
     }
 
     /// @notice The platform settings.
-    function settings() external view returns (Settings memory) {
+    function settings() external view override returns (Settings memory) {
         return _settings;
     }
 

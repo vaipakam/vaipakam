@@ -8,6 +8,8 @@ import {LaunchGate} from "../../src/governance/LaunchGate.sol";
 import {LaunchCrossChainChecks} from "../../src/governance/LaunchCrossChainChecks.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
 import {PriceGuardReader} from "../../src/oracle/PriceGuardReader.sol";
+import {RateReference} from "../../src/oracle/reference/RateReference.sol";
+import {RateReferenceReads} from "../../src/oracle/reference/RateReferenceReads.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {Erc4626RateReader} from "../../src/oracle/rate/Erc4626RateReader.sol";
 import {VaultProtection} from "../../src/vault/VaultProtection.sol";
@@ -124,6 +126,19 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
             type(LaunchCrossChainChecks).creationCode.length,
             EIP3860_INITCODE_LIMIT,
             "LaunchCrossChainChecks initcode exceeds the EIP-3860 limit"
+        );
+    }
+
+    /// @notice #3337 part 2 — the rate reference and the read side split off
+    ///         it so the cap and floor levels fit; the reference's creation
+    ///         code carries the read side's.
+    function test_RateReferenceUnderSizeLimits() public view {
+        _assertUnderLimit(type(RateReference).name);
+        _assertUnderLimit(type(RateReferenceReads).name);
+        assertLe(
+            type(RateReference).creationCode.length,
+            EIP3860_INITCODE_LIMIT,
+            "RateReference initcode (with its read side inside) exceeds the EIP-3860 limit"
         );
     }
 
