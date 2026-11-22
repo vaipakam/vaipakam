@@ -70,7 +70,7 @@ The ids are permanent.
 | PRM-077 | The step taken off a cap: for collateral with no tier, and at high concentration for the shallowest tier | 10 | percentage points | 5 to 25 | Governance | The delay of the setting | PRC-615, PRC-632 |
 | PRM-078 | The caution threshold of concentration | 5 | times the size | 2 to 20 | Governance | The delay of the setting | PRC-631 |
 | PRM-079 | The high threshold of concentration | 10 | times the size | Above caution, at most 50, and below the exposure limit (PRM-066) | Governance | The delay of the setting | PRC-632 |
-| PRM-080 | The calm bound: how far a pair's rate may lie from each of the last two hourly checkpoints | 2 | percent | To be stated | Governance | The delay of the setting | PRC-621, PRC-641 |
+| PRM-080 | The calm bound: how far a pair's rate may lie from the hourly checkpoint of each of the two hours before the current one | 2 | percent | To be stated | Governance | The delay of the setting | PRC-621, PRC-641 |
 | PRM-081 | The coverage a tight floor needs: collateral value against all the loan owes | 110 | percent | To be stated | Governance | The delay of the setting | PRC-621, PRC-650 |
 | PRM-082 | The tight floor of a forced sale for each tier | 4.5, 3.5 and 2.5 | percent | Each at or above the least of 1 percent (proposed) and below the most a forced sale may lose, and not rising from the first tier to the third | Governance | The delay of the setting | PRC-621, PRC-650 |
 | PRM-083 | The least cap for collateral with no tier, also at high concentration | 20 | percent | 10 to 40, below the lowest default cap of a tier, and below the lowest liquidation line by the margin (PRM-084) | Governance | The delay of the setting | PRC-615, PRC-618, PRC-632 |

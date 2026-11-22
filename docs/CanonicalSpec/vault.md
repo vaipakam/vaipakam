@@ -1293,12 +1293,12 @@ A custody move is not an end (VLT-045). A rental's prepayment lien ends as VLT-1
 
 The collateral stays in the vault under its lien. When the sale fails the vault records the
 split the platform asks for: the lender's side's slice, the treasury's share, and the rest.
-It values the slice once, at that moment, within VLT-017, and not again at a hand-over.
+It values the slice once, at that moment, within VLT-017, and not again at a hand-over. The
+record keeps the price it read and the amount owed that the slice was valued against.
 In kind, the slice leaves only to the lender's side's holder, or to the backstop in that
-holder's place (VLT-144), and never more than the record states.
-In that call the treasury's share leaves under the lien's budget for the treasury (VLT-019),
-and the rest is released to the lien's own side's holder. (FEE owed: the share's size.)
-What else a split lien may still do is stated in VLT-147.
+holder's place (VLT-144), and never more than the record states. In that call the treasury's
+share leaves under the lien's budget for the treasury (VLT-019), and the rest is released to
+the lien's own side's holder. (FEE owed: the share's size.) See also VLT-147 and VLT-149.
 
 - **Tests owed:** the defaults for a rule, with the price risen and fallen after the split,
   and the treasury's share paid once and within its budget.
@@ -1359,22 +1359,24 @@ The platform's own record of a notice is not one. (EXT owed: whether a sale clea
 ### VLT-147 · rule
 
 **Who:** the vault that holds a split lien.
-**When:** the slice has not yet been handed over or bought out.
+**When:** a retried sale or an internal match takes from it before the slice is handed over or
+bought out.
 
-A split lien still takes a repayment (VLT-127), and still pays a retried sale or an internal
-match, in part or in full, within VLT-017. A part taken scales the slice and the treasury's
-share by the share that remains of the collateral the split was recorded over; no price is
-read. The rest is what the lien then holds beyond those two (FCL owed: rounding, lender first).
-It returns to bound by a cure: collateral added under the borrower's side's authorization,
-after which what it holds covers the principal owed at the lien's own loan-to-value limit,
-by the vault's own price read. With no price, or one the guard does not vouch for, no cure.
-Collateral added short of a cure joins the rest: the slice stands, and no price is read.
+A split lien still pays a retried sale or an internal match, in part or in full, within VLT-017.
+A part taken scales the slice and the treasury's share by the share that remains of the
+collateral the split was recorded over. The slice is then never above the vault's own ceiling:
+the amount owed it was valued against, less what the lender's side has since received from this
+lien as measured (VLT-143, VLT-150), at the split's own price. The two shares together never
+exceed the most the loan can still owe (VLT-016) at that price, and the treasury's share gives
+way first. No price is read.
+The rest is what the lien then holds beyond those two (FCL owed: rounding, lender first).
 
-- **Tests owed:** the defaults for a rule, with a repayment to nil while split, a cure, a
-  cure attempted with no price, a top-up short of a cure after a price rise and with no
-  price (the slice unchanged, the step not refused), a retried sale, and a match in part at
-  a fallen price and in full, and a match in part after a top-up (the top-up is not scaled),
-  each with every share checked after it and the three summing to what the lien holds.
+- **Tests owed:** the defaults for a rule, with a retried sale, a match in part at a fallen
+  price and in full, a match in part at an unchanged price where the ceiling is the lower
+  figure, a part taken where the treasury's share gives way, a slice asked for above the
+  ceiling, and a match in part after a top-up (the top-up is not scaled), each with every
+  share checked after it, the slice at or below its ceiling, and the three summing to what the
+  lien holds.
 
 ### VLT-148 · rule
 
@@ -1391,6 +1393,43 @@ A late fee is taken from the buffer and never from the rent (RNT owed: its size 
 
 - **Tests owed:** the defaults for a rule, for each standard of NFT, with a close in time, a
   close inside the grace with a late fee, and a default.
+
+### VLT-149 · rule
+
+**Who:** the vault that holds a split lien.
+**When:** collateral is added to it before the slice is handed over or bought out.
+
+A cure returns a split lien to bound: collateral added under the borrower's side's
+authorization, after which what the lien holds covers the principal owed at the lien's own
+loan-to-value limit, by the vault's own price read.
+With no price, or one the guard does not vouch for, there is no cure.
+Collateral added short of a cure joins the rest (VLT-147): the slice stands, and no price is
+read.
+
+- **Tests owed:** the defaults for a rule, with a cure, a cure attempted with no price, a
+  top-up short of a cure after a price rise and with no price (the slice unchanged, the step
+  not refused), and a part repayment accepted again after a cure.
+
+### VLT-155 · refusal
+
+**Who:** anyone who pays for the borrower's side of a loan whose lien is split.
+**When:** the payment would leave principal still owed above nil.
+
+The payment is refused, and nothing is paid.
+A split lien takes a repayment only of all the loan owes, which ends the split (VLT-127,
+VLT-128). A part repayment is any payment for the borrower's side that leaves principal owed
+above nil, by the principal part of its receipt (VLT-150): an interest payment made by hand,
+a standing interest payment and a periodic settlement are each one.
+A standing instruction's run is skipped with its reason, and does not fail
+(LON owed: a standing instruction's skip).
+A cure opens part repayments again (VLT-149).
+
+- **Refused as:** the loan's close-out waits, with all the loan owes at that moment, and the
+  collateral that would cure it where the guard vouches for a price.
+- **For the mistake:** VLT-M51, refuse.
+- **Tests owed:** the defaults for a refusal, with each kind of part payment, the same in a
+  pause, under an asset's pause and with a flagged lender's side, a standing instruction's
+  run, a repayment to nil while split, and a part repayment accepted again after a cure.
 
 ### Model: a lien
 
@@ -1421,8 +1460,8 @@ A late fee is taken from the buffer and never from the rent (RNT owed: its size 
 | Bound | Release in part | Its own side's holder | VLT-128 | Bound |
 | Bound | Carry to a new loan | The borrower's commitment | VLT-137, VLT-138 | Bound |
 | Bound | Split for a close-out in kind | A failed sale | VLT-143 | Split |
-| Split | Add to the rest | Collateral added short of a cure | VLT-147 | Split |
-| Split | Cure | The borrower's side's added collateral | VLT-147 | Bound |
+| Split | Add to the rest | Collateral added short of a cure | VLT-149 | Split |
+| Split | Cure | The borrower's side's added collateral | VLT-149 | Bound |
 | Split | Pay the other side | A retried sale, or an internal match | VLT-017, VLT-147 | Split |
 | Split | Pay the other side, leaving nothing | A retried sale, or an internal match | VLT-017, VLT-142, VLT-147 | Released |
 | Split | Repay the last of the debt | A repayment | VLT-127, VLT-128 | Released |
@@ -1440,7 +1479,7 @@ A late fee is taken from the buffer and never from the rent (RNT owed: its size 
 | Release | By anyone but the one the lien answers to, VLT-131 |
 | Move custody to the new holder's vault | To any vault but that of the side's present holder, VLT-045 |
 | Add to it | With none of the borrower's side's authorization, a draw on a loan reserve and a draw on a standing commitment, VLT-121 |
-| Pay the other side | From a lien that is not bound or split, VLT-125. Beyond the lien, VLT-015. From another loan's lien, VLT-130 |
+| Pay the other side | From a lien that is not bound or split, VLT-125. Beyond the lien, VLT-015. From another loan's lien, VLT-130. By a repayment that leaves principal owed, while the lien is split, VLT-155. A slice above its ceiling, VLT-147 |
 | Pay the other side, leaving nothing | As for any payment for the other side, and beyond the most the loan can owe, VLT-017 |
 | Replace the other side | Without the leaving side's own record, VLT-132 |
 | Take fresh terms in place | Without the lender's side's consent in the same call, or above the plan's highest rate, VLT-145 |
@@ -1448,8 +1487,8 @@ A late fee is taken from the buffer and never from the rent (RNT owed: its size 
 | Release in part | Beyond what still covers the principal owed, or with no price the guard vouches for, VLT-128 |
 | Carry to a new loan | While the earlier loan's principal still owed is above nil, or to another holder, VLT-138 |
 | Split for a close-out in kind | With no failed sale, VLT-143 |
-| Add to the rest | On a lien that is not split, VLT-147 |
-| Cure | With no price the guard vouches for, or short of cover, VLT-147 |
+| Add to the rest | On a lien that is not split, VLT-149 |
+| Cure | With no price the guard vouches for, or short of cover, VLT-149 |
 | Repay the last of the debt | A release while principal is still owed, VLT-128 |
 | Hand over the slice, or the backstop's buyout | With no split, above the recorded slice, or a buyout without proof of its payment, VLT-143, VLT-144 |
 | Release in full | While principal is owed, outside a close-out in kind, VLT-128 |
@@ -1461,17 +1500,20 @@ A late fee is taken from the buffer and never from the rent (RNT owed: its size 
 | --- | --- | --- |
 | The kind of lien | An open offer's, a loan's collateral, a rental's prepayment | VLT-120 |
 | Who is present | The one entitled, in that transaction; or a standing commitment with no owner present | VLT-121 |
-| The collateral's price | Vouched for by the guard; not vouched for; none | VLT-128, VLT-147 |
+| The collateral's price | Vouched for by the guard; not vouched for; none | VLT-128, VLT-149 |
 
 ### Notes on the life of a lien
 
 An offer's lien is never bound: it is recorded, drawn on and released.
 A draw of an offer's lien into a loan lowers it by what was drawn.
 A reserved commitment is not a lien and has no states of its own beyond that (VLT-141).
-What a split lien may still do is VLT-147. It returns to bound only by a cure.
+What a split lien may still do is VLT-147 and VLT-155. It returns to bound only by a cure
+(VLT-149).
 Collateral added short of a cure leaves the slice unchanged.
 A payment from a split lien scales the slice and the treasury's share by the share of the
-collateral that remains.
+collateral that remains, and the slice is never above its ceiling (VLT-147).
+The platform may ask for a smaller slice than that ceiling, and never a larger one.
+A split lien takes no repayment that leaves principal owed (VLT-155).
 At a hand-over or a buyout the treasury's share is paid in the same call.
 A custody move ends no lien: the lien continues in the other vault, in the same state (VLT-045).
 A lien carried to a new loan is bound for the new loan.

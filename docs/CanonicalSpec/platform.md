@@ -168,7 +168,8 @@ A borrower can repay from their own funds, and can add collateral.
 - **From:** every state of a loan in which it is open.
 - **By:** repay, add collateral.
 - **Except under:** an asset whose own code refuses or shortens the transfer (VLT-071),
-  and a flagged payer adding collateral (PLT-060).
+  a flagged payer adding collateral (PLT-060),
+  and, while the loan's lien is split, a repayment of less than all the loan owes (VLT-155).
 - **Tests owed:** the defaults for an always possible.
 
 ### PLT-042 · rule
@@ -219,6 +220,7 @@ liquidation, cancelling an offer and taking capital out of an Auto-lend slot.
 So does every step that adds the borrower's own backing to an open loan or pays it down:
 adding collateral, funding a loan's reserves, and the standing top-up, interest payment and
 repayment at the due date.
+While a loan's lien is split, only a repayment of all the loan owes is taken (VLT-155).
 (AUT owed: when the per-asset pause may be placed, and how each use is published.)
 
 - **Tests owed:** the defaults for a rule, each named step under a paused asset.
@@ -254,7 +256,8 @@ a liquidation, and the completion of a sale already committed.
 - **Except under:** a pause (PLT-040, with its time credit; a repayment is not delayed, PLT-041);
   for a default and a liquidation, a price the guard does not vouch for (PLT-080) and the
   window after a sequencer outage (PLT-090);
-  and an asset whose own code refuses or shortens the transfer.
+  an asset whose own code refuses or shortens the transfer;
+  and, while the loan's lien is split, a repayment of less than all the loan owes (VLT-155).
 - **Tests owed:** the defaults for an always possible.
 
 ### PLT-062 · rule

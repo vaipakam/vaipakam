@@ -31,13 +31,13 @@ FL `docs/DesignsAndPlans/FlashLendingDesign.md`.
 | PLT-020 | K | Owner decision 2026-11-19, 18:56 UTC (card 19:05 UTC): no campaign, no advice to move, no comparison with another lender's rate, facts the platform can substantiate, neutral ids. `docs/DesignsAndPlans/DefaultPathsDesign.md` for a pre-selected setting shown before signing. | f1e8ae0a6b7e07c6 |
 | PLT-030 | K | Owner decisions 2026-11-17 (the fee levels) and 2026-11-19, 17:25 UTC (the same for every loan) | d458e4e81bfbbb89 |
 | PLT-040 | K | Owner decision 2026-10-20. D2 "The decision", and "3. Gating": "Everything else stays paused" | 2bb86315fa95250f |
-| PLT-041 | K | D2 "The decision", "Stays open". The exception: PR, "The platform does not support tokens that deliver less than they send" | bab13be3f564c8f3 |
+| PLT-041 | K | D2 "The decision", "Stays open". The exception: PR, "The platform does not support tokens that deliver less than they send". Changed: one exception, for a part repayment while the loan's lien is split. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:17 UTC. | c1f98711330d312d |
 | PLT-042 | K | D2 "The decision", "Time credit", and "2. One loan clock" | 27b33f7062e0baab |
 | PLT-043 | K | D2 "5. What the credit does not cover". OP "3.7.2", item 3: interest accrues for as long as a loan is open. | a1e4a0fee4436c9f |
 | PLT-050 | K | PK "8. The guards", item 3, the fourth and sixth points (cards #3880, #3887, #3909) | d4b06cae05ee27bc |
-| PLT-051 | K | PK "8. The guards", item 3, the fourth and fifth points. | a3324a46060cddb1 |
+| PLT-051 | K | PK "8. The guards", item 3, the fourth and fifth points. Changed: one exception, for a part repayment while the loan's lien is split. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:17 UTC. | def67bb3bd0abae0 |
 | PLT-060 | K | PR "16. Regulatory Compliance Considerations": "Address-Level Sanctions Screening", and "Sanctioned Proceeds and Position Freeze" for the position token. | 672dd9be7c5bfaac |
-| PLT-061 | K | PR same section, "Sanctions Wind-Down Carve-Out" | 889d55c0fbe386ba |
+| PLT-061 | K | PR same section, "Sanctions Wind-Down Carve-Out". Changed: one exception, for a part repayment while the loan's lien is split. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:17 UTC. | b44899231211720f |
 | PLT-062 | K | PR same section, "Sanctioned Proceeds and Position Freeze" and "Central Freeze Enforcement" | 046519acf50e53fa |
 | PLT-063 | K | PR same section, "Sanctions Wind-Down Carve-Out", its last sentence. | 8d9f8e111aa5acaa |
 | PLT-064 | K | PR same section, "Secondary-Market Protection" | 77b197cda0ff54fb |
@@ -80,6 +80,8 @@ owner's confirmation. Each was read for conflict before it was entered.
   admit it or to give it better terms than its readings earn. PLT-125 lists the steps that
   take from a named asset. PLT-126 lists the steps that give an asset a source for a reading
   or name it as a reference, and says that they admit no asset and refuse none.
+- PLT-041, PLT-051 and PLT-061 each name one exception: while a loan's lien is split, only a
+  repayment of all the loan owes is taken (VLT-155).
 - A keeper pass that a statement owes is cited under the keeper's own code, where the draft he
   read cited it under the authority rules. Form only.
 

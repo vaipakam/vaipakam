@@ -3999,14 +3999,18 @@ refuse once the pause ends.
 **When:** it reads the calm test.
 
 A pair is calm when the rate of its two assets now is within the calm bound [PRM-080] of their
-rate at each of the last two hourly checkpoints. The look back so reaches at least an hour.
+rate at the hourly checkpoint of each of the two hours before the current one.
+The current hour's own slot is not read. So the older of the two was written at least an hour
+ago, however late in its hour, and the look back reaches at least an hour.
 Each comparison has both ends on the same settings: the rate now is read at the version the slot
 names. So a change of settings alone never reads as a move of the market.
 There is one test. The floor of a forced sale and an offer's price-move guard both read it
 (OFR owed: the price-move guard of an offer).
 
 - **Tests owed:** the defaults for a rule, with a rate one smallest part inside and outside the
-  bound at each of the two slots, and a new price version between the two slots.
+  bound at each of the two slots, a new price version between the two slots, a slot written in
+  the current hour (not read), and the two slots written in the last moment of one hour and the
+  first moment of the next.
 
 ### PRC-642 · rule
 
@@ -4017,12 +4021,14 @@ A pair that cannot be shown calm is not calm.
 That is so where a slot is missing for either asset in either hour, a price cannot be read, a slot
 names a version the guard has retired, or a replacement of the guard is inside the time of
 PRC-344.
+After any gap in the slots, a pair cannot read as calm until the slots of two whole hours lie
+behind the current one.
 A rate is a ratio inside one guard, so a change of unit needs no conversion and does not by itself
 unsettle the test (PRC-401).
 
 - **Tests owed:** the defaults for a rule, with each missing input in turn, a daily slot at a
-  retired version, a replacement inside and outside its time, and a change of unit between the
-  slots.
+  retired version, a replacement inside and outside its time, a change of unit between the
+  slots, and the first hours after a pause in which no slot was written.
 
 ### PRC-643 · never
 
@@ -4032,22 +4038,23 @@ unsettle the test (PRC-401).
 A slot is never written twice, and never at a distrusted price. The first write of an hour stands,
 and nobody replaces or corrects it.
 Whoever writes a slot chooses only the moment within the hour. The calm test sets the rate now
-against each of the last two slots, so its look back reaches at least an hour whoever wrote the
-newest one (PRC-641).
+against the slots of the two hours before the current one and never the current hour's, so its
+look back reaches at least an hour whoever wrote them and however late in the hour (PRC-641).
 A slot that is missing never reads as calm (PRC-642).
 
 - **Against:** PRC-T36.
 - **Watch:** no slot changed after its first write, and none holds a price the guard distrusted in
   its block.
 - **Tests owed:** the defaults for a never, with a second write in the same hour by each actor, a
-  write at a distrusted price, and the newest slot written in the block of a sale by its caller.
+  write at a distrusted price, the current hour's slot written in the block of a sale by its
+  caller, and the slots of the two hours before written as late and as early as an hour allows.
 
 ### Model: a checkpoint slot
 
 **States:**
 
 - Not written (start): the hour has begun and no price is recorded for it.
-- Written: the slot holds a price and names its version. The calm test may read it.
+- Written: the slot holds a price and names its version. The calm test reads it after its hour.
 - Written, version retired: a daily slot whose version the guard no longer answers. Not calm.
 - Missed: the hour ended with no slot. The calm test reads it as not calm.
 - Past (end): the slot is older than its reader reaches, the calm test or an offer's guard.

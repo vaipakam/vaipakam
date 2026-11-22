@@ -13,7 +13,7 @@ Each row has:
 - **Waits for:** the section that will answer it, while that section is not entered.
 
 Mistake ids use the form `VLT-M<nn>`, and they are permanent.
-Of the 50 rows, 23 are answered by sections 1 to 3 and the platform's rules, and 27 wait for
+Of the 51 rows, 24 are answered by sections 1 to 3 and the platform's rules, and 27 wait for
 sections 4 to 7. The vault's rules are not complete while a row still waits.
 
 ## 1. Having a vault
@@ -518,3 +518,15 @@ No step recovers it.
 **Proposed answer:** Refuse.
 **Wanted statement:** a listing escrow never accepts the native coin.
 **Waits for:** vault section 4
+
+## 11. A loan whose collateral sale failed
+
+### VLT-M51 · Paying part of a loan whose collateral sale failed
+
+**Who:** the borrower's side.
+**Does:** pays part of the loan while its collateral sits under a split lien, after every sale
+route failed, expecting the payment to lower the debt and free some of the collateral.
+**Proposed answer:** Refuse.
+**Wanted statement:** while the lien is split, a repayment is of all the loan owes, or the borrower
+adds collateral to cure it; a part payment is refused and says those two ways (VLT-155).
+**Answered by:** VLT-155.

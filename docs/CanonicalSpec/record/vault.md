@@ -110,12 +110,14 @@ PR `docs/FunctionalSpecs/ProjectDetailsREADME.md`.
 | VLT-140 | C | OP "3.7.2", item 2, last sentence, and OP "3.7.4", the row on a mandate or a reserve: "the owner's own call". A loan reserve: PR "Standing Instructions", "The reserve belongs to whoever deposited it .. whether or not they still hold the position .. an extension draws only the current holder's reserve". Drawn only while its owner holds the token: the same line, the due-date plan design ("live for the current holder") and the exit instruction's skip "the holder is no longer the wallet that set it". Changed: the statement lists the commitments it covers. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. | 96405e4a0da8b919 |
 | VLT-141 | K | OP "3.7.2", item 2 (the lending mandate, a loan's two reserves) and "A borrowing holds no lien". | b40abafdeab3eb70 |
 | VLT-142 | K | OP "3.7.4", the rows "A lien released into free balance", "A payment to the other side" and "What is left of a lien". OP "3.7.6". OI "The backstop's buyout". | 04ab51fecb99b961 |
-| VLT-143 | K | OI "The held-amount families" (the custody after a failed sale stays under the collateral lien) and "The backstop's buyout" (the split, the slice, valued once when the split is recorded). | 57d23fc09c024da1 |
+| VLT-143 | K | OI "The held-amount families" (the custody after a failed sale stays under the collateral lien) and "The backstop's buyout" (the split, the slice, valued once when the split is recorded). Changed: the record keeps the price read and the amount owed that the slice was valued against. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. | 97a0d326e26f39af |
 | VLT-144 | K | OI "The backstop's buyout", all of it. | a9d74d00dc452037 |
 | VLT-145 | N | New. Raised by the conflict read. Approved by the owner on 2026-11-22, 09:56 UTC. | dbad134acc8a3c2b |
 | VLT-146 | K | OI "The ceiling and the date", last sentence. `docs/DesignsAndPlans/LendingBalanceDesign.md` "6.2": who gives notice, the date as the earlier of the notice date and the term's end, what clears a notice, and that it is not withdrawn. | 5ed0056ef53f9e92 |
-| VLT-147 | K | PR "Liquidation fallback": the collateral leaves the vault "only to settle the fallback (the lender claim, a retry, an internal match or the keeper backstop)", "or returns to the ordinary collateral lock if the borrower cures first"; "if the borrower adds collateral .. and the loan again satisfies the required LTV and Health Factor thresholds, the loan may continue as an active loan". | 62c52bf7689f9efa |
+| VLT-147 | K | PR "Liquidation fallback": the collateral leaves the vault "only to settle the fallback (the lender claim, a retry, an internal match or the keeper backstop)", "or returns to the ordinary collateral lock if the borrower cures first"; "if the borrower adds collateral .. and the loan again satisfies the required LTV and Health Factor thresholds, the loan may continue as an active loan". Changed: a scaled slice is bounded by a ceiling the vault works out itself, the repayment of a split lien moved to VLT-155, and the cure to VLT-149. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. | d42a1ca3a096677b |
 | VLT-148 | K | OI "The NFT rental", for the close. | 788dcaea90d33ad6 |
+| VLT-149 | N | New id. The cure of a split lien, and collateral added short of a cure, moved here from VLT-147 with no change of rule. PR "Liquidation fallback": "if the borrower adds collateral .. and the loan again satisfies the required LTV and Health Factor thresholds, the loan may continue as an active loan". The owner approved these sentences in VLT-147 on 2026-11-22, 09:56 UTC. As a statement of its own it is entered for his confirmation with this folder. | f6c68ddd2eb91a74 |
+| VLT-155 | N | New. The refusal of a part repayment while a lien is split, raised by the review of this folder and by the conflict read of VLT-147; mistake VLT-M51. PR "Liquidation fallback": the borrower "may still either add collateral or fully repay the loan". Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. | 0631018db835009f |
 | VLT-150 | K | OP "3.7.2", item 4, first paragraph. The backstop's vault as a payer: OI "The backstop's buyout" "The backstop's fixed address": as a lender the backstop acts through an ordinary vault it owns (VLT-210, the re-read's E1). | 60aa67d617db94ce |
 | VLT-151 | K | OP "3.7.2", item 4, "The purpose is set by the paying vault". | 20ddbb8a46e333f5 |
 | VLT-152 | K | OP "3.7.2", item 5, last sentence. | f647cca085b0b246 |
@@ -167,7 +169,7 @@ PR `docs/FunctionalSpecs/ProjectDetailsREADME.md`.
 | VLT-245 | N | New. Raised by the owner's answer of 2026-11-22, 11:03 UTC, on the design `docs/DesignsAndPlans/UnitOfAccountChangeDesign.md`. Approved by the owner on 2026-11-22, 11:03 UTC. | b9ee2175e0dec5da |
 | VLT-246 | N | New. Raised by threat PRC-T20. Approved by the owner on 2026-11-22, 14:31 UTC. | b9e1d78aa7928e20 |
 
-145 statements. Kept: 117. Changed: 11. New: 17.
+147 statements. Kept: 117. Changed: 11. New: 19.
 
 ## Approvals
 
@@ -201,6 +203,19 @@ owner's confirmation. Each was read for conflict before it was entered.
 - VLT-220, VLT-222, VLT-224 and VLT-241 were changed, and VLT-228, VLT-229, VLT-234 and VLT-245
   written, from the owner's answer on the unit of account.
 - VLT-002 and VLT-220 cite by id rules they cited in the owed form.
+- VLT-147 bounds a scaled slice. After a part is taken from a split lien, the slice is never
+  above a ceiling the vault works out itself: the amount owed it was valued against, less what
+  the lender's side has since received from the lien, at the split's own price. The slice and
+  the treasury's share together stay within the most the loan can still owe, and the treasury's
+  share gives way first. The security review asked for it.
+- VLT-143 says that the record of a split keeps the price read and the amount owed that the
+  slice was valued against. The bound of VLT-147 reads them.
+- VLT-155 is new. While a lien is split, a repayment is of all the loan owes, and a payment
+  that leaves principal owed is refused. VLT-147 said "still takes a repayment". The source
+  says the borrower may fully repay or add collateral. It answers mistake VLT-M51.
+- VLT-149 is a new id. It holds the cure of a split lien and collateral added short of a cure,
+  moved from VLT-147 with no change of rule, to keep VLT-147 within a statement's length.
+- The record's owed table lists three owed lines of the model of a vault.
 - VLT-140 lists the commitments it covers. VLT-115 and the model of a lien cite the statements
   that state a release of a lien (VLT-035, VLT-131).
 - Two statements of the approved sections are held outside this folder, under ids in the held
@@ -232,6 +247,7 @@ owner's confirmation. Each was read for conflict before it was entered.
 | VLT-M40 | Refuse | VLT-172 |
 | VLT-M41 | Undo | VLT-174 |
 | VLT-M42 | Refuse | VLT-012 |
+| VLT-M51 | Refuse | VLT-155 |
 
 ## Retired ids
 
@@ -255,6 +271,10 @@ when that domain is entered.
 | FCL owed: rounding, lender first | VLT-147 |
 | FEE owed: the share's size. | VLT-143 |
 | FEE owed: the treasury vault's own rules. | VLT-212 |
+| LON owed: a standing instruction's skip | VLT-155 |
 | LON owed: what such a fall does to a lien | VLT-113 |
 | RNT owed: its size and payee | VLT-148 |
 | VLT owed: beyond the reserve, a protected account draws only from its Ready balance | VLT-145 |
+| VLT owed: the refusals of a lock | Model: a vault |
+| VLT owed: the refusals of a recovery | Model: a vault |
+| VLT owed: the refusals of an unlock | Model: a vault |

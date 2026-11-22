@@ -240,9 +240,9 @@ OA the owner's answer of 2026-11-22, 13:30 UTC, on the three price rules.
 | PRC-637 | N | New. Raised by the security review. Added on the security review's read, under the owner's approval of 2026-11-22, 16:24 UTC. | 244790fe3d1e4589 |
 | PRC-638 | N | New. Raised by threat PRC-T42. Added on the security review's read, under the owner's approval of 2026-11-22, 16:24 UTC. | 9e7ec94807d80177 |
 | PRC-640 | K | LS section 9 and PR: one series for each asset, the first caller writes, each slot names its version. | fd3c401d27ab27e3 |
-| PRC-641 | K | PR, the forced-sale floor and the price-move guard: one calm rule, the bound against each of the last two hourly checkpoints. LS section 9: both ends at the slot's version. | 9c6341925fca1b56 |
-| PRC-642 | K | PR: what cannot be established is not calm. LS section 9: a slot at a retired version, which only a daily slot is read long enough to reach (small point). PRC-344 for a replacement. PRC-401 for a change of unit. | eecf7f3f19f6eb43 |
-| PRC-643 | N | New. Raised by threat PRC-T36; the conflict read. Approved by the owner on 2026-11-22, 16:24 UTC. | dd731bb2bf766bef |
+| PRC-641 | K | PR, the forced-sale floor and the price-move guard: one calm rule, the bound against the hourly checkpoint of each of the two hours before the current one. LS section 9: both ends at the slot's version. Changed: the two checkpoints are named as those of the two hours before the current one. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 16:24 UTC. | 7a35fda02234ef0d |
+| PRC-642 | K | PR: what cannot be established is not calm. LS section 9: a slot at a retired version, which only a daily slot is read long enough to reach (small point). PRC-344 for a replacement. PRC-401 for a change of unit. Changed: one sentence on the hours after a gap in the slots. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 16:24 UTC. | 4ecf1df177cd02e3 |
+| PRC-643 | N | New. Raised by threat PRC-T36; the conflict read. Approved by the owner on 2026-11-22, 16:24 UTC. Changed: it names the same two checkpoints as PRC-641. Entered for the owner's confirmation with this folder. | 3945b201d29ad135 |
 | PRC-650 | C | PR, "a forced sale's slippage floor is tighter where the sale is safe to tighten": the tight floor of each tier, the calm test and the coverage. Changed with PRC-522: the tier is the effective tier, where PR reads the depth alone. Changed with the owner's approval of 2026-11-22, 16:24 UTC. | 1f5cb5d87f227b86 |
 | PRC-651 | K | PR, the same rule: a missing input only returns a sale to the full floor, for every kind of forced sale. | 8891f42f2935a72d |
 | PRC-660 | C | PR, risk model, the bounded settings. Changed: no setting of this section gives a named asset a figure of its own (worded so since the references of PRC-613 are named), which drops the per-asset ceiling on the cap, the per-asset cap on the liquidation bonus and the per-asset thresholds of concentration. Changed with the owner's approval of 2026-11-22, 16:24 UTC. | 01f143eb4240433d |
@@ -266,6 +266,11 @@ owner's confirmation. Each was read for conflict before it was entered.
 - Section 7: PRC-612, PRC-613, PRC-615, PRC-617, PRC-618 and PRC-632 were tightened, and
   PRC-619, PRC-635, PRC-636, PRC-637 and PRC-638 added, on the security review's reads of
   16:34 to 18:17 UTC on 2026-11-22. Each only tightens a rule of the approved section.
+- PRC-642 says that after any gap in the slots a pair cannot read as calm until the slots of
+  two whole hours lie behind the current one. It follows from PRC-641.
+- PRC-641 and PRC-643 name the two slots the calm test reads: those of the two hours before
+  the current one, and never the current hour's. They said "the last two hourly checkpoints".
+  The look back of at least an hour, which both already stated, holds only on that reading.
 - Section 6: PRC-521 and PRC-541 were changed, and PRC-543 added, with the owner's approval
   of the points of section 7.
 - Sections 1 to 4: a keeper pass that a statement owes is cited under the keeper's own code.
