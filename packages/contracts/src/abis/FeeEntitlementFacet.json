@@ -87,8 +87,52 @@
             "name": "loanSideRewardCapOpen",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "keptFeeOpen",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "keptFeeNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLoanRewardCapBasis",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "cStarOpen",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keptFeeNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capPerSideOpen",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keptFeeBinds",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -201,6 +245,12 @@
       },
       {
         "name": "cStarOpen",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "keptFeeNumeraire18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1527,6 +1577,17 @@
   },
   {
     "type": "error",
+    "name": "IngressPacketKindUnknown",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IngressPacketReplayed",
     "inputs": [
       {
@@ -2470,6 +2531,22 @@
         "name": "reserved",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationPacketTyped",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },
@@ -4830,5 +4907,21 @@
     "type": "error",
     "name": "VpfiNotAllowedAsRentalPrepay",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WrongSourceChain",
+    "inputs": [
+      {
+        "name": "got",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   }
 ]

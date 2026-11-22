@@ -1178,7 +1178,7 @@ contract RewardCompensationDispatchFacet is
         s.ceremonyFreshRecovered[remitId] += freshInflow;
         s.ceremonyRecycledRecovered[remitId] += recycledInflow;
         s.remitRecoveredForReceipt[remitId] = recovered;
-        _bookRecoveredInflow(s, remitId, freshInflow, recycledInflow, true);
+        _bookRecoveredInflow(s, address(this), remitId, freshInflow, recycledInflow, true);
         // The recovered value is no longer lost: the loss record shrinks
         // exactly like an out-of-order B1 chunk's recompute.
         uint256 sf = s.strandedReturnShortfall[remitId];
@@ -1372,8 +1372,12 @@ contract RewardCompensationDispatchFacet is
     ///        one's `recycleReleasedRemitStrandedCumulative`, so netting
     ///        it would under-recognise local backing and page a false
     ///        CRITICAL shortfall on legitimate commitments.
+    /// @param remitter The deployment that issued the reservation `refId`
+    ///        names: this one for a local ceremony, the retired one for an
+    ///        imported old-era settlement. Recorded on the packet (#2204).
     function _bookRecoveredInflow(
         LibVaipakam.Storage storage s,
+        address remitter,
         uint256 refId,
         uint256 freshInflow,
         uint256 recycledInflow,
@@ -1392,6 +1396,21 @@ contract RewardCompensationDispatchFacet is
         if (bal < earmarks) {
             revert CeremonyInflowNotBacked(refId, bal, earmarks);
         }
+        // #2204 — every ceremony inflow, fresh or recycled, attributed or
+        // not, imported or local, is recorded as an ingress packet before it
+        // is credited, so it carries the audit record every other
+        // value-bearing arrival has. No transport carries it: source 0 with
+        // no message id keys it by the per-source sequence.
+        LibRewardCustody.callRecordIngressPacket(
+            0,
+            bytes32(0),
+            LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW,
+            freshInflow + recycledInflow,
+            freshInflow,
+            recycledInflow,
+            remitter,
+            refId
+        );
         s.rewardBudgetRecovered += freshInflow;
         if (holderCustody) {
             LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, freshInflow);
@@ -1534,7 +1553,7 @@ contract RewardCompensationDispatchFacet is
             // deployment, never in this one's cumulative, so it must not
             // net out of the local coverage allowance. The credit itself
             // asserts the tokens are physically present.
-            _bookRecoveredInflow(s, im.oldRemitId, 0, recycledInflow, false);
+            _bookRecoveredInflow(s, im.oldRemitter, im.oldRemitId, 0, recycledInflow, false);
         }
         delete s.importedOutstanding[dstChainId];
         LibRewardRemitDispatch.clearCompensationGate(s, dstChainId);

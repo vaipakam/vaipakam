@@ -332,7 +332,7 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         V3 envelope built by {_v3Envelope}.
     function deliverBroadcastV2(RewardBroadcastV2 calldata b) external {
         RewardReporterFacet(diamond).onRewardBroadcastV3Received(
-            _v3Envelope(b, b.freshLenderHalf, 0)
+            _baseSource(), _v3Envelope(b, b.freshLenderHalf, 0)
         );
     }
 
@@ -397,7 +397,37 @@ contract MockRewardMessenger is IRewardMessenger {
     /// @notice #1434 P2-w1 — simulate a kind-10 delivery landing on the
     ///         mirror reporter ingress.
     function deliverBroadcastV3(RewardBroadcastV3 calldata b) external {
-        RewardReporterFacet(diamond).onRewardBroadcastV3Received(b);
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            _baseSource(), b
+        );
+    }
+
+    /// @notice #903 — deliver a kind-10 packet stamped with an ARBITRARY
+    ///         authenticated source chain: the probe for a broadcast from a
+    ///         chain that is not the mirror's Base.
+    function deliverBroadcastV3From(
+        uint256 sourceChainId,
+        RewardBroadcastV3 calldata b
+    ) external {
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            sourceChainId, b
+        );
+    }
+
+    /// @notice #903 — the source chain this mock stamps on a broadcast it
+    ///         delivers, as a real messenger stamps the authenticated source.
+    ///         An explicit test setting, never read from the system under
+    ///         test (reading the Diamond's own rule would make every delivery
+    ///         pass the check it is meant to exercise). Defaults to Base
+    ///         mainnet, the canonical chain these suites configure.
+    uint256 public baseSourceChainId = 8453;
+
+    function setBaseSourceChainId(uint256 v) external {
+        baseSourceChainId = v;
+    }
+
+    function _baseSource() private view returns (uint256) {
+        return baseSourceChainId;
     }
 
     // ─── #1434 P2-w3 — compensation-quote surface ─────────────────────────
@@ -755,7 +785,7 @@ contract MockRewardMessenger is IRewardMessenger {
             destChainId: block.chainid
         });
         RewardReporterFacet(diamond).onRewardBroadcastV3Received(
-            _v3Envelope(v2, floorHalf, recycledHalf)
+            _baseSource(), _v3Envelope(v2, floorHalf, recycledHalf)
         );
     }
 

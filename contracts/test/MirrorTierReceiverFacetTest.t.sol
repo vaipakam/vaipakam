@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @title MirrorTierReceiverFacetTest
 /// @notice T-087 Sub 2.C — exercises the mirror-side Diamond ingress for
@@ -129,7 +130,7 @@ contract MirrorTierReceiverFacetTest is SetupTest {
         vm.prank(messengerAddr);
         vm.expectRevert(
             abi.encodeWithSelector(
-                MirrorTierReceiverFacet.WrongSourceChain.selector,
+                IVaipakamErrors.WrongSourceChain.selector,
                 WRONG_CHAIN_ID,
                 uint32(BASE_CHAIN_ID)
             )
@@ -243,7 +244,7 @@ contract MirrorTierReceiverFacetTest is SetupTest {
         vm.prank(messengerAddr);
         vm.expectRevert(
             abi.encodeWithSelector(
-                MirrorTierReceiverFacet.WrongSourceChain.selector,
+                IVaipakamErrors.WrongSourceChain.selector,
                 WRONG_CHAIN_ID,
                 uint32(BASE_CHAIN_ID)
             )
@@ -251,4 +252,56 @@ contract MirrorTierReceiverFacetTest is SetupTest {
         _call().onVersionBumpedReceived(WRONG_CHAIN_ID, 1);
     }
 
+
+    // ─── #903: tier traffic only on a Mirror ────────────────────────
+
+    /// #903 — a Detached former mirror takes the day broadcast from the base
+    /// it detached from, but no tier traffic from anywhere: a tier update or
+    /// a tier-table bump from the detach origin is refused (a failed,
+    /// re-executable CCIP message) and writes nothing.
+    function test903_Detached_RefusesTierTrafficFromDetachOrigin() public {
+        RewardReporterFacet(address(diamond)).setBaseChainId(0); // detach
+        (uint32 tierSrc, uint32 daySrc) =
+            RewardReporterFacet(address(diamond)).getRewardBaseSourceChainId();
+        assertEq(tierSrc, 0, "Detached: no tier source");
+        assertEq(daySrc, uint32(BASE_CHAIN_ID), "Detached: day source is the detach origin");
+
+        vm.prank(messengerAddr);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.WrongSourceChain.selector, BASE_CHAIN_ID, uint32(0)
+            )
+        );
+        _call().onTierUpdateReceived(BASE_CHAIN_ID, user, 1, 1000, 0, 1, 0, 1);
+
+        vm.prank(messengerAddr);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.WrongSourceChain.selector, BASE_CHAIN_ID, uint32(0)
+            )
+        );
+        _call().onVersionBumpedReceived(BASE_CHAIN_ID, 1);
+    }
+
+    /// #903 — on a Mirror, tier traffic from any chain other than its
+    /// configured base is refused, for both kinds of tier message.
+    function test903_Mirror_RefusesTierTrafficFromAnyOtherChain() public {
+        uint256[3] memory others = [uint256(1), uint256(10), uint256(42161)];
+        for (uint256 i; i < others.length; ++i) {
+            vm.prank(messengerAddr);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IVaipakamErrors.WrongSourceChain.selector, others[i], uint32(BASE_CHAIN_ID)
+                )
+            );
+            _call().onTierUpdateReceived(others[i], user, 1, 1000, 0, 1, 0, 1);
+            vm.prank(messengerAddr);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IVaipakamErrors.WrongSourceChain.selector, others[i], uint32(BASE_CHAIN_ID)
+                )
+            );
+            _call().onVersionBumpedReceived(others[i], 1);
+        }
+    }
 }

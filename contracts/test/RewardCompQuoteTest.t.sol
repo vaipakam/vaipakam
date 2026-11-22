@@ -644,7 +644,9 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: 10_000 ether
+                loanSideRewardCapOpen: 10_000 ether,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
         uint256[] memory one = new uint256[](1);
@@ -844,7 +846,9 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: 10_000 ether
+                loanSideRewardCapOpen: 10_000 ether,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
         _mut().closeRewardEntryRaw(1, 10);

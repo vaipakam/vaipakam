@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title MirrorTierReceiverFacet — T-087 Sub 2.C
@@ -28,7 +29,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
  * Both functions are external (the messenger contract is OUTSIDE the
  * Diamond, so a fallback-routed call is the only way in).
  */
-contract MirrorTierReceiverFacet {
+contract MirrorTierReceiverFacet is IVaipakamErrors {
     // ─── Events ─────────────────────────────────────────────────────────
 
     /// @custom:event-category state-change/mirror-tier-cache
@@ -54,8 +55,10 @@ contract MirrorTierReceiverFacet {
 
     /// @notice The caller is not the configured CCIP messenger.
     error NotMessenger(address caller);
-    /// @notice The push arrived from a chain that is not Base.
-    error WrongSourceChain(uint256 got, uint32 expected);
+    // A push from a chain that is not this deployment's Base reverts
+    // `IVaipakamErrors.WrongSourceChain` (#903: one rule, shared with the
+    // day-broadcast ingress, in `LibVaipakam.requireRewardBaseSource`;
+    // tier traffic is accepted only on a Mirror, from its `baseChainId`).
     /// @notice The push's nonce is not strictly greater than the
     ///         cached `lastNonce` — stale or replay.
     error StaleNonce(uint64 got, uint64 cached);
@@ -95,7 +98,7 @@ contract MirrorTierReceiverFacet {
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMessenger(s);
-        _assertSourceChain(s, sourceChainId);
+        LibVaipakam.requireRewardBaseSource(s, sourceChainId, false);
 
         if (nonce > type(uint64).max) revert NonceOverflow(nonce);
         uint64 nonce64 = uint64(nonce);
@@ -151,7 +154,7 @@ contract MirrorTierReceiverFacet {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMessenger(s);
-        _assertSourceChain(s, sourceChainId);
+        LibVaipakam.requireRewardBaseSource(s, sourceChainId, false);
 
         uint16 current = s.currentTierTableVersion;
         if (newVersion <= current) return; // benign no-op
@@ -187,15 +190,6 @@ contract MirrorTierReceiverFacet {
     function _assertMessenger(LibVaipakam.Storage storage s) private view {
         if (msg.sender != s.rewardMessenger) {
             revert NotMessenger(msg.sender);
-        }
-    }
-
-    function _assertSourceChain(
-        LibVaipakam.Storage storage s,
-        uint256 sourceChainId
-    ) private view {
-        if (sourceChainId != s.baseChainId) {
-            revert WrongSourceChain(sourceChainId, s.baseChainId);
         }
     }
 }

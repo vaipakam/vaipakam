@@ -42,6 +42,7 @@ contract MockRehearsalDiamond {
 
     uint256 public bcastCount;
     uint256 public lastBcastDay;
+    uint256 public lastBcastSource;
 
     constructor(ERC20Mock vpfi_) {
         vpfi = vpfi_;
@@ -53,7 +54,8 @@ contract MockRehearsalDiamond {
         ++reportCount;
     }
 
-    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b) external {
+    function onRewardBroadcastV3Received(uint256 sourceChainId, RewardBroadcastV3 calldata b) external {
+        lastBcastSource = sourceChainId;
         lastBcastDay = b.v2.dayId;
         ++bcastCount;
     }
@@ -392,6 +394,8 @@ contract CcipDeploymentRehearsalTest is Test {
         router.deliver(1, SEL_BASE);
         assertEq(diamondMirror.bcastCount(), 1, "mirror got the broadcast");
         assertEq(diamondMirror.lastBcastDay(), 42, "broadcast day");
+        // #903 — the messenger forwards the authenticated CCIP source.
+        assertEq(diamondMirror.lastBcastSource(), BASE, "broadcast source chain");
     }
 
     /// @dev Base sends day 42 to the mirror on the one broadcast wire (kind
