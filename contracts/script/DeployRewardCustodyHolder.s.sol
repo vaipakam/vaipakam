@@ -7,6 +7,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
 
 /**
@@ -64,8 +65,8 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
     }
 
     function run() external {
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
         address diamond = _unboundDiamond();
         _requireNoPendingRecord(KIND);
         require(
@@ -77,7 +78,7 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
         console.log("Diamond:", diamond);
         console.log("Admin:  ", admin);
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         RewardCustodyFacet(diamond).bindRewardCustodyHolder();
         vm.stopBroadcast();
 

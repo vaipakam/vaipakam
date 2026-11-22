@@ -1,0 +1,246 @@
+{
+  "_comment": "The testnet deployment as one desired state (#3111, deploy rehearsal design sections 3 and 16). script/deploy-plan.mjs reads it and prints the plan a rehearsal runs and the real deploy follows; the readback (#3893) checks the live chains against it. Lanes and reward sources are DERIVED from the chain set, never typed. Role holders are named by the operator .env variable that carries the address (public values), so this file holds no address that could drift from the .env.",
+  "network": "testnet",
+  "chains": {
+    "base-sepolia": {
+      "role": "canonical"
+    },
+    "arb-sepolia": {
+      "role": "mirror"
+    },
+    "bnb-testnet": {
+      "role": "mirror",
+      "swapAdapters": true
+    }
+  },
+  "rewards": {
+    "anchor": null,
+    "baseRewardPoolVpfi": "100000",
+    "poolFundedFrom": "TREASURY",
+    "_why": "Owner decision 2026-11-16: 100,000 VPFI to the Base reward pool, sourced from the treasury wallet through the admin. The anchor is set per run (deploy-plan --anchor today) unless fixed here."
+  },
+  "roles": {
+    "admin": "ADMIN_ADDRESS",
+    "deployer": "DEPLOYER_ADDRESS",
+    "treasury": "TREASURY_ADDRESS",
+    "bots": {
+      "keeper": {
+        "address": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B",
+        "roles": [
+          "KEEPER_ROLE",
+          "WATCHER_ROLE",
+          "NOTIF_BILLER_ROLE"
+        ]
+      }
+    }
+  },
+  "governance": {
+    "handover": false,
+    "_why": "Owner decision for the 2026-11-16 fresh deploy, kept: testnet roles stay admin-owned (no Safe handover on testnets)."
+  },
+  "terms": {
+    "version": 4,
+    "_why": "Terms v4 (PR #3784) is set on-chain with the next deploy; the hash is read from apps/www/src/pages/terms/versions.ts."
+  },
+  "records": {
+    "keeperAddress": "keeper"
+  },
+  "_settingsSource": "Owner decision 2026-11-22 (Raaj, via the coordinator): the next testnet deploys must exercise every feature, so every switch is on, with the figures the 2026-11-04 deploy used (read from its archived Diamonds). A mainnet desired file may hold no row carried from a replaced deployment.",
+  "serviceCapacityEscrow": "all",
+  "settings": [
+    {
+      "chains": "all",
+      "setter": "setPartialFillEnabled(bool)",
+      "getter": "getPartialFillEnabled()(bool)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setRiskAccessGateEnabled(bool)",
+      "getter": "getRiskAccessGateEnabled()(bool)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setAutoExtendEnabled(bool)",
+      "getter": "getAutoExtendEnabled()(bool)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setLenderIntentEnabled(bool)",
+      "getter": "isLenderIntentEnabled()(bool)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setCapacityCurve(uint8,uint256,uint256,uint256,uint256)",
+      "args": [
+        "0",
+        "20000000000000000000",
+        "5555555555555556",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "getter": "getCapacityCurve(uint8)((uint256,uint256,uint256,uint256,uint64,uint64))",
+      "getterArgs": [
+        "0"
+      ],
+      "expect": [
+        "20000000000000000000",
+        "5555555555555556",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Solver capacity curve: free tier, free rate per second, bond at 4x, class cost"
+    },
+    {
+      "chains": "all",
+      "setter": "setCapacityCurve(uint8,uint256,uint256,uint256,uint256)",
+      "args": [
+        "1",
+        "60000000000000000000",
+        "16666666666666667",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "getter": "getCapacityCurve(uint8)((uint256,uint256,uint256,uint256,uint64,uint64))",
+      "getterArgs": [
+        "1"
+      ],
+      "expect": [
+        "60000000000000000000",
+        "16666666666666667",
+        "10000000000000000000000",
+        "1000000000000000000"
+      ],
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Keeper capacity curve"
+    },
+    {
+      "chains": "all",
+      "setter": "setArmingFeeRate(uint256)",
+      "getter": "getArmingFee()(uint256,uint256)",
+      "value": "20000000000000000",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "2% arming fee (1e18 = the whole newly armed principal)"
+    },
+    {
+      "chains": "all",
+      "setter": "setServiceCapacityEnabled(bool)",
+      "getter": "isServiceCapacityEnabled()(bool)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": "all",
+      "setter": "setPerkConfig(uint256,uint256,uint32)",
+      "args": [
+        "1",
+        "2000000000000000000",
+        "0"
+      ],
+      "getter": "getPerkConfig(uint256)(uint256,uint32,uint256)",
+      "getterArgs": [
+        "1"
+      ],
+      "expect": [
+        "2000000000000000000",
+        "0"
+      ],
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Perk 1, priority routing: 2 VPFI a credit, counted"
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setFeeEntitlementEnabled(bool)",
+      "getter": "getFeeEntitlementConfig()(bool,uint256,uint256)",
+      "value": "true",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's",
+      "_what": "Refused on a mirror by design"
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setRewardGraceSeconds(uint64)",
+      "getter": "getRewardGraceSeconds()(uint64)",
+      "value": "43200",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    },
+    {
+      "chains": [
+        "base-sepolia"
+      ],
+      "setter": "setRewardRemittanceKeeper(address)",
+      "getter": "getRewardRemittanceKeeper()(address)",
+      "value": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B",
+      "source": "owner decision 2026-11-22 (Raaj): the next testnet deploys switch every feature on; the figures are the 2026-11-04 deploy's"
+    }
+  ],
+  "sanctionsClearance": {
+    "attestor": "bnb-testnet",
+    "timelocks": [
+      "base-sepolia",
+      "arb-sepolia"
+    ],
+    "_why": "Owner decision 2026-11-16: rewire the sanctions delisting route after all three chains are deployed; BNB testnet answers clearance requests for the Base and Arbitrum timelocks (ConfigureSanctionsClearance header)."
+  },
+  "manual": [],
+  "keeper": {
+    "armed": {
+      "base-sepolia": [
+        "KEEPER_ENABLED",
+        "GRACE_DEFAULT_ENABLED",
+        "REWARD_COMMIT_ENABLED",
+        "REWARD_REMIT_ENABLED",
+        "REWARD_SANCTIONS_KEEPER_ENABLED",
+        "REWARD_DAY_CLOSE_ENABLED",
+        "REWARD_ENTRY_SETTLE_ENABLED",
+        "STANDIN_REFRESH_ENABLED",
+        "REWARD_REMIT_ACK_ENABLED",
+        "POSITION_UPKEEP_ENABLED",
+        "BACKSTOP_FILL_ENABLED",
+        "ASSET_RANKINGS_ENABLED",
+        "PRICE_CHECKPOINT_ENABLED"
+      ],
+      "arb-sepolia": [
+        "KEEPER_ENABLED",
+        "GRACE_DEFAULT_ENABLED",
+        "REWARD_COMMIT_ENABLED",
+        "REWARD_REMIT_ENABLED",
+        "REWARD_SANCTIONS_KEEPER_ENABLED",
+        "REWARD_DAY_CLOSE_ENABLED",
+        "REWARD_ENTRY_SETTLE_ENABLED",
+        "STANDIN_REFRESH_ENABLED",
+        "REWARD_REMIT_ACK_ENABLED",
+        "POSITION_UPKEEP_ENABLED",
+        "BACKSTOP_FILL_ENABLED",
+        "ASSET_RANKINGS_ENABLED",
+        "PRICE_CHECKPOINT_ENABLED"
+      ],
+      "bnb-testnet": [
+        "KEEPER_ENABLED",
+        "GRACE_DEFAULT_ENABLED",
+        "REWARD_COMMIT_ENABLED",
+        "REWARD_REMIT_ENABLED",
+        "REWARD_SANCTIONS_KEEPER_ENABLED",
+        "REWARD_DAY_CLOSE_ENABLED",
+        "REWARD_ENTRY_SETTLE_ENABLED",
+        "STANDIN_REFRESH_ENABLED",
+        "REWARD_REMIT_ACK_ENABLED",
+        "POSITION_UPKEEP_ENABLED",
+        "BACKSTOP_FILL_ENABLED",
+        "ASSET_RANKINGS_ENABLED",
+        "PRICE_CHECKPOINT_ENABLED"
+      ]
+    }
+  }
+}

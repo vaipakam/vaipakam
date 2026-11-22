@@ -1792,7 +1792,7 @@ On **Base only** (the canonical reward chain), two registrations, **each
 driven by its own env var**:
 
 5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included.
-6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Until a chain is registered, the compensation-quote (kind-11) ingress is fail-closed for it (`CompQuoteMirrorEraUnset`) and zeroed-day compensation on that lane is unreachable.
+6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per expected mirror, with the Diamond that mirror's own record names (#3891). `MIRROR_REWARD_DEPLOYMENTS` (format `chainId:0xaddr,chainId:0xaddr`) is no longer typed by the operator: when set it must name exactly the recorded Diamonds, and on a testnet it is used only for a chain with no record. Until a chain is registered, the compensation-quote (kind-11) ingress is fail-closed for it (`CompQuoteMirrorEraUnset`) and zeroed-day compensation on that lane is unreachable.
 
 And one setting that is **not** optional, because it has defaults (#2909):
 
@@ -1800,7 +1800,7 @@ And one setting that is **not** optional, because it has defaults (#2909):
 
 On **every reporter** (non-Base chain), one registration, driven the same way:
 
-5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Until it is set, the broadcast ingress (kind 10, the one broadcast wire since #1944) is DARK on this reporter: every broadcast is refused (`BroadcastEraUnauthenticated`) and stays a failed, re-executable CCIP message, so no day figures, day clock or arming day install until it is set. When set, the artifact also gains `baseRewardDeployment`.
+5'. `RewardReporterFacet.setBaseRewardDeployment(<Base's recorded Diamond>)` — taken from canonical Base's own record (#3891); a `BASE_REWARD_DEPLOYMENT` value is refused unless it equals that record. Until it is set, the broadcast ingress (kind 10, the one broadcast wire since #1944) is DARK on this reporter: every broadcast is refused (`BroadcastEraUnauthenticated`) and stays a failed, re-executable CCIP message, so no day figures, day clock or arming day install until it is set. When set, the artifact also gains `baseRewardDeployment`.
 
 **What an unset var does depends on which entry point you used — and on
 whether the Diamond was configured before.**
@@ -1813,12 +1813,19 @@ whether the Diamond was configured before.**
   updates what is stored, so an omitted var is never a way to retire a stale
   source list, mirror registry or base deployment. Rotate or retire those with
   the setter and an explicit value; verify with the readbacks below.
-- **`deploy-mainnet.sh`:** none of the three is optional. Its preflight refuses
-  to start without `BASE_REWARD_DEPLOYMENT` on a mirror and
-  `MIRROR_REWARD_DEPLOYMENTS` on Base, and its configure phase additionally
-  requires `REWARD_EXPECTED_SOURCE_CHAIN_IDS` on Base and checks that the
-  registry's chain set equals that list minus Base, with no duplicates — a
-  hard `FAIL` before the spell runs, not a warning.
+- **`deploy-mainnet.sh`:** the two Diamond registrations come only from the
+  records (design ruling 2026-11-22). Every chain's contracts phase runs
+  before any chain's configure phase; configure refuses by name when Base's
+  record has no Diamond (on a mirror) or when any chain in
+  `REWARD_EXPECTED_SOURCE_CHAIN_IDS` other than Base has none (on Base), and
+  refuses an `.env` value with no record behind it or naming another
+  Diamond. Preflight and configure require `REWARD_EXPECTED_SOURCE_CHAIN_IDS`
+  on Base. After the spell, before the configure marker, both deploy scripts
+  read the identities back (`ConfigureRewardReporter --sig
+  'verifyIdentities()'`): a mirror's base deployment must equal Base's
+  record, and Base's registry must equal the record for every expected
+  mirror, so a rerun cannot leave an old value in force behind a green
+  marker.
 - **`deploy-chain.sh`:** does not run the configure phase at all — it prints
   the `DiamondConfigSpell` command for you to run by hand, so what you get is
   the script's own warn-and-skip posture.

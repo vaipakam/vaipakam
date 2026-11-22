@@ -51,7 +51,7 @@ contract ConfigureCcipLanePreflightTest is Test {
     function test_ThePreflight_RunsBeforeAnyBroadcast() public view {
         string memory src = vm.readFile("script/ConfigureCcip.s.sol");
         uint256 check = _indexOf(src, "requireLaneFitsFreshDaySlice(c.rateCapacity);");
-        uint256 broadcast = _indexOf(src, "vm.startBroadcast(");
+        uint256 broadcast = _indexOf(src, "Signers.start(");
         assertTrue(check != type(uint256).max, "run() calls the pre-flight");
         assertTrue(broadcast != type(uint256).max, "fixture: the script broadcasts");
         assertLt(check, broadcast, "the pre-flight precedes the first broadcast");
@@ -95,8 +95,9 @@ contract ConfigureCcipLanePreflightTest is Test {
     function test_TheLaneBoundsCheck_RunsBeforeAnyBroadcast() public view {
         string memory src = vm.readFile("script/ConfigureCcip.s.sol");
         uint256 check = _indexOf(src, "laneRateLimit(c.rateCapacity, c.rateRefill);");
-        uint256 broadcast = _indexOf(src, "vm.startBroadcast(");
+        uint256 broadcast = _indexOf(src, "Signers.start(");
         assertTrue(check != type(uint256).max, "run() checks the lane figures");
+        assertTrue(broadcast != type(uint256).max, "fixture: the script broadcasts");
         assertLt(check, broadcast, "the check precedes the first broadcast");
     }
 

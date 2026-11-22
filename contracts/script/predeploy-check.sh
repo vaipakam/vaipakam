@@ -36,6 +36,8 @@
 #       the "raised by" half of the error catalogue, matches what the same
 #       AST artifacts say: every entry function whose reachable code can
 #       raise each error.
+#   1g. Signer seam guard (#3891) — every operator script signs and starts a
+#       broadcast only through script/lib/Signers.sol.
 #
 #   2. Forge test suite:
 #        • default            — the deploy-sanity suite (test/deploy/*),
@@ -314,6 +316,26 @@ elif node "$SCRIPT_DIR/error-raisers.mjs" --check; then
 else
   echo "  ✗ error raisers are stale — run node contracts/script/error-raisers.mjs," >&2
   echo "    then node packages/contracts/scripts/build-error-catalogue.mjs (or the ABI export)" >&2
+  FAIL=1
+fi
+
+# ── 1g. Signer seam guard (#3891) ─────────────────────────────────────
+# Every operator script reads a signing key and starts a broadcast only
+# through script/lib/Signers.sol, and the deploy scripts send from the shell
+# only through lib/rehearsal.sh. That seam is what lets a deploy rehearsal run
+# the real scripts on a fork with no key. It reads the parser's AST of
+# script/ with the solc forge installed (step 1 put it there), so it does not
+# depend on step 1c's artifacts.
+echo
+echo "[predeploy 1g/4] signer seam guard (#3891)"
+if [ "$BUILD_OK" -ne 1 ]; then
+  echo "  ✗ skipped — step 1 failed, so the pinned solc may be missing" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-signer-seam.mjs"; then
+  : # the script prints its own line
+else
+  echo "  ✗ signer seam guard failed — sign through script/lib/Signers.sol" >&2
+  echo "    (see above), or exempt a test-actor script with its reason" >&2
   FAIL=1
 fi
 

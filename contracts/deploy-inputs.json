@@ -1,0 +1,357 @@
+{
+  "_comment": "The deploy's input set for a rehearsal verdict and the real deploy's gate (#3891, design section 18). The input digest hashes the name and value of every variable in the deploy's environment that is named in the operator .env file or listed under inputs, less the leftOut patterns. check-deploy-inputs (rehearsal-inputs.mjs check) refuses a variable an operator script reads by a literal name that is in neither list, and a script that builds a variable name at run time unless dynamicSites names it with the patterns it can read.",
+  "inputs": [
+    "AAVE_V3_POOL",
+    "ADDRESSES_JSON_PATH",
+    "ADMIN_ADDRESS",
+    "ALLOWANCE_HOLDER_OVERRIDE",
+    "ANCHOR_RECORD_DESCRIBES_CHAIN",
+    "ANVIL_WETH",
+    "ARB_AAVE_V3_POOL",
+    "ARB_BALANCER_V2_VAULT",
+    "ARB_L2_DEPLOY_BLOCK",
+    "ARB_SEPOLIA_AAVE_V3_POOL",
+    "ARB_SEPOLIA_BALANCER_V2_VAULT",
+    "ARB_SEPOLIA_WETH_ADDRESS",
+    "BALANCER_V2_VAULT",
+    "BASE_AAVE_V3_POOL",
+    "BASE_BALANCER_V2_VAULT",
+    "BASE_CHAIN_ID",
+    "BASE_REWARD_DEPLOYMENT",
+    "BASE_SEPOLIA_AAVE_V3_POOL",
+    "BASE_SEPOLIA_BALANCER_V2_VAULT",
+    "BASE_SEPOLIA_WETH_ADDRESS",
+    "BNB_AAVE_V3_POOL",
+    "BNB_TESTNET_AAVE_V3_POOL",
+    "BNB_TESTNET_WETH_ADDRESS",
+    "CCIP_DEST_GAS_LIMIT",
+    "CCIP_GUARDIAN",
+    "CCIP_LANE_CHAIN_IDS",
+    "CCIP_RATE_CAPACITY",
+    "CCIP_RATE_REFILL",
+    "CCIP_REGISTRY_MODULE_OWNER_CUSTOM",
+    "CCIP_RMN_PROXY",
+    "CCIP_ROUTER",
+    "CCIP_TOKEN_ADMIN_REGISTRY",
+    "CHAINS_JSON_PATH",
+    "CONFIRM_TGE_FUNDING",
+    "DEFAULT_ADMIN_ADDRESS",
+    "DEPLOY_SKIP_ARTIFACTS",
+    "DIAMOND_ADDRESS",
+    "EMERGENCY_REVOKER_ADDRESS",
+    "ETH_AAVE_V3_POOL",
+    "ETH_BALANCER_V2_VAULT",
+    "ETH_GAS_PRICE",
+    "ETH_PRIORITY_GAS_PRICE",
+    "FAUCET_ILLIQUID_TOKEN",
+    "FAUCET_ILLIQUID_TOKEN_2",
+    "FAUCET_LIQUID_TOKEN",
+    "FAUCET_LIQUID_TOKEN_2",
+    "FAUCET_MULTI_TOKEN",
+    "FAUCET_MWETH",
+    "FAUCET_RENTAL_NFT",
+    "FAUCET_RENTAL_NFT_2",
+    "FAUCET_SWAP_ADAPTER",
+    "FEED_REGISTRY_DELAY_SECONDS",
+    "FORGE_GAS_MULTIPLIER",
+    "HANDOVER_GATE_LOG_CHUNK",
+    "HANDOVER_ROLE_EPOCH",
+    "HANDOVER_TIMELOCK_CALLS",
+    "INITIAL_SETTLERS",
+    "INTERACTION_CAP_VPFI_PER_ETH",
+    "INTERACTION_LAUNCH_TIMESTAMP",
+    "KEEPER_BACKUP_OWNER",
+    "KEEPER_BOT_OWNER",
+    "MIRROR_REWARD_DEPLOYMENTS",
+    "MWETH_USD_FEED",
+    "MWETH_USD_FEED_MAX_AGE",
+    "MWETH_USD_PRICE",
+    "NFT_CONTRACT_IMAGE",
+    "NFT_DEFAULT_IMAGE_BORROWER",
+    "NFT_DEFAULT_IMAGE_LENDER",
+    "NFT_EXTERNAL_URL_BASE",
+    "NFT_IMAGE_BORROWER_ACTIVE",
+    "NFT_IMAGE_BORROWER_CLOSED",
+    "NFT_IMAGE_BORROWER_DEFAULTED",
+    "NFT_IMAGE_BORROWER_FALLBACK_PENDING",
+    "NFT_IMAGE_BORROWER_LIQUIDATED",
+    "NFT_IMAGE_BORROWER_OFFER_CREATED",
+    "NFT_IMAGE_BORROWER_REPAID",
+    "NFT_IMAGE_LENDER_ACTIVE",
+    "NFT_IMAGE_LENDER_CLOSED",
+    "NFT_IMAGE_LENDER_DEFAULTED",
+    "NFT_IMAGE_LENDER_FALLBACK_PENDING",
+    "NFT_IMAGE_LENDER_LIQUIDATED",
+    "NFT_IMAGE_LENDER_OFFER_CREATED",
+    "NFT_IMAGE_LENDER_REPAID",
+    "ONEINCH_ROUTER_OVERRIDE",
+    "OP_AAVE_V3_POOL",
+    "OP_BALANCER_V2_VAULT",
+    "OP_SEPOLIA_AAVE_V3_POOL",
+    "OP_SEPOLIA_BALANCER_V2_VAULT",
+    "OP_SEPOLIA_WETH_ADDRESS",
+    "PAA_QUOTE_ASSETS",
+    "PAUSER_ADDRESS",
+    "POLYGON_AAVE_V3_POOL",
+    "POLYGON_BALANCER_V2_VAULT",
+    "POST_HANDOVER",
+    "PRICE_GUARD_DELAY_SECONDS",
+    "REHEARSAL_ALLOW_CHAIN_ID",
+    "REWARD_CUSTODY_FUND_LIVE_FRESH",
+    "REWARD_CUSTODY_FUND_OVERAGE",
+    "REWARD_CUSTODY_FUND_RECOVERY",
+    "REWARD_CUSTODY_FUND_RECYCLED",
+    "REWARD_CUSTODY_FUND_SANCTIONS_HELD",
+    "REWARD_CUSTODY_PAUSE_EPOCH",
+    "REWARD_CUSTODY_PROVENANCE",
+    "REWARD_CUSTODY_RELOCATE_OVERAGE",
+    "REWARD_CUSTODY_RELOCATE_RECOVERY",
+    "REWARD_CUSTODY_RELOCATE_RECYCLED",
+    "REWARD_CUSTODY_RELOCATE_SANCTIONS_HELD",
+    "REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP",
+    "REWARD_DISPATCH_CUTOFF_GAP_SECONDS",
+    "REWARD_EXPECTED_SOURCE_CHAIN_IDS",
+    "REWARD_GRACE_SECONDS",
+    "REWARD_LAPSE_WINDOW_SECONDS",
+    "REWARD_MESSENGER_PROXY",
+    "REWARD_OAPP_PROXY",
+    "REWARD_ROLE_EXPECTED",
+    "RISK_ACCESS_UNLOCK_COOLDOWN_SEC",
+    "SANCTIONS_ADDER_ADDRESS",
+    "SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID",
+    "SANCTIONS_CLEARANCE_REPLACE_ATTESTOR",
+    "SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS",
+    "SANCTIONS_DELISTER_ADDRESS",
+    "SANCTIONS_REMOVER_ADDRESS",
+    "SANCTIONS_STANDIN_CARRY_FROM_BLOCK",
+    "SANCTIONS_STANDIN_LOG_CHUNK",
+    "SANCTIONS_STANDIN_REFRESHER",
+    "SEPOLIA_AAVE_V3_POOL",
+    "SEPOLIA_BALANCER_V2_VAULT",
+    "SEPOLIA_WETH_ADDRESS",
+    "TIMELOCK_CANCELLER",
+    "TIMELOCK_EXECUTOR",
+    "TIMELOCK_MIN_DELAY",
+    "TIMELOCK_PROPOSER",
+    "TREASURY_ADDRESS",
+    "UNISWAP_V3_FACTORY",
+    "UNISWAP_V3_ROUTER",
+    "UNPAUSE_TIMELOCK_DELAY",
+    "UNPAUSE_TIMELOCK_SALT",
+    "VAULT_LISTING_CONDUIT_KEY",
+    "VAULT_ORDER_PROTOCOL",
+    "VAULT_SEAPORT",
+    "VESTING_BENEFICIARY",
+    "VESTING_CLIFF_DAYS",
+    "VESTING_DURATION_DAYS",
+    "VESTING_GRANT_VPFI",
+    "VESTING_START",
+    "VPFI_AMOUNT_EACH",
+    "VPFI_BUY_WEI_PER_VPFI",
+    "VPFI_DISCOUNT_ETH_PRICE_ASSET",
+    "VPFI_DISCOUNT_RATE",
+    "VPFI_RECIPIENT_1",
+    "VPFI_RECIPIENT_2",
+    "VPFI_RECIPIENT_3",
+    "VPFI_RECIPIENT_4",
+    "VPFI_STABLE_FEED_SYMBOLS",
+    "VPFI_TOKEN_FORCE_REDEPLOY",
+    "VPFI_TOKEN_FRESH",
+    "VPFI_TOKEN_REUSE_ADDRESS",
+    "ZEROX_ALLOWANCE_TARGET",
+    "ZEROX_PROXY"
+  ],
+  "dynamicSites": [
+    {
+      "path": "script/lib/Signers.sol",
+      "patterns": [
+        "*_ADDRESS",
+        "*_PRIVATE_KEY"
+      ],
+      "reason": "<ROLE>_ADDRESS and <ROLE>_PRIVATE_KEY for each signing role."
+    },
+    {
+      "path": "script/lib/ArtifactRoot.sol",
+      "patterns": [
+        "VAIPAKAM_REHEARSAL*"
+      ],
+      "reason": "The rehearsal flag and scratch root, through named constants."
+    },
+    {
+      "path": "script/lib/EnvFlag.sol",
+      "patterns": [
+        "*"
+      ],
+      "reason": "A generic boolean-flag reader; each caller passes a literal name, which the literal check covers."
+    },
+    {
+      "path": "script/lib/Deployments.sol",
+      "patterns": [
+        "*_*"
+      ],
+      "reason": "Chain-prefixed variants (<CHAIN>_<KEY>) of keys the callers pass literally."
+    },
+    {
+      "path": "script/lib/PriceGuardDeployment.sol",
+      "patterns": [
+        "*_FEED",
+        "*_*"
+      ],
+      "reason": "Per-symbol stable feeds (<SYMBOL>_FEED) and chain-prefixed variants."
+    },
+    {
+      "path": "script/ConfigureOracle.s.sol",
+      "patterns": [
+        "*_*"
+      ],
+      "reason": "Chain-prefixed oracle settings (<CHAIN>_PAA_QUOTE_ASSETS and the like)."
+    },
+    {
+      "path": "script/ConfigureVPFIBuy.s.sol",
+      "patterns": [
+        "*"
+      ],
+      "reason": "Keys passed in by the caller, chain-prefixed or bare."
+    },
+    {
+      "path": "script/ConfigureVPFIToken.s.sol",
+      "patterns": [
+        "*_*"
+      ],
+      "reason": "Chain-prefixed variants of literal keys."
+    },
+    {
+      "path": "script/DeployFlashLoanLiquidator.s.sol",
+      "patterns": [
+        "*"
+      ],
+      "reason": "Keys passed in by the caller."
+    },
+    {
+      "path": "script/DeployUniV3Adapter.s.sol",
+      "patterns": [
+        "*_*"
+      ],
+      "reason": "Chain-prefixed variants of literal keys."
+    },
+    {
+      "path": "script/Handover.s.sol",
+      "patterns": [
+        "*"
+      ],
+      "reason": "The bot-holder variables named in the handover plan."
+    },
+    {
+      "path": "script/HandoverGate.s.sol",
+      "patterns": [
+        "*"
+      ],
+      "reason": "The bot-holder variables named in the handover plan."
+    }
+  ],
+  "leftOut": [
+    {
+      "pattern": "*PRIVATE_KEY",
+      "reason": "Signing keys: a rehearsal holds none and pins them to zero (design section 18, kind 1)."
+    },
+    {
+      "pattern": "*_RPC_URL",
+      "reason": "RPC endpoints: a rehearsal reaches a fork, the real deploy the chain; the chain id is checked instead (kind 2)."
+    },
+    {
+      "pattern": "*_RPC_URLS",
+      "reason": "RPC endpoint lists, as above (kind 2)."
+    },
+    {
+      "pattern": "VAIPAKAM_REHEARSAL*",
+      "reason": "The rehearsal's own flag, scratch root and fork URL: declared differences (kind 3)."
+    },
+    {
+      "pattern": "FOUNDRY_BROADCAST",
+      "reason": "Forge's journal folder, moved to scratch in a rehearsal: a declared difference (kind 3)."
+    },
+    {
+      "pattern": "FOUNDRY_CACHE_PATH",
+      "reason": "Forge's run cache folder, moved with the journal folder: a declared difference (kind 3)."
+    },
+    {
+      "pattern": "E2E_*",
+      "reason": "Scenario-harness redirects, read only by the e2e wrappers, which never run in a deploy plan."
+    },
+    {
+      "pattern": "*_API_KEY",
+      "reason": "Provider and explorer credentials: they authenticate a request and change nothing that is deployed."
+    },
+    {
+      "pattern": "*_API_TOKEN",
+      "reason": "Provider credentials (Cloudflare), as above; the Cloudflare phases never run in a rehearsal."
+    },
+    {
+      "pattern": "VAIPAKAM_LIVE_PUBLICATION_TOKEN",
+      "reason": "A per-run lock token the deploy script itself creates for the archive manifest; never operator input."
+    },
+    {
+      "pattern": "CHAIN_SLUG",
+      "reason": "Set per command by the deploy script from its argument; the chain set is digested separately in the verdict."
+    },
+    {
+      "pattern": "REPRICE_*",
+      "reason": "Inputs of the hand-run testnet mock repricer, which is not a deploy step."
+    },
+    {
+      "pattern": "FINALIZE_*",
+      "reason": "Inputs of the hand-run reward day finalizer, which is not a deploy step."
+    },
+    {
+      "pattern": "CENSUS_*",
+      "reason": "Inputs of the read-only census report, which writes nothing on chain."
+    },
+    {
+      "pattern": "EXPECT_CHANGED",
+      "reason": "An assertion input of the changed-facet refresh, which is an in-place refresh (#3897), not a fresh-deploy step."
+    },
+    {
+      "pattern": "RH_*",
+      "reason": "The rehearsal machinery's own knobs (fork depth, a test stand-in for the feed list): they shape the rehearsal's forks, never what the deploy sends."
+    },
+    {
+      "pattern": "REHEARSE",
+      "reason": "The mainnet wrapper's --rehearse flag: it selects rehearsal mode, which the verdict records itself, like VAIPAKAM_REHEARSAL."
+    }
+  ],
+  "hashedPatterns": [
+    {
+      "pattern": "*_ADDRESS",
+      "reason": "Role and bot addresses: Signers.sol builds <ROLE>_ADDRESS from the role name, Handover reads the bot holders' names from a list."
+    },
+    {
+      "pattern": "*_FEED",
+      "reason": "Per-symbol price feeds: PriceGuardDeployment builds <SYMBOL>_FEED from VPFI_STABLE_FEED_SYMBOLS."
+    },
+    {
+      "pattern": "*_GAS_PRICE_WEI",
+      "reason": "Per-chain gas pins: the deploy wrappers build <SLUG>_GAS_PRICE_WEI and <SLUG>_PRIORITY_GAS_PRICE_WEI and export them as ETH_GAS_PRICE / ETH_PRIORITY_GAS_PRICE."
+    }
+  ],
+  "chainPrefixes": [
+    "ANVIL_",
+    "ARBITRUM_",
+    "ARB_SEPOLIA_",
+    "BASE_",
+    "BASE_SEPOLIA_",
+    "BNB_",
+    "BNB_TESTNET_",
+    "ETHEREUM_",
+    "OPTIMISM_",
+    "OP_SEPOLIA_",
+    "POLYGON_",
+    "POLYGON_AMOY_",
+    "SEPOLIA_"
+  ],
+  "notInputs": [
+    {
+      "pattern": "*_ROLE",
+      "reason": "Access-control role names, hashed into role ids; never an environment name."
+    }
+  ]
+}

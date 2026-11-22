@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {console} from "forge-std/console.sol";
 import {ZeroExProxyMock} from "../test/mocks/ZeroExProxyMock.sol";
 
@@ -39,12 +40,12 @@ contract DeployZeroExMock is Script {
             "DeployZeroExMock: refusing to deploy mock on a production chain"
         );
 
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
 
         console.log("=== Deploy ZeroExProxyMock (testnet only) ===");
         console.log("Chain id:   ", chainId);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
         ZeroExProxyMock proxy = new ZeroExProxyMock();
         vm.stopBroadcast();
 

@@ -8,6 +8,7 @@ import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /// @dev Minimal metadata surface a Uniswap-V3 periphery SwapRouter exposes,
 ///      used to preflight the router before wrapping it in an adapter.
@@ -63,7 +64,7 @@ interface IUniV3SwapRouterMeta {
  */
 contract DeployUniV3Adapter is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
 
         address router = _resolveRouter();
         require(
@@ -124,7 +125,7 @@ contract DeployUniV3Adapter is Script {
             "DeployUniV3Adapter: Diamond not found in this chain's addresses.json - run DeployDiamond.s.sol first"
         );
 
-        address broadcaster = vm.addr(deployerKey);
+        address broadcaster = adminSigner.addr;
         require(
             AccessControlFacet(diamond).hasRole(keccak256("ADMIN_ROLE"), broadcaster),
             string.concat(
@@ -172,7 +173,7 @@ contract DeployUniV3Adapter is Script {
             }
         }
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(adminSigner);
         UniV3Adapter adapter = new UniV3Adapter(router);
         AdminFacet(diamond).addSwapAdapter(address(adapter));
         vm.stopBroadcast();

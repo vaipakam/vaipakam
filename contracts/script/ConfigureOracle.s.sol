@@ -10,6 +10,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
@@ -224,7 +225,7 @@ contract ConfigureOracle is Script {
     }
 
     function run() external {
-        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
 
         // Diamond is mandatory. Reads from
         // deployments/<chain>/addresses.json (with legacy
@@ -312,7 +313,7 @@ contract ConfigureOracle is Script {
         // broadcast and half via timelock proposals isn't worth the
         // automation. For post-handover oracle changes, hand-encode the
         // calldata for each setter and submit through the timelock UI.
-        address broadcaster = vm.addr(deployerKey);
+        address broadcaster = adminSigner.addr;
         address diamondOwner = IERC173(diamond).owner();
         require(
             broadcaster == diamondOwner,
@@ -397,7 +398,7 @@ contract ConfigureOracle is Script {
         );
         console.log("Price guard:           ", address(guard));
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(adminSigner);
 
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         AdminFacet af = AdminFacet(diamond);

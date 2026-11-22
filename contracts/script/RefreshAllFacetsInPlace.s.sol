@@ -8,6 +8,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
@@ -620,8 +621,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // deployer->admin handover that owner is the ADMIN key, so sign with it.
         // Pre-flight the match so a wrong key (or a timelock-owned diamond)
         // reverts HERE, before the 63 facet deploys — not after.
-        uint256 ownerKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address signer = vm.addr(ownerKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address signer = adminSigner.addr;
         address diamond = Deployments.readDiamond();
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         address currentOwner = IOwnable(diamond).owner();
@@ -662,7 +663,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // the messages below.
         bool writesArtifact = Deployments.artifactWritesEnabled();
 
-        vm.startBroadcast(ownerKey);
+        Signers.start(adminSigner);
 
         // The pause is the FIRST transaction of the run (Codex #2158 r25 P1),
         // before the implementation deploys, not after them: under `--slow`

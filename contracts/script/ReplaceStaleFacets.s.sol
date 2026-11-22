@@ -34,6 +34,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
@@ -112,11 +113,10 @@ contract ReplaceStaleFacets is DeployDiamond {
     error PredatesPositionNFT(address diamond);
 
     function run() external override {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         // Same env-var-prefix normalisation as RedeployFacets — read
         // from deployments/<chain>/addresses.json with chain-prefixed
         // env fallback rather than the bare DIAMOND_ADDRESS.
-        runWith(Deployments.readDiamond(), deployerKey);
+        _replaceWith(Deployments.readDiamond(), Signers.role("DEPLOYER"));
     }
 
     /**
@@ -129,6 +129,13 @@ contract ReplaceStaleFacets is DeployDiamond {
      *         the process environment shared across parallel test threads.
      */
     function runWith(address diamond, uint256 deployerKey) public {
+        _replaceWith(diamond, Signers.fromKey("DEPLOYER", deployerKey));
+    }
+
+    /// @dev The body of {run} and {runWith}: every broadcast goes through
+    ///      `Signers` (#3891), so a rehearsal signs as the impersonated
+    ///      deployer address and a real run with the key.
+    function _replaceWith(address diamond, Signer memory deployer) internal {
         console.log("Diamond:", diamond);
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`); the
@@ -181,7 +188,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3272 part 2 - and one from before the price guard.
         PriceGuardCrossing.requireRecorded(diamond);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployer);
 
         OfferCreateFacet offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
         // #3242 — every creation ends in a self-call to the offer book's entry

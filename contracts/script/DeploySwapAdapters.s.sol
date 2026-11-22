@@ -7,6 +7,7 @@ import {ZeroExAggregatorAdapter} from "../src/adapters/ZeroExAggregatorAdapter.s
 import {OneInchAggregatorAdapter} from "../src/adapters/OneInchAggregatorAdapter.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
 
 /**
@@ -93,7 +94,7 @@ contract DeploySwapAdapters is Script {
         0x111111125421cA6dc452d289314280a0f8842A65;
 
     function run() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        Signer memory deployerSigner = Signers.role("DEPLOYER");
 
         address allowanceHolder = vm.envOr(
             "ALLOWANCE_HOLDER_OVERRIDE",
@@ -138,7 +139,7 @@ contract DeploySwapAdapters is Script {
         require(adapterOwner != address(0), "DeploySwapAdapters: the Diamond has no owner");
         console.log("  Adapter owner:     ", adapterOwner);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployerSigner);
 
         ZeroExAggregatorAdapter zeroExAdapter =
             new ZeroExAggregatorAdapter(adapterOwner, allowanceHolder, initialSettlers);

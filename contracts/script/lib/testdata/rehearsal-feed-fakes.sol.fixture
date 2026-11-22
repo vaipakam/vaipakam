@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+// Fakes for script/lib/rehearsal-feeds.test.sh (#3891): a feed with its own
+// layout (stands for a real aggregator), the repo mock's shape, and a guard
+// that answers the reads ListPriceFeeds and the re-stamp make.
+
+contract FakeRealFeed {
+    uint256 internal pad0;
+    int256 internal a;
+    uint256 internal t;
+    uint80 internal r;
+    uint8 internal d;
+    constructor(int256 answer_, uint256 updatedAt_, uint80 round_, uint8 decimals_) {
+        (a, t, r, d) = (answer_, updatedAt_, round_, decimals_);
+    }
+    function decimals() external view returns (uint8) { return d; }
+    function description() external pure returns (string memory) { return "ETH / USD"; }
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) { return (r, a, t, t, r); }
+}
+
+contract MockChainlinkAggregator {
+    int256 public answer_;
+    uint256 public updatedAt_;
+    uint80 public roundId_;
+    uint8 public decimals_;
+    constructor(int256 answer, uint256 updatedAt, uint8 dec) { (answer_, updatedAt_, decimals_, roundId_) = (answer, updatedAt, dec, 1); }
+    function setUpdatedAt(uint256 u) external { updatedAt_ = u; }
+    function decimals() external view returns (uint8) { return decimals_; }
+    function description() external pure returns (string memory) { return "MockChainlinkAggregator"; }
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (roundId_, answer_, updatedAt_, updatedAt_, roundId_);
+    }
+}
+
+interface IFeed {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
+    function decimals() external view returns (uint8);
+}
+
+contract FakeGuard {
+    event ConfigSet(uint8 indexed kind, bytes32 indexed subject, bytes32 value);
+    mapping(uint8 => address) public single;
+    mapping(address => address) public assetDirectFeed;
+    bytes32[] internal syms;
+    mapping(bytes32 => address) public stableRefFeed;
+    address public pythOracle;
+    address public secondary0;
+
+    function setSingle(uint8 kind, address feed) external { single[kind] = feed; }
+    function setStable(bytes32 sym, address feed) external { syms.push(sym); stableRefFeed[sym] = feed; }
+    function setAssetDirect(address asset, address feed) external {
+        assetDirectFeed[asset] = feed;
+        emit ConfigSet(17, bytes32(uint256(uint160(asset))), bytes32(uint256(uint160(feed))));
+    }
+    function setPyth(address p) external { pythOracle = p; }
+    function config(uint8 kind, bytes32) external view returns (bytes32) { return bytes32(uint256(uint160(single[kind]))); }
+    function secondarySource(uint8 i) external view returns (address) { return i == 0 ? secondary0 : address(0); }
+    function stableRefSymbols() external view returns (bytes32[] memory) { return syms; }
+    function readFeed(address feed, bool) external view returns (bool, uint256, uint8) {
+        (uint80 r, int256 a,, uint256 u, uint80 ar) = IFeed(feed).latestRoundData();
+        if (a <= 0 || u > block.timestamp || block.timestamp - u > 3600 || r != ar) return (false, 0, 0);
+        return (true, uint256(a), IFeed(feed).decimals());
+    }
+}

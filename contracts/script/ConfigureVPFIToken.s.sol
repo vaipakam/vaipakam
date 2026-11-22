@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title ConfigureVPFIToken (VPFI diamond registration — canonical + mirror)
@@ -45,7 +46,7 @@ contract ConfigureVPFIToken is Script {
     function run() external {
         bool canonical = block.chainid == 8453 || block.chainid == 84532;
 
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         require(diamond != address(0), "ConfigureVPFIToken: diamond not deployed");
 
@@ -75,7 +76,7 @@ contract ConfigureVPFIToken is Script {
         // Pre-flight role check. `setVPFIToken` / `setCanonicalVPFIChain`
         // enforce `onlyRole(ADMIN_ROLE)`; without it the broadcasts revert
         // on-chain with no useful surface. Mirror ConfigureVPFIBuy's pattern.
-        address broadcaster = vm.addr(adminKey);
+        address broadcaster = adminSigner.addr;
         require(
             AccessControlFacet(diamond).hasRole(keccak256("ADMIN_ROLE"), broadcaster),
             string.concat(
@@ -86,7 +87,7 @@ contract ConfigureVPFIToken is Script {
         );
         console.log("Pre-flight: broadcaster holds ADMIN_ROLE");
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         VPFITokenFacet d = VPFITokenFacet(diamond);
         d.setVPFIToken(token);
         // Canonical flag ONLY on the canonical chain — mirrors must stay false

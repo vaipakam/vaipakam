@@ -25,6 +25,13 @@
 seed_retired_deployments_now() {
   local repo_root="${1:?repo_root}"
   local seed="$repo_root/apps/indexer/scripts/lib/retiredDeploymentSeed.mjs"
+  # A rehearsal (#3891) writes nothing off-chain: the seed targets the real
+  # indexer database, and the run's local indexer (#3894) reads the scratch
+  # manifest instead.
+  if [ "${VAIPAKAM_REHEARSAL:-0}" = 1 ] || [ "${REHEARSE:-0}" = 1 ]; then
+    echo "    · rehearsal: the real indexer database is not seeded"
+    return 0
+  fi
   if ! command -v node >/dev/null 2>&1 || [ ! -d "$repo_root/apps/indexer/node_modules" ]; then
     echo "    ⚠ node or apps/indexer/node_modules missing here — the indexer's deploy seeds from archive-manifest.json"
     return 0

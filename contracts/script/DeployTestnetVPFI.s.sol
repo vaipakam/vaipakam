@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title DeployTestnetVPFI
@@ -68,7 +69,7 @@ contract DeployTestnetVPFI is Script {
             "DeployTestnetVPFI: chain not supported"
         );
 
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         // Canonical chains record the chain-local VPFI as `.vpfiToken`;
         // MIRROR testnets (Arb Sepolia, BNB Testnet, ...) record it as
@@ -95,10 +96,10 @@ contract DeployTestnetVPFI is Script {
         console.log("Diamond:  ", diamond);
         console.log("VPFI:     ", vpfi);
         console.log("WETH:     ", weth);
-        console.log("Admin:    ", vm.addr(adminKey));
+        console.log("Admin:    ", adminSigner.addr);
 
         // ── Step 1+2: admin wiring ─────────────────────────────────────
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         VPFITokenFacet(diamond).setVPFIToken(vpfi);
         VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(weth);
         VPFIDiscountFacet(diamond).setVPFIDiscountRate(rate);
@@ -118,10 +119,10 @@ contract DeployTestnetVPFI is Script {
             if (recips[i] != address(0)) anyRecip = true;
         }
         if (anyRecip) {
-            uint256 sourceKey = vm.envUint("VPFI_SOURCE_PRIVATE_KEY");
-            address source = vm.addr(sourceKey);
+            Signer memory vpfisourceSigner = Signers.role("VPFI_SOURCE");
+            address source = vpfisourceSigner.addr;
             console.log("VPFI source (holder):", source, "balance:", IERC20(vpfi).balanceOf(source) / 1e18);
-            vm.startBroadcast(sourceKey);
+            Signers.start(vpfisourceSigner);
             for (uint256 i; i < 4; ++i) {
                 if (recips[i] == address(0)) continue;
                 if (IERC20(vpfi).balanceOf(recips[i]) >= amountEach) {

@@ -9,6 +9,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /**
  * @title  ReplaceRewardCustodyHolder — the paused holder-replacement
@@ -67,8 +68,8 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
     }
 
     function run() external {
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
         (address diamond, address previous) = _boundDiamond();
         _requireNoPendingRecord(KIND);
         AccessControlFacet acl = AccessControlFacet(diamond);
@@ -91,7 +92,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         console.log("Previous holder: ", previous);
         console.log("Admin:           ", admin);
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         // Always — a pause observed a moment ago can be lifted or lapse;
         // `pause()` on an already paused Diamond rewrites the same flag.
         adminFacet.pause();

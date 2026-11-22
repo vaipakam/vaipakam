@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 
 /// @dev The three reads the funding guard needs, declared here rather than
 ///      imported from their facets so the script does not compile them.
@@ -61,7 +62,7 @@ interface IRewardFundingReads {
  */
 contract SetInteractionLaunch is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
         address diamond = Deployments.readDiamond();
         uint256 launchTs = vm.envUint("INTERACTION_LAUNCH_TIMESTAMP");
         uint256 cap = vm.envOr("INTERACTION_CAP_VPFI_PER_ETH", uint256(0));
@@ -73,7 +74,7 @@ contract SetInteractionLaunch is Script {
         console.log("Cap VPFI/ETH:   ", cap);
         _requireCanonicalFunded(diamond);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(adminSigner);
         InteractionRewardsFacet ir = InteractionRewardsFacet(diamond);
         ir.setInteractionLaunchTimestamp(launchTs);
         if (cap > 0) {

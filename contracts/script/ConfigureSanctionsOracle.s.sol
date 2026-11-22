@@ -9,6 +9,7 @@ import {ISanctionsList} from "../src/interfaces/ISanctionsList.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {TestnetSanctionsOverlay} from "../src/compliance/TestnetSanctionsOverlay.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
 import {TotalRead} from "./lib/TotalRead.sol";
@@ -72,8 +73,8 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         // it reverts here, before any transaction is collected.
         bool writes = Deployments.artifactWritesEnabled();
         address diamond = Deployments.readDiamond();
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
         address owner = IERC173(diamond).owner();
 
         address current = ProfileFacet(diamond).getSanctionsOracle();
@@ -97,7 +98,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
                 console.log("  call   : setSanctionsOracle(address)", target);
                 return;
             }
-            vm.startBroadcast(adminKey);
+            Signers.start(adminSigner);
             ProfileFacet(diamond).setSanctionsOracle(target);
             vm.stopBroadcast();
         }
@@ -164,7 +165,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
             }
             console.log("Recorded overlay not reusable (upstream, owner or pending owner differs):", recorded);
         }
-        vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        Signers.start(Signers.role("DEPLOYER"));
         TestnetSanctionsOverlay overlay = new TestnetSanctionsOverlay(admin, address(0));
         vm.stopBroadcast();
         console.log("Deployed TestnetSanctionsOverlay:", address(overlay));

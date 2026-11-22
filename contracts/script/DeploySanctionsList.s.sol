@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {SanctionsList} from "../src/compliance/SanctionsList.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
 import {TotalRead} from "./lib/TotalRead.sol";
@@ -63,8 +64,8 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
             "DeploySanctionsList: mainnet refused - the SanctionsList adder host is undecided (#2443)"
         );
         bool writes = Deployments.artifactWritesEnabled();
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.addr(adminKey);
+        Signer memory adminSigner = Signers.role("ADMIN");
+        address admin = adminSigner.addr;
         require(adder != address(0) && remover != address(0), "DeploySanctionsList: adder and remover are required");
         require(adder != remover, "DeploySanctionsList: the adder and the remover must be different keys");
         require(adder != admin, "DeploySanctionsList: the adder must not be the owner");
@@ -74,7 +75,7 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
         bool needsAdder = !list.isAdder(adder);
         bool needsRemover = !list.isRemover(remover);
         if (needsAdder || needsRemover) {
-            vm.startBroadcast(adminKey);
+            Signers.start(adminSigner);
             if (needsAdder) list.setAdder(adder, true);
             if (needsRemover) list.setRemover(remover, true);
             vm.stopBroadcast();
@@ -135,7 +136,7 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
             Deployments.readSanctionsDelistingTimelockOptional() == address(0),
             "DeploySanctionsList: the artifact records a sanctionsDelistingTimelock but no list this script can reuse. A timelock is bound to its list for good, so a new list recorded beside it would be paired with another list's timelock: remove .sanctionsDelistingTimelock as well (it stays with its own list), then re-run. Nothing was sent or recorded"
         );
-        vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        Signers.start(Signers.role("DEPLOYER"));
         SanctionsList list = new SanctionsList(admin, address(0));
         vm.stopBroadcast();
         return (list, true);

@@ -161,6 +161,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
@@ -211,8 +212,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     address public diamondCutFacet;
 
     /// @notice Operator entry point — reads `ADMIN_ADDRESS`,
-    ///         `TREASURY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` from env and
-    ///         delegates to `runWith(...)`. Foundry's `forge script
+    ///         `TREASURY_ADDRESS` and the deployer signer (`Signers`) from env
+    ///         and delegates to the body {runWith} shares. Foundry's `forge script
     ///         DeployDiamond --ffi --broadcast` invokes this (the storage-layout
     ///         record in {runWith} needs `--ffi`).
     /// @dev    #947 — when `ADMIN_PRIVATE_KEY` is also set (every deploy
@@ -224,9 +225,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         is deployed.
     function run() external virtual {
         address admin = vm.envAddress("ADMIN_ADDRESS");
-        requireAdminIsKey(admin, vm.envOr("ADMIN_PRIVATE_KEY", uint256(0)));
+        // #947 / #3891 — resolving the admin signer proves ADMIN_ADDRESS is
+        // the address of ADMIN_PRIVATE_KEY whenever a key is supplied
+        // (`Signers.roleOr` refuses a mismatch); a rehearsal reads no key.
+        Signers.roleOr("ADMIN");
         setPriceGuardInputs(vm.envOr("PAUSER_ADDRESS", address(0)), PriceGuardDeployment.fromEnv());
-        runWith(admin, vm.envAddress("TREASURY_ADDRESS"), vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        _deployWith(admin, vm.envAddress("TREASURY_ADDRESS"), Signers.role("DEPLOYER"));
     }
 
     /// @notice #3272 — the feed registry's guardian (the Pauser Safe; zero =
@@ -347,8 +351,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
         address admin,
         address treasury,
         uint256 deployerKey
-    ) public virtual {
-        address deployerAddr = vm.addr(deployerKey);
+    ) public {
+        _deployWith(admin, treasury, Signers.fromKey("DEPLOYER", deployerKey));
+    }
+
+    /// @dev The body of {run} and {runWith}. Every broadcast goes through
+    ///      `Signers` (#3891): a real run signs with the deployer key, a
+    ///      rehearsal as the impersonated deployer address.
+    function _deployWith(
+        address admin,
+        address treasury,
+        Signer memory deployer
+    ) internal {
+        address deployerAddr = deployer.addr;
 
         // #947 — Step 6 hands every role and the ERC-173 ownership to
         // `admin`, then the deployer renounces everything, with nothing in
@@ -386,7 +401,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         console.log("Treasury:", treasury);
         console.log("Deployer:", deployerAddr);
 
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployer);
 
         // ── Step 1: Deploy all facets ───────────────────────────────────
         DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));

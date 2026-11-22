@@ -130,9 +130,11 @@ in the shell** (BNBTestnetDeploy.md §2; FreshDeployHardeningPlan lesson 4), so
 put per-run topology in `.env`, not on the command line.
 
 Keys and accounts:
-- `DEPLOYER_PRIVATE_KEY` — broadcasts the deploy scripts. `DeployDiamond` hands
-  every role to the admin and the deployer renounces all (DeployDiamond.s.sol
-  "Step 6").
+- `DEPLOYER_PRIVATE_KEY`, `DEPLOYER_ADDRESS` — broadcasts the deploy scripts.
+  `DeployDiamond` hands every role to the admin and the deployer renounces all
+  (DeployDiamond.s.sol "Step 6"). Since #3891 every keyed role needs its
+  `_ADDRESS` beside its key on a real chain: the signer library refuses a key
+  whose address does not match, and a rehearsal signs as the address alone.
 - `ADMIN_PRIVATE_KEY`, `ADMIN_ADDRESS` — the deploy-time admin (must match;
   DeploymentRunbook "0. Pre-flight", #947). Signs every configure/ccip-wire/
   launch call. Holds all roles on a testnet with no handover.
@@ -169,9 +171,11 @@ Keys and accounts:
   (default 50,000 VPFI), `CCIP_RATE_REFILL` (default 5.8 VPFI/s).
 - `BASE_CHAIN_ID` — required on mirrors by preflight (=84532); the configure
   phase derives it itself.
-- `BASE_REWARD_DEPLOYMENT` — mirrors: the NEW Base Diamond (known only after
-  Base's contracts phase). `MIRROR_REWARD_DEPLOYMENTS` — Base:
-  `421614:<new arb diamond>,97:<new bnb diamond>`.
+- `BASE_REWARD_DEPLOYMENT` (mirrors) and `MIRROR_REWARD_DEPLOYMENTS` (Base):
+  leave them unset. The configure phase takes each from the chains' own
+  records, which the contracts phases wrote, and refuses a value in `.env`
+  that names any other Diamond (a stale one from the deployment being
+  replaced).
   `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — Base: `84532,421614,97` (**must include
   Base itself**; FreshDeployHardeningPlan lesson 4). Optional
   `REWARD_GRACE_SECONDS` (default 14400; precedent restored 43200 on Base),
@@ -352,6 +356,22 @@ its own record"). Commit both files with the deploy.
 
 ## 3. Per-chain deploy
 
+**Rehearse first (#3891).** From `contracts/`, print the plan from the desired
+state and run it against local forks, with no key:
+
+```bash
+node script/deploy-plan.mjs plan deployments/testnets.desired.json \
+  --anchor today --env-file .env > /tmp/plan.txt
+bash script/rehearse.sh --plan /tmp/plan.txt
+```
+
+The run writes a report and a verdict under
+`deployments/.forge-test/rehearsal/<run>/`. The plan is also the order of the
+real deploy below: the phases in sections 3.1 to 3.10, and the steps in
+section 5 as exact commands. Run those commands from `contracts/`, with `.env`
+loaded and `script/lib/rehearsal.sh` sourced. A step the plan lists as
+`manual` has no command yet, and the rehearsal reports it as not covered.
+
 Run each phase per chain and eyeball its output before the next. Do Base first.
 
 ### 3.1 preflight (read-only)
@@ -363,7 +383,7 @@ bash contracts/script/deploy-testnet.sh bnb-testnet  --phase preflight
 ```
 
 Checks RPC chain id, required vars, deployer balance (`phase_preflight`).
-Mirror WARN for `BASE_REWARD_DEPLOYMENT` unset is expected at this point.
+A note that `BASE_REWARD_DEPLOYMENT` is unset is expected; configure takes it from the records and reads it back after the spell.
 
 ### 3.2 contracts (all three chains)
 
@@ -411,8 +431,8 @@ cast call $D 'getTreasury()(address)' --rpc-url "$<RPC_VAR>"    # TREASURY_ADDRE
 jq -r .monorepoCommit contracts/deployments/<slug>/deployment_source.json  # no " (dirty)"
 ```
 
-Then put the new Diamond addresses in `.env`: `BASE_REWARD_DEPLOYMENT`
-(mirrors) and `MIRROR_REWARD_DEPLOYMENTS` (Base).
+Nothing to copy into `.env`: configure reads the new Diamonds from these
+records.
 
 Known traps: an Arbitrum diamond cut sent with a too-low gas estimate left a
 half-built Diamond in the precedent (hardening lesson 1) — raise
@@ -932,7 +952,7 @@ markers (lines 333–416) — read both halves.
 - [ ] Recorded the old operating settings (§2.4 item 5); `--fresh` carries `keeperAddress` and the sanctions records and archives `reward-custody-activated.json` itself.
 - [ ] `preflight` ×3.
 - [ ] `contracts --fresh` Base, Arb, BNB; paused; treasury; clean stamp.
-- [ ] `.env`: `BASE_REWARD_DEPLOYMENT`, `MIRROR_REWARD_DEPLOYMENTS`, `REWARD_EXPECTED_SOURCE_CHAIN_IDS`, lane lists.
+- [ ] `.env`: `REWARD_EXPECTED_SOURCE_CHAIN_IDS`, lane lists (reward deployments come from the records).
 - [ ] `ccip-wire` ×3; limiter reads per lane.
 - [ ] BNB `swap-adapters`.
 - [ ] `testnet-mocks` ×3; mocks Liquid.

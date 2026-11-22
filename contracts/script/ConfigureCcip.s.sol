@@ -20,6 +20,7 @@ import {VpfiPoolRateBounds} from "../src/crosschain/VpfiPoolRateBounds.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 
 /// @dev T-087 Sub 3.A — minimal selector surface for the
@@ -246,10 +247,10 @@ contract ConfigureCcip is Script {
     }
 
     function run() external {
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        Signer memory adminSigner = Signers.role("ADMIN");
 
         Ctx memory c;
-        c.admin = vm.addr(adminKey);
+        c.admin = adminSigner.addr;
         c.canonical = block.chainid == 8453 || block.chainid == 84532;
         c.baseChainId = c.canonical ? block.chainid : vm.envUint("BASE_CHAIN_ID");
         c.registry = vm.envAddress("CCIP_TOKEN_ADMIN_REGISTRY");
@@ -371,7 +372,7 @@ contract ConfigureCcip is Script {
         console.log("Local VPFI token:", c.localToken);
         console.log("Lanes to wire:   ", c.laneChainIds.length);
 
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
 
         _acceptPoolOwnership(c);
         _wireMessengerLanes(c);

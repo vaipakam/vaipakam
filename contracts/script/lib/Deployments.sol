@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
-import {artifactRootState, hasParentSegment} from "./ArtifactRoot.sol";
+import {artifactRootState, hasParentSegment, unredirectedRecordRoot} from "./ArtifactRoot.sol";
 // The REAL cut interface, imported rather than approximated. An earlier
 // revision declared a "minimal" `diamondCut(bytes,address,bytes)` here to keep
 // this library free of domain imports; that has a DIFFERENT selector from the
@@ -88,10 +88,30 @@ library Deployments {
     ///      shares it), and for why it is read directly rather than through a
     ///      call to the script (#2347). A script that never set an override
     ///      reads the empty default.
+    ///
+    ///      **Rehearsal (#3891).** With no wrapper override, the root comes from
+    ///      `unredirectedRecordRoot()` in `ArtifactRoot.sol`: the committed root
+    ///      on a real chain, Anvil or a test; the run's scratch folder in a deploy
+    ///      rehearsal; and a REFUSAL on a node carrying the local-node marker that
+    ///      is neither rehearsing nor redirected. A fork keeps the real chain id,
+    ///      so without that refusal a script run by hand on a fork would read and
+    ///      write the committed records of the real chain. Every path in this
+    ///      library reaches the root through here ({dirForSlug}), so the rule
+    ///      cannot be skipped by a new script.
     function artifactRoot() internal view returns (string memory) {
         string memory overridden = artifactRootState().rootOverride;
         if (bytes(overridden).length != 0) return overridden;
+        string memory rehearsal = unredirectedRecordRoot();
+        if (bytes(rehearsal).length != 0) return rehearsal;
         return ARTIFACT_ROOT;
+    }
+
+    /// The archive manifest this run reads: beside the record root, so a
+    /// rehearsal's publication marker is the one its own deploy script wrote
+    /// into the scratch folder. A wrapper redirect never reads it (the
+    /// publication gate exempts a redirected run).
+    function archiveManifestPath() internal view returns (string memory) {
+        return string.concat(artifactRoot(), "/archive-manifest.json");
     }
 
     /// TRUE when this run writes to a scratch root rather than the committed
@@ -1470,12 +1490,12 @@ library Deployments {
             )
         );
         require(
-            publicationMarked(CHEATS.readFile(ARCHIVE_MANIFEST), chainSlug(), token),
+            publicationMarked(CHEATS.readFile(archiveManifestPath()), chainSlug(), token),
             string.concat(
                 "Deployments: VAIPAKAM_LIVE_PUBLICATION_TOKEN does not match an in-progress live-publication marker for ",
                 chainSlug(),
                 " in ",
-                ARCHIVE_MANIFEST,
+                archiveManifestPath(),
                 " - the token must come from archive-manifest.mjs live-begin in the same deploy run"
             )
         );

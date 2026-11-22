@@ -19,6 +19,7 @@ import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {TestnetFeedRegistration} from "./lib/TestnetFeedRegistration.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Signers, Signer} from "./lib/Signers.sol";
 import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
@@ -197,8 +198,8 @@ contract DeployTestnetMocks is Script {
             "DeployTestnetMocks: chain not supported (need 84532, 11155111, 97, 421614, 11155420, or 31337)"
         );
         _deployTestnetMocks(
-            vm.envUint("DEPLOYER_PRIVATE_KEY"),
-            vm.envUint("ADMIN_PRIVATE_KEY"),
+            Signers.role("DEPLOYER"),
+            Signers.role("ADMIN"),
             Deployments.readDiamond(),
             _wethFor(cid)
         );
@@ -223,6 +224,17 @@ contract DeployTestnetMocks is Script {
         address diamond,
         address weth
     ) internal {
+        _deployTestnetMocks(Signers.fromKey("DEPLOYER", deployerKey), Signers.fromKey("ADMIN", adminKey), diamond, weth);
+    }
+
+    /// @dev The body of {run} and the key-taking overload: every broadcast goes
+    ///      through `Signers` (#3891).
+    function _deployTestnetMocks(
+        Signer memory deployer,
+        Signer memory adminSigner,
+        address diamond,
+        address weth
+    ) internal {
         uint256 cid = block.chainid;
 
         // mWETH pricing knobs. `MWETH_USD_PRICE` (8-dec, default $3,000)
@@ -238,8 +250,8 @@ contract DeployTestnetMocks is Script {
         console.log("=== Deploy Testnet Faucet + Oracle Mocks ===");
         console.log("Chain id: ", cid);
         console.log("Diamond:  ", diamond);
-        console.log("Deployer: ", vm.addr(deployerKey));
-        console.log("Admin:    ", vm.addr(adminKey));
+        console.log("Deployer: ", deployer.addr);
+        console.log("Admin:    ", adminSigner.addr);
         console.log("WETH:     ", weth);
 
         // ── Pre-flight (view-only): validate the reuse / override env BEFORE
@@ -310,7 +322,7 @@ contract DeployTestnetMocks is Script {
             // adapter owned by a different key is rejected too.
             try MockSwapAdapter(swapAdapter).owner() returns (address o) {
                 require(
-                    o == vm.addr(deployerKey),
+                    o == deployer.addr,
                     "DeployTestnetMocks: FAUCET_SWAP_ADAPTER owned by another key - unset the env to deploy fresh"
                 );
             } catch {
@@ -333,7 +345,7 @@ contract DeployTestnetMocks is Script {
         }
 
         // ── Step 1: Deployer-side — deploy mocks ───────────────────────
-        vm.startBroadcast(deployerKey);
+        Signers.start(deployer);
 
         // Anvil-only: when ANVIL_WETH is unset there is no canonical
         // WETH, and `createPool(liquidToken, address(0), …)` would
@@ -557,7 +569,7 @@ contract DeployTestnetMocks is Script {
             address(registry).code.length != 0,
             "DeployTestnetMocks: no feedRegistry recorded for this chain - run DeployFeedRegistry (the contracts phase) first"
         );
-        vm.startBroadcast(adminKey);
+        Signers.start(adminSigner);
         {
             TestnetFeedRegistration.Feed[] memory feeds = new TestnetFeedRegistration.Feed[](4);
             feeds[0] = TestnetFeedRegistration.Feed(liquidToken, USD_DENOM, address(liquidFeed), "tLIQ / USD");

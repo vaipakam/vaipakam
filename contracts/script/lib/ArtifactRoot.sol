@@ -119,6 +119,157 @@ function hasParentSegment(string memory s) pure returns (bool) {
     return false;
 }
 
+// ── Rehearsal mode (#3891) ─────────────────────────────────────────────────
+//
+// A deploy rehearsal (`deploy-testnet.sh --rehearse`, driven by
+// `script/rehearse.sh`) runs the REAL operator scripts against a local fork of
+// a target chain. A fork keeps the real chain id, so every per-chain path
+// resolves exactly as it would on the real chain. Two things must therefore
+// hold for the whole run, and both are decided here, once:
+//
+//   1. Every record read and write goes to the run's scratch folder, never the
+//      committed `deployments/<slug>/` files.
+//   2. The mode cannot be entered against a real chain, and a node that only a
+//      development node could be (the marker below) is never treated as a real
+//      chain.
+//
+// The FLAG is the environment variable {REHEARSAL_FLAG_ENV} = "1", exported by
+// the deploy script's `--rehearse` mode together with {REHEARSAL_ROOT_ENV}.
+// The NODE is the chain this script runs against carrying the local-node marker.
+// Both must agree. The shell adds the half Solidity cannot see (the RPC URL is
+// a loopback address).
+//
+// Why an environment variable here, when {ArtifactRootBase} explains at length
+// why its override is NOT one: that reason is `forge test`, where every
+// parallel test shares one process environment. The rule below never reads the
+// environment under `forge test` (`underTest` short-circuits it), so the hazard
+// does not arise, and a `forge script` run is one process for one script.
+string constant REHEARSAL_FLAG_ENV = "VAIPAKAM_REHEARSAL";
+string constant REHEARSAL_ROOT_ENV = "VAIPAKAM_REHEARSAL_ROOT";
+
+// A rehearsal's records live under this narrower prefix of
+// {ARTIFACT_SCRATCH_PREFIX}, one folder per run.
+string constant REHEARSAL_SCRATCH_PREFIX = "deployments/.forge-test/rehearsal/";
+
+// The harness's local-node marker (`packages/anvil-harness`, `LOCAL_NODE_MARKER`).
+// File level so {ArtifactRootBase}, {Deployments} and `Signers` read ONE copy.
+// The address is a hash, so nobody holds its key and no CREATE or CREATE2 can be
+// steered to it short of a 160-bit preimage: on a real chain it never has code.
+// Only a dev node's `anvil_setCode` can place code there. The code opens with
+// INVALID (0xfe), so a call to it reverts. The two must match the harness's
+// copies byte for byte; a mismatch fails closed.
+address constant LOCAL_NODE_MARKER =
+    address(uint160(uint256(keccak256("vaipakam.e2e.local-node-marker"))));
+bytes32 constant LOCAL_NODE_MARKER_CODEHASH =
+    keccak256(hex"fe76616970616b616d20653265206c6f63616c206e6f6465");
+
+/// TRUE when the chain the calling script runs against carries the marker.
+function carriesLocalNodeMarker() view returns (bool) {
+    return LOCAL_NODE_MARKER.codehash == LOCAL_NODE_MARKER_CODEHASH;
+}
+
+/// Where a script's records resolve when no scenario wrapper has redirected
+/// them. Every non-`Committed` value but `Rehearsal` is a refusal.
+enum RecordRoot {
+    /// The committed `deployments/` tree: a real chain, Anvil (31337) or a test.
+    Committed,
+    /// The rehearsal's scratch folder ({REHEARSAL_ROOT_ENV}).
+    Rehearsal,
+    /// The flag is set against a node that does not carry the marker: an
+    /// attempt to rehearse against a real chain.
+    RefuseFlagWithoutMarker,
+    /// The flag is set but no scratch root was exported with it.
+    RefuseFlagWithoutRoot,
+    /// The exported root is outside {REHEARSAL_SCRATCH_PREFIX} or climbs out.
+    RefuseRootOutsideScratch,
+    /// A marker node, no flag and no wrapper redirect: a script run by hand on
+    /// a local fork would otherwise read and write the committed records of the
+    /// real chain whose id the fork presents.
+    RefuseMarkerWithoutRehearsal
+}
+
+/// The rule, as a pure function of its four inputs so every combination is
+/// testable without touching the process environment.
+///
+/// @param underTest A `forge test` run: the environment is never consulted.
+/// @param flag      {REHEARSAL_FLAG_ENV} is "1".
+/// @param marker    The node carries the local-node marker.
+/// @param root      The value of {REHEARSAL_ROOT_ENV} ("" when unset).
+function recordRootRule(bool underTest, bool flag, bool marker, string memory root)
+    pure
+    returns (RecordRoot)
+{
+    if (underTest) return RecordRoot.Committed;
+    if (flag) {
+        if (!marker) return RecordRoot.RefuseFlagWithoutMarker;
+        if (bytes(root).length == 0) return RecordRoot.RefuseFlagWithoutRoot;
+        if (!_startsWithPrefix(root, REHEARSAL_SCRATCH_PREFIX) || hasParentSegment(root)) {
+            return RecordRoot.RefuseRootOutsideScratch;
+        }
+        return RecordRoot.Rehearsal;
+    }
+    if (marker) return RecordRoot.RefuseMarkerWithoutRehearsal;
+    return RecordRoot.Committed;
+}
+
+/// The refusal text for each refusing value of {RecordRoot}.
+function recordRootRefusal(RecordRoot r) pure returns (string memory) {
+    if (r == RecordRoot.RefuseFlagWithoutMarker) {
+        return "Rehearsal: VAIPAKAM_REHEARSAL=1 against a node without the local-node marker - a rehearsal runs only on a local fork started by script/rehearse.sh, never against a real chain";
+    }
+    if (r == RecordRoot.RefuseFlagWithoutRoot) {
+        return "Rehearsal: VAIPAKAM_REHEARSAL=1 with no VAIPAKAM_REHEARSAL_ROOT - the run's scratch folder must be exported with the flag";
+    }
+    if (r == RecordRoot.RefuseRootOutsideScratch) {
+        return "Rehearsal: VAIPAKAM_REHEARSAL_ROOT must start with deployments/.forge-test/rehearsal/ and contain no `..` segment";
+    }
+    if (r == RecordRoot.RefuseMarkerWithoutRehearsal) {
+        return "Deployments: this node carries the local-node marker but the run is neither a rehearsal nor redirected by a scenario wrapper - refusing to touch the committed records of the chain it presents (use script/rehearse.sh)";
+    }
+    return "";
+}
+
+/// TRUE when this `forge script` run is a deploy rehearsal. Reverts when the
+/// flag is set against a node without the marker. Never TRUE under `forge test`.
+function rehearsalMode() view returns (bool) {
+    Vm cheats = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    if (cheats.isContext(VmSafe.ForgeContext.TestGroup)) return false;
+    if (!_flagSet(cheats)) return false;
+    require(carriesLocalNodeMarker(), recordRootRefusal(RecordRoot.RefuseFlagWithoutMarker));
+    return true;
+}
+
+/// The record root for a run with no wrapper redirect: the committed root
+/// (returned as ""), or the rehearsal's scratch root. Reverts on every refusal
+/// of {recordRootRule}.
+function unredirectedRecordRoot() view returns (string memory) {
+    Vm cheats = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool underTest = cheats.isContext(VmSafe.ForgeContext.TestGroup);
+    if (underTest) return "";
+    bool flag = _flagSet(cheats);
+    // The marker is read only when it can change the answer, so a real
+    // deploy against a real chain pays one EXTCODEHASH and nothing more.
+    string memory root = flag ? cheats.envOr(REHEARSAL_ROOT_ENV, string("")) : "";
+    RecordRoot r = recordRootRule(false, flag, carriesLocalNodeMarker(), root);
+    if (r == RecordRoot.Committed) return "";
+    if (r == RecordRoot.Rehearsal) return root;
+    revert(recordRootRefusal(r));
+}
+
+function _flagSet(Vm cheats) view returns (bool) {
+    return keccak256(bytes(cheats.envOr(REHEARSAL_FLAG_ENV, string("")))) == keccak256("1");
+}
+
+function _startsWithPrefix(string memory s, string memory prefix) pure returns (bool) {
+    bytes memory b = bytes(s);
+    bytes memory p = bytes(prefix);
+    if (b.length < p.length) return false;
+    for (uint256 i; i < p.length; ++i) {
+        if (b[i] != p[i]) return false;
+    }
+    return true;
+}
+
 /**
  * @title  ArtifactRootBase
  * @notice Inherited by every deploy script whose artifact a TEST may need to
@@ -196,24 +347,12 @@ abstract contract ArtifactRootBase {
         artifactRootState().rootOverride = newRoot;
     }
 
-    /// @notice Where the e2e harness puts its local-node marker, and the code it
-    ///         puts there (`packages/anvil-harness`, `LOCAL_NODE_MARKER`).
-    /// @dev    The address is a hash, so nobody holds its key, and no CREATE or
-    ///         CREATE2 can be steered to it short of a 160-bit preimage: on a
-    ///         real chain it never has code. Only a dev node's `anvil_setCode`
-    ///         can place code there. The code opens with INVALID (0xfe), so a
-    ///         call to it reverts. The two must match the harness's copies byte
-    ///         for byte; a mismatch fails closed (the redirect is refused).
-    address internal constant LOCAL_NODE_MARKER =
-        address(uint160(uint256(keccak256("vaipakam.e2e.local-node-marker"))));
-    bytes32 internal constant LOCAL_NODE_MARKER_CODEHASH =
-        keccak256(hex"fe76616970616b616d20653265206c6f63616c206e6f6465");
-
     /// @dev TRUE when the chain this script runs against carries the harness's
-    ///      local-node marker. Read only after the two cheaper tests above have
-    ///      failed, so a 31337 or `forge test` run never reads it.
+    ///      local-node marker (the file-level {LOCAL_NODE_MARKER}). Read only
+    ///      after the two cheaper tests above have failed, so a 31337 or
+    ///      `forge test` run never reads it.
     function _carriesLocalNodeMarker() private view returns (bool) {
-        return LOCAL_NODE_MARKER.codehash == LOCAL_NODE_MARKER_CODEHASH;
+        return carriesLocalNodeMarker();
     }
 
     /// @dev Total test: does `s` begin with `prefix`?
