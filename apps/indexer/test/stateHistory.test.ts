@@ -9,8 +9,10 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import {
   SETTINGS_READ_ATTEMPTS,
+  eventSettingKey,
   facetAt,
   fillSettingsHistory,
+  historyStartStatement,
   historyStatements,
   settingsAt,
   type HistoryDb,
@@ -54,6 +56,9 @@ const backstopSet = (block: number, txIndex: number, enabled: boolean) =>
   );
 
 const cut = (block: number, txIndex: number, facet: string, action: number) =>
+  cutOf(block, txIndex, [{ facet, action, selectors: [SELECTOR] }]);
+
+const cutOf = (block: number, txIndex: number, entries: Array<{ facet: string; action: number; selectors: string[] }>) =>
   log(
     block,
     txIndex,
@@ -72,25 +77,31 @@ const cut = (block: number, txIndex: number, facet: string, action: number) =>
         { type: 'address' },
         { type: 'bytes' },
       ],
-      [[{ facetAddress: facet as Hex, action, functionSelectors: [SELECTOR] }], '0x0000000000000000000000000000000000000000', '0x'],
+      [
+        entries.map((e) => ({ facetAddress: e.facet as Hex, action: e.action, functionSelectors: e.selectors as Hex[] })),
+        '0x0000000000000000000000000000000000000000',
+        '0x',
+      ],
     ),
   );
 
 async function record(d1: HistoryDb, logs: RawLog[]) {
+  const statements: number[] = [];
   const byBlock = new Map<bigint, RawLog[]>();
   for (const l of logs) byBlock.set(l.blockNumber, [...(byBlock.get(l.blockNumber) ?? []), l]);
   for (const [block, list] of byBlock) {
-    await d1.batch(
-      historyStatements({
-        db: d1,
-        chainId: CHAIN,
-        diamond: DIAMOND,
-        blockAt: Number(block) * 2,
-        logs: list,
-        isSettingsEvent: isSettingsHistoryEvent,
-      }),
-    );
+    const batch = historyStatements({
+      db: d1,
+      chainId: CHAIN,
+      diamond: DIAMOND,
+      blockAt: Number(block) * 2,
+      logs: list,
+      isSettingsEvent: isSettingsHistoryEvent,
+    });
+    statements.push(batch.length);
+    await d1.batch(batch);
   }
+  return statements;
 }
 
 describe('the event history (#3921)', () => {
@@ -146,6 +157,11 @@ describe('the event history (#3921)', () => {
     const mid = await settingsAt(d1, CHAIN, { block: 200, txIndex: 4 });
     expect(mid.inForce).toMatchObject({ block_number: 200, tx_index: 3, unknown_between: 1 });
     expect(mid.inBlock.map((r) => r.tx_index)).toEqual([5]);
+    // The event layer is exact between the two: the setting is off there,
+    // though the block's end-of-block read says on.
+    expect(mid.fromEvents.BackstopEnabledSet).toMatchObject({ args: { enabled: false }, block: 200, txIndex: 3, carriesValue: true });
+    expect((await settingsAt(d1, CHAIN, { block: 150 })).fromEvents.BackstopEnabledSet?.args).toEqual({ enabled: true });
+    expect((await settingsAt(d1, CHAIN, { block: 300 })).fromEvents.BackstopEnabledSet?.args).toEqual({ enabled: true });
     const after200 = await settingsAt(d1, CHAIN, { block: 300 });
     expect(after200.inForce).toMatchObject({ block_number: 200, tx_index: 5, unknown_between: 0 });
     expect(raw.prepare("SELECT COUNT(*) AS n FROM settings_history WHERE values_basis = 'pending'").get()).toEqual({ n: 0 });
@@ -171,6 +187,8 @@ describe('the event history (#3921)', () => {
     // A bounded description (`describeFailure`): it never carries the node's
     // URL or key, so a plain error is named by its kind.
     expect(String(row.read_error)).not.toBe('');
+    // The event's own value stands.
+    expect((await settingsAt(d1, CHAIN, { block: 101 })).fromEvents.BackstopEnabledSet?.args).toEqual({ enabled: true });
   });
 
   it('a pending block above the cursor is not read, and a refused read leaves the row pending', async () => {
@@ -195,6 +213,45 @@ describe('the event history (#3921)', () => {
       action: 'remove',
       facet: null,
     });
+  });
+
+  it('a cut that removes a selector and adds it again records its final routing', async () => {
+    const { d1 } = db();
+    await record(d1, [
+      cutOf(100, 0, [
+        { facet: FACET_A, action: 2, selectors: [SELECTOR] },
+        { facet: FACET_B, action: 0, selectors: [SELECTOR] },
+      ]),
+    ]);
+    expect((await facetAt(d1, CHAIN, SELECTOR, { block: 101 })).lastChange).toMatchObject({ action: 'add', facet: FACET_B });
+  });
+
+  it('a block costs a few statements however many logs and selectors it carries', async () => {
+    const { d1, raw } = db();
+    const selectors = Array.from({ length: 300 }, (_, i) => `0x${(i + 1).toString(16).padStart(8, '0')}`);
+    const logs = [
+      cutOf(100, 0, [{ facet: FACET_A, action: 0, selectors }]),
+      ...Array.from({ length: 200 }, (_, i) => backstopSet(100, i + 1, i % 2 === 0)),
+    ];
+    const [count] = await record(d1, logs);
+    expect(count).toBeLessThanOrEqual(3);
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM chain_event_log').get()).toEqual({ n: 201 });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM facet_history').get()).toEqual({ n: 300 });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM settings_history WHERE unknown_between = 0').get()).toEqual({ n: 1 });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM settings_history').get()).toEqual({ n: 200 });
+  });
+
+  it('keyed settings events fold per key, and an event without its value says so', () => {
+    expect(eventSettingKey('KeeperTierSet', { asset: '0xAbC' })).toBe('KeeperTierSet(0xabc)');
+    expect(eventSettingKey('BackstopEnabledSet', { enabled: true })).toBe('BackstopEnabledSet');
+  });
+
+  it('states where the history begins', async () => {
+    const { d1 } = db();
+    expect((await settingsAt(d1, CHAIN, { block: 10 })).historyFrom).toBeNull();
+    await historyStartStatement(d1, CHAIN, 90).run();
+    await historyStartStatement(d1, CHAIN, 500).run();
+    expect((await settingsAt(d1, CHAIN, { block: 10 })).historyFrom).toBe(90);
   });
 
   it('settings and facet rows come only from the Diamond, and a cut is not a settings change', async () => {

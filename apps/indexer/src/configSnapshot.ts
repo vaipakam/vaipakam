@@ -316,7 +316,7 @@ function isStoredKnobValue(v: unknown): boolean {
 
 /** The settings stored beside the tuples (#2071), or null when the column
  *  is empty or does not hold the shape the refresh writes. */
-function storedKnobs(json: string | null | undefined): ProtocolKnobRead | null {
+function storedKnobs(json: string | null | undefined): Pick<ProtocolKnobRead, 'values' | 'unreported'> | null {
   if (!json) return null;
   try {
     const k = JSON.parse(json) as { values?: unknown; unreported?: unknown };
@@ -840,6 +840,10 @@ export async function readSettingsAt(opts: {
     }),
     readPauseLog({ client: opts.client, diamond: opts.diamond, blockNumber: opts.blockNumber }).then(pauseLogToJson),
   ]);
+  // A setting the node failed to answer is not a setting the chain did not
+  // have: throw, so the history retries the block rather than recording it
+  // as unreported for good (Codex #4016 r1).
+  if (knobs.transportFailed) throw new Error('the settings multicall failed at the node');
   return {
     // The output names only when the loupe shows this build's ABI is the
     // code that answered at this block (as the snapshot row, #2073);
@@ -850,7 +854,7 @@ export async function readSettingsAt(opts: {
           ? { values: bundle.values }
           : { positional: bundle.positional }
         : { unreadable: bundle.reason },
-    knobs,
+    knobs: { values: knobs.values, unreported: knobs.unreported },
     graceBuckets,
     pauseLog,
   };

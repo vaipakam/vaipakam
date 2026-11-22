@@ -172,7 +172,7 @@ import {
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
-import { fillSettingsHistory, historyAddresses, historyStatements, type RawLog } from './stateHistory';
+import { fillSettingsHistory, historyAddresses, historyStartStatement, historyStatements, type RawLog } from './stateHistory';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -2958,6 +2958,9 @@ async function runChainPass(
    *  the ingest loop retries, not progress. */
   let stoppedForBlockTime = false;
   try {
+    // #3921 — where the histories begin on this network, noted once (an
+    // indexer that took them on mid-chain has none below it).
+    if (blocks.length > 0) await historyStartStatement(env.DB, chainId, Number(scanFrom)).run();
     for (const [i, { blockNumber, logs, raw }] of blocks.entries()) {
       if (i === 1) holdBack(budget, SCAN_TAIL_RESERVE);
       let done: Awaited<ReturnType<typeof scanBlock>>;

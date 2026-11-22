@@ -1,7 +1,7 @@
 -- #3921 — the indexer's event history and the state at a block
 -- (TroubleshootingPictureDesign.md §4.5, §4.6).
 --
--- Three replay-derived histories, each written by the scan in the same pass
+-- Three replay-derived histories (and where they begin), each written by the scan in the same pass
 -- as the block it came from, and each cleared and rebuilt with the chain's
 -- other rows on a reorg rebuild or a new Diamond (deploymentEpoch.ts finds
 -- them by their chain_id column).
@@ -34,14 +34,16 @@ CREATE INDEX IF NOT EXISTS idx_chain_event_log_tx ON chain_event_log(chain_id, t
 CREATE INDEX IF NOT EXISTS idx_chain_event_log_name ON chain_event_log(chain_id, event_name, block_number);
 CREATE INDEX IF NOT EXISTS idx_chain_event_log_address ON chain_event_log(chain_id, address, block_number);
 
--- One row per change of the protocol's settings, with the event and the
--- transaction that caused it. `values_json` holds the settings as read at the
--- END of the block (`values_basis` 'end-of-block'): today's settings events
--- do not all carry the whole new value, so the row never claims more. When a
--- block holds more than one change, every row but the block's last is marked
--- `unknown_between`: its values are the block's last values, not the ones in
--- force between it and the next change. 'pending' until the read is made,
--- 'unreadable' when the node cannot answer for that block (`read_error`).
+-- One row per change of the protocol's settings, with the event, the values
+-- it carries (`event_args_json`) and the transaction that caused it. A
+-- reader applies the events' own values in order, which is exact between two
+-- changes in one block. `values_json` adds the full settings as read at the
+-- END of the block (`values_basis` 'end-of-block'), for what no event
+-- carries. When a block holds more than one change, every row but the
+-- block's last is marked `unknown_between`: its read is the block's last
+-- values, not the ones in force between it and the next change. 'pending'
+-- until the read is made, 'unreadable' when the node cannot answer for that
+-- block (`read_error`); the event's own values stand either way.
 CREATE TABLE IF NOT EXISTS settings_history (
   chain_id        INTEGER NOT NULL,
   block_number    INTEGER NOT NULL,
@@ -76,3 +78,11 @@ CREATE TABLE IF NOT EXISTS facet_history (
   PRIMARY KEY (chain_id, block_number, log_index, selector)
 );
 CREATE INDEX IF NOT EXISTS idx_facet_history_selector ON facet_history(chain_id, selector, block_number, tx_index, log_index);
+
+-- The first block the histories above cover on a network. An indexer that
+-- took them on mid-chain has no history below it, and a reader is told so
+-- rather than shown an empty past as a quiet one.
+CREATE TABLE IF NOT EXISTS history_coverage (
+  chain_id    INTEGER PRIMARY KEY,
+  from_block  INTEGER NOT NULL
+);
