@@ -788,8 +788,14 @@ contains the incident before considering the full `AdminFacet.pause()` (§3).
 
 Each is reversible at zero cost beyond gas and touches no user funds or
 per-user consent. Post-handover these move behind the Timelock — confirm
-whether the incident needs an immediate-effect lever (pre-handover, or the
-asset-level `AdminFacet.pauseAsset`) before relying on one of these.
+whether the incident needs an immediate-effect lever before relying on one
+of these. Pre-handover each is immediate. After it, the one immediate lever
+for a single asset is the per-asset pause (`AdminFacet.pauseAsset`), and only
+for the two reasons in §3.8: the asset's own code takes, freezes or blocks
+what vaults hold or breaks a close-out, or the platform's own reading of the
+asset (a mispricing aggregator, manipulated peer LTV reads) is shown wrong so
+new positions would open on false numbers, and then only while that reading
+is wrong.
 
 ### Confirm afterwards
 
@@ -846,57 +852,66 @@ See the Deployment Runbook "Auto-lend keeper address" section.
 
 `AdminFacet.pauseAsset(asset)` is the one place the platform acts on a
 named asset, so its use is bound by a written rule. Read this before
-reaching for it.
+reaching for it. The design is
+[`ProjectKitDesign.md`](../DesignsAndPlans/ProjectKitDesign.md) section 8
+(guard 3) and section 14.
 
-**What it does.** It refuses new exposure to the asset on either leg: a new
-offer, an offer change, an acceptance, a match, funding a standing intent,
-a standing-intent fill or roll, an instant takeover and the backstop's seeding. It also refuses three
-steps on positions that are already open, because each adds exposure: adding
-more of the asset as collateral to an open loan, the collateral reserve's
-top-up from a standing instruction, and a lender's exit by sale of a loan
-that names the asset (both routes). Everything else stays open: repaying,
-liquidating, defaulting, claiming, withdrawing, cancelling an offer,
-cancelling a standing intent and taking capital out of it. So a borrower whose collateral is paused can
-still repay but cannot top up, and a lender can still be repaid or claim but
-cannot sell the loan. Say both in the public note. It is never the lever for
-stopping a defect in the platform's own code (see the corrections in §3.5
-and §3.6): that is the global pause (§3) or a targeted kill switch (§3.7).
+**What it does.** It stops new positions in the asset, on either leg: a new
+offer, an offer change, an acceptance, a match, funding a standing intent, a
+standing-intent fill or roll, an instant takeover and the backstop's
+seeding. A lender's sale of a loan that names the asset (both routes) is
+refused too, because a sale opens a position for its buyer. Every close-out
+stays open: repaying, claiming, withdrawing, defaulting, liquidating,
+cancelling an offer, and taking capital out of a standing intent (or
+cancelling it).
 
-**When it may be used.** Only when the asset's own code is shown to do one
-of these:
+Today it also refuses three steps that add to a position already open:
+adding more of the asset as collateral to an open loan, the collateral
+reserve's top-up from a standing instruction, and funding a loan reserve in
+it. #3887 changes that, so those steps stay open under the pause; until it
+lands, say in the public note that a borrower whose collateral is paused can
+still repay but cannot top up.
 
-- take, freeze or block what vaults hold (for example a token whose owner
-  can seize or freeze balances held by a vault, or refuse transfers out of
-  one), or
-- break a close-out (for example a token whose transfer now reverts or
-  delivers less than sent, so a repayment, liquidation or claim on it
-  cannot complete).
+It is never the lever for stopping a defect in the platform's own code (see
+the corrections in §3.5 and §3.6): that is the global pause (§3) or a
+targeted kill switch (§3.7).
+
+**When it may be used.** For one of two reasons, each shown, not suspected:
+
+1. **The asset's own code** is shown to take, freeze or block what vaults
+   hold (for example a token whose owner can seize or freeze balances held
+   by a vault, or refuse transfers out of one), or to break a close-out (a
+   token whose transfer now reverts or delivers less than sent, so a
+   repayment, liquidation or claim on it cannot complete).
+2. **The platform's own reading of the asset** is shown to be wrong or
+   manipulated, so new positions would open on false numbers: its price
+   sources, its liquidity reading, or a limit taken from an outside reading.
+   The pause lasts only while that reading is wrong; lift it once the
+   reading is repaired or replaced.
 
 "Shown" means the behaviour is demonstrated: by the asset's code, a
-transaction on chain, or a reproduction against a fork. A report or a
+transaction on chain, a reproduction against a fork, or a comparison of the
+platform's reading with the market it claims to read. A report or a
 suspicion starts the investigation; it is not the reason.
 
-**When it is never used.** Not for the asset's price or its market (a
-crash, thin liquidity, a feed problem: the risk rules and the price guard
-handle those), not for its reputation or its issuer's, and never at anyone's
-request, the asset's own project included.
-
-**Exits stay open.** Repayment, claims and withdrawals are never refused by
-the pause. If an asset's code itself blocks an exit, say so; the pause does
-not cause it and cannot cure it.
+**When it is never used.** Not because the market price moved (a crash or
+thin liquidity on its own is handled by the risk rules and the price guard),
+not for the asset's reputation or its issuer's conduct, and never at
+anyone's request, the asset's own project included.
 
 **Each use is published.** When the pause lands, post a public note giving
-the asset (address and network), the time and the reason in the terms above, with the evidence that showed it. The
+the asset (address and network), the time and the reason (1 or 2 above),
+with the evidence that showed it and what the pause blocks today. The
 contract's `AssetPauseEnabled` event carries no reason and is not changed;
 the note is where the reason lives. A pause with no note is a defect in the
 response.
 
-**Lifting it goes through the delayed route.** `unpauseAsset` needs
-`ADMIN_ROLE` or `UNPAUSER_ROLE`, both on the Timelock after handover, so a
-lift waits the standard delay and can be cancelled by the Pauser Safe. The
-Pauser Safe cannot lift its own pause. Before handover the admin can lift
-it directly; say so in the note when that happens. Post the lift with the
-same detail as the pause: what changed in the asset's code or behaviour.
+**Lifting it.** After handover, `unpauseAsset` needs `ADMIN_ROLE` or
+`UNPAUSER_ROLE`, both held by the Timelock, so a lift waits the standard
+delay and the Pauser Safe can cancel it; the Pauser Safe cannot lift its own
+pause. Before handover the admin lifts it directly; say so in the note when
+that happens. Post the lift with the same detail as the pause: what changed
+in the asset's code or in the platform's reading.
 
 **Who.** The Pauser Safe (`PAUSER_ROLE`) or the admin.
 

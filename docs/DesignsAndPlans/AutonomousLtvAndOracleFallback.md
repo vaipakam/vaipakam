@@ -17,6 +17,8 @@ levers retained are the *emergency multisig kill-switches* for crises
 `autoPause` window). Every per-asset risk parameter is derived from
 real-time on-chain data.
 
+> **Superseded reading (#3880).** The per-asset pause is now bound by the rule in [`IncidentRunbook.md`](../ops/IncidentRunbook.md) §3.8, which replaces the reading above: it is used only when the asset's own code takes, freezes or blocks what vaults hold or breaks a close-out, or when the platform's own reading of the asset is shown wrong (and only while it is), and never for reputation or an issuer's conduct.
+
 The product positioning that follows from this:
 
 > *"Vaipakam's risk parameters are real-time-data-derived: depth-tier

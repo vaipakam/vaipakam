@@ -18,7 +18,7 @@ Roles defined in `LibAccessControl.sol`:
 |---|---|---|---|
 | `DEFAULT_ADMIN_ROLE` | `0x00` | Deployer on init, then rotated to the admin timelock (D1, #934) | Can grant/revoke every other role, `transferAdmin` |
 | `ADMIN_ROLE` | `keccak256("ADMIN_ROLE")` | Deployer on init | `AdminFacet.setZeroExProxy/setallowanceTarget/setKYCEnforcement/addSwapAdapter/removeSwapAdapter/reorderSwapAdapters/setPancakeswapV3Factory/setSushiswapV3Factory`, `RewardReporterFacet.set*`, `RewardAggregatorFacet.setExpectedSourceEids`. (No treasury setter since #3569: the treasury is fixed in the vault code and moves only through the `VaultBeacon`, whose owner is the Timelock.) |
-| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Deployer on init | `AdminFacet.pause / unpause`, `AdminFacet.pauseAsset / unpauseAsset` (per-asset reserve pause / blacklist — either `ADMIN_ROLE` or `PAUSER_ROLE` accepted) |
+| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Deployer on init | `AdminFacet.pause / unpause`, `AdminFacet.pauseAsset / unpauseAsset` (the per-asset pause, bound by the rule in [IncidentRunbook §3.8](IncidentRunbook.md) — either `ADMIN_ROLE` or `PAUSER_ROLE` accepted to pause) |
 | `KYC_ADMIN_ROLE` | `keccak256("KYC_ADMIN_ROLE")` | Deployer on init | `ProfileFacet.updateKYCStatus/updateKYCTier/updateKYCThresholds/setKeeperAccess/setLoanKeeperAccess` |
 | `ORACLE_ADMIN_ROLE` | `keccak256("ORACLE_ADMIN_ROLE")` | Deployer on init | `OracleAdminFacet.setChainlinkRegistry/setUsdChainlinkDenominator/setEthChainlinkDenominator/setWethContract/setUniswapV3Factory/setStableTokenFeed/setSequencerUptimeFeed/setFeedOverride/setTellorOracle/setApi3ServerV1/setDIAOracleV2/setSecondaryOracleMaxDeviationBps/setSecondaryOracleMaxStaleness` |
 | `RISK_ADMIN_ROLE` | `keccak256("RISK_ADMIN_ROLE")` | Deployer on init | `RiskFacet.updateRiskParams` |
@@ -68,13 +68,18 @@ Pausing is a **brake**, not a wrench. Anything structural requires governance �
 
 ### The per-asset pause has a written rule (#3880)
 
-`pauseAsset` refuses new exposure to one named asset; repayment, claims and
-withdrawals stay open (what else it refuses is listed in the rule). It is used only where the asset's own code is shown to take, freeze or
-block what vaults hold, or to break a close-out. It is never used for the
-asset's price, its reputation, or at anyone's request. Each use is published
-with its reason, and lifting it goes through the delayed route. The full
-rule, with what counts as shown and how a use is published, is in
-[`IncidentRunbook.md`](IncidentRunbook.md) §3.8.
+`pauseAsset` stops new positions in one named asset (a lender's sale of a
+loan in it is one, since it opens a position for the buyer); every close-out
+stays open: repay, claim, withdraw, default, liquidation, offer cancel and
+taking capital out of a standing intent. It is used for one of two reasons,
+each shown: the asset's own code takes, freezes or blocks what vaults hold
+or breaks a close-out; or the platform's own reading of the asset (its price
+sources, liquidity reading, or a limit taken from an outside reading) is
+wrong or manipulated, and then only while that reading is wrong. It is never
+used because a market price moved, for reputation or an issuer's conduct, or
+at anyone's request. Each use is published with its reason. After handover
+lifting it waits the Timelock's delay; before handover the admin lifts it
+directly. The full rule is in [`IncidentRunbook.md`](IncidentRunbook.md) §3.8.
 
 ### Permissionless callers vs. role-gated admins
 

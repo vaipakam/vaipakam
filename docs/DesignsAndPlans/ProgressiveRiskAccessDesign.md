@@ -92,6 +92,8 @@ the per-tx integrity guard; #671 is the per-vault structural floor.
   analog), never KYC / identity / permissioning (per the CLAUDE.md
   retail-copy prohibitions).
 
+> **Superseded reading (#3880).** The per-asset pause is now bound by the rule in [`IncidentRunbook.md`](../ops/IncidentRunbook.md) §3.8, which replaces the reading above: it is used only when the asset's own code takes, freezes or blocks what vaults hold or breaks a close-out, or when the platform's own reading of the asset is shown wrong (and only while it is), and never for reputation or an issuer's conduct.
+
 ## 3. Resolved decisions, grounded in code
 
 The card's four resolved decisions (2026-06-21), each checked against the
