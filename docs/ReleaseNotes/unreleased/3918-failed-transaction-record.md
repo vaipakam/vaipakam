@@ -2,7 +2,7 @@
 
 The indexer now keeps a record of every failed transaction sent to a contract in a network's deployment record, with the error decoded at the time, while the node still holds the state. It is the stored half of the troubleshooting picture: a failure seen days later can be read from the record instead of being rebuilt from a node that may no longer have the block.
 
-The record is written only through a new internal route, under a token of its own. The writer is a small separate Worker (#3919) with no database binding, so the most it can do is add records, move its own cursor and mark ranges the chain replaced. It can touch no other table. Each write is bounded (twenty records, a size bound on each explanation) and refused whole if any part of it does not fit the rules.
+The record is written only through a new internal route, under a token of its own. The writer is a separate service on the keeper machine (#3919), with its own user and no database binding, so the most it can do is add records, move its own cursor and mark ranges the chain replaced. It can touch no other table. Each write is bounded (twenty records, a size bound on each explanation) and refused whole if any part of it does not fit the rules.
 
 Each record says which source found it (the keeper's own sends, the explorer's list of transactions to a contract, the daily sampled audit, a trace filter, or a block scan), the pass's mode for that network at the time, and where its decoding came from (a node trace, a local rebuild, a plain replay, or none). It says what it cannot hold rather than leaving a blank: a replay has no call path, and a record whose block state was no longer reachable says so. A better source later replaces a weaker one; a weaker one never overwrites a better one.
 
