@@ -1,4 +1,4 @@
-## Troubleshooting — the failed transaction record (PR #<n>)
+## Troubleshooting — the failed transaction record (PR #3988)
 
 The indexer now keeps a record of every failed transaction sent to a contract in a network's deployment record, with the error decoded at the time, while the node still holds the state. It is the stored half of the troubleshooting picture: a failure seen days later can be read from the record instead of being rebuilt from a node that may no longer have the block.
 
