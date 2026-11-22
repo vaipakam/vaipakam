@@ -146,6 +146,18 @@ contract AFacet {
         if (!(ok && ret.length >= 32)) revert Failed();
     }
 
+    function successReturnsThenReverts() external {
+        (bool ok, ) = address(ext).call("");
+        if (ok) return;
+        revert Failed();
+    }
+
+    function successReturnsThenSwallows() external {
+        (bool ok, ) = address(ext).call("");
+        if (ok) return;
+        neverRead = 9;
+    }
+
     // ─── ambiguous-errors ────────────────────────────────────────────────
     function twoSites(uint256 a) external {
         if (a == 1) revert Bad();

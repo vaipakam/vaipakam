@@ -1,7 +1,7 @@
 {
   "report": "swallowed-failures",
   "counts": {
-    "entries": 151
+    "entries": 149
   },
   "entries": [
     "AnnualRayRateReader.readRate(address,address,bytes32) lowlevel#1 (src/oracle/reference/AnnualRayRateReader.sol)",
@@ -74,7 +74,6 @@
     "LibPriceGuard.tryGuard() try#2 catch#1 (src/libraries/LibPriceGuard.sol)",
     "LibRefinancePayoff.nonceSpent(address,uint256) lowlevel#1 (src/libraries/LibRefinancePayoff.sol)",
     "LibRefinanceRequest.live(uint256) lowlevel#1 (src/libraries/LibRefinanceRequest.sol)",
-    "LibRewardCustody._custody(bytes) lowlevel#1 (src/libraries/LibRewardCustody.sol)",
     "LibRewardCustody.tryBalance(address,address) lowlevel#1 (src/libraries/LibRewardCustody.sol)",
     "LibRewardStaging._payFromDiamond(struct:LibVaipakam.Storage,address,uint256,bool) lowlevel#1 (src/libraries/LibRewardStaging.sol)",
     "LibVPFIDiscount._baseEffectiveTierAndBps(address) lowlevel#1 (src/libraries/LibVPFIDiscount.sol)",
@@ -132,7 +131,6 @@
     "ProtocolBroadcastFacet.getTierPushStatus(address) try#1 catch#1 (src/facets/ProtocolBroadcastFacet.sol)",
     "RateReference._read(address,struct:IRateReference.Source) try#1 catch#1 (src/oracle/reference/RateReference.sol)",
     "RecoveryClawbackFacet._movable(address,struct:VaultOutflowTypes.ClawbackAsset) lowlevel#1 (src/facets/RecoveryClawbackFacet.sol)",
-    "RewardAggregatorFacet._onExpectedSourceListChange(uint32[]) lowlevel#1 (src/facets/RewardAggregatorFacet.sol)",
     "RewardClaimFacet._deliverFromDiamond(address,address,uint256,bool,uint256) lowlevel#1 (src/facets/RewardClaimFacet.sol)",
     "RewardCustodyFacet.custodyDeliverClaim(address,uint256,uint256,uint256,bool) lowlevel#1 (src/facets/RewardCustodyFacet.sol)",
     "RiskPremiumRateModel._readTier(address) try#1 catch#1 (src/models/RiskPremiumRateModel.sol)",

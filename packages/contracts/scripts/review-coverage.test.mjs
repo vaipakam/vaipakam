@@ -241,6 +241,13 @@ test('unit: the description lists each declaration with its lines, what it calls
   assert.match(text, /AFacet\.viaKeccakConstant\(\)\n  - calls outside the unit: BFacet\.loud \(through the Diamond\)/, "a selector constant is followed like a selector member");
 });
 
+test('unit: a helper called in a modifier argument is a call the description lists', () => {
+  const g = graph();
+  const u = deriveUnit('EntryFacet', { ...g, ledger: { entries: {} }, shared: ['LibArg'] });
+  const text = describeSlice(u, 0, g);
+  assert.match(text, /EntryFacet\.guarded\(\)\n  - calls outside the unit: [^\n]*LibArg\.prepare\(\)/);
+});
+
 test('base files: the head with the unit\'s declarations cut out, nothing else', () => {
   const head = Buffer.from('aaaXXXbbbYYYccc');
   const out = baseFiles({ 'f.sol': head }, [
@@ -324,6 +331,7 @@ test('ladder: a step up needs two qualifying runs AT the next rung, provisional 
   assert.deepEqual(miss.sizeLimit, { lines: 1000, setBy: 'P2' }, 'a miss at a provisional rung steps down');
   assert.throws(() => applyPlantedRun(base, { id: 'P1', at: 't1', size: 1500, planted: 2, missed: 3, missingRule: 0 }));
   assert.throws(() => applyPlantedRun(base, { id: 'P1', at: 't1', size: 1500, planted: 2, missed: 0 }), /missing-rule/);
+  assert.throws(() => applyPlantedRun(one, { id: 'P1', at: 't1', size: 1500, planted: 3, missed: 0, missingRule: 1 }), /already recorded/, 'a retried record does not count twice');
   assert.throws(() => r(base, { id: 'P1', size: 1500, lenses: ['speed'] }), /unknown lens/);
 });
 

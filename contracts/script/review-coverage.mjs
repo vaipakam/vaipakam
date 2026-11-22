@@ -492,7 +492,10 @@ function directCallees(fn, ctx, walk) {
     const d = ctx.byId.get(m.modifierName?.referencedDeclaration);
     if (d?.nodeType === 'ModifierDefinition') ids.add(d.id);
   }
-  walk(fn.body, (n) => {
+  // The body and the arguments of its modifier invocations (`guard(LibArg.prepare())`
+  // runs prepare before the body).
+  const code = [fn.body, ...(fn.modifiers ?? []).flatMap((m) => m.arguments ?? [])];
+  for (const c of code) walk(c, (n) => {
     if (n.nodeType === 'FunctionCall') {
       const e = n.expression;
       const d = e?.referencedDeclaration === undefined ? undefined : ctx.byId.get(e.referencedDeclaration);
@@ -506,7 +509,8 @@ function directCallees(fn, ctx, walk) {
     // unit); a facet's goes through the Diamond.
     const owner = ctx.contractOf.get(fn.id);
     const r = routedCallAt(n, ctx, ctx.selfRoutes ? ctx.selfRoutes(owner?.linearizedBaseContracts) : ctx.routes);
-    if (r && ctx.selfRoutes && ctx.selfRoutes(owner?.linearizedBaseContracts) !== ctx.routes) ids.add(r.fn.id);
+    // A hit in the contract's own table is its own code; a facet's is another unit.
+    if (r && owner && r.contract === owner && !ctx.facetIds?.has(owner.id)) ids.add(r.fn.id);
     else if (r) selectors.add(`${r.contract.name}.${r.fn.name}`);
     return undefined;
   });
@@ -705,6 +709,8 @@ export function applyPlantedRun(ledger, run) {
   }
   const unknown = [...lenses.filter((l) => !LENSES.includes(l)), ...depths.filter((d) => !DEPTHS.includes(d))];
   if (unknown.length) throw new Error(`unknown lens or depth: ${unknown.join(', ')} (lenses ${LENSES.join('/')}, depths ${DEPTHS.join('/')})`);
+  // One run counts once: a retried record must not confirm a limit on its own.
+  if ((ledger.plantedRuns ?? []).some((r) => r.id === run.id)) throw new Error(`planted-fault run ${run.id} is already recorded: each run counts once`);
   const next = structuredClone(ledger);
   const record = { id: run.id, at: run.at, size: run.size, planted: run.planted, missed: run.missed, missingRule: run.missingRule, lenses: [...new Set(lenses)].sort(), depths: [...new Set(depths)].sort() };
   next.plantedRuns = [...(next.plantedRuns ?? []), record];

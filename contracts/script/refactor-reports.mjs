@@ -428,6 +428,19 @@ function handles(stmts, contract, ctx) {
   return hit;
 }
 
+/** Whether a statement always leaves the function (returns or reverts) on every path. */
+function alwaysExits(n) {
+  if (!n) return false;
+  if (n.nodeType === 'Return' || n.nodeType === 'RevertStatement') return true;
+  if (n.nodeType === 'ExpressionStatement') {
+    const e = n.expression;
+    return e?.nodeType === 'FunctionCall' && e.expression?.nodeType === 'Identifier' && e.expression.name === 'revert';
+  }
+  if (n.nodeType === 'Block' || n.nodeType === 'UncheckedBlock') return alwaysExits((n.statements ?? []).at(-1));
+  if (n.nodeType === 'IfStatement') return !!n.falseBody && alwaysExits(n.trueBody) && alwaysExits(n.falseBody);
+  return false;
+}
+
 /**
  * How a condition reads the flag a low-level call declared: 'ok' when the
  * branch runs only if the call succeeded, 'failed' when it runs whenever the
@@ -488,7 +501,12 @@ export function swallowedFailures(units, ctx) {
                 if (!handles(later.trueBody, contract, ctx)) out.push(label);
               } else if (t === 'ok') {
                 judged = true;
-                if (!later.falseBody || !handles(later.falseBody, contract, ctx)) out.push(label);
+                // The failure path is the else branch; with none, and a
+                // success branch that always leaves, it is whatever the block
+                // runs next (`if (ok) return; revert Failed();`).
+                const failurePath = later.falseBody
+                  ?? (alwaysExits(later.trueBody) ? { nodeType: 'Block', statements: stmts.slice(stmts.indexOf(later) + 1) } : undefined);
+                if (!failurePath || !handles(failurePath, contract, ctx)) out.push(label);
               }
             }
             if (judged) break;
