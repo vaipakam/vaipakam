@@ -7,11 +7,11 @@ before the switch flips on any chain.**
 
 **Amended 2026-11-22 (owner decision).** `LiquidityTiersAndExposureDesign.md`
 is the design of record for the tiers, the standing of a loan and the
-exposure limit. It
-replaces three points below: an asset no longer starts at Tier 1 (it starts
-with no confidence tier and earns each step over time, §5 decisions 2 and 9
-and §9.ii), a confidence tier that is not renewed lapses, and a liquid asset
-with no tier still backs a new loan on the most conservative terms.
+exposure limit. It replaces three points wherever the sections below state
+them (§4.1.b, §4.2, §5 decisions 2 and 9, and §9.ii): an asset no longer
+starts at Tier 1 (it starts with no confidence tier and earns each step over
+time), a confidence tier that is not renewed lapses, and a liquid asset with
+no tier still backs a new loan on the most conservative terms.
 
 Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
 - **§4.4 step 1 — Piece A — SHIPPED & deployed** (base-sepolia

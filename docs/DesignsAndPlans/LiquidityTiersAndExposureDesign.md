@@ -71,9 +71,14 @@ A loan has one standing, fixed when it opens:
 The vault holds the same line by its own check: a lien holds the collateral as
 the loan stands, written when the lien is made and never changed. The
 collateral of an unpriced loan is held as unpriced, also where the asset by
-itself has a price, and its hand-over at default is that loan's own route. The
-set of assets in use, which a replacement of the guard must vouch for, follows
-the lien: only collateral held as priced is in it.
+itself has a price, and its hand-over at default is that loan's own route.
+
+The set of assets in use, which a replacement of the guard must vouch for,
+keeps its definition (`UnitOfAccountChangeDesign.md`): every asset that some
+record holds as priced, the lending asset of a priced loan among them. The
+standing changes only how collateral joins it. Collateral joins the set where
+its lien holds it as priced, and the collateral of an unpriced loan does not,
+since no step values it.
 
 Depth that leaves later never changes a priced loan's standing. Its ratios are
 still read by the guard's price, and where its collateral cannot be sold, the
