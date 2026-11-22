@@ -368,7 +368,11 @@ export function regressionAgreement(regression) {
 export function compareBuild(record, built) {
   const diffs = [];
   const rb = record.versions?.build;
-  if (rb && built.build) {
+  // The toolchain is evidence §3.2 requires, never optional: a record or a
+  // build without it is refused rather than compared on contracts alone.
+  if (!rb?.compiler || !rb?.settings) diffs.push('compiler: the record names no compiler and settings (versions.build); a baseline records its toolchain');
+  if (!built.build?.compiler || !built.build?.settings) diffs.push('compiler: this build reports no compiler and settings (no build-info); build with this tree\'s forge');
+  if (rb?.compiler && built.build?.compiler) {
     if (rb.compiler !== built.build.compiler) diffs.push(`compiler: the record was built with ${rb.compiler}, this build with ${built.build.compiler}`);
     if (canonicalJson(rb.settings) !== canonicalJson(built.build.settings)) {
       diffs.push(`compiler settings: the record has ${JSON.stringify(rb.settings)}, this build ${JSON.stringify(built.build.settings)}`);
@@ -430,4 +434,15 @@ export function checkTagFacts(tag, t) {
   if (record.source?.digest !== t.sourceDigest) out.push(`the record names source digest ${record.source?.digest}, but the tagged commit, baseline records left out, digests to ${t.sourceDigest}`);
   if (record.source?.commit !== t.parentCommit) out.push(`the record was built from commit ${record.source?.commit}, but the tagged commit's parent is ${t.parentCommit}`);
   return out;
+}
+
+/**
+ * The environment a `run-regression.sh --verify-shards` runs under to rebuild
+ * the plan a set of manifests recorded: `base` without its own chunk sizes or
+ * FORK_URL_* variables, plus the recorded ones (a FORK_URL_* name only marks
+ * a URL as present; planning never reads the value).
+ */
+export function planEnv(planInputs, base = process.env) {
+  const env = Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'CHUNK_SIZE' && k !== 'SUBDIR_CHUNK_SIZE' && !k.startsWith('FORK_URL_')));
+  return Object.assign(env, planInputs ?? {});
 }

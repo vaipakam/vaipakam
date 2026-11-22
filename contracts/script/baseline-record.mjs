@@ -43,6 +43,7 @@ import {
   SOURCE_DIGEST_RULE,
   sha256,
   sourceDigest,
+  planEnv,
   regressionAgreement,
 } from './lib/baseline.mjs';
 import { librariesAt, treeEntries } from './lib/baseline-git.mjs';
@@ -101,8 +102,17 @@ export function main(argv = process.argv.slice(2)) {
     console.error(`baseline-record: the record carries a figure for every action of the gas suite (${opt.gas}; the full regression writes them, #3915)`);
     return 1;
   }
+  // Verify under the plan inputs the manifests recorded, not this shell's
+  // (a regression run with `CHUNK_SIZE=7 bash ...` set them for that command).
+  let planInputs;
   try {
-    execFileSync('bash', [join(CONTRACTS_DIR, 'script/run-regression.sh'), '--verify-shards', resolve(opt.manifests)], { stdio: ['ignore', 'inherit', 'inherit'] });
+    ({ planInputs } = collectRegression(resolve(opt.manifests)));
+  } catch (e) {
+    console.error(`baseline-record: ${e.message.replace(/^baseline: /, '')}`);
+    return 1;
+  }
+  try {
+    execFileSync('bash', [join(CONTRACTS_DIR, 'script/run-regression.sh'), '--verify-shards', resolve(opt.manifests)], { stdio: ['ignore', 'inherit', 'inherit'], env: planEnv(planInputs) });
   } catch {
     console.error('baseline-record: run-regression.sh --verify-shards refused the manifests; the record carries a verified regression only');
     return 1;

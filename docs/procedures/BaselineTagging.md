@@ -91,7 +91,9 @@ node contracts/script/baseline-check.mjs --tag v0.9-pre-refactor
 
 The check always verifies the tag's signature with `git tag -v`, so import
 the signer's public key first (the key GitHub shows as verified for the
-account that pushed). A message that only looks signed is refused. It rebuilds the tagged commit in a temporary worktree and refuses, by name, on
+account that pushed). A message that only looks signed is refused. Until the signature, the record hash and the
+tagged commit's contents are proven, nothing from the tagged tree is run or
+built. It rebuilds the tagged commit in a temporary worktree and refuses, by name, on
 any difference: the tag unsigned or lightweight, the message without the
 record's hash, the commit changing more than the record, another source
 digest, another library pin or storage layout, a gas section missing an

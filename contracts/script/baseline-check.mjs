@@ -47,6 +47,7 @@ import {
   compareBuild,
   GAS_BUDGETS_FILE,
   gasCompleteness,
+  planEnv,
   recordPath,
   regressionAgreement,
   sha256,
@@ -142,12 +143,8 @@ export function verifyShardsAt(repo, commit, manifests, planInputs) {
     }
     run('git', ['worktree', 'add', '--detach', '--quiet', wt, commit], { cwd: repo });
     try {
-      // The plan is rebuilt from the RECORDED inputs, never this machine's:
-      // its chunk sizes and FORK_URL_* are dropped, the recorded ones set (a
-      // name only marks a URL as present; planning never reads the value).
-      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'CHUNK_SIZE' && k !== 'SUBDIR_CHUNK_SIZE' && !k.startsWith('FORK_URL_')));
-      Object.assign(env, planInputs ?? {});
-      run('bash', [join(wt, 'contracts/script/run-regression.sh'), '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'], env });
+      // The plan is rebuilt from the RECORDED inputs, never this machine's.
+      run('bash', [join(wt, 'contracts/script/run-regression.sh'), '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'], env: planEnv(planInputs) });
       return [];
     } catch (e) {
       const said = `${e.stderr ?? ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -176,6 +173,13 @@ export function checkBaseline({
   const facts = tagFacts(repo, tag, verifyTag);
   const refusals = checkTagFacts(tag, facts);
   if (facts.recordText == null) return { refusals };
+  // Nothing from the tagged tree runs or builds until the tag is proven: an
+  // unverified signature, a record that is not the one the message names or a
+  // commit carrying more than the record stops the check here.
+  if (refusals.length) {
+    refusals.push('nothing from the tagged tree was run or built: the tag is not proven');
+    return { refusals };
+  }
   let record;
   try {
     record = JSON.parse(facts.recordText);
@@ -201,6 +205,7 @@ export function checkBaseline({
   const regressionRefusals = regressionAgreement(record.regression);
   refusals.push(...regressionRefusals);
   if (!regressionRefusals.length) refusals.push(...verifyShards(facts.commit, record.regression));
+  if (!record.versions?.forge) refusals.push('build tool: the record names no forge version (versions.forge); a baseline records its toolchain');
   if (!outDir) {
     const forge = forgeVersion();
     if (forge !== record.versions?.forge) {

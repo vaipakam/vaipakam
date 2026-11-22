@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -191,7 +191,7 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message, regre
   // The tagged tree's verifier: this stand-in accepts manifests cut from plan
   // "abc" only, so the check is seen running the TAG's run-regression.sh.
   mkdirSync(join(repo, 'contracts/script'), { recursive: true });
-  writeFileSync(join(repo, 'contracts/script/run-regression.sh'), '#!/usr/bin/env bash\n[ "$CHUNK_SIZE" = 7 ] && [ -z "${FORK_URL_LEAK:-}" ] || { echo "verify-shards: not the recorded inputs" >&2; exit 1; }\ngrep -rqP "^plan\\tabc$" "$2" || { echo "verify-shards: cut from a different plan" >&2; exit 1; }\n');
+  writeFileSync(join(repo, 'contracts/script/run-regression.sh'), '#!/usr/bin/env bash\n[ -n "${BASELINE_TEST_SENTINEL:-}" ] && touch "$BASELINE_TEST_SENTINEL"\n[ "$CHUNK_SIZE" = 7 ] && [ -z "${FORK_URL_LEAK:-}" ] || { echo "verify-shards: not the recorded inputs" >&2; exit 1; }\ngrep -rqP "^plan\\tabc$" "$2" || { echo "verify-shards: cut from a different plan" >&2; exit 1; }\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'source');
   const source = { commit: git(repo, 'rev-parse', 'HEAD'), digest: sourceDigest(treeEntries(repo, 'HEAD')) };
@@ -225,7 +225,10 @@ test('the check against a real repository: a tag git cannot verify is refused, a
   const tag = 'v0.9-pre-refactor';
   const { repo, dir } = repoWithTag(tag);
   try {
-    assert.deepEqual(checkBaseline({ repo, tag, outDir: dir }).refusals, [`${tag}'s signature does not verify (git tag -v) with the keys this machine trusts; the series is signed`]);
+    assert.deepEqual(checkBaseline({ repo, tag, outDir: dir }).refusals, [
+      `${tag}'s signature does not verify (git tag -v) with the keys this machine trusts; the series is signed`,
+      'nothing from the tagged tree was run or built: the tag is not proven',
+    ]);
     assert.deepEqual(checkBaseline({ repo, tag, outDir: dir, verifyTag: verified }).refusals, []);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -334,4 +337,33 @@ test('the check requires a green regression section that adds up and that the ta
       rmSync(repo, { recursive: true, force: true });
     }
   }
+});
+
+test('an unproven tag runs and builds nothing from its tree', () => {
+  const tag = 'v0.9-pre-refactor';
+  const { repo, dir } = repoWithTag(tag);
+  const sentinel = join(mkdtempSync(join(tmpdir(), 'baseline-sentinel-')), 'RAN');
+  process.env.BASELINE_TEST_SENTINEL = sentinel;
+  let built = false;
+  try {
+    const { refusals } = checkBaseline({ repo, tag, verifyTag: () => false, forgeVersion: () => 'forge 1.8.6', build: () => { built = true; return { outDir: dir, cleanup() {} }; } });
+    assert.ok(refusals.some((x) => /nothing from the tagged tree was run or built/.test(x)), refusals.join('\n'));
+    assert.equal(built, false);
+    assert.equal(existsSync(sentinel), false, 'the unproven tag ran its own script');
+    // A proven tag does run it (the same stand-in, through the real worktree path).
+    assert.deepEqual(checkBaseline({ repo, tag, outDir: dir, verifyTag: verified }).refusals, []);
+    assert.equal(existsSync(sentinel), true);
+  } finally {
+    delete process.env.BASELINE_TEST_SENTINEL;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a record or build without its toolchain is refused', () => {
+  const dir = outDir({ A: artifact('60') });
+  const built = collectContracts(dir);
+  const d = compareBuild({ contracts: structuredClone(built.contracts), versions: {} }, built);
+  assert.ok(d.some((x) => /the record names no compiler and settings/.test(x)), d.join('\n'));
+  const d2 = compareBuild({ contracts: structuredClone(built.contracts), versions: { build: built.build } }, { ...built, build: undefined });
+  assert.ok(d2.some((x) => /this build reports no compiler and settings/.test(x)), d2.join('\n'));
 });
