@@ -30,6 +30,7 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {SaleAdmissionFacet} from "../../src/facets/SaleAdmissionFacet.sol";
 import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
@@ -157,7 +158,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](34);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -196,11 +197,13 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         cuts[16] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
-        // #1503 PR-E — the sale paths now read `RiskPreviewFacet.saleAdmission`
+        // #1503 PR-E — the sale paths now read `SaleAdmissionFacet.saleAdmission` (on RiskPreviewFacet until #3843)
         // (the admission classification lives there for EIP-170 headroom), so
         // this scenario's diamond must route it or every sale reverts
         // FunctionDoesNotExist.
         cuts[19] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskPreviewFacetSelectors()});
+        // #3843 — the sale reads, split off RiskPreviewFacet.
+        cuts[33] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getSaleAdmissionFacetSelectors()});
         // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance mutate facet,
         // required so the loan-lifecycle terminals' cross-facet
         // release call (e.g. {RepayFacet.repayLoan}) resolves

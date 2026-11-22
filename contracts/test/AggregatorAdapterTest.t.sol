@@ -806,7 +806,9 @@ contract AggregatorAdapterTest is SetupTest {
         LegalFacet(address(diamond)).publishTos(1, TOS1);
         assertFalse(LegalFacet(address(diamond)).isTermsCurrent(address(adapter)));
         assertEq(adapter.maxDeposit(aggregator), 0, "funding advertised closed");
-        (address w, uint32 v) = LegalFacet(address(diamond)).termsBlocker(address(adapter), address(0));
+        (uint64 closing, address w, uint32 v) =
+            LegalFacet(address(diamond)).openingBlocker(address(adapter), address(0));
+        assertEq(closing, 0, "the network is open");
         assertEq(w, aggregator, "the blocker names the principal");
         assertEq(v, 1);
         vm.prank(aggregator);

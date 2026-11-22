@@ -16,6 +16,7 @@ import {
   OracleFacetABI,
   RiskAccessFacetABI,
   RiskPreviewFacetABI,
+  IntentPreviewFacetABI,
   ConfigFacetABI,
   FeeLevelsFacetABI,
   VaultFactoryFacetABI,
@@ -32,6 +33,8 @@ export const OFFER_PREVIEW = OfferPreviewFacetABI as Abi;
 export const ORACLE = OracleFacetABI as Abi;
 export const RISK_ACCESS = RiskAccessFacetABI as Abi;
 export const RISK_PREVIEW = RiskPreviewFacetABI as Abi;
+/** `previewIntent` — on IntentPreviewFacet since #3843. */
+export const INTENT_PREVIEW = IntentPreviewFacetABI as Abi;
 export const CONFIG = ConfigFacetABI as Abi;
 export const FEE_LEVELS = FeeLevelsFacetABI as Abi;
 export const VAULT_FACTORY = VaultFactoryFacetABI as Abi;
@@ -101,6 +104,8 @@ export const ACCEPT_ERRORS = [
   'RateReferenceUnavailable',
   'RateReferenceUnusual',
   'RateRangeEmpty',
+  // #3864 — the network is closing: no new position may open on it.
+  'NetworkClosing',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

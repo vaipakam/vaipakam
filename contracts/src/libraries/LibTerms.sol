@@ -6,16 +6,27 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 /**
  * @title  LibTerms
  * @author Vaipakam Developer Team
- * @notice #3734 — the ONE rule for Terms of Service acceptance: a wallet that
- *         takes on a new position must be current on the Terms; a wallet that
- *         only reduces or leaves a position is never asked.
- * @dev    Two halves:
- *         - the rule itself ({state}, {isCurrent}), whose one runtime host is
- *           `LegalFacet` (and the read-only previews it answers);
- *         - {requireCurrent}, which every opening step calls. It is a
- *           self-call to `LegalFacet.requireCurrentTerms`, so the facets that
- *           open positions (several of them close to EIP-170) carry a call,
- *           not a copy of the rule.
+ * @notice The ONE rule for taking on a new position (#3734, #3864): a step
+ *         that commits a wallet's money or standing consent to a new position
+ *         asks one question with two parts, in this order:
+ *         1. the network is open: no closing switch is on ({NetworkClosing},
+ *            #3864). It binds every wallet, the backstop vault included;
+ *         2. the wallet is current on the Terms ({TermsNotAccepted}, #3734).
+ *         A wallet that only reduces or leaves a position is never asked.
+ * @dev    Three halves:
+ *         - the rule itself ({closingSince}, {state}, {isCurrent}), whose one
+ *           runtime host is `LegalFacet` (and the read-only previews it
+ *           answers);
+ *         - {requireMayOpen}, which every opening step calls. It is a
+ *           self-call to `LegalFacet.requireMayOpen`, so the facets that open
+ *           positions (several of them close to EIP-170) carry a call, not a
+ *           copy of the rule;
+ *         - the two named exceptions: {requireCurrentTerms} asks the Terms
+ *           part alone (setting standing instructions on a loan, which must
+ *           stay open while a network closes because every run helps the loan
+ *           end), and {requireNetworkOpen} asks the closing part alone (the
+ *           standing-intent slot's re-commit of held payments and its roll of
+ *           a repaid loan, whose Terms behaviour is deliberately unchanged).
  *
  *         Versions. Each network keeps two values: the LATEST version in
  *         force (what a new acceptance names) and the MINIMUM version (the
@@ -38,6 +49,26 @@ library LibTerms {
     ///         `version` is the latest version in force, the one to accept.
     ///         For an aggregator adapter, `wallet` names its principal.
     error TermsNotAccepted(address wallet, uint32 version);
+
+    /// @notice #3864 — this network has been closing since `since`: no step
+    ///         may commit a wallet's money or standing consent to a new
+    ///         position here. Every position already open runs to its end.
+    error NetworkClosing(uint64 since);
+
+    /// @notice #3864 — when this network began closing (0 = open).
+    function closingSince(LibVaipakam.Storage storage s) internal view returns (uint64) {
+        return s.networkClosingSince;
+    }
+
+    /// @notice #3864 — refuse with {NetworkClosing} while the network is
+    ///         closing. The closing part of the opening rule, inlined: one
+    ///         storage read. Asked alone only by the two standing-intent slot
+    ///         steps named in the library header; every other opening step
+    ///         asks it through {requireMayOpen}.
+    function requireNetworkOpen(LibVaipakam.Storage storage s) internal view {
+        uint64 since = s.networkClosingSince;
+        if (since != 0) revert NetworkClosing(since);
+    }
 
     /// @notice The Terms values that count now.
     /// @param latest        The latest version in force (0 = none; nothing checked).
@@ -109,6 +140,10 @@ library LibTerms {
     ///                 backstop vault, or when it accepted a version in force
     ///                 from the minimum to the latest.
     /// @return needed  The latest version in force (0 when `current`).
+    /// @dev The Terms part only. The backstop vault's exemption is from the
+    ///      Terms, never from the closing part: {requireMayOpen}'s host asks
+    ///      {requireNetworkOpen} first, so the vault's lending is refused on
+    ///      a closing network like any wallet's (#3864).
     function isCurrent(LibVaipakam.Storage storage s, address wallet)
         internal
         view
@@ -130,13 +165,25 @@ library LibTerms {
         return (false, t.latest);
     }
 
-    /// @notice Refuse a new position for `wallet` unless it is current
-    ///         ({isCurrent}): a self-call to the rule's one host,
-    ///         `LegalFacet.requireCurrentTerms`, whose refusal
-    ///         ({TermsNotAccepted}) is passed through unchanged.
-    function requireCurrent(address wallet) internal view {
-        (bool ok, bytes memory ret) =
-            address(this).staticcall(abi.encodeWithSignature("requireCurrentTerms(address)", wallet));
+    /// @notice Refuse a new position for `wallet` unless the network is open
+    ///         and `wallet` is current ({isCurrent}): a self-call to the
+    ///         rule's one host, `LegalFacet.requireMayOpen`, whose refusal
+    ///         ({NetworkClosing} first, else {TermsNotAccepted}) is passed
+    ///         through unchanged.
+    function requireMayOpen(address wallet) internal view {
+        _selfCall(abi.encodeWithSignature("requireMayOpen(address)", wallet));
+    }
+
+    /// @notice The Terms part alone: refuse unless `wallet` is current
+    ///         ({TermsNotAccepted}), whatever the closing state. Only for the
+    ///         exception named in the library header (standing instructions).
+    function requireCurrentTerms(address wallet) internal view {
+        _selfCall(abi.encodeWithSignature("requireCurrentTerms(address)", wallet));
+    }
+
+    /// @dev A static self-call to the rule's host, its refusal passed through.
+    function _selfCall(bytes memory data) private view {
+        (bool ok, bytes memory ret) = address(this).staticcall(data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(ret, 0x20), mload(ret))

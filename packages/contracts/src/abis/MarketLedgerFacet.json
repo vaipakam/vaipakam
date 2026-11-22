@@ -233,6 +233,37 @@
   },
   {
     "type": "error",
+    "name": "BackstopDailyLimitExceeded",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "usedToday",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "OnlyDiamondInternal",
     "inputs": []
   },

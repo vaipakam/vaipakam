@@ -53,7 +53,9 @@
       "class": "keeper",
       "pass": "positionUpkeep",
       "flag": "BACKSTOP_FILL_ENABLED",
-      "evidence": "apps/keeper/src/positionUpkeep.ts"
+      "evidence": "apps/keeper/src/positionUpkeep.ts",
+      "callerChooses": "which eligible borrower offer the backstop fills, and so which offer uses the day's room in its lending asset (first come, first served; the keeper's own order is oldest eligible first)",
+      "boundedBy": "the backstop's daily limit per lending asset per UTC day, a governed share of its lending capital in the asset (LibBackstopDailyLimit.consume, checked in MarketLedgerFacet.onSlotFilled, #3849); the borrower's own opt-in and its deadline, the offer's whole amount and terms, the pair's funded capital and exposure cap, and the liquidity, oracle-coverage, calm-price and sanctions gates (BackstopFacet.backstopFill, LibIntentFill.admitFill)"
     },
     "BackstopVaultImplementation.initialize(address)": {
       "class": "init",
@@ -152,7 +154,8 @@
       "class": "keeper",
       "pass": "matcher",
       "flag": "HELD_RECOMMIT_ENABLED",
-      "evidence": "apps/keeper/src/matcher.ts"
+      "evidence": "apps/keeper/src/matcher.ts",
+      "note": "#3864: refused while the network is closing (NetworkClosing), by name, the closing part of the opening rule only; the held payments stay for the position holder's claim, and the keeper's matcher should disarm the step at the switch"
     },
     "LenderIntentFacet.withdrawLenderIntentCapital(address,address,address,uint8,uint256)": {
       "class": "gap",
@@ -179,7 +182,8 @@
       "class": "keeper",
       "pass": "matcher",
       "flag": "KEEPER_ENABLED",
-      "evidence": "apps/keeper/src/matcher.ts"
+      "evidence": "apps/keeper/src/matcher.ts",
+      "note": "#3864: refused while the network is closing (NetworkClosing), by name, the closing part of the opening rule only; the repaid loan's lender claims normally instead, and the keeper's matcher should disarm the step at the switch"
     },
     "LenderIntentFacet.setLenderIntent(address,address,uint8,uint256,uint256,uint16,uint32,uint256,bool,uint64,bool,bool,struct:LibVaipakam.IntentRateTerms,uint64)": {
       "class": "user",

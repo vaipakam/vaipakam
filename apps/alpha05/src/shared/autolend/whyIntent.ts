@@ -4,7 +4,7 @@
  * that sit closest to its terms (`/intents/nearest`, the same cache ranking
  * the offer panel uses), and this module reads each one from the chain at
  * one block and asks the protocol's own preview of a fill from the slot
- * (`RiskPreviewFacet.previewIntent`). The stated gap is the preview's first
+ * (`IntentPreviewFacet.previewIntent`). The stated gap is the preview's first
  * refusal, so the reason is the protocol's, never the app's guess; the
  * slot's and the request's own terms only supply the figures.
  *
@@ -21,7 +21,7 @@ import { answerOrNull } from '../reads/answer';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
 import type { StoredOffer } from '../offers/acceptTerms';
 import type { IntentSummary } from '../offers/intents';
-import { readOffer, readOfferState, RISK_PREVIEW, type OfferState } from '../offers/reads';
+import { readOffer, readOfferState, INTENT_PREVIEW, type OfferState } from '../offers/reads';
 
 type Hex = `0x${string}`;
 
@@ -130,7 +130,7 @@ export async function readWhyIntent(c: PublicClient, diamond: Hex, slot: IntentS
         const r = (await answerOrNull(
           c.readContract({
             address: diamond,
-            abi: RISK_PREVIEW,
+            abi: INTENT_PREVIEW,
             functionName: 'previewIntent',
             args: [solver, solver, slot.owner, slot.lendingAsset, slot.collateralAsset, slot.slot, id, fill],
             ...at,

@@ -203,6 +203,8 @@ describe('the share and the capacity', () => {
     expect(refusalText(25, copy)).toBe('matchBand.codeFresh');
     expect(refusalText(26, copy)).toBe('matchBand.codeTermsNotAccepted');
     expect(refusalText(27, copy)).toBe('matchBand.codeOther(27)');
+    expect(refusalText(29, copy)).toBe('matchBand.codeNetworkClosing');
+    expect(refusalText(30, copy)).toBe('matchBand.codeOther(30)');
   });
 });
 

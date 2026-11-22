@@ -183,23 +183,26 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
     }
 
     /// @notice The first check loan creation runs after the accept or match
-    ///         core that would refuse the loan, if any: the parties' Terms
-    ///         acceptance (#3734), the offer's cadence (#3025), then the
-    ///         makers' price-move guards (#3358).
+    ///         core that would refuse the loan, if any: the opening rule (the
+    ///         network is open, #3864, then the parties' Terms acceptance,
+    ///         #3734), the offer's cadence (#3025), then the makers'
+    ///         price-move guards (#3358). Members are appended, never
+    ///         reordered.
     enum OriginationRefusal {
         None,
         CadenceNotAdmitted,
         PriceGuardRefused,
-        TermsNotAccepted
+        TermsNotAccepted,
+        NetworkClosing
     }
 
     /**
      * @notice The first origination check loan creation would refuse a loan
      *         opened now from `offerId` with `principal` funded, between
      *         `partyA` and `partyB` (0 = skip), where `otherOfferId` (0 =
-     *         none) is the other maker's offer in a match: the parties' Terms
-     *         acceptance, the cadence rule, then the price-move guards, in
-     *         loan creation's order.
+     *         none) is the other maker's offer in a match: the closing state,
+     *         the parties' Terms acceptance, the cadence rule, then the
+     *         price-move guards, in loan creation's order.
      * @dev The match and standing-intent previews ask it; each check asks
      *      the entry loan creation itself calls, so the refusal is the one it
      *      would raise. Not for a lender-sale vehicle, which the cadence rule
@@ -214,7 +217,8 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
         address partyA,
         address partyB
     ) external view returns (OriginationRefusal) {
-        (address blocked,) = LegalFacet(address(this)).termsBlocker(partyA, partyB);
+        (uint64 closingSince, address blocked,) = LegalFacet(address(this)).openingBlocker(partyA, partyB);
+        if (closingSince != 0) return OriginationRefusal.NetworkClosing;
         if (blocked != address(0)) return OriginationRefusal.TermsNotAccepted;
         try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(offerId, principal) {} catch {
             return OriginationRefusal.CadenceNotAdmitted;
@@ -259,7 +263,7 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
      * @notice Where a fill from `owner`'s intent slot stands against the
      *         calm-price check now: Off (switched off), Clear, NoCheckpoint,
      *         NotCalm or Unpriced (see {LibOfferPriceGuard.Status}).
-     * @dev    The fill and `RiskPreviewFacet.previewIntent` read this same
+     * @dev    The fill and `IntentPreviewFacet.previewIntent` read this same
      *         answer, so they cannot disagree.
      */
     function intentCalmStatus(address owner, address lendingAsset, address collateralAsset, uint8 slot)

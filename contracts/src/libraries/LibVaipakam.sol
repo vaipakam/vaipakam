@@ -9064,6 +9064,42 @@ library LibVaipakam {
         ///      a mirror cache before the mirror's maximum age retires it.
         ///      Written only there. Base-only. Appended — append-only.
         mapping(address => uint40) lastTierCommitSec;
+        /// @dev #3849 — the backstop's daily lending limit, as a share in
+        ///      basis points of its lending capital in each asset. 0 = never
+        ///      set, read as `LibBackstopDailyLimit.DEFAULT_BPS` (never as no
+        ///      limit). Written only by `BackstopFacet.setBackstopDailyLimitBps`.
+        uint16 backstopDailyLimitBps;
+        /// @dev #3849 — per lending asset, what the backstop lent on the UTC
+        ///      day it names. Written only by `LibBackstopDailyLimit.consume`,
+        ///      from `MarketLedgerFacet.onSlotFilled`.
+        mapping(address => BackstopDayUse) backstopDayUse;
+        /// @dev #3849 — per lending asset, the backstop's lending capital:
+        ///      the sum over its (lending, collateral) pairs of `backstopPairCapital`.
+        ///      Written only by `LibBackstopDailyLimit.syncPair`, from
+        ///      `MarketLedgerFacet`'s slot sync.
+        mapping(address => uint256) backstopCapital;
+        /// @dev #3849 — per (lending, collateral) pair, the backstop slot's
+        ///      reserved capital plus its live principal as last synced.
+        ///      Written only by `LibBackstopDailyLimit.syncPair`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => uint256)) backstopPairCapital;
+        /// @dev #3864 — when this network began closing (0 = open). While it
+        ///      is non-zero no step may commit a wallet's money or standing
+        ///      consent to a new position here; every position already open
+        ///      runs to its own end. Written only by `LegalFacet`'s switch
+        ///      (`setNetworkClosing`), read by the opening rule's host
+        ///      (`LegalFacet.requireMayOpen`, through `LibTerms`). Appended —
+        ///      append-only.
+        uint64 networkClosingSince;
+    }
+
+    /// @notice #3849 — what the backstop lent in one lending asset on one UTC
+    ///         day. `day` is the day number (`block.timestamp / 1 days`);
+    ///         `used` is the principal opened on it. A record for an earlier
+    ///         day reads as zero used today.
+    struct BackstopDayUse {
+        uint64 day;
+        uint192 used;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

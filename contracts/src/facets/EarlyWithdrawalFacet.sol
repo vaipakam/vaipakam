@@ -172,7 +172,7 @@ contract EarlyWithdrawalFacet is
      *      #1810 / #3412 — the listing is BOUND to what the seller reviewed:
      *      after it records its seller bounds (LibSaleListing.recordSellerBounds)
      *      the recorded figures are checked against what
-     *      `RiskPreviewFacet.quoteSellerBounds` showed the seller, and the
+     *      `SaleAdmissionFacet.quoteSellerBounds` showed the seller, and the
      *      listing reverts on ADVERSE drift only — a floor below the reviewed
      *      one, or a held ceiling above it. Better-than-reviewed passes. This
      *      closes the quote→listing seam (#1812 binds listing→fill): a borrower

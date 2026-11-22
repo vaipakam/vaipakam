@@ -27,7 +27,7 @@ import {
   InstantMarketFacetABI,
   InstantTakeoverFacetABI,
   LoanFacetABI,
-  RiskPreviewFacetABI,
+  SaleAdmissionFacetABI,
   SaleExitVerdictFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -46,7 +46,7 @@ export const TAKEOVER = InstantTakeoverFacetABI as Abi;
 export const DIRECT_SALE = EarlyWithdrawalDirectFacetABI as Abi;
 export const LISTING = EarlyWithdrawalFacetABI as Abi;
 const INSTANT = InstantMarketFacetABI as Abi;
-const PREVIEW = RiskPreviewFacetABI as Abi;
+const PREVIEW = SaleAdmissionFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
 
 /** How many of the pair's offers and slots are looked at as counterparties. */

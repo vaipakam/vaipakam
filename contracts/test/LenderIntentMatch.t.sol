@@ -12,7 +12,7 @@ import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -715,7 +715,7 @@ contract LenderIntentMatchTest is SetupTest {
         returns (LibOfferMatch.IntentPreviewResult memory)
     {
         // The solver sends its own transaction, so it is also the route's initiator.
-        return RiskPreviewFacet(address(diamond)).previewIntent(
+        return IntentPreviewFacet(address(diamond)).previewIntent(
             solver_, solver_, lender, mockERC20, mockCollateralERC20, 0, boId, fill
         );
     }

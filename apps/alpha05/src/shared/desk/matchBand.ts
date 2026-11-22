@@ -62,7 +62,7 @@ const SOLVER_ROLE = 0;
 
 /** `LibOfferMatch.MatchError`, by ordinal. */
 export const MATCH_OK = 0;
-const REFUSAL: readonly CopyKey[] = [
+const REFUSAL: readonly (CopyKey | null)[] = [
   'matchBand.codeOk',
   'matchBand.codeAsset',
   'matchBand.codeAssetType',
@@ -90,6 +90,11 @@ const REFUSAL: readonly CopyKey[] = [
   'matchBand.codeGuard',
   'matchBand.codeFresh',
   'matchBand.codeTermsNotAccepted',
+  // ReferenceUnavailable, ReferenceUnusual: stated by their code.
+  null,
+  null,
+  // #3864 — the network is closing.
+  'matchBand.codeNetworkClosing',
 ];
 
 /** Why the protocol refuses a pair, in words. */

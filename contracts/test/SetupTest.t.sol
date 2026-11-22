@@ -61,6 +61,9 @@ import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
@@ -693,7 +696,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](141);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1315,6 +1318,24 @@ contract SetupTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(RateLinkFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRateLinkFacetSelectors()
+        });
+        // #3843 — the sale reads, split off RiskPreviewFacet (EIP-170).
+        cuts[138] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleAdmissionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleAdmissionFacetSelectors()
+        });
+        // #3843 — backstop Role B governance, split off BackstopFacet.
+        cuts[139] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getBackstopAbsorbFacetSelectors()
+        });
+        // #3843 — the standing-intent fill preview, split off RiskPreviewFacet.
+        cuts[140] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(IntentPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getIntentPreviewFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

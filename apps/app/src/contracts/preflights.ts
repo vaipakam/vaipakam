@@ -256,7 +256,7 @@ export async function isAssetIlliquidLive(opts: {
  * Gated on `AdminFacet.isKYCEnforcementEnabled` FIRST, so the retail
  * deploy (enforcement OFF — `meetsKYCRequirement` short-circuits true)
  * pays one cheap read and zero oracle round-trips — the same
- * flag-gating `RiskPreviewFacet.previewIntent` applies for the same
+ * flag-gating `IntentPreviewFacet.previewIntent` applies for the same
  * reason. This makes the preflight a no-op passthrough on retail while
  * staying real on the KYC-enabled industrial forks.
  *

@@ -58,12 +58,15 @@ contract OfferBookFacet is IVaipakamErrors {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        // #3734 — an offer that would give its poster a new position (lend,
-        // borrow, rent, buy a loan, an offset) is a standing commitment, so
-        // its creator must have accepted the Terms in force. A loan-sale
-        // listing only ends the lister's position (its buyer is asked at the
-        // fill), so it is not asked.
-        if (!s.saleVehicleCreate) LibTerms.requireCurrent(offer.creator);
+        // #3734 / #3864 — an offer that would give its poster a new position
+        // (lend, borrow, rent, buy a loan, an offset) is a standing
+        // commitment, so it asks the opening rule: the network is open and
+        // its creator has accepted the Terms in force. A loan-sale listing
+        // only ends the lister's position (its buyer is asked at the fill),
+        // so it is not asked the Terms; it is still an offer that can only
+        // fill as a new position, so a closing network refuses it too.
+        if (s.saleVehicleCreate) LibTerms.requireNetworkOpen(s);
+        else LibTerms.requireMayOpen(offer.creator);
         LibOfferAdmission.enforceLifecycleFlex(offer, route);
         LibOfferAdmission.enforceBounds(offer, route);
         // #3635 A / #3713 — the rate terms, through their one host: a link the

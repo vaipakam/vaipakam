@@ -1016,6 +1016,17 @@
   },
   {
     "type": "error",
+    "name": "NetworkClosing",
+    "inputs": [
+      {
+        "name": "since",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotAccountManager",
     "inputs": [
       {
