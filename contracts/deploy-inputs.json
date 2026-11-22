@@ -53,6 +53,7 @@
     "FAUCET_RENTAL_NFT_2",
     "FAUCET_SWAP_ADAPTER",
     "FEED_REGISTRY_DELAY_SECONDS",
+    "FORGE_GAS_MULTIPLIER",
     "HANDOVER_GATE_LOG_CHUNK",
     "HANDOVER_ROLE_EPOCH",
     "HANDOVER_TIMELOCK_CALLS",
@@ -93,6 +94,7 @@
     "PAUSER_ADDRESS",
     "POLYGON_AAVE_V3_POOL",
     "POLYGON_BALANCER_V2_VAULT",
+    "POST_HANDOVER",
     "PRICE_GUARD_DELAY_SECONDS",
     "REHEARSAL_ALLOW_CHAIN_ID",
     "REWARD_CUSTODY_FUND_LIVE_FRESH",
@@ -134,6 +136,8 @@
     "TREASURY_ADDRESS",
     "UNISWAP_V3_FACTORY",
     "UNISWAP_V3_ROUTER",
+    "UNPAUSE_TIMELOCK_DELAY",
+    "UNPAUSE_TIMELOCK_SALT",
     "VAULT_LISTING_CONDUIT_KEY",
     "VAULT_ORDER_PROTOCOL",
     "VAULT_SEAPORT",
@@ -305,6 +309,14 @@
     {
       "pattern": "EXPECT_CHANGED",
       "reason": "An assertion input of the changed-facet refresh, which is an in-place refresh (#3897), not a fresh-deploy step."
+    },
+    {
+      "pattern": "RH_*",
+      "reason": "The rehearsal machinery's own knobs (fork depth, a test stand-in for the feed list): they shape the rehearsal's forks, never what the deploy sends."
+    },
+    {
+      "pattern": "REHEARSE",
+      "reason": "The mainnet wrapper's --rehearse flag: it selects rehearsal mode, which the verdict records itself, like VAIPAKAM_REHEARSAL."
     }
   ],
   "hashedPatterns": [

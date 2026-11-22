@@ -98,3 +98,20 @@ test('the shell-consumed gas pins are in the digest and covered by the check', (
   const p = checkShellReads(new Map([['script/deploy-x.sh', text]]), spec);
   assert.equal(p.length, 2);
 });
+
+test('every setting a wrapper takes from its caller is in the digest or named as left out', () => {
+  const spec = readInputs();
+  const base = inputDigest({}, [], spec).digest;
+  assert.notEqual(inputDigest({ FORGE_GAS_MULTIPLIER: '100' }, [], spec).digest, inputDigest({ FORGE_GAS_MULTIPLIER: '200' }, [], spec).digest);
+  assert.notEqual(inputDigest({ POST_HANDOVER: '1' }, [], spec).digest, base);
+  // A defaulted expansion of a name the file does not set is a read; one it
+  // sets itself is not; a self-default (X="${X:-1}") still is.
+  const text = [
+    'forge script --gas-estimate-multiplier "${NEW_MULTIPLIER:-130}"',
+    'LOCAL_ONE=$(date); echo "${LOCAL_ONE:-0}"',
+    'SELF_DEFAULT="${SELF_DEFAULT:-12}"',
+    'env_assert_bool NEW_FLAG || exit 1',
+  ].join('\n');
+  const p = checkShellReads(new Map([['script/deploy-x.sh', text]]), spec);
+  assert.deepEqual(p.map((x) => x.split(' ')[2]).sort(), ['NEW_FLAG', 'NEW_MULTIPLIER', 'SELF_DEFAULT']);
+});

@@ -174,11 +174,27 @@ export function checkReads(asts, spec) {
   return problems;
 }
 
-/** Names the deploy shell wrappers hand forge and cast. Pure over the text. */
+/**
+ * Names the deploy shell wrappers read from the environment. Pure over the text.
+ *
+ * - every `ETH_*` name (forge and cast read those from the environment
+ *   themselves);
+ * - every defaulted expansion `${NAME:-…}` (or `:=`, `:?`, `-`, `=`) of a name
+ *   the same file never sets other than from itself, since a default is how a
+ *   wrapper takes a setting from its caller (`FORGE_GAS_MULTIPLIER`);
+ * - every name handed to `env_assert_bool`.
+ *
+ * A name built as `${SLUG}_SUFFIX` (or "$SLUG"_SUFFIX) reaches the shell as
+ * the suffix alone; it is checked as some prefix plus that suffix.
+ */
 export function shellReadsIn(text) {
   const literals = new Set(text.match(/\bETH_[A-Z0-9_]+\b/g) ?? []);
-  // A name built as `${SLUG}_SUFFIX` (or "$SLUG"_SUFFIX) reaches the shell as
-  // the suffix alone; it is checked as some prefix plus that suffix.
+  const setsItself = (n) =>
+    new RegExp(`(^|[\\s;&|(])(local\\s+|export\\s+|readonly\\s+)?${n}=(?!"?\\$\\{${n}:?[-=?])`, 'm').test(text)
+    || new RegExp(`\\bread\\s+(-[a-z]+\\s+)*([A-Za-z_]+\\s+)*${n}\\b`).test(text)
+    || new RegExp(`\\bfor\\s+${n}\\s+in\\b`).test(text);
+  for (const m of text.matchAll(/\$\{([A-Z][A-Z0-9_]*):?[-=?]/g)) if (!setsItself(m[1])) literals.add(m[1]);
+  for (const m of text.matchAll(/\benv_assert_bool\s+([A-Z][A-Z0-9_]*)/g)) literals.add(m[1]);
   const suffixes = new Set([...text.matchAll(/\}(_[A-Z][A-Z0-9_]*)\b/g)].map((m) => m[1]).filter((x) => /_(GAS|PRICE|WEI)/.test(x)));
   return { literals, suffixes };
 }
@@ -192,7 +208,7 @@ export function checkShellReads(texts, spec) {
   const problems = [];
   for (const [p, text] of texts) {
     const { literals, suffixes } = shellReadsIn(text);
-    for (const n of literals) if (!covered(n)) problems.push(`${p} hands ${n} to forge or cast, and it is not an input, left out or hashed by pattern`);
+    for (const n of literals) if (!covered(n)) problems.push(`${p} reads ${n} from the environment, and it is not an input, left out or hashed by pattern`);
     for (const x of suffixes) if (!covered(`X${x}`)) problems.push(`${p} builds a name ending ${x}, which no hashedPatterns entry matches`);
   }
   return problems;
