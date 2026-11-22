@@ -20,9 +20,10 @@
  *
  * Instant borrow is measured with 1, 2, 4 and 8 sources, and with one
  * skipped source before one fill (a skip refused early and one refused
- * late). The suite's guard is a mock, so every instant-borrow figure here
- * counts each price-guard read at the worst cost of one read against a fully
- * set-up mainnet-shaped guard: every source the mainnet guard reads, set and
+ * late). The suite's guard reads feeds the suite sets up, so every
+ * instant-borrow figure here lifts each price-guard read to the worst cost of
+ * one read against a fully set-up mainnet-shaped guard, adding only the part
+ * above the suite guard's own cheapest read (already in the measured gas): every source the mainnet guard reads, set and
  * live (test/gas/GasSuiteGuardRig.t.sol), plus each source call at its cold
  * cost measured on a live network (`instantBorrow.guardSourceCosts`, from
  * test/fork/GuardSourceReadCostFork.t.sol). The read
@@ -48,6 +49,8 @@
  * isolation demonstration) and are ignored.
  *
  * CLI: node contracts/script/check-gas-budgets.mjs [--dir out-gas-suite] [--budgets <file>] [--base <file>]
+ *      node contracts/script/check-gas-budgets.mjs --raises-only --base <file> [--budgets <file>]
+ *      (the raise rule alone, no measurements: CI runs it on every pull request)
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -79,18 +82,27 @@ export function readMeasurements(dir) {
     });
     Object.defineProperty(out, '__guardRig', { value: { reads }, enumerable: false });
   }
+  const suiteRead = join(dir, 'config', 'guard-suite-read.json');
+  if (existsSync(suiteRead)) Object.defineProperty(out, '__guardSuiteRead', { value: JSON.parse(readFileSync(suiteRead, 'utf8')), enumerable: false });
   return out;
 }
 
 /**
- * The worst cost of one guard read: each read the rig measured (the guard's
- * own code, cold, with every source answered by a mock), plus each call it
- * made to an outside source at that source's cold cost measured on a live
- * network (`instantBorrow.guardSourceCosts`). Returns `{ cost, read }`, or
- * `{ problem }` when the rig is missing or names a source with no cost.
+ * What one guard read costs on mainnet ABOVE what the suite already charged
+ * for it. The mainnet-shaped worst read is each read the rig measured (the
+ * guard's own code, cold, with every source answered by a mock) plus each
+ * call it made to an outside source at that source's cold cost measured on a
+ * live network (`instantBorrow.guardSourceCosts`). Each instant-borrow figure
+ * already holds every price read at no less than the suite guard's cheapest
+ * warm read (`suiteRead`, out-gas-suite/config/guard-suite-read.json), so
+ * that much is taken off: the remainder is added per read, and the read is
+ * counted once, at its worst. Returns `{ cost, read, worst, suite }`, or
+ * `{ problem }` when the rig or the suite read is missing, or the rig names a
+ * source with no cost.
  */
-export function guardReadCost(ib, rig) {
+export function guardReadCost(ib, rig, suiteRead) {
   if (!rig || !Array.isArray(rig.reads) || !rig.reads.length) return { problem: 'the mainnet-shaped guard rig was not run (out-gas-suite/config/guard-rig/)' };
+  if (!suiteRead || !Number.isInteger(suiteRead.gas) || suiteRead.gas <= 0) return { problem: "the suite guard's own read was not measured (out-gas-suite/config/guard-suite-read.json)" };
   const costs = ib.guardSourceCosts ?? {};
   let worst = { cost: 0, read: '' };
   for (const r of rig.reads) {
@@ -103,10 +115,14 @@ export function guardReadCost(ib, rig) {
     }
     if (cost > worst.cost) worst = { cost, read: r.read };
   }
-  return worst;
+  return { cost: Math.max(0, worst.cost - suiteRead.gas), read: worst.read, worst: worst.cost, suite: suiteRead.gas };
 }
 
-/** An instant-borrow figure with every guard read at its measured mainnet-shaped worst cost. */
+/**
+ * An instant-borrow figure with every guard read at its measured
+ * mainnet-shaped worst cost: the measured gas already holds each read at the
+ * suite guard's cost, and `guardReadCost` is only the cost above that.
+ */
 export function fullGas(ib, m) {
   // Only the calls that price an asset run the guard's sources; its other
   // views (the numeraire symbol, WETH, the price version) are already in
@@ -123,13 +139,13 @@ export function budgetInHand(ib) {
 export function withGuardReadCost(budgets, measured, refusals = []) {
   const ib = budgets.instantBorrow;
   if (!ib) return budgets;
-  const r = guardReadCost(ib, measured.__guardRig);
+  const r = guardReadCost(ib, measured.__guardRig, measured.__guardSuiteRead);
   if (r.problem) {
     refusals.push(`instantBorrow: ${r.problem}`);
     // Never a figure from the budgets file in place of the measurement.
     return { ...budgets, instantBorrow: { ...ib, guardReadCost: undefined } };
   }
-  return { ...budgets, instantBorrow: { ...ib, guardReadCost: r.cost, guardReadWorst: r.read } };
+  return { ...budgets, instantBorrow: { ...ib, guardReadCost: r.cost, guardReadWorst: r.read, guardReadFull: r.worst, guardReadSuite: r.suite } };
 }
 
 /** The largest measured source count within the headroom of the smallest network limit. */
@@ -173,6 +189,22 @@ export function sourceRuleCost(costs, b, skips, inHand = 0) {
 }
 
 /**
+ * Every budget raised above its row in `base` (the budgets file of the base
+ * commit) whose reason did not change. Needs no measurement, so CI checks it
+ * on every pull request and the pre-deploy gate against the base branch.
+ */
+export function budgetRaises(budgets, base) {
+  const out = [];
+  for (const [action, row] of Object.entries(budgets.actions ?? {})) {
+    const b = base?.actions?.[action];
+    if (b && Number.isInteger(row.gas) && row.gas > b.gas && row.reason === b.reason) {
+      out.push(`${action}: budget raised from ${b.gas} to ${row.gas} without a changed reason`);
+    }
+  }
+  return out;
+}
+
+/**
  * Compare. Returns `{ findings, notes, refusals }`: findings warn or fail by
  * `blocking`; refusals always fail; notes never do.
  */
@@ -183,6 +215,7 @@ export function compareBudgets(budgets, measured, base) {
   budgets = withGuardReadCost(budgets, measured, refusals);
   const rows = budgets.actions ?? {};
   const lowerAt = budgets.lowerAt ?? 0.8;
+  refusals.push(...budgetRaises(budgets, base));
   for (const [action, row] of Object.entries(rows)) {
     if (!Number.isInteger(row.gas) || row.gas <= 0) refusals.push(`${action}: budget gas must be a positive whole number`);
     if (typeof row.reason !== 'string' || row.reason.trim().length < MIN_REASON) refusals.push(`${action}: budget needs a reason of at least ${MIN_REASON} characters`);
@@ -193,10 +226,6 @@ export function compareBudgets(budgets, measured, base) {
     }
     if (m.gas > row.gas) findings.push(`${action}: ${m.gas} gas, over its budget of ${row.gas} by ${m.gas - row.gas}`);
     else if (m.gas < row.gas * lowerAt) notes.push(`${action}: ${m.gas} gas, under ${Math.round(lowerAt * 100)}% of its budget of ${row.gas}: lower the budget`);
-    const b = base?.actions?.[action];
-    if (b && Number.isInteger(row.gas) && row.gas > b.gas && row.reason === b.reason) {
-      refusals.push(`${action}: budget raised from ${b.gas} to ${row.gas} without a changed reason`);
-    }
   }
   for (const action of Object.keys(measured)) if (!rows[action]) findings.push(`${action}: measured but has no budget`);
   const ib = largestInstantCount(budgets, measured);
@@ -240,8 +269,10 @@ export function main(argv = process.argv.slice(2)) {
   let dir = MEASURE_DIR;
   let budgetsPath = BUDGETS_FILE;
   let basePath;
+  let raisesOnly = false;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--dir' && argv[i + 1]) dir = argv[++i];
+    if (argv[i] === '--raises-only') raisesOnly = true;
+    else if (argv[i] === '--dir' && argv[i + 1]) dir = argv[++i];
     else if (argv[i] === '--budgets' && argv[i + 1]) budgetsPath = argv[++i];
     else if (argv[i] === '--base' && argv[i + 1]) basePath = argv[++i];
     else {
@@ -250,7 +281,24 @@ export function main(argv = process.argv.slice(2)) {
     }
   }
   let budgets = JSON.parse(readFileSync(budgetsPath, 'utf8'));
-  const base = basePath && existsSync(basePath) ? JSON.parse(readFileSync(basePath, 'utf8')) : undefined;
+  if (basePath && !existsSync(basePath)) {
+    // Named and missing: never a silent pass of the raise rule.
+    console.error(`  ✗ the base budgets file ${basePath} does not exist`);
+    return 1;
+  }
+  const base = basePath ? JSON.parse(readFileSync(basePath, 'utf8')) : undefined;
+  if (raisesOnly) {
+    if (!base) {
+      console.error('  ✗ --raises-only needs --base <budgets.json of the base commit>');
+      return 2;
+    }
+    const raised = budgetRaises(budgets, base);
+    for (const r of raised) console.error(`  ✗ ${r}`);
+    if (raised.length) return 1;
+    console.log('  ✓ gas budgets: no budget raised without a changed reason');
+    return 0;
+  }
+  if (!base) console.log('  · no --base: a budget raised without a changed reason is not checked in this run');
   const measured = readMeasurements(dir);
   if (!Object.keys(measured).length) {
     console.error(`  ✗ no measurements in ${relative(process.cwd(), dir)}: run forge test --match-path "test/gas/*" first`);
@@ -263,7 +311,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   const ib = largestInstantCount(budgets, measured);
   if (ib && Number.isFinite(ib.limit)) {
-    console.log(`  instant borrow: up to ${ib.best} sources within ${ib.cap} gas, guard reads at ${budgets.instantBorrow.guardReadCost} each (worst: ${budgets.instantBorrow.guardReadWorst}) plus ${budgetInHand(budgets.instantBorrow)} in hand`);
+    console.log(`  instant borrow: up to ${ib.best} sources within ${ib.cap} gas, guard reads at ${budgets.instantBorrow.guardReadFull} each (worst: ${budgets.instantBorrow.guardReadWorst}; ${budgets.instantBorrow.guardReadCost} added per read above the ${budgets.instantBorrow.guardReadSuite} the suite charged) plus ${budgetInHand(budgets.instantBorrow)} in hand`);
     const c = instantCosts(budgets.instantBorrow, measured);
     if (c) console.log(`  instant borrow: first fill ${c.first}, each further fill ${c.perFill}, each skip ${c.skip}`);
   }

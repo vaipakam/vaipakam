@@ -34,6 +34,22 @@ contract GasSuiteFeed {
     }
 }
 
+/// @dev Measures, inside one frame, what a repeated (warm) call costs: the
+///      first call warms the target's code and slots, the second is timed.
+///      The gas suite's figures already carry each guard read at what the
+///      suite's guard charged; the check takes this figure off the
+///      mainnet-shaped cost so a read is not counted twice.
+contract GasSuiteWarmCallProbe {
+    function warmCost(address target, bytes calldata data) external view returns (uint256 used) {
+        (bool ok,) = target.staticcall(data);
+        require(ok, "first call failed");
+        uint256 before = gasleft();
+        (ok,) = target.staticcall(data);
+        used = before - gasleft();
+        require(ok, "second call failed");
+    }
+}
+
 /**
  * @title  GasSuiteBase
  * @notice The gas suite's measuring step (#3915, RefactorRulesDesign §5.1).

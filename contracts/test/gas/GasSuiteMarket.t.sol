@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {GasSuiteBase} from "./GasSuiteBase.sol";
+import {GasSuiteBase, GasSuiteWarmCallProbe} from "./GasSuiteBase.sol";
+import {IPriceGuard} from "../../src/interfaces/IPriceGuard.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 import {InstantMarketBase} from "../InstantMarketTest.t.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LenderIntentFacet} from "../../src/facets/LenderIntentFacet.sol";
@@ -139,6 +141,42 @@ contract GasSuiteMarketTest is GasSuiteBase, InstantMarketBase {
         string memory json = vm.serializeUint(o, "maxSources", top);
         vm.createDir(string.concat(OUT_DIR, "config/"), true);
         vm.writeJson(json, string.concat(OUT_DIR, "config/instant.json"));
+    }
+
+    /// @dev The cheapest price read the suite's own guard serves inside a
+    ///      transaction: each of the four pricing calls, for each pair asset,
+    ///      repeated in one frame (warm). Every instant-borrow figure already
+    ///      holds each of its price reads at no less than this, so the check
+    ///      adds only the mainnet-shaped read's cost above it.
+    function test_gas_guard_suite_read() public {
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        GasSuiteWarmCallProbe probe = new GasSuiteWarmCallProbe();
+        address[2] memory assets = [mockERC20, mockCollateralERC20];
+        uint256 least = type(uint256).max;
+        string memory leastName;
+        for (uint256 i; i < 2; i++) {
+            address a = assets[i];
+            bytes[4] memory calls = [
+                abi.encodeCall(IPriceGuard.getAssetPrice, (a)),
+                abi.encodeCall(IPriceGuard.getAssetPriceStatus, (a)),
+                abi.encodeCall(IPriceGuard.tryGetAssetPrice, (a)),
+                abi.encodeCall(IPriceGuard.countLiveSecondaryOracleFeeds, (a))
+            ];
+            string[4] memory names = ["getAssetPrice", "getAssetPriceStatus", "tryGetAssetPrice", "countLiveSecondaryOracleFeeds"];
+            for (uint256 f; f < 4; f++) {
+                uint256 g = probe.warmCost(guard, calls[f]);
+                if (g < least) {
+                    least = g;
+                    leastName = names[f];
+                }
+            }
+        }
+        assertGt(least, 0, "measured");
+        string memory o = "guardSuiteRead";
+        vm.serializeString(o, "read", leastName);
+        string memory json = vm.serializeUint(o, "gas", least);
+        vm.createDir(string.concat(OUT_DIR, "config/"), true);
+        vm.writeJson(json, string.concat(OUT_DIR, "config/guard-suite-read.json"));
     }
 
     // ─── Auto-lend slots ─────────────────────────────────────────────────

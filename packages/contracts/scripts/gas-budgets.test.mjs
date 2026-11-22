@@ -5,14 +5,18 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareBudgets, fullGas, guardReadCost, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost } from '../../../contracts/script/check-gas-budgets.mjs';
+import { compareBudgets, fullGas, guardReadCost, instantCosts, largestInstantCount, readMeasurements, sourceRuleCost, withGuardReadCost, main, budgetRaises } from '../../../contracts/script/check-gas-budgets.mjs';
 
 const R = 'the measured figure on the first suite run, with mocked oracles';
 const budgets = (actions, extra = {}) => ({ blocking: false, lowerAt: 0.8, actions, ...extra });
 const m = (gas) => ({ gas, slotsWritten: 1, slotsRead: 1, facetCalls: 0, events: 1 });
 
 /** Attaches a guard rig whose one read costs `gas` with no source calls. */
-const withRig = (meas, gas) => Object.defineProperty(meas, '__guardRig', { value: { reads: [{ read: 'r', gas, sourceCalls: {} }] }, enumerable: false });
+// A rig whose read costs `gas` above the suite guard's own read (100).
+const withRig = (meas, gas) => {
+  Object.defineProperty(meas, '__guardRig', { value: { reads: [{ read: 'r', gas: gas + 100, sourceCalls: {} }] }, enumerable: false });
+  return Object.defineProperty(meas, '__guardSuiteRead', { value: { read: 's', gas: 100 }, enumerable: false });
+};
 
 test('over a budget is a finding; well under asks for a lower budget; within is quiet', () => {
   const b = budgets({ a: { gas: 100_000, reason: R }, b: { gas: 100_000, reason: R }, c: { gas: 100_000, reason: R } });
@@ -26,6 +30,22 @@ test('a budget with no measurement, and a measurement with no budget, are findin
   const r = compareBudgets(budgets({ gone: { gas: 1, reason: R } }), { fresh: m(5) });
   assert.ok(r.findings.some((f) => /gone: has a budget but no measurement/.test(f)));
   assert.ok(r.findings.some((f) => /fresh: measured but has no budget/.test(f)));
+});
+
+test('--raises-only checks the raise rule with no measurements, and a named base that is missing refuses', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gas-'));
+  const cur = join(dir, 'budgets.json');
+  const base = join(dir, 'base.json');
+  writeFileSync(cur, JSON.stringify(budgets({ a: { gas: 120, reason: R }, b: { gas: 50, reason: R } })));
+  writeFileSync(base, JSON.stringify(budgets({ a: { gas: 100, reason: R }, b: { gas: 50, reason: R } })));
+  const quiet = (fn) => { const [l, e] = [console.log, console.error]; console.log = console.error = () => {}; try { return fn(); } finally { console.log = l; console.error = e; } };
+  assert.equal(quiet(() => main(['--raises-only', '--budgets', cur, '--base', base])), 1);
+  writeFileSync(base, JSON.stringify(budgets({ a: { gas: 120, reason: R }, b: { gas: 50, reason: R } })));
+  assert.equal(quiet(() => main(['--raises-only', '--budgets', cur, '--base', base])), 0);
+  assert.equal(quiet(() => main(['--raises-only', '--budgets', cur])), 2, 'the raise rule needs a base');
+  assert.equal(quiet(() => main(['--raises-only', '--budgets', cur, '--base', join(dir, 'none.json')])), 1, 'a named base that is missing is never a pass');
+  // A row with no measurement still has its raise checked.
+  assert.deepEqual(budgetRaises(budgets({ z: { gas: 2, reason: R } }), budgets({ z: { gas: 1, reason: R } })), ['z: budget raised from 1 to 2 without a changed reason']);
 });
 
 test('a raise without a changed reason is refused against the base; with a new reason it passes', () => {
@@ -96,9 +116,29 @@ test('the source rule: a code list cap above the bound plus the skip allowance i
 test('a guard read costs its rig gas plus each source call at its measured cost, and an unpriced source refuses', () => {
   const ib = { guardSourceCosts: { tellor: { gas: 100 }, pyth: { gas: 10 } } };
   const rig = { reads: [{ read: 'a', gas: 1_000, sourceCalls: { tellor: 2, pyth: 1 } }, { read: 'b', gas: 1_150, sourceCalls: { pyth: 0 } }] };
-  assert.deepEqual(guardReadCost(ib, rig), { cost: 1_210, read: 'a' });
-  assert.match(guardReadCost(ib, { reads: [{ read: 'c', gas: 1, sourceCalls: { dia: 1 } }] }).problem, /calls dia, which has no measured cost/);
-  assert.match(guardReadCost(ib, undefined).problem, /was not run/);
+  const suite = { read: 's', gas: 200 };
+  // The worst read is 1,210; the suite's figures already hold 200 of it.
+  assert.deepEqual(guardReadCost(ib, rig, suite), { cost: 1_010, read: 'a', worst: 1_210, suite: 200 });
+  assert.match(guardReadCost(ib, { reads: [{ read: 'c', gas: 1, sourceCalls: { dia: 1 } }] }, suite).problem, /calls dia, which has no measured cost/);
+  assert.match(guardReadCost(ib, undefined, suite).problem, /was not run/);
+  assert.match(guardReadCost(ib, rig, undefined).problem, /suite guard's own read was not measured/);
+});
+
+test('a read already in the measured gas at the suite guard\'s cost is counted once, at its worst', () => {
+  const ib = { actionPrefix: 'ib_', guardSourceCosts: {} };
+  const meas = { ib_1: { ...m(10_000), guardPriceReads: 3 } };
+  Object.defineProperty(meas, '__guardRig', { value: { reads: [{ read: 'r', gas: 900, sourceCalls: {} }] }, enumerable: false });
+  Object.defineProperty(meas, '__guardSuiteRead', { value: { read: 's', gas: 300 }, enumerable: false });
+  const b = withGuardReadCost({ instantBorrow: ib }, meas);
+  // 10,000 already holds three reads at >= 300 each; each is lifted to 900.
+  assert.equal(fullGas(b.instantBorrow, meas.ib_1), 10_000 + 3 * 600);
+});
+
+test('the suite read file is read beside the measurements', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gas-'));
+  mkdirSync(join(dir, 'config'));
+  writeFileSync(join(dir, 'config', 'guard-suite-read.json'), JSON.stringify({ read: 'getAssetPrice', gas: 4_321 }));
+  assert.deepEqual(readMeasurements(dir).__guardSuiteRead, { read: 'getAssetPrice', gas: 4_321 });
 });
 
 test('the source rule without its measurements or the code bounds is a finding, never a silent pass', () => {

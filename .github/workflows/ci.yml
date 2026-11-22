@@ -1263,6 +1263,32 @@ jobs:
           pnpm --filter @vaipakam/app exec tsx \
             scripts/check-baselines-shrink-only.ts --base "$BASE"
 
+      # A gas budget may be raised only with a changed reason (#3915). The
+      # rule needs the budgets as they stood at the base, and no measurement,
+      # so it runs here on every change rather than only in the pre-deploy
+      # full run. Same trusted base as the step above.
+      - name: Gas budgets raised only with a reason
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${PR_BASE_SHA}"
+          else
+            BASE="${PUSH_BEFORE_SHA}"
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              echo "First push to this ref — no prior budgets to compare."
+              exit 0
+            fi
+          fi
+          git fetch --depth=1 origin "$BASE"
+          if ! git cat-file -e "$BASE:contracts/gas-suite/budgets.json" 2>/dev/null; then
+            echo "contracts/gas-suite/budgets.json is new since the base — nothing to compare."
+            exit 0
+          fi
+          git show "$BASE:contracts/gas-suite/budgets.json" > "$RUNNER_TEMP/gas-budgets-base.json"
+          node contracts/script/check-gas-budgets.mjs --raises-only --base "$RUNNER_TEMP/gas-budgets-base.json"
+
       # `pnpm -r test` is intentionally NOT wired into this required-check
       # workflow. The suites that matter gate elsewhere and per-workspace:
       # the connected app, @vaipakam/lib and apps/indexer all run in the
