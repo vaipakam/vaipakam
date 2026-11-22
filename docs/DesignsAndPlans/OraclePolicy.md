@@ -43,7 +43,10 @@ Illiquid and cannot back a loan.
   answer rests on its feed alone, and that fact is disclosed per asset. A
   feed's own update window is recorded with the feed and is never above 24
   hours.
-- A secondary source that disagrees always refuses the answer.
+- Past the general limit, a secondary source that disagrees refuses the
+  answer, whatever another source says. This is stricter than the quorum
+  rule below, which applies as written to an answer inside the general
+  limit.
 - A stable asset is checked against its peg as the price rules state.
 - An answer that is not fresh is a distrusted price. The step that needs it
   refuses. It is never read as an asset with no price.
@@ -132,6 +135,9 @@ For each price read:
      secondary form the 2-source majority).
    - **Some Disagree AND no Agree** → revert
      `OraclePriceDivergence`.
+3. For a primary answer older than the general limit, the freshness rule
+   above decides first: one Disagree refuses it, whatever another probe
+   says, and an Agree is what lets it be used up to its feed's window.
 
 That revert is a *distrusted* price, not a missing one, and so is the
 Pyth cross-check's `OracleCrossCheckDivergence`. `getAssetPriceStatus`
@@ -143,7 +149,7 @@ code that must tell them apart reads the status view.
 
 **Where the line lies (owner decision 2026-11-22).** "Unavailable" means the
 guard has no source for the asset, and nothing else. A primary answer that
-is too old, nil or less, or a source whose read fails, is a distrusted
+is too old, zero or less, or a source whose read fails, is a distrusted
 price: the step that needs it refuses, and a loan never takes the route of
 an asset with no price because a source went quiet.
 

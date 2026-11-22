@@ -291,13 +291,15 @@ The second key is bounded two ways, so that it never becomes a way to hold a liq
   line, measured as a share of the line's own figure. A loan the new guard reads further under
   water is liquidated on that reading alone.
 - **An end when the old guard is silent.** Anyone may record that the old guard, at one of its
-  price versions, is silent for an asset: a source on the asset's route gave no reply, the call
-  to that source failed, or its answer is older than its own update window and margin. Silence
-  is the source's own failure and nothing else. If it is still silent
-  when a stated time has passed (proposed at two hours), the key is over for every loan that
-  names the asset and is read on that guard at that version. The record and its effect are
-  keyed by guard, price version and asset: silence at one version never ends the key of a loan
-  whose own version still answers. One stale moment does not end it, and a lender waits no
+  price versions, is silent for an asset. It is silent when it gives no accepted price for the
+  asset and the cause is a source's own failure: a source the asset's route needs gave no
+  reply, the call to that source failed, or its answer is older than its own update window and
+  margin. Silence is that and nothing else. A source that falls quiet while the guard still
+  gives an accepted price for the asset, as a secondary source can, is not silence. If the
+  guard is still silent when a stated time has passed (proposed at two hours), the key is over
+  for every loan that names the asset and is read on that guard at that version. The record
+  and its effect are keyed by guard, price version and asset: silence at one version never
+  ends the key of a loan whose own version still answers. One stale moment does not end it, and a lender waits no
   longer than that time on a dead feed.
 
 **Only silence ends a key** (owner decision 2026-11-22). The old guard can fail to vouch in

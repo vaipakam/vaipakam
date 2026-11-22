@@ -39,7 +39,7 @@ vaults read.
   (distrusted). The existing rules keep their meaning: a missing price takes
   the lender-first in-kind path, and a distrusted price refuses (#666).
   Unavailable means the guard has no source for the asset. An answer that is
-  too old, nil or less, or a source whose read fails, is distrusted (owner
+  too old, zero or less, or a source whose read fails, is distrusted (owner
   decision 2026-11-22). The freshness rule itself is stated in
   `OraclePolicy.md`.
 - The one freshness rule for a Chainlink answer. The liquidity probe still
