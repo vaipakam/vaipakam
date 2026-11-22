@@ -255,7 +255,7 @@ const REQUIRED_TABLE_COLUMNS = {
     'explanation_cut', 'unavailable', 'gas_used', 'gas_limit', 'used_all_gas', 'not_reproduced',
     'state_unreachable', 'replaced_at', 'recorded_at',
   ],
-  failed_tx_cursor: ['chain_id', 'mode', 'block_number', 'block_time', 'watched_share_bps', 'updated_at'],
+  failed_tx_cursor: ['chain_id', 'diamond', 'mode', 'block_number', 'block_time', 'watched_share_bps', 'updated_at'],
   failed_tx_range: [
     'chain_id', 'kind', 'from_block', 'to_block', 'block_hash', 'reason', 'found', 'missed',
     'marked', 'replaced_at', 'recorded_at',
@@ -310,6 +310,7 @@ const TRUSTED_COLUMN_SHAPES = {
   // The write route (apps/indexer/src/failedTx.ts) stores these lowercased
   // and in these shapes, and refuses any other.
   failed_tx: { tx_hash: HASH_SHAPE, block_hash: HASH_SHAPE, diamond: ADDRESS_SHAPE, sender: ADDRESS_SHAPE, contract: ADDRESS_SHAPE },
+  failed_tx_cursor: { diamond: ADDRESS_SHAPE },
 };
 
 /**

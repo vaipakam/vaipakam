@@ -81,9 +81,13 @@ CREATE INDEX IF NOT EXISTS idx_failed_tx_error ON failed_tx (chain_id, error_sel
 CREATE INDEX IF NOT EXISTS idx_failed_tx_time ON failed_tx (block_time);
 
 -- The pass's position per network: the highest block it has finished, its
--- mode, and the time of that block (the health route's age).
+-- mode, the time of that block (the health route's age) and the Diamond it
+-- was scanning under. The row is kept across a fresh Diamond, so a position
+-- written under a retired Diamond is told apart from the current one's and
+-- is not resumed from.
 CREATE TABLE IF NOT EXISTS failed_tx_cursor (
   chain_id          INTEGER PRIMARY KEY,
+  diamond           TEXT    NOT NULL,
   mode              TEXT    NOT NULL,
   block_number      INTEGER NOT NULL,
   block_time        INTEGER NOT NULL,

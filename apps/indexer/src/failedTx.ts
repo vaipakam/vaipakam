@@ -374,12 +374,12 @@ export async function applyFailedTxWrite(db: D1Write, w: FailedTxWrite, now: num
       stmts.push(
         db
           .prepare(
-            `INSERT INTO failed_tx_cursor (chain_id, mode, block_number, block_time, watched_share_bps, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (chain_id) DO UPDATE SET mode = excluded.mode, block_number = excluded.block_number,
+            `INSERT INTO failed_tx_cursor (chain_id, diamond, mode, block_number, block_time, watched_share_bps, updated_at)
+             VALUES (?1, ?7, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, mode = excluded.mode, block_number = excluded.block_number,
                block_time = excluded.block_time, watched_share_bps = excluded.watched_share_bps, updated_at = excluded.updated_at`,
           )
-          .bind(w.chainId, c.mode, c.blockNumber, c.blockTime, c.watchedShareBps, now),
+          .bind(w.chainId, c.mode, c.blockNumber, c.blockTime, c.watchedShareBps, now, dep.diamond.toLowerCase()),
       );
       for (const p of c.checkpoints) {
         // A rescanned height takes the new hash and is live again.
@@ -508,7 +508,8 @@ export interface FailedTxChainHealth {
   chainId: number;
   mode: string | null;
   /** The highest block the pass finished, and when that block was made. */
-  cursor: { blockNumber: number; blockTime: number; ageSeconds: number; updatedAt: number } | null;
+  /** `diamond` is the Diamond the position was written under; `current` says whether it is the bundle's. */
+  cursor: { blockNumber: number; blockTime: number; ageSeconds: number; updatedAt: number; diamond: string; current: boolean } | null;
   /** In sends-and-audit mode, the share of the day failures by others are watched (bps); the rest is not watched. */
   watchedShareBps: number | null;
   newestCheckpoint: { blockNumber: number; blockHash: string } | null;
@@ -524,8 +525,8 @@ export async function handleFailedTxHealth(db: { prepare(sql: string): D1Stmt },
   try {
     const t = now();
     const q = async <T>(sql: string, ...binds: unknown[]) => ((await db.prepare(sql).bind(...binds).all<T>()).results ?? []) as T[];
-    const cursors = await q<{ chain_id: number; mode: string; block_number: number; block_time: number; watched_share_bps: number | null; updated_at: number }>(
-      'SELECT chain_id, mode, block_number, block_time, watched_share_bps, updated_at FROM failed_tx_cursor',
+    const cursors = await q<{ chain_id: number; diamond: string; mode: string; block_number: number; block_time: number; watched_share_bps: number | null; updated_at: number }>(
+      'SELECT chain_id, diamond, mode, block_number, block_time, watched_share_bps, updated_at FROM failed_tx_cursor',
     );
     const checkpoints = await q<{ chain_id: number; block_number: number; block_hash: string }>(
       `SELECT c.chain_id, c.from_block AS block_number, c.block_hash FROM failed_tx_range c
@@ -561,7 +562,16 @@ export async function handleFailedTxHealth(db: { prepare(sql: string): D1Stmt },
       return {
         chainId,
         mode: c?.mode ?? null,
-        cursor: c ? { blockNumber: c.block_number, blockTime: c.block_time, ageSeconds: Math.max(0, t - c.block_time), updatedAt: c.updated_at } : null,
+        cursor: c
+          ? {
+              blockNumber: c.block_number,
+              blockTime: c.block_time,
+              ageSeconds: Math.max(0, t - c.block_time),
+              updatedAt: c.updated_at,
+              diamond: c.diamond,
+              current: c.diamond === getDeployment(c.chain_id)?.diamond.toLowerCase(),
+            }
+          : null,
         watchedShareBps: c?.watched_share_bps ?? null,
         newestCheckpoint: p ? { blockNumber: p.block_number, blockHash: p.block_hash } : null,
         lastReplacement: r ? { fromBlock: r.from_block, toBlock: r.to_block, foundAt: r.found_at, marked: r.marked } : null,

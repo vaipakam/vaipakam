@@ -234,7 +234,7 @@ describe('GET /health/failed-tx', () => {
       {
         chainId: CHAIN,
         mode: 'sends-and-audit',
-        cursor: { blockNumber: 2000, blockTime: NOW - 90, ageSeconds: 90, updatedAt: NOW },
+        cursor: { blockNumber: 2000, blockTime: NOW - 90, ageSeconds: 90, updatedAt: NOW, diamond: DIAMOND, current: true },
         watchedShareBps: 2500,
         newestCheckpoint: { blockNumber: 1900, blockHash: h64(19) },
         lastReplacement: { fromBlock: 2000, toBlock: 2000, foundAt: NOW, marked: 0 },
