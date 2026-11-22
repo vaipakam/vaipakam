@@ -197,6 +197,7 @@ import {
   type ChannelDeps,
 } from './alertChannelFlow';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { noteServiceBuild, UNSTAMPED } from '@vaipakam/lib/buildHistory';
 
 /** A signed alert request: a few fields plus a wallet signature. A
  *  smart-account (ERC-6492) signature can run to a few kilobytes, so the
@@ -217,6 +218,9 @@ const MAX_TELEGRAM_UPDATE_BYTES = 256 * 1024;
  * schema themselves (the shared module states why).
  */
 const schemaGate = createSchemaGate();
+
+/** The version this isolate has noted into the build history (#3921). */
+let notedVersion: string | null = null;
 
 /** #1722 — the agent's Telegram state object; wrangler binds it as TG_STATE. */
 export { TelegramState } from './telegramState/object';
@@ -269,6 +273,25 @@ export default {
       // eslint-disable-next-line no-console
       console.warn(schemaDeclineNotice(WORKER_NAME, 'this tick', schema));
       return;
+    }
+    // #3921 — the build history: note this version once per isolate. One
+    // statement, and only when the version is new to this isolate.
+    const version = resolved.CF_VERSION_METADATA;
+    if (version?.id && notedVersion !== version.id) {
+      notedVersion = version.id;
+      ctx.waitUntil(
+        noteServiceBuild(resolved.DB, {
+          service: 'agent',
+          build: version.tag ?? UNSTAMPED,
+          versionId: version.id,
+          source: 'self',
+          at: Math.floor(Date.now() / 1000),
+        }).catch((err) => {
+          notedVersion = null;
+          // eslint-disable-next-line no-console
+          console.error('[agent] build history note failed:', redactedError(err));
+        }),
+      );
     }
     // Each pass wrapped so a transient D1 / RPC blip on one can't
     // wedge the others. Same isolation policy the ops/hf-watcher

@@ -85,6 +85,13 @@ async function sendAlerts(findings: Finding[], now: number): Promise<void> {
   }
 }
 
+/**
+ * The deploy stamp tag this bundle was built with (`scripts/build.mjs` sets
+ * it), or 'unstamped' when it was not built that way (`tsx` in development).
+ */
+declare const __FAILED_TX_BUILD__: string | undefined;
+const PASS_BUILD = typeof __FAILED_TX_BUILD__ === 'string' ? __FAILED_TX_BUILD__ : 'unstamped';
+
 function summary(r: RunResult): string {
   const parts = [`chain ${r.chainId} (${r.mode})`];
   if (r.scanned) parts.push(`scanned ${r.scanned.from}-${r.scanned.to}`);
@@ -95,7 +102,7 @@ function summary(r: RunResult): string {
 }
 
 async function main(): Promise<number> {
-  const indexer = indexerClient({ origin: need('INDEXER_ORIGIN'), token: need('FAILED_TX_WRITER_TOKEN') });
+  const indexer = indexerClient({ origin: need('INDEXER_ORIGIN'), token: need('FAILED_TX_WRITER_TOKEN'), build: PASS_BUILD });
   const resultsDir = need('CAPABILITY_RESULTS_DIR');
   const apiKey = env('EXPLORER_API_KEY');
   const apiBase = env('EXPLORER_API_BASE') ?? 'https://api.etherscan.io/v2/api';

@@ -1468,8 +1468,9 @@ For each table:
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
    `loan_orphans` (absent from pre-#2197 archives), `signed_offers`
-   (absent from pre-#1481 archives), and `failed_tx`, `failed_tx_cursor`
-   and `failed_tx_range` (absent from pre-#3918 archives).
+   (absent from pre-#1481 archives), `failed_tx`, `failed_tx_cursor`
+   and `failed_tx_range` (absent from pre-#3918 archives), and
+   `service_build_history` (absent from pre-#3921 archives).
 
    > **The failed transaction record is restored, not replayed** (#3918).
    > `failed_tx` holds each failed transaction with its error and the

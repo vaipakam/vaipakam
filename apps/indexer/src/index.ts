@@ -167,6 +167,7 @@ import {
   handleNotifications,
   handleLoansPreflight,
 } from './loanRoutes';
+import { runBuildHistoryPass } from './buildHistoryPass';
 
 export default {
   async scheduled(
@@ -411,6 +412,15 @@ export default {
     // ingest — so it stays on. (Routing the global sweep per-chain THROUGH the
     // DO remains a nice-to-have follow-up, no longer a correctness gate.)
     //
+    // #3921 — the build history: this Worker's own build, and hourly the
+    // static builds' build files. In the post-ingest queue; it asks the live
+    // budget first (`buildHistoryPass.ts`).
+    afterIngestPass(() =>
+      runBuildHistoryPass(resolved, budget).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] build history pass failed:', redactedError(err));
+      }),
+    );
     // #2194 — in the post-ingest queue, behind the snapshot, and it asks the
     // live budget before each row (`sweepUnpublishedListings`).
     afterIngestPass(() =>

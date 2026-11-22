@@ -4,6 +4,7 @@
  * The pass has no database binding; everything it remembers between runs is
  * what it wrote here.
  */
+import { BUILD_HEADER } from '@vaipakam/lib/buildHistory';
 
 export interface PassState {
   cursor: {
@@ -37,10 +38,18 @@ export class IndexerFailure extends Error {
   }
 }
 
-export function indexerClient(opts: { origin: string; token: string; fetch?: typeof fetch; timeoutMs?: number }): IndexerClient {
+export function indexerClient(opts: {
+  origin: string;
+  token: string;
+  /** The pass's build (the deploy stamp tag the bundle was built with), sent so the indexer notes it in the build history (#3921). */
+  build?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): IndexerClient {
   const f = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 30_000;
-  const headers = { authorization: `Bearer ${opts.token}` };
+  const headers: Record<string, string> = { authorization: `Bearer ${opts.token}` };
+  if (opts.build) headers[BUILD_HEADER] = opts.build;
   const send = async (path: string, init: RequestInit): Promise<unknown> => {
     let res: Response;
     try {

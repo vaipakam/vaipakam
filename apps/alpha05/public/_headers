@@ -56,6 +56,11 @@
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
 
+# #3921 — the commit this build names, read by the indexer into the build
+# history. Never cached, so the read sees the deploy that is serving.
+/build.json
+  Cache-Control: no-store
+
 # Immutable static assets (content-hashed filenames).
 
 /assets/*

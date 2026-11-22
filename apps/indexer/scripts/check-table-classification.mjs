@@ -102,6 +102,10 @@ export const CLASSIFICATION = {
     reason: 'the failed transaction record (#3918): errors and explanations decoded while the node still had the state, which no replay can give back',
   },
   failed_tx_cursor: { class: 'born-off-chain', reason: 'the failed-tx pass\'s position per network (#3918), kept with the records it covers' },
+  service_build_history: {
+    class: 'born-off-chain',
+    reason: 'which build of each service ran from when (#3921): seen as it ran, so no replay recreates it',
+  },
   failed_tx_range: {
     class: 'born-off-chain',
     reason: 'the failed-tx pass\'s checkpoints, gaps, audit windows and replaced ranges (#3918), kept with the records they describe',
@@ -729,7 +733,11 @@ function docsCite(num) {
 // Empty since #2937 retired `recycle_day_backfill`, whose operator pass
 // (#1523) never shipped. The mechanism stays: a future table whose writer is
 // legitimately not a Worker is declared here, with a script or a cited tracker.
-const EXTERNAL_WRITERS = {};
+const EXTERNAL_WRITERS = {
+  // #3921 — the build history is written through the shared library, which
+  // the indexer and agent Workers and the failed-tx write route all call.
+  service_build_history: { script: 'packages/lib/src/buildHistory.ts' },
+};
 
 const dead = Object.keys(CLASSIFICATION)
   .filter((t) => !writers.has(t) && !(t in EXTERNAL_WRITERS))

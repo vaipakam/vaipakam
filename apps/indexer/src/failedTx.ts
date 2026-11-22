@@ -33,6 +33,7 @@
  * gaps, the audit's measured miss rate and, in sends-and-audit mode, the
  * share of the day that is watched. Facts only, no verdict.
  */
+import { BUILD_HEADER, noteServiceBuild, UNSTAMPED } from '@vaipakam/lib/buildHistory';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import {
@@ -569,7 +570,20 @@ export async function handleFailedTxWrite(
   const parsed = parseFailedTxWrite(body);
   if (!parsed.ok) return json({ error: parsed.error }, parsed.status);
   try {
-    const written = await applyFailedTxWrite(db, parsed.value, now());
+    const at = now();
+    const written = await applyFailedTxWrite(db, parsed.value, at);
+    // #3921 — the build history: the pass names its build on each write, and
+    // a cursor write (one per network per run) notes it. A note that fails
+    // is logged and does not fail the write it rode on.
+    if (parsed.value.kind === 'cursor') {
+      await noteServiceBuild(db, {
+        service: 'failed-tx-pass',
+        build: req.headers.get(BUILD_HEADER) ?? UNSTAMPED,
+        versionId: null,
+        source: 'pass-report',
+        at,
+      }).catch((e: unknown) => console.error('[failedTx] build history note failed', redactedError(e)));
+    }
     return json({ ok: true, written }, 200);
   } catch (e) {
     // The detail stays in the Worker's log; the caller gets a fixed answer.

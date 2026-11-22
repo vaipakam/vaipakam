@@ -93,6 +93,11 @@
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
 
+# #3921 — the commit this build names, read by the indexer into the build
+# history. Never cached, so the read sees the deploy that is serving.
+/build.json
+  Cache-Control: no-store
+
 # Version-pinned Terms archives (#1998 / Codex #2010 r3): tell crawlers
 
 # at the HTTP layer not to index them. The client-side meta tag only

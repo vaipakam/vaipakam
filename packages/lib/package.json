@@ -154,6 +154,14 @@
       "types": "./src/d1Maintenance.ts",
       "default": "./src/d1Maintenance.ts"
     },
+    "./buildHistory": {
+      "types": "./src/buildHistory.ts",
+      "default": "./src/buildHistory.ts"
+    },
+    "./buildFile": {
+      "types": "./src/buildFile.d.mts",
+      "default": "./src/buildFile.mjs"
+    },
     "./d1SchemaGate": {
       "types": "./src/d1SchemaGate.ts",
       "default": "./src/d1SchemaGate.ts"

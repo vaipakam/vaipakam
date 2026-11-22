@@ -12,6 +12,8 @@ import { connectSources, rpcConfigProblems } from './src/chain/endpoints.ts';
 import { applyFrameAncestors } from './src/chain/safeOrigins.ts';
 import { serviceWorkerSource, shellFiles } from './src/shared/install/serviceWorkerSource.ts';
 import { buildCommitLabel, buildSourceTime } from '@vaipakam/lib/buildTime';
+// #3921 — build.json, the commit this build names, read into the build history.
+import { buildFilePlugin } from '@vaipakam/lib/buildFile';
 
 // Stamp the commit and build time into the bundle (shown on the Help page
 // and in the capability service's provenance) so a tester can always tell
@@ -122,6 +124,7 @@ export default defineConfig(({ mode, command }) => {
       : [
           react(),
           serviceWorkerPlugin(),
+          buildFilePlugin() as Plugin,
           cspScriptHashesPlugin() as Plugin,
           frameAncestorsPlugin(),
           cspConnectSourcesPlugin({

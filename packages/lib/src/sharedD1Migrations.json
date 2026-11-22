@@ -101,5 +101,6 @@
   "0121_activity_payload_loan_index.sql",
   "0123_failed_transactions.sql",
   "0124_failed_tx_pass_state.sql",
-  "0125_event_and_state_history.sql"
+  "0125_event_and_state_history.sql",
+  "0126_service_build_history.sql"
 ]
