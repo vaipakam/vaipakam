@@ -38,6 +38,10 @@ vaults read.
 - The status split: **Priced**, **Unavailable** (missing) and **Divergent**
   (distrusted). The existing rules keep their meaning: a missing price takes
   the lender-first in-kind path, and a distrusted price refuses (#666).
+  Unavailable means the guard has no source for the asset. An answer that is
+  too old, zero or less, or a source whose read fails, is distrusted (owner
+  decision 2026-11-22). The freshness rule itself is stated in
+  `OraclePolicy.md`.
 - The one freshness rule for a Chainlink answer. The liquidity probe still
   needs it for pool-implied reserves, so the guard exposes it as a
   non-reverting view instead of the facet keeping a second copy.
