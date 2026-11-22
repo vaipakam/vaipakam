@@ -55,6 +55,7 @@ import {
   handleLoansRecent,
   handleLoansStats,
 } from './loanRoutes';
+import { NO_VALUE_TOTAL, ONE_ADDRESS_EXCLUDES } from './figureRules';
 
 export const PUBLIC_FEED_PREFIX = '/public/v1';
 export const PUBLIC_FEED_VERSION = 'v1';
@@ -172,9 +173,13 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     handler: handleLoansStats,
     params: [],
     about: {
-      what: 'Loan counts by status and the totals the transparency page shows.',
+      what: 'Loan counts by status, and the principal lent per lending asset in its own units. `counting` states how they were counted and how many loans had one address on both sides.',
       source: CHAIN_EVENTS,
-      excludes: ["the temporary loan a lender's sale creates"],
+      excludes: [
+        "the temporary loan a lender's sale creates",
+        `a value total across assets (${NO_VALUE_TOTAL})`,
+        'any rate: no average rate is formed across lending assets and terms',
+      ],
     },
   },
   {
@@ -191,6 +196,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
         'loans whose agreed terms the chain has not yet confirmed (counted as `unplaced`)',
         "the temporary loan a lender's sale creates",
         'loans with an NFT on either side',
+        ONE_ADDRESS_EXCLUDES,
         'intervals with no filled loan (no figure is drawn for them)',
       ],
     },

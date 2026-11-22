@@ -13,16 +13,14 @@
  *      one is a table `scripts/check-table-classification.mjs` classes as
  *      replay-derived (rebuilt from the chain alone), never born off-chain
  *      or hybrid. One wallet's own-page reads stay out, and a route taking
- *      an address joins only when a design names it public: today that is
- *      the repayment record alone (#3778), which answers for one address
- *      and never lists, ranks, searches or filters addresses.
+ *      an address joins only when a design names it public (none yet; the
+ *      repayment record, #3778, joins in its own change).
  */
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { FEED_RATE_LIMIT, FEED_ROUTES, handlePublicFeed } from '../src/publicFeed';
 import type { Env } from '../src/env';
-import { RECORD_STATEMENTS, RECORD_VERSION } from '../src/repaymentRecord';
 // @ts-expect-error — a plain .mjs script with no type declarations.
 import { CLASSIFICATION } from '../scripts/check-table-classification.mjs';
 
@@ -53,7 +51,6 @@ const SAMPLE: Record<string, string> = {
   '/loans/stats': '/loans/stats',
   '/loans/rate-candles': `/loans/rate-candles?${PAIR}&interval=1d&range=30d`,
   '/loans/{id}': '/loans/1',
-  '/repayment-record/{address}': `/repayment-record/${B}`,
 };
 
 function insert(db: { prepare(sql: string): { run(...a: unknown[]): unknown } }, table: string, row: Record<string, unknown>) {
@@ -96,7 +93,6 @@ function seeded() {
       status: 'active',
       lender: A,
       borrower: B,
-      borrower_current_owner: B,
       principal: '1000',
       collateral_amount: '2',
       lending_asset: USDC,
@@ -115,21 +111,6 @@ function seeded() {
       init_terms_unbacked: 0,
     });
   }
-  // B held both loans as borrower and paid interest on the first, so the
-  // repayment record has rows in every list it returns.
-  for (const id of [1, 2]) {
-    insert(h.db, 'loan_participants', { chain_id: CHAIN, loan_id: id, wallet: B, role: 'borrower', from_at: NOW - 3600 * id });
-  }
-  insert(h.db, 'activity_events', {
-    chain_id: CHAIN,
-    block_number: 20,
-    log_index: 0,
-    tx_hash: '0x' + '14'.repeat(32),
-    kind: 'LoanInterestPaid',
-    loan_id: 1,
-    args_json: JSON.stringify({ loanId: '1', asset: USDC, gross: '5' }),
-    block_at: NOW - 1800,
-  });
   const sql: string[] = [];
   const d1 = h.d1 as { prepare(s: string): unknown };
   const prepare = d1.prepare.bind(d1);
@@ -175,7 +156,7 @@ describe('(a) each route takes only the parameters it lists', () => {
     parseMarketFilter: ['lendingAsset', 'collateralAsset', 'durationDays'],
   };
   const handlerParams = (name: string): string[] => {
-    for (const file of ['offerRoutes.ts', 'loanRoutes.ts', 'repaymentRecord.ts']) {
+    for (const file of ['offerRoutes.ts', 'loanRoutes.ts']) {
       const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
       const starts = [...src.matchAll(/^export async function (\w+)\(/gm)];
       const i = starts.findIndex((m) => m[1] === name);
@@ -209,7 +190,6 @@ describe('(a) each route takes only the parameters it lists', () => {
       '/loans/stats': [],
       '/loans/rate-candles': ['lendingAsset', 'collateralAsset', 'durationDays', 'interval', 'range'],
       '/loans/{id}': [],
-      '/repayment-record/{address}': [],
     });
   });
 
@@ -276,7 +256,7 @@ describe('(c) the tables each route reads', () => {
 
   // The routes a design names public that take an address. Adding one
   // here needs that design, in review.
-  const ADDRESS_ROUTES = ['/repayment-record/{address}'];
+  const ADDRESS_ROUTES: string[] = [];
   // One wallet's own-page reads: chain data, but each serves one wallet's
   // own page, so the feed never carries them.
   const OWN_PAGE = [
@@ -320,13 +300,6 @@ describe('(c) the tables each route reads', () => {
         'protocol_config',
         'swap_to_repay_intents',
       ],
-      '/repayment-record/{address}': [
-        'activity_events',
-        'indexer_cursor',
-        'indexer_deployment',
-        'loan_participants',
-        'loans',
-      ],
     });
   });
 
@@ -355,45 +328,6 @@ describe('(c) the tables each route reads', () => {
     }
   });
 });
-
-describe('the repayment record on the feed', () => {
-  it('answers one address with the statements, block, version, unclassified count and fee state', async () => {
-    const { env } = seeded();
-    const res = await handlePublicFeed(new Request(`https://x${withChain(`/repayment-record/${B}`)}`), env);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, any>;
-    expect(body.asOf.block).toBe(500);
-    expect(body.data.version).toBe(RECORD_VERSION);
-    expect(body.data.statements).toEqual([...RECORD_STATEMENTS]);
-    expect(body.data.asOf.block).toBe(500);
-    expect(typeof body.data.loans.unclassified).toBe('number');
-    expect(typeof body.data.rentals.unclassified).toBe('number');
-    expect(body.data.feesPaid.stated).toBe(false);
-    expect(body.data.loans.openNow).toBe(2);
-    expect(body.data.interestPaid).toEqual([{ asset: USDC, total: '5' }]);
-  });
-
-  it('answers an address with no history with an empty record, not an error', async () => {
-    const { env } = seeded();
-    const nobody = '0x' + '99'.repeat(20);
-    const res = await handlePublicFeed(new Request(`https://x${withChain(`/repayment-record/${nobody}`)}`), env);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, any>;
-    expect(body.data.address).toBe(nobody);
-    expect(body.data.loans.closed).toBe(0);
-    expect(body.data.loans.openNow).toBe(0);
-    expect(body.data.interestPaid).toEqual([]);
-    expect(body.data.statements).toEqual([...RECORD_STATEMENTS]);
-  });
-
-  it('refuses a malformed address with a 400, passed through', async () => {
-    const { env } = seeded();
-    const res = await handlePublicFeed(new Request(`https://x${withChain('/repayment-record/not-an-address')}`), env);
-    expect(res.status).toBe(400);
-    expect(res.headers.get('X-Feed-Version')).toBe('v1');
-  });
-});
-
 describe('the budget', () => {
   it('a 429 states the limit and the period and carries Retry-After', async () => {
     const { env } = seeded();

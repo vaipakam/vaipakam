@@ -88,7 +88,7 @@ today are testnets; the platform is not live on any mainnet.
 | `/offers/{id}` | One offer by id. | |
 | `/loans/active` | Active loans, paginated. | `limit`, `before` |
 | `/loans/recent` | Recently opened loans, optionally for one pair and term. | `limit`, `before`, `excludeSaleVehicles`, and together `lendingAsset`, `collateralAsset`, `durationDays` |
-| `/loans/stats` | Loan counts by status and the totals the transparency page shows. | |
+| `/loans/stats` | Loan counts by status, and the principal lent per lending asset in that asset's own smallest units. `counting` states how it counted (see below). | |
 | `/loans/rate-candles` | The agreed rates of this platform's own past loans for one pair and term, by interval (open, high, low, close). `fills` is each interval's sample size. | `lendingAsset`, `collateralAsset`, `durationDays` (all required), `interval` (`1h`, `4h`, `1d`), `range` (`7d`, `30d`, `90d`, `all`) |
 | `/loans/{id}` | One loan by id, with its status. | |
 
@@ -101,6 +101,28 @@ same path gives the app; the indexer's README describes those shapes. The
 field names each route returns in v1 are pinned by a test: a field may be
 added, never removed or renamed.
 
+### How the figures count
+
+Three rules hold for every figure the feed publishes.
+
+1. **No value total.** The index reads no price, so it never adds amounts of
+   different assets together. Each amount is stated in its own asset's
+   smallest units, on its own line, and `counting.valueTotal` is always
+   `null`.
+2. **One address on both sides.** A loan whose opening event names the same
+   address as lender and borrower is left out of rate figures and counted on
+   its own line (`counting.oneAddress`). It is judged on the opening event
+   only: a later sale or handover moves a loan neither in nor out. The rule
+   sees one address on both sides only; it cannot see two addresses that
+   belong to one person. A loan whose opening parties are not known is not
+   left out.
+3. **No mean across assets or terms.** Every rate figure is per lending asset
+   and term range. No figure averages the rates of different assets or terms
+   together.
+
+Each figure carries a `counting` object that states these in words, and the
+envelope states the block, as above.
+
 ### What the figures leave out
 
 Each response's `about.excludes` lists this for the route. In short:
@@ -110,7 +132,10 @@ Each response's `about.excludes` lists this for the route. In short:
   here.
 - **Loan totals and rate candles** leave out the temporary loan a lender's
   sale creates: it is a change of holder, not a new loan.
-- **Rate candles** also leave out loans with an NFT on either side, and
+- **Rate candles** also leave out loans whose opening event names one
+  address on both sides (counted as `oneAddress`; `oneAddressAtLeast` is
+  `true` when the count stopped at its cap of 1,000), loans with an NFT on
+  either side, and
   loans whose agreed terms the chain has not yet confirmed (these are
   counted, as `unplaced`, but not drawn). An interval with no filled loan
   has no figure; nothing is filled in for it.

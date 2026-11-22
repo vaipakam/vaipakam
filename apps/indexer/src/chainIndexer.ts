@@ -5688,8 +5688,9 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at, init_principal_unbacked, init_terms_unbacked)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+             start_block, start_at, updated_at, init_principal_unbacked, init_terms_unbacked,
+             init_lender, init_borrower)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
         )
           .bind(
             chainId,
@@ -5731,6 +5732,9 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
+            // #3879 — the opening event's two parties, written once (0118).
+            lender,
+            borrower,
           );
         // #1130 — seed participation from the current-owner projection at
         // init (lenderOwner/borrowerOwner already resolve a pre-accept
@@ -5822,8 +5826,9 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at, init_principal_unbacked)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0)`,
+             start_block, start_at, updated_at, init_principal_unbacked,
+             init_lender, init_borrower)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         )
           .bind(
             chainId,
@@ -5866,6 +5871,10 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
+            // #3879 — the opening EVENT's parties, not the read-back's: the
+            // read-back is unpinned, and a sale may already have moved a side.
+            lender,
+            borrower,
           );
         // #1130 — participation seed via the offer-projection resolution
         // above, written with the row by the pass that writes it, for the
@@ -5898,8 +5907,9 @@ export async function processLoanLogs(
            duration_days, token_id, collateral_token_id,
            lender_current_owner, borrower_current_owner,
            is_stub, init_principal,
-           start_block, start_at, updated_at, init_principal_unbacked)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0)`,
+           start_block, start_at, updated_at, init_principal_unbacked,
+           init_lender, init_borrower)
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0, ?, ?)`,
       )
         .bind(
           chainId,
@@ -5915,6 +5925,8 @@ export async function processLoanLogs(
           Number(log.blockNumber),
           blockAt,
           now,
+          lender,
+          borrower,
         );
       // #1130 — participation seed from the event parties (all the stub
       // path has). Same-tx mint Transfers can't attribute these (the stub

@@ -177,13 +177,43 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_placed_tenor_start_at');
   });
 
-  it('reads the candles and the unplaced count in one batch, so both describe one snapshot', async () => {
+  it('reads the candles and both counts in one batch, so all describe one snapshot', async () => {
     const h = makeHarness();
     h.seed(1, 0, 400);
     h.seed(2, 100, 500, 1);
     await h.call();
     expect(h.batches).toHaveLength(1);
-    expect(h.batches[0]).toHaveLength(2);
+    // Candles, the unplaced count, the one-address count (#3879).
+    expect(h.batches[0]).toHaveLength(3);
+  });
+
+  it('leaves a loan opened with one address on both sides out of the candles, and counts it (#3879)', async () => {
+    const h = makeHarness();
+    const opened = h.db.prepare(
+      'UPDATE loans SET init_lender = ?, init_borrower = ?, lender = ?, borrower = ? WHERE loan_id = ?',
+    );
+    const A = '0x1111111111111111111111111111111111111111';
+    const B = '0x2222222222222222222222222222222222222222';
+    h.seed(1, 0, 400); // A to B
+    opened.run(A, B, A, B, 1);
+    h.seed(2, 10, 9_000); // A to A: a rate nobody else agreed to
+    opened.run(A, A, A, A, 2);
+    // Opened A to B; B later bought the lender side. Stays in.
+    h.seed(3, 20, 500);
+    opened.run(A, B, B, B, 3);
+    // Opened A to A; A later sold the lender side. Stays out.
+    h.seed(4, 30, 9_500);
+    opened.run(A, A, B, A, 4);
+    const body = (await h.call()) as CandlesBody & {
+      oneAddress: number;
+      oneAddressAtLeast: boolean;
+      counting: { valueTotal: null; oneAddress: number };
+    };
+    expect(body.buckets.map((b) => [b.open, b.close, b.fills])).toEqual([[400, 500, 2]]);
+    expect(body.oneAddress).toBe(2);
+    expect(body.oneAddressAtLeast).toBe(false);
+    expect(body.counting.valueTotal).toBeNull();
+    expect(body.counting.oneAddress).toBe(2);
   });
 
   it('stops counting at the cap and says "more than" past it', async () => {
