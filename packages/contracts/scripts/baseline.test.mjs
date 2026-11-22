@@ -113,24 +113,29 @@ test('the source digest leaves the baseline records out and does not depend on o
 test('the regression section keeps every manifest, at any depth, and adds up chunks and tests', () => {
   const dir = mkdtempSync(join(tmpdir(), 'baseline-man-'));
   mkdirSync(join(dir, 'machine2'));
-  writeFileSync(join(dir, 'shard-1.tsv'), 'plan\tabc\nshard\t1/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\npass\ttest/{A}.t.sol\ntests\ttest/{A}.t.sol\t10\t10\ncomplete\t1\n');
-  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\npass\ttest/{B}.t.sol\ntests\ttest/{B}.t.sol\t5\t5\ncomplete\t1\n');
+  writeFileSync(join(dir, 'shard-1.tsv'), 'plan\tabc\nshard\t1/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\npass\ttest/{A}.t.sol\ntests\ttest/{A}.t.sol\t10\t10\ncomplete\t1\n');
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\npass\ttest/{B}.t.sol\ntests\ttest/{B}.t.sol\t5\t5\ncomplete\t1\n');
   const r = collectRegression(dir);
   assert.deepEqual([r.planDigest, r.chunks, r.chunksPassed, r.testsRun, r.testsPassed], ['abc', 2, 2, 15, 15]);
-  assert.deepEqual(r.planInputs, { CHUNK_SIZE: '7', SUBDIR_CHUNK_SIZE: '3' });
+  assert.deepEqual(r.planInputs, { CHUNK_SIZE: '7', SUBDIR_CHUNK_SIZE: '3', INVARIANTS: '0' });
+  assert.deepEqual(r.source, { commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', clean: true });
   assert.deepEqual(Object.keys(r.manifests), ['machine2/shard-2.tsv', 'shard-1.tsv']);
-  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\npass\ttest/{B}.t.sol\ncomplete\t1\n');
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\npass\ttest/{B}.t.sol\ncomplete\t1\n');
   assert.throws(() => collectRegression(dir), /the chunk test\/\{B\}\.t\.sol has no test counts/);
-  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\npass\ttest/{B}.t.sol\ntests\ttest/{B}.t.sol\t5\tx\ncomplete\t1\n');
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\npass\ttest/{B}.t.sol\ntests\ttest/{B}.t.sol\t5\tx\ncomplete\t1\n');
   assert.throws(() => collectRegression(dir), /not two whole numbers/);
-  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tother\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\n');
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tother\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\n');
   assert.throws(() => collectRegression(dir), /2 plan digests/);
   writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\n');
   assert.throws(() => collectRegression(dir), /no plan inputs/);
-  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t9\ninput\tSUBDIR_CHUNK_SIZE\t3\n');
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t9\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\n');
   assert.throws(() => collectRegression(dir), /plan inputs differ/);
-  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tFORK_URL_X\thttps://rpc/key\n');
-  assert.throws(() => collectRegression(dir), /not a chunk size or a FORK_URL_\* name marked set/);
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tclean\ninput\tFORK_URL_X\thttps://rpc/key\n');
+  assert.throws(() => collectRegression(dir), /not a chunk size, the invariants switch or a FORK_URL_\* name marked set/);
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\n');
+  assert.throws(() => collectRegression(dir), /no "source <commit> clean\|dirty" row/);
+  writeFileSync(join(dir, 'machine2/shard-2.tsv'), 'plan\tabc\nshard\t2/2\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tclean\n');
+  assert.throws(() => collectRegression(dir), /one regression tests one tree/);
 });
 
 test('the comparison names the compiler first, then every contract difference', () => {
@@ -172,12 +177,13 @@ const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'u
 /** A repository with one deployable and a tag of the series made the documented way (unsigned unless a key is given). */
 const GREEN = {
   planDigest: 'abc',
-  planInputs: { CHUNK_SIZE: '7', SUBDIR_CHUNK_SIZE: '3' },
+  planInputs: { CHUNK_SIZE: '7', SUBDIR_CHUNK_SIZE: '3', INVARIANTS: '0' },
+  source: { commit: 'SRCCOMMIT', clean: true },
   chunks: 1,
   chunksPassed: 1,
   testsRun: 3,
   testsPassed: 3,
-  manifests: { 'full.tsv': 'plan\tabc\nshard\t1/1\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\npass\ttest/{A}.t.sol\ntests\ttest/{A}.t.sol\t3\t3\ncomplete\t1\n' },
+  manifests: { 'full.tsv': 'plan\tabc\nshard\t1/1\ninput\tCHUNK_SIZE\t7\ninput\tSUBDIR_CHUNK_SIZE\t3\ninput\tINVARIANTS\t0\nsource\tSRCCOMMIT\tclean\npass\ttest/{A}.t.sol\ntests\ttest/{A}.t.sol\t3\t3\ncomplete\t1\n' },
 };
 
 function repoWithTag(tag, { extraFile = false, wrongHash = false, message, regression } = {}) {
@@ -192,7 +198,7 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message, regre
   // The tagged tree's verifier: this stand-in accepts manifests cut from plan
   // "abc" only, so the check is seen running the TAG's run-regression.sh.
   mkdirSync(join(repo, 'contracts/script'), { recursive: true });
-  writeFileSync(join(repo, 'contracts/script/run-regression.sh'), '#!/usr/bin/env bash\n[ -n "${BASELINE_TEST_SENTINEL:-}" ] && touch "$BASELINE_TEST_SENTINEL"\n[ "$CHUNK_SIZE" = 7 ] && [ -z "${FORK_URL_LEAK:-}" ] || { echo "verify-shards: not the recorded inputs" >&2; exit 1; }\ngrep -rqP "^plan\\tabc$" "$2" || { echo "verify-shards: cut from a different plan" >&2; exit 1; }\n');
+  writeFileSync(join(repo, 'contracts/script/run-regression.sh'), '#!/usr/bin/env bash\n[ -n "${BASELINE_TEST_SENTINEL:-}" ] && touch "$BASELINE_TEST_SENTINEL"\n[ "$CHUNK_SIZE" = 7 ] && [ -z "${FORK_URL_LEAK:-}" ] || { echo "verify-shards: not the recorded inputs" >&2; exit 1; }\nD="${@: -1}"\nif grep -rqP "^input\\tINVARIANTS\\t1$" "$D"; then [ "$1" = --invariants ] || { echo "verify-shards: invariants plan rebuilt without --invariants" >&2; exit 1; }; fi\ngrep -rqP "^plan\\tabc$" "$D" || { echo "verify-shards: cut from a different plan" >&2; exit 1; }\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'source');
   const source = { commit: git(repo, 'rev-parse', 'HEAD'), digest: sourceDigest(treeEntries(repo, 'HEAD')) };
@@ -205,7 +211,8 @@ function repoWithTag(tag, { extraFile = false, wrongHash = false, message, regre
     source,
     contracts: built.contracts,
     gas: { repay: { gas: 1 } },
-    regression: regression ?? GREEN,
+    // The manifests name the tree they tested: this fixture's source commit.
+    regression: regression === false ? false : JSON.parse(JSON.stringify(regression ?? GREEN).replaceAll('SRCCOMMIT', source.commit)),
     storageLayout: { file: 'contracts/storage-layout/layout.golden.json', sha256: execFileSync('sha256sum', [join(repo, 'contracts/storage-layout/layout.golden.json')], { encoding: 'utf8' }).split(' ')[0] },
     versions: { build: built.build, forge: 'forge 1.8.6', libraries: { dep: { type: 'vendored', hash: meta.split(' ')[2] } } },
   };
@@ -307,6 +314,8 @@ test('the check requires a green regression section that adds up and that the ta
   const cases = [
     [null, /no regression section/],
     [{ ...GREEN, testsRun: 4 }, /states testsRun 4, its manifests add up to 3/],
+    [{ ...GREEN, source: { commit: 'c'.repeat(40), clean: true }, manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('SRCCOMMIT', 'c'.repeat(40)) } }, /the manifests tested c+, the record is of/],
+    [{ ...GREEN, source: { commit: 'SRCCOMMIT', clean: false }, manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('\tclean', '\tdirty') } }, /uncommitted changes to tracked files/],
     [{ ...GREEN, planInputs: { CHUNK_SIZE: '25', SUBDIR_CHUNK_SIZE: '3' } }, /states planInputs .*25.*, its manifests add up to .*7/],
     [{ ...GREEN, chunksPassed: 0, manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('pass\t', 'fail\t') } }, /1 of 1 chunks failed/],
     [{ ...GREEN, planDigest: 'zzz', manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('abc', 'zzz') } }, /verify-shards: cut from a different plan/],
@@ -328,6 +337,16 @@ test('the check requires a green regression section that adds up and that the ta
     }
   } finally {
     restore();
+  }
+  // A plan that held the invariant suites is rebuilt with --invariants.
+  {
+    const inv = { ...GREEN, planInputs: { ...GREEN.planInputs, INVARIANTS: '1' }, manifests: { 'full.tsv': GREEN.manifests['full.tsv'].replace('INVARIANTS\t0', 'INVARIANTS\t1') } };
+    const { repo, dir } = repoWithTag(tag, { regression: inv });
+    try {
+      assert.deepEqual(checkBaseline({ repo, tag, outDir: dir, verifyTag: verified }).refusals, []);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   }
   for (const [regression, want] of cases) {
     const { repo, dir } = repoWithTag(tag, { regression: regression ?? false });

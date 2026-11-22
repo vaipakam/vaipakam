@@ -43,7 +43,7 @@ import {
   SOURCE_DIGEST_RULE,
   sha256,
   sourceDigest,
-  planEnv,
+  planInvocation,
   regressionAgreement,
 } from './lib/baseline.mjs';
 import { librariesAt, treeEntries } from './lib/baseline-git.mjs';
@@ -105,20 +105,28 @@ export function main(argv = process.argv.slice(2)) {
   }
   // Verify under the plan inputs the manifests recorded, not this shell's
   // (a regression run with `CHUNK_SIZE=7 bash ...` set them for that command).
-  let planInputs;
+  const commit = git(['rev-parse', 'HEAD']);
+  let regression;
   try {
-    ({ planInputs } = collectRegression(resolve(opt.manifests)));
+    regression = collectRegression(resolve(opt.manifests));
   } catch (e) {
     console.error(`baseline-record: ${e.message.replace(/^baseline: /, '')}`);
     return 1;
   }
+  // The same rule the check applies, before the build: a green regression of
+  // a clean checkout of exactly this commit, whose totals add up.
+  const regressionGaps = regressionAgreement(regression, commit);
+  if (regressionGaps.length) {
+    for (const g of regressionGaps) console.error(`baseline-record: ${g}`);
+    return 1;
+  }
   try {
-    execFileSync('bash', [join(CONTRACTS_DIR, 'script/run-regression.sh'), '--verify-shards', resolve(opt.manifests)], { stdio: ['ignore', 'inherit', 'inherit'], env: planEnv(planInputs) });
+    const { env, args } = planInvocation(regression.planInputs);
+    execFileSync('bash', [join(CONTRACTS_DIR, 'script/run-regression.sh'), ...args, '--verify-shards', resolve(opt.manifests)], { stdio: ['ignore', 'inherit', 'inherit'], env });
   } catch {
     console.error('baseline-record: run-regression.sh --verify-shards refused the manifests; the record carries a verified regression only');
     return 1;
   }
-  const commit = git(['rev-parse', 'HEAD']);
   const { outDir, cleanup } = buildAt(REPO, commit);
   let record;
   try {
@@ -134,13 +142,6 @@ export function main(argv = process.argv.slice(2)) {
     });
   } finally {
     cleanup();
-  }
-  // The same rule the check applies: a record carries a green regression whose
-  // totals are what its manifests add up to.
-  const regressionGaps = regressionAgreement(record.regression);
-  if (regressionGaps.length) {
-    for (const g of regressionGaps) console.error(`baseline-record: ${g}`);
-    return 1;
   }
   const text = canonicalJson(record);
   const dest = join(REPO, rel);

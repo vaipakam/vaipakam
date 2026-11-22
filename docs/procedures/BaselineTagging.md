@@ -29,10 +29,13 @@ bash script/run-regression.sh --manifest ../baseline-manifests/full.tsv
 
 The regression runs the gas suite with everything else and writes its figures
 to `out-gas-suite/`. A sharded run works too: put every
-shard's manifest in the same folder, at any depth. Each manifest names the inputs its plan
-was built from (the chunk sizes, and the names of the `FORK_URL_*` variables
-that were set, never a URL), so the check rebuilds the same plan on another
-machine whatever that machine's own settings.
+shard's manifest in the same folder, at any depth. Each manifest names the commit it tested
+and whether tracked files were changed, and the inputs its plan was built from
+(the chunk sizes, whether the invariant suites were in it, and the names of the
+`FORK_URL_*` variables that were set, never a URL). The record and the check
+refuse manifests of another commit or of a changed tree, and the check
+rebuilds the same plan on another machine whatever that machine's own
+settings.
 
 ## 2. Write the record
 

@@ -47,7 +47,7 @@ import {
   compareBuild,
   GAS_BUDGETS_FILE,
   gasCompleteness,
-  planEnv,
+  planInvocation,
   recordPath,
   regressionAgreement,
   sha256,
@@ -102,10 +102,18 @@ export function buildAt(repo, commit) {
   try {
     // A submodule the checkout has initialized is part of its build; the
     // worktree gets the same pinned commit.
-    for (const line of run('git', ['submodule', 'status'], { cwd: repo }).split('\n').filter(Boolean)) {
-      if (line.startsWith('-')) continue;
-      const path = line.trim().split(/\s+/)[1];
-      run('git', ['submodule', 'update', '--init', '--quiet', path], { cwd: wt });
+    // The submodules are the ones the REBUILT commit pins (listed in the
+    // worktree), initialized where this checkout has them; a submodule only a
+    // later checkout added is not the old commit's business.
+    const here = new Set(
+      run('git', ['submodule', 'status'], { cwd: repo })
+        .split('\n')
+        .filter((l) => l && !l.startsWith('-'))
+        .map((l) => l.trim().split(/\s+/)[1]),
+    );
+    for (const line of run('git', ['submodule', 'status'], { cwd: wt }).split('\n').filter(Boolean)) {
+      const path = line.trim().replace(/^[-+U]/, '').trim().split(/\s+/)[1];
+      if (here.has(path)) run('git', ['submodule', 'update', '--init', '--quiet', path], { cwd: wt });
     }
     const outDir = join(scratch, 'out');
     // --ast names every immutable in the record (§3.2); it changes no code.
@@ -144,7 +152,8 @@ export function verifyShardsAt(repo, commit, manifests, planInputs) {
     run('git', ['worktree', 'add', '--detach', '--quiet', wt, commit], { cwd: repo });
     try {
       // The plan is rebuilt from the RECORDED inputs, never this machine's.
-      run('bash', [join(wt, 'contracts/script/run-regression.sh'), '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'], env: planEnv(planInputs) });
+      const { env, args } = planInvocation(planInputs);
+      run('bash', [join(wt, 'contracts/script/run-regression.sh'), ...args, '--verify-shards', dir], { stdio: ['ignore', 'pipe', 'pipe'], env });
       return [];
     } catch (e) {
       const said = `${e.stderr ?? ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -202,7 +211,7 @@ export function checkBaseline({
   }
   const budgets = tryGit(repo, ['show', `${facts.commit}:${GAS_BUDGETS_FILE}`]);
   refusals.push(...gasCompleteness(record.gas, budgets == null ? {} : JSON.parse(budgets)));
-  const regressionRefusals = regressionAgreement(record.regression);
+  const regressionRefusals = regressionAgreement(record.regression, record.source?.commit);
   refusals.push(...regressionRefusals);
   if (!regressionRefusals.length) refusals.push(...verifyShards(facts.commit, record.regression));
   if (!record.versions?.forge) refusals.push('build tool: the record names no forge version (versions.forge); a baseline records its toolchain');

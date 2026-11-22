@@ -87,6 +87,8 @@ rm -rf "$WORK/inputs"; mkdir -p "$WORK/inputs"
 FORK_URL_SECRET_PROBE='https://rpc.example/key-1234' CHUNK_SIZE=7 rr --manifest "$WORK/inputs/full.tsv" > /dev/null 2>&1
 if grep -qP '^input\tCHUNK_SIZE\t7$' "$WORK/inputs/full.tsv" \
    && grep -qP '^input\tSUBDIR_CHUNK_SIZE\t3$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^input\tINVARIANTS\t0$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^source\t\S+\t(clean|dirty)$' "$WORK/inputs/full.tsv" \
    && grep -qP '^input\tFORK_URL_SECRET_PROBE\tset$' "$WORK/inputs/full.tsv" \
    && ! grep -q 'key-1234' "$WORK/inputs/full.tsv"; then
   ok "the manifest names the plan's inputs and no URL"

@@ -293,6 +293,7 @@ export function regressionFromManifests(manifests) {
   if (!files.length) throw new Error('baseline: the regression section carries no manifests');
   const digests = new Set();
   let planInputs = null;
+  let source = null;
   let chunks = 0;
   let passed = 0;
   let testsRun = 0;
@@ -305,13 +306,27 @@ export function regressionFromManifests(manifests) {
     for (const line of text.split('\n')) {
       const [k, name, value] = line.split('\t');
       if (k !== 'input') continue;
-      const known = name === 'CHUNK_SIZE' || name === 'SUBDIR_CHUNK_SIZE' ? /^[1-9]\d*$/.test(value ?? '') : /^FORK_URL_[A-Z0-9_]+$/.test(name ?? '') && value === 'set';
-      if (!known || name in inputs) throw new Error(`baseline: ${f}: the input row "${line}" is not a chunk size or a FORK_URL_* name marked set, or repeats one`);
+      const known =
+        name === 'CHUNK_SIZE' || name === 'SUBDIR_CHUNK_SIZE'
+          ? /^[1-9]\d*$/.test(value ?? '')
+          : name === 'INVARIANTS'
+            ? value === '0' || value === '1'
+            : /^FORK_URL_[A-Z0-9_]+$/.test(name ?? '') && value === 'set';
+      if (!known || name in inputs) throw new Error(`baseline: ${f}: the input row "${line}" is not a chunk size, the invariants switch or a FORK_URL_* name marked set, or repeats one`);
       inputs[name] = value;
     }
-    if (!('CHUNK_SIZE' in inputs) || !('SUBDIR_CHUNK_SIZE' in inputs)) {
-      throw new Error(`baseline: ${f}: no plan inputs (chunk sizes); run the regression again with this tree's run-regression.sh`);
+    if (!('CHUNK_SIZE' in inputs) || !('SUBDIR_CHUNK_SIZE' in inputs) || !('INVARIANTS' in inputs)) {
+      throw new Error(`baseline: ${f}: no plan inputs (chunk sizes, invariants switch); run the regression again with this tree's run-regression.sh`);
     }
+    // The tree the run tested: the plan digest covers file names, not
+    // contents, so this binds the results to a source.
+    const sources = text.split('\n').filter((l) => l.startsWith('source\t')).map((l) => l.split('\t'));
+    if (sources.length !== 1 || !/^[0-9a-f]{40,64}$/.test(sources[0][1] ?? '') || !['clean', 'dirty'].includes(sources[0][2])) {
+      throw new Error(`baseline: ${f}: no "source <commit> clean|dirty" row naming the tree it tested; run the regression again with this tree's run-regression.sh`);
+    }
+    const src = { commit: sources[0][1], clean: sources[0][2] === 'clean' };
+    if (source && canonicalJson(source) !== canonicalJson(src)) throw new Error(`baseline: ${f}: it tested ${src.commit}, another manifest ${source.commit}; one regression tests one tree`);
+    source = src;
     if (planInputs && canonicalJson(planInputs) !== canonicalJson(inputs)) throw new Error(`baseline: ${f}: its plan inputs differ from another manifest's; one regression has one plan`);
     planInputs = inputs;
     // Every chunk the manifest records carries exactly one count row, so the
@@ -341,17 +356,18 @@ export function regressionFromManifests(manifests) {
   if (digests.size !== 1) throw new Error(`baseline: the manifests name ${digests.size} plan digests; one regression has one plan`);
   const sorted = {};
   for (const f of files) sorted[f] = manifests[f];
-  return { planDigest: [...digests][0], planInputs, chunks, chunksPassed: passed, testsRun, testsPassed, manifests: sorted };
+  return { planDigest: [...digests][0], planInputs, source, chunks, chunksPassed: passed, testsRun, testsPassed, manifests: sorted };
 }
 
 /**
  * Whether a record's regression section is the evidence §3.2 asks for: present,
  * its totals and plan digest the ones its own manifests add up to, and green
- * (every chunk and every test passed). Returns every refusal as a sentence.
+ * (every chunk and every test passed), run on a clean checkout of exactly
+ * `sourceCommit`. Returns every refusal as a sentence.
  * Whether the manifests cover the tagged tree's plan is the tree's own
  * verifier's question (`run-regression.sh --verify-shards`), asked separately.
  */
-export function regressionAgreement(regression) {
+export function regressionAgreement(regression, sourceCommit) {
   if (!regression || typeof regression !== 'object') return ['regression: the record carries no regression section; a baseline records its full regression'];
   let derived;
   try {
@@ -360,10 +376,12 @@ export function regressionAgreement(regression) {
     return [`regression: ${e.message.replace(/^baseline: /, '')}`];
   }
   const out = [];
-  for (const k of ['planDigest', 'planInputs', 'chunks', 'chunksPassed', 'testsRun', 'testsPassed']) {
+  for (const k of ['planDigest', 'planInputs', 'source', 'chunks', 'chunksPassed', 'testsRun', 'testsPassed']) {
     const [a, b] = [regression[k] ?? null, derived[k]].map((v) => JSON.stringify(JSON.parse(canonicalJson(v))));
     if (a !== b) out.push(`regression: the record states ${k} ${a}, its manifests add up to ${b}`);
   }
+  if (derived.source.commit !== sourceCommit) out.push(`regression: the manifests tested ${derived.source.commit}, the record is of ${sourceCommit}; run the regression on the record's commit`);
+  if (!derived.source.clean) out.push(`regression: the manifests were run with uncommitted changes to tracked files; run the regression on a clean checkout`);
   if (derived.chunksPassed !== derived.chunks) out.push(`regression: ${derived.chunks - derived.chunksPassed} of ${derived.chunks} chunks failed; a baseline records a green regression`);
   if (derived.testsPassed !== derived.testsRun) out.push(`regression: ${derived.testsRun - derived.testsPassed} of ${derived.testsRun} tests failed; a baseline records a green regression`);
   return out;
@@ -446,12 +464,14 @@ export function checkTagFacts(tag, t) {
 }
 
 /**
- * The environment a `run-regression.sh --verify-shards` runs under to rebuild
- * the plan a set of manifests recorded: `base` without its own chunk sizes or
- * FORK_URL_* variables, plus the recorded ones (a FORK_URL_* name only marks
- * a URL as present; planning never reads the value).
+ * How to run `run-regression.sh --verify-shards` so it rebuilds the plan a set
+ * of manifests recorded: `base` without its own chunk sizes or FORK_URL_*
+ * variables, plus the recorded ones (a FORK_URL_* name only marks a URL as
+ * present; planning never reads the value), and `--invariants` when the
+ * recorded plan held the invariant suites. Returns {env, args}.
  */
-export function planEnv(planInputs, base = process.env) {
+export function planInvocation(planInputs, base = process.env) {
+  const { INVARIANTS, ...vars } = planInputs ?? {};
   const env = Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'CHUNK_SIZE' && k !== 'SUBDIR_CHUNK_SIZE' && !k.startsWith('FORK_URL_')));
-  return Object.assign(env, planInputs ?? {});
+  return { env: Object.assign(env, vars), args: INVARIANTS === '1' ? ['--invariants'] : [] };
 }

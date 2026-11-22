@@ -346,10 +346,17 @@ fi
 if [ -n "$MANIFEST" ]; then
   : > "$MANIFEST" || die "cannot write manifest '$MANIFEST'"
   printf 'plan\t%s\nshard\t%s/%s\n' "$PLAN_DIGEST" "$SHARD_I" "$SHARD_N" >> "$MANIFEST"
+  # The tree this run tested (#3964): the commit, and whether tracked files
+  # differed from it. The plan digest covers file NAMES, not contents, so
+  # this is what binds the results to a source.
+  src=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+  if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then tree=dirty; else tree=clean; fi
+  printf 'source\t%s\t%s\n' "$src" "$tree" >> "$MANIFEST"
   # The inputs the plan was built from, so a verifier elsewhere can rebuild
-  # the same plan (#3964): the chunk sizes, and the NAMES of the FORK_URL_*
-  # variables that were set. Never a URL: it can carry a provider key.
-  printf 'input\tCHUNK_SIZE\t%s\ninput\tSUBDIR_CHUNK_SIZE\t%s\n' "$CHUNK_SIZE" "$SUBDIR_CHUNK_SIZE" >> "$MANIFEST"
+  # the same plan (#3964): the chunk sizes, whether the invariant suites are
+  # in it, and the NAMES of the FORK_URL_* variables that were set. Never a
+  # URL: it can carry a provider key.
+  printf 'input\tCHUNK_SIZE\t%s\ninput\tSUBDIR_CHUNK_SIZE\t%s\ninput\tINVARIANTS\t%s\n' "$CHUNK_SIZE" "$SUBDIR_CHUNK_SIZE" "$RUN_INVARIANTS" >> "$MANIFEST"
   while IFS= read -r v; do
     if [ -n "${!v:-}" ]; then printf 'input\t%s\tset\n' "$v" >> "$MANIFEST"; fi
   done < <(compgen -v FORK_URL_ | LC_ALL=C sort)
