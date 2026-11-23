@@ -121,6 +121,13 @@ describe('route pattern', () => {
     ];
     expect(extractRouteWords(src)).toEqual(['by-participant', 'loans', 'name', 'phrase', 'telegram']);
   });
+
+  it('reads a long run of crafted openings in linear time', () => {
+    const crafted = '/^\\/' + '\\/^\\/'.repeat(200_000);
+    const started = Date.now();
+    extractRouteWords([crafted]);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
 
 describe('withRequestReference', () => {

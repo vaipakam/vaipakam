@@ -109,9 +109,36 @@ export function extractRouteWords(sources: readonly string[]): string[] {
   };
   for (const src of sources) {
     for (const m of src.matchAll(/(['"`])(\/[A-Za-z0-9_\-/.{}$:]*)\1/g)) add(m[2]);
-    for (const m of src.matchAll(/\/\^(\\\/(?:[^/\n\\]|\\.)*)\//g)) add(m[1]);
+    for (const body of pathRegexBodies(src)) add(body);
   }
   return [...words].sort();
+}
+
+/**
+ * The bodies of the path regexes (`/^\/...`) in `src`, up to the closing
+ * unescaped `/` on the same line. A plain left-to-right scan: each opening is
+ * found with `indexOf` and its body read once, so the time is linear in the
+ * source (a backtracking regex here was polynomial on crafted input).
+ */
+function pathRegexBodies(src: string): string[] {
+  const OPEN = '/^\\/';
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = src.indexOf(OPEN, from);
+    if (at < 0) return out;
+    let i = at + 2; // the body starts at the escaped slash
+    let closed = false;
+    while (i < src.length && src[i] !== '\n') {
+      if (src[i] === '\\') i += 2;
+      else if (src[i] === '/') {
+        closed = true;
+        break;
+      } else i += 1;
+    }
+    if (closed) out.push(src.slice(at + 2, i));
+    from = Math.max(i, at + 1);
+  }
 }
 
 /** One row of the record, as the wrapper writes it. */
