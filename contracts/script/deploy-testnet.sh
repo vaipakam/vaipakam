@@ -46,6 +46,13 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       reachable for the role-rotation ceremony at the end of the
 #       deploy day, and the operator has eyeballed the .env one more
 #       time.
+#       A FRESH deploy (--fresh, or the first on a chain with no Diamond
+#       recorded) also needs `--plan <file>`: the plan file a green
+#       rehearsal ran (script/rehearse.sh) of this commit, these .env
+#       inputs and this chain set, forked under 24 hours ago (#3896).
+#       In an emergency `--without-rehearsal "<reason>"` passes instead,
+#       and the reason is written into the phase marker, the chain's
+#       history record and deployment_source.json.
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase ccip-wire
 #       Runs ConfigureCcip.s.sol — wires CCIP chain selectors, remote
@@ -226,6 +233,8 @@ source "$SCRIPT_DIR/lib/handover-proof.sh"
 source "$SCRIPT_DIR/lib/retired-deployment.sh"
 # shellcheck source=lib/rehearsal.sh
 source "$SCRIPT_DIR/lib/rehearsal.sh"
+# shellcheck source=lib/rehearsal-gate.sh
+source "$SCRIPT_DIR/lib/rehearsal-gate.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -373,6 +382,10 @@ else
   echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1
 fi
+# #3896 — the input digest the rehearsal gate compares, worked out here,
+# before this script derives or exports anything, which is the point at which
+# the rehearsal driver works out its own.
+rehearsal_gate_capture_inputs "$CONTRACTS_DIR/.env"
 
 CHAIN_SLUG="$1"; shift
 
@@ -406,6 +419,17 @@ while [ $# -gt 0 ]; do
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --confirm-orphans-prior-onchain-state) CONFIRM_ORPHANS=1 ;;
     --fresh)                         FRESH=1 ;;
+    # #3896 — the rehearsal gate on a fresh deploy: the plan the rehearsal
+    # ran, or the emergency override with its reason.
+    --plan)
+      shift
+      REHEARSAL_GATE_PLAN="${1:-}"
+      ;;
+    --without-rehearsal)
+      shift
+      REHEARSAL_GATE_OVERRIDE_SET=1
+      REHEARSAL_GATE_OVERRIDE_REASON="${1:-}"
+      ;;
     # #3891 — a deploy rehearsal on a local fork. Set already by
     # rehearsal_prescan; entered (or refused) once the RPC is known.
     --rehearse)                      REHEARSE=1 ;;
@@ -964,6 +988,15 @@ EOF
     exit 1
   fi
 
+  # #3896 — the rehearsal gate, once per chain, before anything this phase
+  # sends: a fresh deploy (--fresh, or no Diamond recorded yet) needs a green
+  # rehearsal of this commit, these inputs and this plan, forked less than
+  # 24 hours ago, or --without-rehearsal "<reason>". A rehearsal run itself is
+  # what produces the verdict, so it skips this.
+  if [ "$FRESH" = "1" ] || ! jq -e '.diamond // empty' "$DEPLOY_DIR/addresses.json" >/dev/null 2>&1; then
+    rehearsal_gate_check testnet "$CHAIN_SLUG" || exit 1
+  fi
+
   # #857 — VPFI-token config validation: ONE pre-broadcast gate. The single
   # source of truth for the fresh-mint / force-rotate / carry-forward decision
   # (and every reuse-address check) lives in DeployVPFIToken._resolveMode(); run
@@ -1016,7 +1049,7 @@ internally consistent.
 
 To proceed, pass --fresh:
   bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase contracts \\
-    --confirm-i-have-multisig-ready --fresh
+    --confirm-i-have-multisig-ready --fresh --plan <the rehearsed plan file>
 
 --fresh archives the prior chain state under
 $DEPLOY_DIR/.archive/<ISO-8601>/. The redeploy creates a NEW reward
@@ -1067,7 +1100,7 @@ cancelled / settled.
 Re-run with both flags if you genuinely intend this:
   bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase contracts \\
     --confirm-i-have-multisig-ready --fresh \\
-    --confirm-orphans-prior-onchain-state
+    --confirm-orphans-prior-onchain-state --plan <the rehearsed plan file>
 
 The --confirm-orphans-prior-onchain-state flag exists so that
 "yes, I know I'm orphaning $ACTIVE_OFFERS offers + $ACTIVE_LOANS
@@ -1131,6 +1164,10 @@ EOF
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — contracts  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
+
+  # The gate's result, in the markers and the history record this phase's
+  # archive just recreated (#3896).
+  rehearsal_gate_record "$MARKERS_DIR" "$HISTORY_DIR"
 
   echo "[1] forge build (--skip test — see #636)"
   # `--skip test` is load-bearing (#636, mirrored from predeploy-check.sh).
@@ -1379,10 +1416,12 @@ EOF
   "deployedAt": "$(date +%Y-%m-%dT%H:%M:%S%z)",
   "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
   "deployer": "$DEPLOYER_ADDR",
-  "diamond": "$DIAMOND_NOW"
+  "diamond": "$DIAMOND_NOW",
+  "rehearsalGate": ${REHEARSAL_GATE_RESULT:-null}
 }
 EOF
   mark_phase_done "contracts"
+  rehearsal_gate_mark_phase "$MARKERS_DIR/phase-contracts.done"
 
   # Mainnet-parity rehearsal — same Admin-EOA-took-ownership
   # timestamp write as mainnet. The 48h handover-deadline check

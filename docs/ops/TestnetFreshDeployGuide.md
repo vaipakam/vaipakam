@@ -372,6 +372,19 @@ section 5 as exact commands. Run those commands from `contracts/`, with `.env`
 loaded and `script/lib/rehearsal.sh` sourced. A step the plan lists as
 `manual` has no command yet, and the rehearsal reports it as not covered.
 
+**The rehearsal gates the real deploy (#3896).** Keep the plan file the
+rehearsal ran. The contracts phase of a fresh deploy takes it with `--plan`
+and refuses unless a green verdict under `deployments/.forge-test/rehearsal/`
+has the same commit, tree, `.env` inputs, plan and chain set, with forks taken
+less than 24 hours before that chain's contracts phase. The refusal names
+each value that differs. Do not regenerate the plan for the real deploy: a
+plan made on another day carries another anchor, so its digest differs. In an
+emergency, `--without-rehearsal "<reason>"` passes instead; the reason is
+written into the phase marker, the chain's `.history` and
+`deployment_source.json`. The verdict is a local file, so the gate catches
+mistakes, not someone who means to skip it. `deploy-chain.sh` follows no plan,
+so on a testnet it deploys a Diamond only with `--without-rehearsal`.
+
 Run each phase per chain and eyeball its output before the next. Do Base first.
 
 ### 3.1 preflight (read-only)
@@ -389,11 +402,13 @@ A note that `BASE_REWARD_DEPLOYMENT` is unset is expected; configure takes it fr
 
 ```bash
 bash contracts/script/deploy-testnet.sh base-sepolia --phase contracts \
-  --confirm-i-have-multisig-ready --fresh [--confirm-orphans-prior-onchain-state]
+  --confirm-i-have-multisig-ready --fresh --plan /tmp/plan.txt \
+  [--confirm-orphans-prior-onchain-state]
 # then arb-sepolia, then bnb-testnet, same flags
 ```
 
-What it does (`phase_contracts`): `[1c]` VPFI token preflight (canonical);
+What it does (`phase_contracts`): the rehearsal gate (`--plan`, or
+`--without-rehearsal "<reason>"`); `[1c]` VPFI token preflight (canonical);
 orphan guard; `[0a]` archive + manifest; `[0b]` retired-Diamond seed attempt;
 `[1]` `forge build --skip test`; `[1b]` predeploy-check; `[2·arb]`
 `ARB_L2_DEPLOY_BLOCK` on Arbitrum; manifest `live-begin`;

@@ -198,6 +198,8 @@ source "$SCRIPT_DIR/lib/sentinel-reads.sh"
 source "$SCRIPT_DIR/lib/worker-secrets.sh"
 # shellcheck source=lib/artifact-code-check.sh
 source "$SCRIPT_DIR/lib/artifact-code-check.sh"
+# shellcheck source=lib/rehearsal-gate.sh
+source "$SCRIPT_DIR/lib/rehearsal-gate.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -303,6 +305,9 @@ if [ -f "$CONTRACTS_DIR/.env" ]; then
 else
   __env_missing=1
 fi
+# #3896 — the input digest for the rehearsal gate's record, before anything
+# is derived or exported.
+[ "$__env_missing" = 0 ] && rehearsal_gate_capture_inputs "$CONTRACTS_DIR/.env"
 
 CHAIN_SLUG="$1"; shift
 
@@ -334,6 +339,13 @@ while [ $# -gt 0 ]; do
     --fresh)            FRESH=1 ;;
     --resume)           RESUME=1 ;;
     --verify-contracts) VERIFY_CONTRACTS=1 ;;
+    # #3896 — this quick loop follows no rehearsed plan, so a new Diamond on
+    # a shared testnet needs a stated reason (see the gate below).
+    --without-rehearsal)
+      shift
+      REHEARSAL_GATE_OVERRIDE_SET=1
+      REHEARSAL_GATE_OVERRIDE_REASON="${1:-}"
+      ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -558,6 +570,29 @@ snapshot_addresses() {
   fi
 }
 
+# ── The rehearsal gate (#3896) ────────────────────────────────────────
+# A fresh deploy on a shared testnet is gated on a green rehearsal of the plan
+# it follows (deploy-testnet.sh --plan). This quick loop follows no plan, so no
+# verdict can cover it: deploying a Diamond here needs
+# `--without-rehearsal "<reason>"`, written into the markers, the history
+# record and deployment_source.json. A --resume past the Diamond step sends no
+# new Diamond and is not gated.
+if ! step_done "diamond"; then
+  if [ "$REHEARSAL_GATE_OVERRIDE_SET" != 1 ]; then
+    cat >&2 <<EOF
+Refusing to deploy a new Diamond on $CHAIN_SLUG from deploy-chain.sh.
+
+A fresh testnet deploy is gated on a green rehearsal of the plan it follows
+(script/rehearse.sh, then deploy-testnet.sh --phase contracts --fresh --plan
+<plan>). This one-shot dev loop follows no rehearsed plan, so it needs
+  --without-rehearsal "<reason>"
+and the reason is recorded with the deploy.
+EOF
+    exit 1
+  fi
+  rehearsal_gate_check testnet "$CHAIN_SLUG" || exit 1
+fi
+
 # ── 0. --fresh cleanup (rehearsal hygiene) ────────────────────────────
 # Wipes prior deploy artefacts so the rehearsal starts from a known-
 # empty state. Without this, DeployDiamond reuses the existing
@@ -776,9 +811,11 @@ if step_done "diamond"; then
 else
   echo
   echo "[2] DeployDiamond.s.sol"
+  rehearsal_gate_record "$MARKERS_DIR" "$HISTORY_DIR"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
   snapshot_addresses "post-diamond"
   mark_done "diamond"
+  rehearsal_gate_mark_phase "$MARKERS_DIR/diamond.done"
 fi
 
 # ── 2b. Post-cut facet verification ───────────────────────────────────
@@ -1141,7 +1178,8 @@ cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
   "deployedAt": "$(date +%Y-%m-%dT%H:%M:%S%z)",
   "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
   "deployer": "$DEPLOYER_ADDR",
-  "diamond": "$DIAMOND_FOR_HEALTH"
+  "diamond": "$DIAMOND_FOR_HEALTH",
+  "rehearsalGate": ${REHEARSAL_GATE_RESULT:-null}
 }
 EOF
 echo "  ✓ deployment_source.json written ($(echo "$COMMIT_HASH" | head -c 8)$COMMIT_DIRTY)"

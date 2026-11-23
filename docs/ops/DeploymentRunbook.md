@@ -103,6 +103,8 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 - `--phase <phase>` (required) — see the phases table above.
 - `--confirm-i-have-multisig-ready` — gates `--phase contracts` and `--phase handover`.
 - `--fresh` — opt-in archive + wipe (testnet) or archive + wipe (mainnet — also requires `--confirm-purging-prior-mainnet-deploy`).
+- `--plan <file>` — the plan file a green rehearsal ran (`script/rehearse.sh`). Required by `--phase contracts` on a fresh deploy (`--fresh`, or no Diamond recorded yet): the phase refuses unless a green verdict has the same commit, tree, `.env` inputs, plan and chain set, forked under 24 hours ago (#3896).
+- `--without-rehearsal "<reason>"` — the emergency override for that gate. The reason is written into the phase marker, the chain's `.history` and `deployment_source.json`. `deploy-chain.sh` takes it too, and needs it to deploy a Diamond on a testnet, because the dev loop follows no rehearsed plan.
 - `--mode <mode>` — only for `--phase pause-rehearsal`.
 
 **Artifacts every deploy now writes** (under
