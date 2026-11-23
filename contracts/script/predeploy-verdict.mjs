@@ -17,24 +17,28 @@
  *       After a passing run: writes the verdict with the check's context,
  *       unless the tree changed while the check ran (the digest now differs
  *       from <digest>), in which case it says so and writes nothing.
- *   covers --mode <default|full> [--dir <d>]
- *       Exit 0 and print the verdict's path when a passing verdict covers the
- *       present tree, a mode at least <mode> (`full` covers `default`) and
- *       the present context. Exit 1 with the reason otherwise.
+ *   covers --mode default [--dir <d>]
+ *       Exit 0 and print the verdict's path when a passing verdict (of the
+ *       default or the full check) covers the present tree and the present
+ *       context. Exit 1 with the reason otherwise.
  *
- * The context is everything outside the tree that changes what the check
- * decides, worked out in one place ({@link checkContext}): the forge version,
- * every FOUNDRY_* setting in the environment (a profile can leave tests out),
- * and for the full check two more: the resolved commit its gas-budget raise
- * rule compares against (GAS_BUDGETS_BASE_REF, else where HEAD left
- * origin/main), and the regression plan itself, as `run-regression.sh
- * --list-chunks` prints it. The plan is the regression's own statement of
- * which suites it runs, so anything that changes the coverage (a FORK_URL_*
- * that adds the fork suites, --invariants, a new suite) changes it, without
- * this file keeping a list of such inputs.
- * A storage-layout baseline (STORAGE_LAYOUT_BASE) names a file outside the
+ * Only the default check is ever answered from a verdict. The full check
+ * (mainnet) runs every time: its regression includes the live-fork suites,
+ * which read live chains and the deployment records under
+ * `contracts/deployments`, both outside the tree digest and outside anything
+ * a verdict could pin. A full pass is still recorded, and covers a later
+ * default step.
+ *
+ * The context is what outside the tree changes the default check's decision,
+ * worked out in one place ({@link checkContext}): the forge version and every
+ * FOUNDRY_* setting in the environment (a profile can leave tests out). A
+ * storage-layout baseline (STORAGE_LAYOUT_BASE) names a file outside the
  * tree, so a run with one is never recorded or reused (predeploy-check.sh,
- * lib/predeploy-once.sh).
+ * lib/predeploy-once.sh). The deployment records are outside the tree digest
+ * by design (§18), so that a launch's later chains reuse the verdict after the
+ * first chain writes its records; the one default step that reads them is the
+ * LayerZero-residue lint over committed addresses.json files, which the
+ * deploy writes from the tree's own code.
  *
  * The verdict is a local file under the ignored
  * `contracts/deployments/.forge-test/predeploy/`, outside the tree digest.
@@ -42,7 +46,6 @@
  * who means to skip the check.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,56 +66,25 @@ export function toolchain() {
 
 export const verdictPath = (dir, digest) => join(dir, `${digest}.json`);
 
-/** The commit the full check's gas-budget raise rule compares against, as predeploy-check.sh resolves it. */
-export function gasBudgetsBase(env = process.env, root = REPO_ROOT) {
-  const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  const ref = env.GAS_BUDGETS_BASE_REF;
-  try {
-    return ref ? git('rev-parse', '--verify', `${ref}^{commit}`) : git('merge-base', 'HEAD', 'origin/main');
-  } catch {
-    return `unresolved ${ref || 'origin/main'}`;
-  }
-}
-
-/** The digest of the full check's regression plan, from run-regression.sh itself. */
-export function regressionPlan(env = process.env) {
-  try {
-    const out = execFileSync('bash', [join(REPO_ROOT, 'contracts', 'script', 'run-regression.sh'), '--list-chunks'], {
-      cwd: join(REPO_ROOT, 'contracts'),
-      env,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return createHash('sha256').update(out).digest('hex');
-  } catch {
-    return 'unavailable';
-  }
-}
-
 /** Everything outside the tree that changes what the check decides. */
-export function checkContext(mode, { env = process.env, tool = toolchain, gasBase = gasBudgetsBase, plan = regressionPlan } = {}) {
+export function checkContext({ env = process.env, tool = toolchain } = {}) {
   const foundry = Object.keys(env)
     .filter((k) => k.startsWith('FOUNDRY_') && !(k === 'FOUNDRY_PROFILE' && env[k] === 'default'))
     .sort()
     .map((k) => `${k}=${env[k]}`);
-  const ctx = { toolchain: tool(), foundry: foundry.join(' ') || 'none' };
-  if (mode === 'full') {
-    ctx.gasBudgetsBase = gasBase(env);
-    ctx.regressionPlan = plan(env);
-  }
-  return ctx;
+  return { toolchain: tool(), foundry: foundry.join(' ') || 'none' };
 }
 
 /**
  * Why `verdict` does not cover `present` ({treeDigest, mode, context}), or ''
- * when it does. Every key of the present context must equal the verdict's
- * (a full verdict carries one more, which a default step does not ask). Pure.
+ * when it does. Every key of the present context must equal the verdict's.
+ * A full step is never covered. Pure.
  */
 export function whyNot(verdict, present) {
+  if (present.mode === 'full') return 'the full check is never reused: its live-fork suites read chains and deployment records outside the tree';
   if (!verdict) return 'no pre-deploy verdict was recorded for this tree';
   if (verdict.kind !== KIND || verdict.result !== 'pass') return 'the recorded verdict is not a passing pre-deploy verdict';
   if (verdict.treeDigest !== present.treeDigest) return 'the recorded verdict is of another tree';
-  if (MODES.indexOf(verdict.mode) < MODES.indexOf(present.mode)) return `the verdict ran the ${verdict.mode} check; this step needs the ${present.mode} check`;
   for (const [k, v] of Object.entries(present.context ?? {})) {
     const was = verdict.context?.[k];
     if (was !== v) return `the verdict's ${k} was ${was ?? 'not recorded'}, now ${v}`;
@@ -134,7 +106,7 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
     console.log(JSON.stringify({ commit, treeDigest: digest }));
     return 0;
   }
-  if ((cmd === 'record' || cmd === 'covers') && !MODES.includes(mode)) {
+  if ((cmd === 'record' && !MODES.includes(mode)) || (cmd === 'covers' && mode !== 'default' && mode !== 'full')) {
     console.error(`  ✗ predeploy-verdict: --mode must be one of ${MODES.join(', ')}`);
     return 2;
   }
@@ -150,14 +122,14 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
       return 0;
     }
     mkdirSync(dir, { recursive: true });
-    const ctx = context(mode);
+    const ctx = context();
     const verdict = { kind: KIND, version: 1, result: 'pass', mode, commit, treeDigest: digest, context: ctx, passedAt: now().toISOString() };
     const f = verdictPath(dir, digest);
-    // A full verdict is never replaced by a weaker one for the same tree.
+    // A full verdict is never replaced by a default one for the same tree.
     if (existsSync(f)) {
       try {
         const old = JSON.parse(readFileSync(f, 'utf8'));
-        if (whyNot(old, { treeDigest: digest, mode, context: ctx }) === '' && MODES.indexOf(old.mode) > MODES.indexOf(mode)) {
+        if (whyNot(old, { treeDigest: digest, mode: 'default', context: ctx }) === '' && MODES.indexOf(old.mode) > MODES.indexOf(mode)) {
           console.log(`  · ${relative(REPO_ROOT, f)} already records the ${old.mode} check for this tree`);
           return 0;
         }
@@ -179,7 +151,7 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
     } catch {
       verdict = null;
     }
-    const why = whyNot(verdict, { treeDigest: digest, mode, context: context(mode) });
+    const why = whyNot(verdict, { treeDigest: digest, mode, context: context() });
     if (why) {
       console.error(`  · ${why}`);
       return 1;

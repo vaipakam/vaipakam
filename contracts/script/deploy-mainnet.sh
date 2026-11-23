@@ -1010,10 +1010,10 @@ EOF
   # contracts. A failure aborts the deploy before any broadcast.
   # A rehearsal (#3891) runs the check once per tree, in its driver, before
   # the first step; running it again per chain would repeat a gate whose
-  # verdict is a property of the tree, not of the chain. A real run reuses
-  # the verdict a passing check recorded for this very tree (#3896), so the
-  # second chain of a launch, or a deploy right after its rehearsal, does not
-  # run it again; any change to the tree runs it again.
+  # verdict is a property of the tree, not of the chain. The full check is
+  # the exception to the once-per-tree reuse (#3896): its live-fork suites
+  # read chains and deployment records outside the tree, so a real mainnet
+  # run always runs it.
   if [ "$REHEARSE" = 1 ]; then
     echo "  · rehearsal: the driver ran the pre-deploy check for this tree"
   else

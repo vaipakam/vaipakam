@@ -361,8 +361,8 @@ stage build
 (cd "$CONTRACTS_DIR" && "$RH_NODE" "$RH_LAYOUT_GUARD" check) 2>&1 | rh_redact >> "$LOGS/build.log"
 # The pre-deploy check once per tree (#3896): a verdict a passing run already
 # recorded for this tree is reused, and the deploy that follows reuses the one
-# this run records. A mainnet rehearsal needs the full check, as the mainnet
-# deploy does.
+# this run records. A mainnet rehearsal runs the full check, as the mainnet
+# deploy does; the full check is never reused.
 predeploy_mode=()
 [ "$NETWORK" = mainnet ] && predeploy_mode=(--full)
 (cd "$CONTRACTS_DIR" && PREDEPLOY_CHECK_SCRIPT="$RH_PREDEPLOY" predeploy_check_once "${predeploy_mode[@]+"${predeploy_mode[@]}"}") 2>&1 | rh_redact >> "$LOGS/build.log"

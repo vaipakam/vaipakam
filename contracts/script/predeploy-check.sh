@@ -92,8 +92,10 @@
 # chain, so a passing run records its verdict against the tree digest
 # (`predeploy-verdict.mjs`, under the ignored deployments/.forge-test/), and
 # the deploy scripts and the rehearsal driver reuse it through
-# `lib/predeploy-once.sh` when it covers the present tree, mode and context (forge version, FOUNDRY_*
-# settings, the full check's gas-budget base).
+# `lib/predeploy-once.sh` for the default check when it covers the present
+# tree and context (forge version, FOUNDRY_* settings). The full check always
+# runs: its live-fork suites read chains and deployment records outside the
+# tree. A full pass is recorded and covers a later default step.
 # Not recorded: a shard of the regression (one shard is no verdict), a run
 # with a storage-layout baseline (STORAGE_LAYOUT_BASE names a file outside
 # the tree digest, so its comparison is always run, never reused), a run that
