@@ -944,8 +944,8 @@ Mirror-cache mechanics:
 
 - Mirror chains do not recompute the ring-buffer tier locally. They apply an authenticated cached tuple containing the effective tier, effective discount bps, computation time, nonce, expiry, and tier-table version.
 - A mirror cache entry is usable only if it is non-zero, matches the current mirror tier-table version, has not passed its tier-expiry timestamp, and is no older than the configured mirror max age.
-- The mirror cache maximum age is configurable up to sixty days; its default
-  is thirty minutes. Expired or stale mirror entries must resolve to tier `0` until refreshed.
+- The mirror cache maximum age defaults to sixty days and cannot be set
+  below thirty days. Expired or stale mirror entries must resolve to tier `0` until refreshed.
 - A tier push must never make the user's own action fail. Stake, unstake, loan start, settlement, consolidation and the tier poke land even when the protocol broadcast budget is short, a destination lane is down or paused, or no destination is configured. The canonical tier is current on Base at once; each mirror lane is owed the new tier until it is delivered.
 - Each destination lane is delivered on its own, so one failing lane never holds back another. An owed lane is retried by the user's next tier-pushing action and by anyone who asks for delivery. Every lane that is left owed is announced on-chain with its reason, and each user's per-lane delivery state is publicly readable.
 - The protocol budget pays only for a tier push that takes a discount away on a mirror (#1277): a push that lowers the lane's tier or bps without raising either, under the same table version, or a push to tier 0. Such a push goes out at once. Every other push, which includes a lane's first discount, a raised tier, a later expiry on its own and any push under a new table version, is delivered only when someone pays the lane's fee; until then the lane stays owed and the mirror keeps what it last received, which grants no more than before. So the budget pays one drop per lane for each raise someone paid for, and toggling consent or a stake cannot spend the budget faster than the person toggling spends their own funds. An earlier expiry on its own is not budget-paid either, because the expiry moves with every balance change: the mirror's cached tier then lapses at the old expiry, never later than the mirror's maximum age. A tier-table change by governance therefore leaves every mirror discount reading as none until a paid push carries the new version. There is no rate limit on caller-funded delivery.
@@ -1980,9 +1980,10 @@ This section states expected outcomes and is independent of that evidence.
   An empty priced reward window retires once and leaves unsettled indexes.
   Unfinalized or unpriceable work is never empty. Any earlier-era entitlement
   settles before terminal retirement.
-- An unchanged nonzero holding tier may be recommitted after fifteen days when
-  a destination's delivered record predates that commitment or it has remained
-  owed for fifteen days. Earlier recommits do nothing; zero is never renewed.
+- Once its last commitment is fifteen days old, a tier-pushing action or poke
+  recommits an unchanged nonzero tier. A mirror lane is owed it when its last
+  delivery predates that commitment or is itself at least fifteen days old.
+  Before that age an unchanged tier sends nothing; zero is never renewed.
   Renewal is caller-paid like a raise, never charged to the protocol budget.
   The public tier-poke route itself requires no fee-discount consent.
 - Anyone may pay to send Base's current table version to a configured mirror

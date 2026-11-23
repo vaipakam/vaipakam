@@ -1649,6 +1649,13 @@ dependency is never turned into an empty queue or a successful run.
 
 ## New capabilities and independent activation
 
+- Private Telegram notices use the phrase that chat was last told for the
+  wallet and network; a manager's chat uses its manager's phrase. Groups and
+  Push receive no phrase. The shared
+  [alert phrase rules](Alpha05ConnectedApp.md#alert-phrase-and-chat-change-notices)
+  govern change notices and confirmation; sending a notice is not an on-chain
+  lock or a guaranteed delivery.
+
 - Multi-slot matching names one of the lender's eight independent intents on
   a pair. Cheapest rate floor is tried first while preserving wallet fairness;
   eight slots do not count as eight distinct lenders. Backstop and aggregator

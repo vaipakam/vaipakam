@@ -43,10 +43,11 @@ that a check has run, or that its history is complete.
 - A repayment belongs to the borrower that held the obligation at close, even
   when another address paid. The record distinguishes obligations opened from
   those taken over and follows ownership history through transfers.
-- Outcomes distinguish on-time and late repayment, lender sale, refinance,
-  liquidation, default, and unclassified outcomes. Open obligations and
+- Outcomes distinguish on-time and late repayment, repayment by a sale of
+  collateral, refinance, liquidation, default, and unclassified outcomes. Open obligations and
   periodic interest are separate. Amounts stay per token; rentals are separate
-  from token loans. Each answer names its sources, classification-rule version,
+  from token loans. The first observed loan is reported within the stated
+  history coverage. Each answer names its sources, classification-rule version,
   and history floor, and includes the required limitations on coverage,
   classification, address identity, and the absence of a credit assessment.
 - Self-originated loans, bookkeeping or sale vehicles, and unknown origination
@@ -56,8 +57,10 @@ that a check has run, or that its history is complete.
 - A recorded late-fee start determines timing when available. For legacy
   records, a positive late fee establishes lateness; closing by the original
   due time establishes on-time repayment; the rest is unclassified. Curing a
-  fallback does not determine how a later close is classified. Fee totals are
-  withheld when their event evidence is incomplete.
+  fallback does not determine how a later close is classified. Platform fee
+  totals are
+  not yet reported because the events do not state each loan's fees; a partial
+  sum cannot stand in for that missing record.
 
 ## Public rental rights
 
@@ -85,8 +88,10 @@ that a check has run, or that its history is complete.
   upgrades, forced transfer, freezing, pausing and current pause, NFT transfer
   validators, non-transferability, and vault-to-vault transfer simulation.
 - Finding a function does not prove who can call it or that a power is active.
-  Not finding one does not establish safety. Unknown, unchecked, failed, and
-  not applicable are distinct; failed checks remain in the record. Marketplace
+  For transfer simulation, found means refused and not found means the transfer
+  succeeded. Neither finding establishes general safety. Unknown, unchecked, failed, and
+  not applicable are distinct; failed and unrecognised checks remain in the
+  returned record. Marketplace
   conduit simulation is not run for the stated NFT-check version, and a
   missing route is unavailable, not passed.
 - The issuer-check runner is not yet built at this source cutoff. Empty
@@ -130,16 +135,19 @@ that a check has run, or that its history is complete.
 - A replaced block is marked rather than erased. The same transaction mined
   again belongs to a separate block record. Gaps, late discovery, and failed
   scans are visible; an unavailable node retries without downgrading evidence.
-- BNB testnet discovery can use historical trace search. Base and Arbitrum
-  use direct explorer discovery every five minutes, other explorer scans
-  hourly, with a random audit every thirty minutes and a daily full audit.
-  Audit results measure missed records; schedule alone proves no completeness.
+- BNB testnet discovery can use historical trace search. The observed Base
+  Sepolia and Arbitrum Sepolia paths use explorer discovery for user-facing contracts every five minutes
+  and other deployment contracts hourly. Each day a randomly selected
+  thirty-minute window is audited by scanning every block. Audit results
+  measure missed records; this is sampled coverage, not a daily full-chain
+  audit or a promise of completeness.
 - Without an explorer key, the audit path is the source until a keeper-source
   decision is recorded; the declared sampling fraction remains visible.
   Checkpoint changes require two confirming reorg reads. Local reconstruction
   is operator-only. Installing the service or its ingest token does not prove
   any production instance is running.
-- Failure records remain for 400 days and have nightly backups. Restore
+- Failure records remain for 400 days, survive a fresh deployment, and have
+  nightly backups. Restore
   preserves the whole evidence payload, including records split into pieces,
   and does not silently discard inconvenient or unreadable rows.
 
@@ -168,9 +176,9 @@ that a check has run, or that its history is complete.
   replace a newer-block estimate; an estimate cannot displace fresh confirmed
   evidence, although a newer estimate may replace stale confirmed evidence.
 - Build history records successive serving periods, including a rollback as a
-  new period. Dirty or unstamped sources remain explicit. The indexer, agent,
-  and scheduled services report their own build; failure evidence names its
-  bundle commit. Public website, current app, and alpha05 stamps are read
+  new period. Dirty or unstamped sources remain explicit. The indexer and
+  agent report their own builds on scheduled runs; failure evidence names
+  its bundle commit. Public website, current app, and alpha05 stamps are read
   uncached hourly. Keeper build coverage remains a follow-up. Build records
   contain no users, remain for the deployment lifetime, and are backed up.
 

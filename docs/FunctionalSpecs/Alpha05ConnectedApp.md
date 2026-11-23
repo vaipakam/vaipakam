@@ -835,11 +835,41 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   advances every network's order, and settings have their own ordering record.
   An older request cannot undo a newer change. Test alerts are not settings
   updates; unlinking voids outstanding link codes.
-- A Safe request waits while proposed and finishes only when the on-chain
-  signature and service can both confirm it. Account or network changes hold
-  the request. New alert links and Push consent require current Terms.
+- A Safe request waits while proposed and finishes when approval is confirmed
+  on chain or its service supplies the combined signature. Account or network
+  changes hold the request. New alert links and Push consent require current Terms.
   Discarding clears only this browser's pending request, never another tab's
   newer one. A remembered Push refusal is not overwritten by a later refresh.
+
+## Alert phrase and chat-change notices
+
+- An owner with a linked private Telegram chat may set or remove a phrase by
+  a signed alert request. The service accepts the phrase exactly as typed,
+  from three to thirty-two permitted plain characters, without surrounding
+  spaces, links, slashes, colons, or at signs. Invalid text is refused, never
+  silently cleaned. The signed text contains a request-key-bound fingerprint,
+  not the phrase; a mismatch is refused. Phrase changes have their own ordering.
+- A request signed with the wallet's own key sets the phrase across networks,
+  replacing network-specific phrases. A contract-only approval sets it only on
+  the named network, where a private chat must already be linked. That phrase
+  takes precedence there. The newest applicable request wins across scopes;
+  an old request cannot undo a newer network or global setting.
+- Each private chat starts messages with the phrase it was last told for that
+  wallet and network. A phrase change first sends a notice led by the phrase
+  the chat knew, and switches only when Telegram accepts that notice. A newly
+  linked chat receives no phrase until it is set again; the same chat linked
+  on another network already knows it. A manager's chat uses the manager's
+  phrase. Groups and Push never receive the phrase, and the app explains this.
+- Status shows only whether a phrase is set, since when, and its scope. A
+  pending contract-wallet request keeps no phrase in browser storage; finishing
+  requires typing it again and matching the approved fingerprint. Applying the
+  phrase on another network requires a separate approval and re-entry there.
+- An unprotected account's old chat is notified when it stops receiving alerts;
+  existing chats are notified when another chat is added. Notices use each
+  chat's known phrase, try immediately, and retry for at most one hour. An old
+  chat identity is kept only for that notice. Consented Push gives a notice
+  naming only the network. Protected accounts retain the delayed chat-change
+  procedure, with the known phrase on its notices as well.
 
 ## Sources
 

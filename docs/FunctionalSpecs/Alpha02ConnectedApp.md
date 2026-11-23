@@ -76,6 +76,12 @@ ownership, and safety rules follow the platform and vault specifications.
   Terms step, and multisig alert authorization belong to its separate spec;
   they do not imply this app has reached feature parity.
 
+- Multisig alert authorization and the shared
+  [alert phrase and chat-change rules](Alpha05ConnectedApp.md#alert-phrase-and-chat-change-notices)
+  apply to both apps. Contract approvals are network-specific; own-key
+  authorizations retain their stated global scope. Groups and Push never
+  receive a private Telegram phrase.
+
 ## Purpose
 
 The connected app is the beginner-first surface for Vaipakam's pre-live testnet

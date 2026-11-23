@@ -47,6 +47,14 @@ The functional summaries below retain that precedence.
   requires delayed vault code. Launch checks refuse endpoint mismatches, including a conduit key resolving
   to a different conduit. The treasury has one source: the vault code, not a
   second platform setting or registry entry.
+- A code version may retain up to two earlier price guards and two earlier
+  listing conduits with their keys, so existing loans and listings keep their
+  accepted endpoints after an upgrade. Duplicates, unordered entries, current
+  endpoints repeated as earlier ones, or missing conduit keys are refused.
+  A fresh deployment has no earlier entries. A listing and its approval may
+  use any listed conduit; any other endpoint is refused. Guard acceptance is
+  readable but does not itself establish independent vault price checks;
+  those checks remain the stated follow-up.
 - The vault hashes only orders whose terms name itself, or its own listing
   escrow, as seller and its own conduit. It answers signature checks only
   from the named marketplace or order protocol. Teardown withdraws the order.
@@ -335,7 +343,8 @@ The exit from a locked protected account (#3246 part 2; design:
   it. The selected wait is thirty to 365 days.
 - Only the recovery address currently in force may request or execute a claim.
   A pending recovery-address change prevents a request. Replacing that address
-  invalidates the earlier claim. A request freezes no assets and may be made
+  invalidates the earlier claim; the new recovery address may request at once,
+  with the full selected wait. A request freezes no assets and may be made
   while the account is locked.
 - The claim opens after the selected wait and expires thirty days later. Only
   the recovery address may execute it, with the same irreversible retirement,
@@ -345,8 +354,8 @@ The exit from a locked protected account (#3246 part 2; design:
   A lock, replacement, or clawback ends a pending claim. A direct owner write
   to the protected account record also cancels it; submission of a stored
   owner signature by a relay does not establish fresh owner liveness.
-- Cancellation or dropping the claim requires thirty days before a new request;
-  simple lapse adds no such wait. Execution is refused during global pause,
+- Cancellation or dropping the claim requires thirty days before the same
+  recovery address can request again; simple lapse adds no such wait. Execution is refused during global pause,
   including pause escape, and until twenty-four hours after the latest
   sequencer-outage window. An unread outage state refuses execution; a network
   without a sequencer has no such sequencer wait.
