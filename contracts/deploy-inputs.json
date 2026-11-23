@@ -317,6 +317,10 @@
     {
       "pattern": "REHEARSE",
       "reason": "The mainnet wrapper's --rehearse flag: it selects rehearsal mode, which the verdict records itself, like VAIPAKAM_REHEARSAL."
+    },
+    {
+      "pattern": "REHEARSAL_GATE_*",
+      "reason": "The rehearsal gate's own state (#3896): the plan, the override and the gate's result, set by the deploy script from its flags. The gate compares the inputs; it is not one."
     }
   ],
   "hashedPatterns": [

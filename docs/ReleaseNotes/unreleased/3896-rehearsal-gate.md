@@ -1,0 +1,11 @@
+## Local testing — the rehearsal gate on a real fresh deploy
+
+A real fresh deploy now refuses its first broadcasting step unless a green rehearsal covers it. The testnet and mainnet deploy scripts check this at the start of the contracts phase, whenever the run is a fresh deploy or the chain has no Diamond recorded yet. A rehearsal verdict covers the deploy only when it passed and records the same commit, the same tree digest, the same inputs, the same plan and network, and the same chain set, with this chain in that set, and when its forks were taken less than 24 hours ago. The 24 hours come from the deploy rehearsal design; the figure a verdict carries about itself is not read.
+
+The operator names the rehearsed plan with a new plan option. The gate works out the commit, the tree digest, the plan's digest and its chain set the same way the rehearsal records them, and checks that the desired-state file the plan was made from has not changed since. The input digest is taken right after the deploy loads its environment file and before it works anything out from it, which is the point at which the rehearsal takes its own, so the same environment file gives the same digest in both.
+
+When no verdict covers the deploy, the refusal names every value in which the newest verdict differs, so the operator can see whether the commit moved, the inputs changed, the plan is another one or the rehearsal is too old. The refusal also says plainly that the verdict is a local file: the gate guards against deploying something other than what was rehearsed, not against someone who means to skip it.
+
+In an emergency the operator can pass a reason with a new without-rehearsal option. A reason must be written in words. The deploy still prints what was not covered, and writes the reason into the chain's markers, the contracts phase marker, the history record and the deployment source record. A passed gate leaves the same records, naming the verdict and its fingerprint.
+
+The development deploy script follows no plan, so it can never be covered by a rehearsal: it now needs the without-rehearsal reason to deploy a new Diamond, while a resumed run past that step goes ahead as before. A rehearsal run never meets the gate, since it is what produces the verdict. The operator guide and the deployment runbook show the new options, and CI runs the gate's tests.
