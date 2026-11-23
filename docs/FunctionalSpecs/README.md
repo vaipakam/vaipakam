@@ -1,8 +1,9 @@
 # Functional Specs — the platform's intended-behaviour specification
 
 `docs/FunctionalSpecs/` is the **code-free specification of what the
-Vaipakam platform is *intended* to do**. It is the single place to learn
-the platform's functional behaviour, and it is written so it can serve
+Vaipakam platform is *intended* to do**. Together with the approved sections of
+[CanonicalSpec](../CanonicalSpec/README.md), it states the platform's functional
+behaviour. It is written so it can serve
 as a **test oracle** — every behavioural statement should be concrete
 enough to turn into a test case.
 
@@ -56,11 +57,13 @@ distilled statement of intended behaviour.
 
 When the source documents disagree about intended behaviour:
 
-1. The up-to-date `docs/FunctionalSpecs/` docs are taken as current
-   intent. `docs/DesignsAndPlans/` docs may be stale.
+1. Approved canonical sections govern the behaviour they cover, as described
+   in [CanonicalSpec](../CanonicalSpec/README.md). For uncovered behaviour, the
+   up-to-date Functional Specs state current intent; design docs may be stale.
 2. On a `FunctionalSpecs` vs `DesignsAndPlans` conflict, consult
    `docs/ReleaseNotes/` to see which is the more recent decision.
-3. If still unresolved, `docs/FunctionalSpecs/` holds the final say.
+3. For behaviour not covered by an approved canonical section, Functional
+   Specs hold the final say unless a later recorded owner decision supersedes them.
 4. Genuinely ambiguous cases are resolved case-by-case, not by rule.
 
 This precedence decides *which document states the intent*. It is a
@@ -124,6 +127,10 @@ That gate is what keeps bugs out of the oracle.
 - [VaultOperations.md](VaultOperations.md) — depository ownership, all-asset
   adoption, protected payouts, delayed settings, recovery signers, account
   replacement, and the app's disclosures and limitations.
+
+- [PublicDataAndDiagnostics.md](PublicDataAndDiagnostics.md) — public feeds,
+  repayment records, rental rights, issuer-power evidence, failure explanations,
+  and source and build provenance.
 
 The two cross-cutting **analysis matrices** (action × actor) now live under
 `docs/DesignsAndPlans/` — they are code-derived analysis of how the live gates
@@ -456,3 +463,26 @@ Those dated facts do not establish that later changes were deployed or that
 independent keeper duties are armed. The keeper database and VM destination
 remains intended deployment architecture, not a migration-completion claim.
 Feature defaults, dated activations, and current observations stay distinct.
+
+## Release-note consolidation: November 15 through November 22, 2026
+
+This continuation preserves the earlier August–November consolidation and later
+recorded owner decisions. A release describes intent and delivery boundaries;
+it does not establish current deployment, keeper activation, or complete data.
+The release notes remain unchanged. Approved canonical sections retain their
+precedence; this consolidation does not change them or runtime behaviour.
+
+| Reference | Functional homes |
+| --- | --- |
+| [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md) | Existing platform, vault, app, keeper, and reward baseline retained |
+| [November 16](../ReleaseNotes/ReleaseNotes-2026-11-16.md) | Alpha05 Auto-lend setup and management; NFT image hosting |
+| [November 17](../ReleaseNotes/ReleaseNotes-2026-11-17.md) | Alpha05 asset-separated summaries and approval read freshness |
+| [November 18](../ReleaseNotes/ReleaseNotes-2026-11-18.md) | Frozen Terms and publication versus network activation |
+| [November 19](../ReleaseNotes/ReleaseNotes-2026-11-19.md) | Platform matching, claims, fees, risk and Terms; vault and position authority; keeper capability limits; public evidence |
+| [November 20](../ReleaseNotes/ReleaseNotes-2026-11-20.md) | Vault recovery claim; Alpha05 embedded use, approvals, disclosures, and vault-only rewards |
+| [November 21](../ReleaseNotes/ReleaseNotes-2026-11-21.md) | Alpha05 multisig alert authorization and safe token labels |
+| [November 22](../ReleaseNotes/ReleaseNotes-2026-11-22.md) | Closing mode and backstop limits; reward caps and transport; public feeds, failure records, provenance, and operational assurance |
+
+The intended outcomes belong in these domain specs. Command examples, ABI
+fragments, implementation recipes, test inventories, and dated change history
+remain outside this folder.

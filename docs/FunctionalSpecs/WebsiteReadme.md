@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the website and product experience for Vaipakam.
-It consolidates the release notes from 2026-08-13 through 2026-11-04,
+It consolidates the release notes from 2026-08-13 through 2026-11-22,
 inclusive, while retaining later recorded intent decisions.
 It is separate from the repository root `README.md`, which is a product-facing overview. Protocol and workflow detail lives in `apps/www/src/content/whitepaper/Whitepaper.en.md` and the other `docs/FunctionalSpecs/` documents.
 
@@ -17,9 +17,9 @@ The goal of this file is to guide the design and development of:
 - basic and advanced product interaction modes
 - visual design system decisions
 
-## Functional consolidation through November 15, 2026
+## Functional consolidation through November 22, 2026
 
-This website spec includes the November 4–15 release decisions. The
+This website spec includes the November 4–22 release decisions. The
 [alpha05 spec](Alpha05ConnectedApp.md) defines the new connected app, including
 its own Home, Rewards, Rate Desk, rental, and Protection pages. Existing-app
 route descriptions below retain that scope until parity and explicit cutover;
@@ -54,6 +54,25 @@ a new app feature is not evidence that the current app was replaced.
   prove the application build safe. Foreign service workers are removed when
   genuine page code runs, but a page wholly controlled by a hostile worker
   cannot be assumed to run that cleanup.
+
+- The public [data and diagnostics specification](PublicDataAndDiagnostics.md)
+  governs versioned feeds, address repayment records, rental rights, issuer
+  evidence, history coverage, and build provenance. Public data is no credit
+  score, benchmark rate, executable offer, safety endorsement, or advice.
+- Position imagery is served from the platform website's position-image URL,
+  with a permanent content-addressed backing copy, one-day cache, and public
+  cross-origin access. It is branding, not a statement of live financial
+  terms. An existing deployment changes its image only through its authorized
+  update route, not because the website publishes a new file.
+- Public copy states that funds lent cannot be withdrawn from a running loan;
+  a sale needs a willing buyer and does not promise a date of return. A reward
+  is credited to the user's own vault and later withdrawal follows protection.
+  Until holding discounts launch, fee copy says no holding discount, while
+  retaining any substantiated referral or other reduction in the actual quote.
+- The [November 15–22 source map](README.md#release-note-consolidation-november-15-through-november-22-2026)
+  preserves earlier consolidation and records this continuation. Published
+  Terms remain frozen; publication alone does not activate network acceptance.
+  Alpha05's connection and consent journey remains defined in its own spec.
 
 ## Website Goals
 

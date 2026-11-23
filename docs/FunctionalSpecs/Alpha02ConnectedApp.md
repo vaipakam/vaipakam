@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-11-15, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-11-22, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -17,11 +17,12 @@ app's presentation and implemented feature slices. This document continues
 to govern the existing app until explicit parity and cutover. Shared funds,
 ownership, and safety rules follow the platform and vault specifications.
 
-## Consolidated shared behavior through November 15
+## Consolidated shared behavior through November 22
 
 - Net principal and ordinary claims credit the payee's own vault; reviews
   distinguish credit from a subsequent wallet withdrawal and its protection.
-  The separately documented swap-to-repay exceptions retain their stated routes.
+  Open-loan receipts and swap surplus are held for the current position
+  holder's claim; no loan payout retains a direct-wallet exception.
 - Position NFTs are standalone ownership records and closed tokens remain
   retired receipts. Optional NFT protection uses a holder lock; no platform
   NFT-transfer queue is offered. Routes bound to an earlier transfer count
@@ -54,6 +55,26 @@ ownership, and safety rules follow the platform and vault specifications.
   protected and the latest manager signs for their vault, including code pins.
   General relayed protection controls and vault-event owner alerts retain the
   Stage B4 limitations described in [Vault Operations](VaultOperations.md).
+
+- Reward claims use the claimant's own vault for every account kind, opening
+  it on supported deployments when needed. There is no new wallet venue or
+  fallback. Withdrawal is separate and retains protection. Historical wallet
+  payments remain identifiable in payment history.
+- Position authority binds token identity and transfer count. Plain holder-lock
+  transfers stay refused, while qualified protected sales and handovers follow
+  [Vault Operations](VaultOperations.md). Unsupported recovery controls must
+  remain labelled unavailable rather than imply equivalent authority.
+- Closing mode and global pause are distinct and have different rescue paths,
+  as defined in the [platform specification](ProjectDetailsREADME.md#closing-mode-and-backstop-exposure).
+  A feature being hidden or not yet reflected by app controls cannot bypass
+  an on-chain refusal or establish that a keeper is running.
+- Public records, history completeness, issuer-power evidence, cleaned token
+  labels, and safe exports follow [Public Data and Diagnostics](PublicDataAndDiagnostics.md).
+  Unknown evidence is never rendered as a passed safety check or zero amount.
+- The [November 15–22 source map](README.md#release-note-consolidation-november-15-through-november-22-2026)
+  extends the earlier consolidation. New alpha05 journeys, its before-Connect
+  Terms step, and multisig alert authorization belong to its separate spec;
+  they do not imply this app has reached feature parity.
 
 ## Purpose
 

@@ -2,7 +2,7 @@
 
 This document describes the intended behavior of the protocol-operated keeper.
 It consolidates the operational decisions in the release notes from August 13
-through November 15, 2026, while retaining later recorded intent decisions.
+through November 22, 2026, while retaining later recorded intent decisions.
 The deployment destination incorporates the owner's
 October 27 direction: a dedicated Cloudflare database and a separate always-on
 keeper VM in Oracle Cloud. This is the required deployment arrangement, not
@@ -367,8 +367,9 @@ evidence that the migration has completed.
   at least one minus that share, not its former entire budget.
 - Intent candidates apply their lend-until and pro-rata choices before
   preview. Expiring intent capital is never silently withdrawn or rolled
-  past its permissible one-day-loan window. Partial principal payments do
-  not recommit working capital or free the original exposure cap early.
+  past its permissible one-day-loan window. Partial repayment immediately
+  reduces the intent's outstanding principal. Recommitting its held payment
+  is a separate, explicitly armed duty, not an automatic result of repayment.
 
 ### Periodic settlement and in-place extension
 
@@ -389,7 +390,10 @@ evidence that the migration has completed.
   holder's reserve for the loan plus their other free balance of the
   principal asset must cover what the extension would charge now. A loan
   that falls short is skipped with the three figures named, and a loan whose
-  funding cannot be read waits for the next run.
+  funding cannot be read waits for the next run. This precheck does not yet
+  include the added-term initiation fee, so the contract may still refuse
+  an apparently funded extension. The keeper cannot describe that gap as a
+  reliable insufficient-funding skip.
 
 ### Required deployment capabilities
 
@@ -1643,6 +1647,54 @@ dependency is never turned into an empty queue or a successful run.
 - The agent owns the user bot and its links; the keeper has no user-bot handle
   or token role. The keeper's operator-alert bot remains an independent route.
 
+## New capabilities and independent activation
+
+- Multi-slot matching names one of the lender's eight independent intents on
+  a pair. Cheapest rate floor is tried first while preserving wallet fairness;
+  eight slots do not count as eight distinct lenders. Backstop and aggregator
+  intent routing remains slot zero. Candidate checks use exact outstanding
+  principal, not original principal retained until claim.
+- Ordinary matching respects an offer's either-choice partial-repayment and
+  prepayment-listing terms, exact NFT identifiers and multi-token quantities.
+  Collection-offer matching is a separate follow-up, not a capability inferred
+  from its ordinary matching support.
+- Recommitting open-loan held payments requires the holder's roll authority,
+  an active intent inside its end window, unpaused assets, and no seller
+  interest still owed. The held-payment recommit duty ships off. Final roll
+  includes still-held receipts but obeys all its own eligibility checks.
+- Closing mode refuses both recommit and roll. At this source cutoff the keeper
+  does not yet pre-disarm those attempts, so the contract's refusal is expected
+  and must be recorded honestly. Claims remain the owner's separate route.
+- A lender-sale mandate never permits a listing above the loan's own rate.
+  Auto-extension needs both holders' latest explicit caps; a missing or zero
+  cap is not unlimited consent. A borrower instruction near due conflicts
+  with auto-extension or auto-refinance limits as specified by the platform.
+- Permissionless repayment and collateral-reserve instructions, hourly
+  reference-rate updates, parked treasury-leg release, and delayed recovery
+  position movement are not armed merely because contracts expose them.
+  Their described executors remain unbuilt or off at this cutoff. The
+  optional recovery-address claim likewise has no built keeper or app setup.
+- Role A's daily per-asset backstop cap binds every opening route on chain;
+  keeper planning and app cap displays remain follow-ups. The service cannot
+  promise room from a stale capital or daily-used reading.
+- [Public data and diagnostics](PublicDataAndDiagnostics.md) specifies the
+  independent failure service, issuer checks, read coverage, node capability
+  measurements, and deployment assurance. Running on the same VM grants the
+  failure service neither a keeper key nor keeper-state access. The issuer
+  check runner is not built, so no check results are implied.
+- The exclusive runner lease exists only in the dedicated keeper store.
+  A retired copy in the indexer store is not a fallback. Other services may
+  neither acquire it nor seed a shadow copy during deployment adoption.
+- Backup and restore preserve decision order, legal holds, and completed work.
+  All retention settings have an eight-day minimum; an existing thirty-one-day
+  monthly setting is preserved. A backup credential cannot cover multiple
+  buckets. Startup settings are parsed as data, all-or-none, without executing
+  assignments or startup hooks.
+- Fresh-deployment rehearsal and readback disclose each capability they have
+  actually checked, including required-but-unset values. They do not prove
+  that keeper duties are armed, that a token is fully registered for live
+  cross-chain transport, or that the new build is serving production.
+
 ## Sources
 
 - [August 23](../ReleaseNotes/ReleaseNotes-2026-08-23.md) and
@@ -1701,3 +1753,8 @@ dependency is never turned into an empty queue or a successful run.
 - [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md): cross-term
   pro-rata candidates, bounded fresh-offer priority, intent end dates, and
   vault-owned protection with explicit discovery and alert limitations.
+
+Additional sources: [November 19](../ReleaseNotes/ReleaseNotes-2026-11-19.md)
+(matching, held receipts, fee and instruction boundaries), and
+[November 22](../ReleaseNotes/ReleaseNotes-2026-11-22.md)
+(closing mode, daily backstop limits, lease isolation, diagnostics, and restore).
