@@ -417,7 +417,7 @@ is de-listed, and credits nothing.
 **Wanted statement:** an adoption is refused while the screen cannot be read.
 **Answered by:** VLT-172.
 
-## 10. Second pass: rebasing tokens, the position move, listing escrows
+## 10. Second pass: rebasing tokens, the position move, listing compartments
 
 ### VLT-M41 · Depositing a token whose balance grows by itself
 
@@ -491,32 +491,32 @@ replacement.
 It is free again only when the listing ends unfilled.
 **Answered by:** VLT-354.
 
-### VLT-M48 · Sending a multi-token straight to a listing escrow
+### VLT-M48 · Sending a multi-token straight to a listing compartment
 
 **Who:** any party.
-**Does:** sends a multi-token to the address of a listing escrow, thinking it is the vault or the
-listing.
+**Does:** sends a multi-token to the address of a listing compartment, thinking it is the vault or
+the listing.
 **Proposed answer:** Refuse.
-**Wanted statement:** a listing escrow accepts nothing except from its own vault.
+**Wanted statement:** a listing compartment accepts nothing except from its own vault.
 **Answered by:** VLT-353.
 
-### VLT-M49 · Sending a token or a single NFT straight to a listing escrow
+### VLT-M49 · Sending a token or a single NFT straight to a listing compartment
 
 **Who:** any party.
 **Does:** sends a token, or a single NFT without asking it to accept, to the address of a listing
-escrow.
+compartment.
 **Proposed answer:** Stated.
-**Wanted statement:** an asset other than the listed lot that reaches a listing escrow cannot leave
-it.
+**Wanted statement:** an asset other than the listed lot that reaches a listing compartment cannot
+leave it.
 No step recovers it.
 **Answered by:** VLT-355.
 
-### VLT-M50 · The network's own coin sent to a listing escrow
+### VLT-M50 · The network's own coin sent to a listing compartment
 
 **Who:** any party.
-**Does:** sends the native coin to a listing escrow.
+**Does:** sends the native coin to a listing compartment.
 **Proposed answer:** Refuse.
-**Wanted statement:** a listing escrow never accepts the native coin.
+**Wanted statement:** a listing compartment never accepts the native coin.
 **Answered by:** VLT-353.
 
 ## 11. A loan whose collateral sale failed

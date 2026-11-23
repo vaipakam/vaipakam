@@ -1618,19 +1618,19 @@ The coin is refused, and stays with the sender. A vault never holds the network'
 ### VLT-161 · refusal
 
 **Who:** any sender other than the vault's owner, a genuine vault or the vault's own listing
-escrow.
+compartment.
 **When:** an NFT is sent to a vault by a send that asks the vault to accept it.
 
 The NFT is refused, and stays with the sender.
 Every send of a multi-unit NFT asks, so every such send from anyone else is refused.
 The owner's own send is accepted (VLT-111).
 So is a delivery inside a step of the platform: from a genuine vault, the return of a listed
-lot from the vault's own listing escrow, up to the lot left, or the return of a rental.
+lot from the vault's own listing compartment, up to the lot left, or the return of a rental.
 
 - **Refused as:** the vault accepts an NFT only from its owner or inside a step.
 - **For the mistake:** VLT-M12, refuse.
 - **Tests owed:** the defaults for a refusal, for each standard and each kind of sender, and
-  a lot coming back from a listing escrow that is torn down, and a return that carries more
+  a lot coming back from a listing compartment that is torn down, and a return that carries more
   than the lot left.
 
 ### VLT-162 · rule
@@ -1638,7 +1638,7 @@ lot from the vault's own listing escrow, up to the lot left, or the return of a 
 **Who:** anyone who sends an asset straight to a vault.
 **When:** a token arrives by a plain transfer, an NFT by a send that does not ask, a token is
 issued to the vault's address, a token's balance grows by itself, or an asset comes from the
-vault's own listing escrow other than the lot left.
+vault's own listing compartment other than the lot left.
 
 What arrived is untracked: the vault's balance of the asset less everything it records.
 It is in no figure of VLT-110, and no step moves it, counts it or shows it as a balance.
@@ -2543,12 +2543,12 @@ A cell names the statement that decides it. "Open" means the condition does not 
 No step of this section sets a price, and none is moved by a sequencer outage. VLT-246 states
 what a vault's own read of a price never does.
 
-## Section 4: deposits, the Ready balance and listing escrows
+## Section 4: deposits, the Ready balance and listing compartments
 
 The platform's rules (PLT) and sections 1 to 3 apply throughout and are cited by id.
 Protection itself belongs to section 5, and what a protected account pays out to section 6.
 A listing and its sale are owed by the exits rules. This section states the deposit, the Ready
-balance, and the escrow of a listed lot.
+balance, and the compartment of a listed lot.
 
 ## 4.1 A deposit
 
@@ -2596,7 +2596,8 @@ than the permit allows or the wallet holds.
 The deposit is refused, and nothing moves.
 An approval the owner gave to the vault's address, or to the platform's, is never used: the
 vault takes a token from a wallet only under a permit signed for that deposit (VLT-081).
-A token the owner sends inside its own step (VLT-116) is not taken, and needs no permit.
+A token the owner sends inside its own step is not taken: it is booked under VLT-116 and needs
+no permit. A token sent outside such a step is untracked (VLT-162), never a deposit.
 The refusal states the amount asked for, what the wallet holds and what the permit allows, so
 the owner sees which of them fell short.
 
@@ -2973,45 +2974,45 @@ No surface calls the protected balance savings.
 | A move that waits for the token | None; one | VLT-325 |
 | The protected balance against a fee | Covers it; covers part; nil | VLT-323 |
 
-## 4.3 Listing escrows
+## 4.3 Listing compartments
 
 ### VLT-350 · rule
 
 **Who:** a vault whose owner lists a lot of a multi-unit NFT that is under a lien.
 **When:** the listing is recorded.
 
-The vault moves exactly the listed id and amount into a listing escrow that it creates for
+The vault moves exactly the listed id and amount into a listing compartment that it creates for
 that one listing. The lien never leaves the lot: the move is a reservation inside the lien, as
 an allowance's is (VLT-061).
 It does so because a marketplace takes a multi-unit NFT only under an approval over the whole
 collection, which a vault never grants (VLT-065). A token and a single NFT are listed from the
 vault itself, by an allowance (VLT-061).
-An escrow's address follows from its vault and its listing, and the vault's version fixes its
-code. A vault knows only the escrows it created, and keeps that record across its versions.
+A compartment's address follows from its vault and its listing, and the vault's version fixes its
+code. A vault knows only the compartments it created, and keeps that record across its versions.
 
 - **Tests owed:** the defaults for a rule, with a lot above its lien, a lot under no lien, a
-  second listing of the same id, an escrow that another vault created, and a teardown after
+  second listing of the same id, a compartment that another vault created, and a teardown after
   the vault's version changed.
 
 ### VLT-351 · never
 
-**Who:** a listing escrow.
+**Who:** a listing compartment.
 **When:** at any time.
 
-A listing escrow is never a way out of its vault. It holds the listed lot, obeys only its own
+A listing compartment is never a way out of its vault. It holds the listed lot, obeys only its own
 vault, and sends the lot only to a buyer under the listing or back to its vault (VLT-352).
 It is the listing's seller toward the marketplace. It alone grants the marketplace's approval,
 and only to a listing conduit the vault code fixes (VLT-240, VLT-241).
 It answers that an order is signed only from its vault's record of the listing, and only to
 that marketplace (VLT-066). While the platform is paused its order reads as unsigned.
-The price is paid to the vault itself, within VLT-067, and never to the escrow.
+The price is paid to the vault itself, within VLT-067, and never to the compartment.
 
 - **Against:** VLT-T33.
-- **Watch:** every approval an escrow grants names the fixed conduit. Every fall in an escrow's
-  holding of its lot is a sale under its vault's recorded listing or a return to its vault,
-  and the price of each sale arrives at the vault.
+- **Watch:** every approval a compartment grants names the fixed conduit. Every fall in a
+  compartment's holding of its lot is a sale under its vault's recorded listing or a return to its
+  vault, and the price of each sale arrives at the vault.
 - **Tests owed:** the defaults for a never, with an order the vault did not record, an approval
-  asked for another spender, a sale in a pause, a price paid to the escrow's address, and a
+  asked for another spender, a sale in a pause, a price paid to the compartment's address, and a
   lot larger than the listing asked to leave.
 
 ### VLT-352 · rule
@@ -3019,14 +3020,14 @@ The price is paid to the vault itself, within VLT-067, and never to the escrow.
 **Who:** the step that ends a listing.
 **When:** the listing ends: sold, cancelled or lapsed (EXT owed: when a listing ends).
 
-The escrow returns to its vault whatever is left of the lot, in the same transaction,
+The compartment returns to its vault whatever is left of the lot, in the same transaction,
 withdraws the approval it gave, and grants nothing afterwards.
 The vault accepts the lot left (VLT-161) and holds it in the vault again, under the same lien.
 More of that id than the lot left, if any comes back with it, is untracked (VLT-162).
-An escrow is torn down once, and is never used for another listing.
-What was sold left the escrow for the buyer, and its price arrived at the vault.
+A compartment is torn down once, and is never used for another listing.
+What was sold left the compartment for the buyer, and its price arrived at the vault.
 No condition of the platform refuses a teardown: it is open whenever the step that ends the
-listing is, so a lot never rests in an escrow after its lien has ended.
+listing is, so a lot never rests in a compartment after its lien has ended.
 
 - **Tests owed:** the defaults for a rule, with a listing that ends unsold, sold in part and
   sold whole, a second teardown, an order and the approval tried after the teardown, a teardown
@@ -3034,24 +3035,24 @@ listing is, so a lot never rests in an escrow after its lien has ended.
 
 ### VLT-353 · refusal
 
-**Who:** any sender other than the escrow's own vault.
-**When:** a multi-unit NFT, or the network's own coin, is sent to a listing escrow.
+**Who:** any sender other than the compartment's own vault.
+**When:** a multi-unit NFT, or the network's own coin, is sent to a listing compartment.
 
-It is refused, and stays with the sender. A listing escrow accepts nothing except from its own
+It is refused, and stays with the sender. A listing compartment accepts nothing except from its own
 vault.
 
-- **Refused as:** a listing escrow accepts only from its own vault.
+- **Refused as:** a listing compartment accepts only from its own vault.
 - **For the mistake:** VLT-M48 and VLT-M50, refuse.
 - **Tests owed:** the defaults for a refusal, for each sender and each of the two assets.
 
 ### VLT-354 · rule
 
-**Who:** a vault with a lot in one of its own listing escrows.
+**Who:** a vault with a lot in one of its own listing compartments.
 **When:** its records are read, or its owner asks to withdraw the listed asset.
 
-A lot in the vault's own listing escrow is still the vault's, and still under its lien.
+A lot in the vault's own listing compartment is still the vault's, and still under its lien.
 For a multi-unit NFT, what a vault holds of an id is its own balance and what its own listing
-escrows hold of that id as their lots. Every statement that speaks of what the vault holds, or
+compartments hold of that id as their lots. Every statement that speaks of what the vault holds, or
 of the vault's balance, reads it so (VLT-011, VLT-038, VLT-113 to VLT-115, VLT-162).
 So the lot counts once, as held under that lien, and never makes another lien's release of the
 same id fall short.
@@ -3066,31 +3067,31 @@ It never leaves by the owner's withdrawal (VLT-014). The refusal says that a lis
 ### VLT-355 · rule
 
 **Who:** a vault's owner.
-**When:** one of the vault's own listing escrows holds an asset other than its listed lot: a
+**When:** one of the vault's own listing compartments holds an asset other than its listed lot: a
 token, or a single NFT sent without asking.
 
-The owner may have the vault take that asset from the escrow into the vault: all the escrow
-holds of it. The escrow sends it only at its own vault's word, and only to that vault.
-It arrives untracked (VLT-162). The owner may adopt it, naming the address that sent it to the
-escrow and never the escrow. That is the owner's word, as for an asset sent straight to the
-vault, and the adoption screens the address named (VLT-170, VLT-173).
+The owner may have the vault take that asset from the compartment into the vault: all the
+compartment holds of it. The compartment sends it only at its own vault's word, and only to that
+vault. It arrives untracked (VLT-162). The owner may adopt it, naming the address that sent it to
+the compartment and never the compartment. That is the owner's word, as for an asset sent straight
+to the vault, and the adoption screens the address named (VLT-170, VLT-173).
 The step never moves the listed lot or any unit of its collection, and pays nobody.
-After the teardown it is the escrow's only remaining action: no approval and no answer for an
+After the teardown it is the compartment's only remaining action: no approval and no answer for an
 order outlives the teardown (VLT-352).
 
 - **For the mistake:** VLT-M49, undo through adoption.
 - **Tests owed:** the defaults for a rule, with a token and a single NFT taken before and after
   the teardown, the listed collection named as the asset, a caller who is not the owner, an
-  escrow another vault created, an adoption that names the escrow as the source, an adoption
-  that names a flagged sender, an approval and an order tried after the teardown, and a token
-  that calls back into the escrow or the vault during the send.
+  compartment another vault created, an adoption that names the compartment as the source, an
+  adoption that names a flagged sender, an approval and an order tried after the teardown, and a
+  token that calls back into the compartment or the vault during the send.
 
-### Model: a listing escrow
+### Model: a listing compartment
 
 **States:**
 
-- Not created (start): no escrow exists for the listing.
-- Created: the escrow holds the listed lot, or what is left of it, for an open listing.
+- Not created (start): no compartment exists for the listing.
+- Created: the compartment holds the listed lot, or what is left of it, for an open listing.
 - Torn down (end): the listing has ended, and what was left of the lot is back in the vault.
 
 **Steps:**
@@ -3110,7 +3111,7 @@ order outlives the teardown (VLT-352).
 | Create, and move the lot in | A lot under no lien or above it, or an asset that is not a multi-unit NFT, VLT-350 |
 | Sell the lot, or part of it | An order the vault did not record, another marketplace, or a pause, VLT-351. After the teardown, VLT-352 |
 | Tear down, returning what is left | A second teardown, or a step that does not end the listing, VLT-352. No condition of the platform refuses it |
-| Take another asset into the vault | By anyone but the vault's owner. From an escrow the vault did not create. The listed lot, or any unit of its collection, VLT-355 |
+| Take another asset into the vault | By anyone but the vault's owner. From a compartment the vault did not create. The listed lot, or any unit of its collection, VLT-355 |
 
 **Dimensions:**
 
@@ -3118,7 +3119,7 @@ order outlives the teardown (VLT-352).
 | --- | --- | --- |
 | The lot | Whole; sold in part; sold whole | VLT-352 |
 | The platform | Open; paused | VLT-351 |
-| Another asset in the escrow | None; a token; a single NFT | VLT-355 |
+| Another asset in the compartment | None; a token; a single NFT | VLT-355 |
 
 ## Outcome under each condition of the platform (section 4)
 
@@ -3131,9 +3132,9 @@ A cell names the statement that decides it. "Open" means the condition does not 
 | Cancelling a move, or moving the Ready balance back | Open (VLT-326) | Open | Stated in section 5 | Stated in section 5 | Open (PLT-071) |
 | A step that draws on the Ready balance | As the step itself (VLT-333) | As the step itself | As the step itself | As the step itself | As the step itself |
 | Setting, changing or removing the idle period | Stated in section 5 | Open | Stated in section 5 | Stated in section 5 | Open (PLT-071) |
-| Creating a listing escrow, and a sale from it | PLT-040. An order reads as unsigned (VLT-351) | The exits domain states it | The exits domain states it | The exits domain states it | The exits domain states it |
-| Tearing an escrow down | As the step that ends the listing (VLT-352) | Open | As the step that ends the listing (VLT-352) | As the step that ends the listing (VLT-352) | Open (PLT-071) |
-| Taking another asset from an escrow into its vault | PLT-040 | Open | Open: it arrives untracked, and its adoption is refused (PLT-060) | Open: its adoption states its own outcome (VLT-172) | Open (PLT-071) |
+| Creating a listing compartment, and a sale from it | PLT-040. An order reads as unsigned (VLT-351) | The exits domain states it | The exits domain states it | The exits domain states it | The exits domain states it |
+| Tearing a compartment down | As the step that ends the listing (VLT-352) | Open | As the step that ends the listing (VLT-352) | As the step that ends the listing (VLT-352) | Open (PLT-071) |
+| Taking another asset from a compartment into its vault | PLT-040 | Open | Open: it arrives untracked, and its adoption is refused (PLT-060) | Open: its adoption states its own outcome (VLT-172) | Open (PLT-071) |
 
 No step of this section sets a price or reads one.
 
