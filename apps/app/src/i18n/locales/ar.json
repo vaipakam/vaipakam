@@ -3170,7 +3170,10 @@
       "unknown": "غير معروف",
       "amountTooPrecise": "لا يمكن تقسيم {{symbol}} بهذه الدقة — استخدم {{decimals}} منازل عشرية كحد أقصى.",
       "amountBelowOfferFloor": "أصغر عرض يقبله البروتوكول بهذا الرمز هو {{min}} {{symbol}}. أدخل هذا المقدار على الأقل.",
-      "serviceReference": "المرجع {{reference}}. اذكره إذا تواصلت مع الدعم."
+      "serviceReference": "المرجع {{reference}}. اذكره إذا تواصلت مع الدعم.",
+      "readNoAnswer": "لم يستجب المفهرس، لذا لا يوجد مرجع لهذه القراءة.",
+      "chainReadFailed": "فشلت القراءة من الشبكة؛ لا يوجد مرجع لها.",
+      "chainReadAlsoFailed": "فشلت القراءة من الشبكة أيضًا؛ لا يوجد مرجع لها."
     },
     "stepNav": {
       "progressAria": "التقدم",

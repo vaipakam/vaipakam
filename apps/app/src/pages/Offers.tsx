@@ -547,7 +547,7 @@ export function Offers() {
       {offers.isLoading ? (
         <EmptyState icon={LoaderCircle} title={copy.offers.loading} />
       ) : visible === null || visible === undefined ? (
-        <UnavailableState body={copy.offers.unavailable} />
+        <UnavailableState body={copy.offers.unavailable} failed={offers.failedRead} />
       ) : visible.length === 0 ? (
         filtersActive && marketHasRows ? (
           // The MARKET isn't empty — the filters matched nothing.

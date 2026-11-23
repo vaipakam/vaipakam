@@ -1334,7 +1334,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   }
   if (!loan.data) {
     return (
-      <UnavailableState body={copy.positions.details.notFound} />
+      <UnavailableState body={copy.positions.details.notFound} failed={loan.failedRead} />
     );
   }
 

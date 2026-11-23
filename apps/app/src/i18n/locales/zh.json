@@ -3170,7 +3170,10 @@
       "unknown": "未知",
       "amountTooPrecise": "{{symbol}} 不能分得这么细——最多使用 {{decimals}} 位小数。",
       "amountBelowOfferFloor": "协议在此代币中接受的最小报价为 {{min}} {{symbol}}。请至少输入该数额。",
-      "serviceReference": "参考编号 {{reference}}。联系支持时请提供此编号。"
+      "serviceReference": "参考编号 {{reference}}。联系支持时请提供此编号。",
+      "readNoAnswer": "索引服务没有响应，因此这次读取没有参考编号。",
+      "chainReadFailed": "网络读取失败；没有对应的参考编号。",
+      "chainReadAlsoFailed": "网络读取也失败了；没有对应的参考编号。"
     },
     "stepNav": {
       "progressAria": "进度",

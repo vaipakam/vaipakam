@@ -289,6 +289,7 @@ export function Positions() {
         // (audit F-20260702-001 class).
         <UnavailableState
           body={copy.positions.unavailable}
+          failed={[loans.failedRead, offers.failedRead]}
           onRetry={() => {
             void loans.refetch();
             void offers.refetch();

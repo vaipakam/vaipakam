@@ -168,6 +168,7 @@ import { consentCheck, useEligibility } from './useEligibility';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { idleAware } from '../lib/idle';
 import { readPositionOwnerOn } from '../contracts/positionNft';
+import { FailedReadNote } from './ServiceReference';
 
 type Side = 'lender' | 'borrower';
 type FlowStep = 'details' | 'choose' | 'terms' | 'review' | 'done';
@@ -2611,7 +2612,10 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
             {activeOffers.isLoading ? (
               <p className="muted">{copy.offerFlow.lookingForMatches}</p>
             ) : matchPick === null ? (
-              <p className="muted">{copy.match.unavailable}</p>
+              <>
+                <p className="muted">{copy.match.unavailable}</p>
+                <FailedReadNote failed={activeOffers.failedRead} />
+              </>
             ) : matchPick.matches.length === 0 && matchPick.screening ? (
               // #2535 — an empty list while the screen is still answering
               // is not "no matches".

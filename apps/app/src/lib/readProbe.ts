@@ -143,7 +143,15 @@ export type IndexerReadFailure = "unconfigured" | "timeout" | "network" | "http"
 /** One indexer read's outcome, as `data/indexer.ts` observes it. */
 export type IndexerReadOutcome<T> =
   | { ok: true; value: T }
-  | { ok: false; failure: IndexerReadFailure; status?: number };
+  | {
+      ok: false;
+      failure: IndexerReadFailure;
+      status?: number;
+      /** #3922 — the request reference the indexer's answer carried, for
+       *  a failure that got an answer (an HTTP error, or a body that was
+       *  not JSON); null when nothing answered. Never sent to the probe. */
+      reference?: string | null;
+    };
 
 const MAX_CHAIN = 8;
 const MAX_TEXT = 300;

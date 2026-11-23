@@ -58,6 +58,7 @@ import { AssetType } from '../lib/types';
 import { WindowedRowList } from '../lib/visibleWindow';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
+import { FailedReadNote } from './ServiceReference';
 
 /** Mirror of the contract's candidate admission — exported for the
  *  submit-time re-check (same predicate, live values). */
@@ -601,7 +602,10 @@ export function ObligationTransferFlow({
       ) : offers.isLoading || candidates === undefined ? (
         <p className="muted">{copy.transferOb.checking}</p>
       ) : candidates === null ? (
-        <p className="muted">{copy.transferOb.bookUnavailable}</p>
+        <>
+          <p className="muted">{copy.transferOb.bookUnavailable}</p>
+          <FailedReadNote failed={offers.failedRead} />
+        </>
       ) : candidates.length === 0 ? (
         <p className="muted">{copy.transferOb.noneFound}</p>
       ) : !confirmOpen ? (

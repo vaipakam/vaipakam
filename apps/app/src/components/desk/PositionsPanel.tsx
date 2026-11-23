@@ -135,7 +135,7 @@ export function PositionsPanel() {
     return <EmptyState icon={LoaderCircle} title={text.loading} />;
   }
   if (loans.data == null || rows === null) {
-    return <UnavailableState body={text.unavailable} />;
+    return <UnavailableState body={text.unavailable} failed={loans.failedRead} />;
   }
   return (
     <div>

@@ -7550,6 +7550,11 @@ const copySource = {
     // #3922 — shown beside a failure that came from the app's own services
     // (the indexer or the agent), and nowhere else.
     serviceReference: tmpl('Reference {{reference}}. Quote it if you contact support.', ['reference']),
+    // #3922 — a failed read says when there is no reference to quote,
+    // rather than leaving it blank.
+    readNoAnswer: 'The indexer did not answer, so there is no reference for this read.',
+    chainReadFailed: 'The network read failed; there is no reference for it.',
+    chainReadAlsoFailed: 'The network read failed too; there is no reference for it.',
     waitingForWallet: 'Waiting for wallet…',
     // Fallback chain label when a chain id has no known name (offer-row,
     // rental prepay). "#42" style, so the number reads as an id.

@@ -3170,7 +3170,10 @@
       "unknown": "unbekannt",
       "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen.",
       "amountBelowOfferFloor": "Das kleinste Angebot, das das Protokoll in diesem Token annimmt, beträgt {{min}} {{symbol}}. Gib mindestens diesen Betrag ein.",
-      "serviceReference": "Referenz {{reference}}. Geben Sie sie an, wenn Sie den Support kontaktieren."
+      "serviceReference": "Referenz {{reference}}. Geben Sie sie an, wenn Sie den Support kontaktieren.",
+      "readNoAnswer": "Der Indexer hat nicht geantwortet, daher gibt es für diesen Abruf keine Referenz.",
+      "chainReadFailed": "Der Abruf aus dem Netzwerk ist fehlgeschlagen; dafür gibt es keine Referenz.",
+      "chainReadAlsoFailed": "Auch der Abruf aus dem Netzwerk ist fehlgeschlagen; dafür gibt es keine Referenz."
     },
     "stepNav": {
       "progressAria": "Fortschritt",
