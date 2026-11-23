@@ -2590,12 +2590,13 @@ protection is on.
 ### VLT-302 · refusal
 
 **Who:** a vault's owner.
-**When:** a deposit of a token has no permit for it, or asks for more than the permit allows
-or the wallet holds.
+**When:** the vault is asked to take a token for a deposit with no permit for it, or for more
+than the permit allows or the wallet holds.
 
 The deposit is refused, and nothing moves.
-An approval the owner gave to the vault's address, or to the platform's, is never used: a
-token leaves a wallet only under a permit signed for that deposit (VLT-081).
+An approval the owner gave to the vault's address, or to the platform's, is never used: the
+vault takes a token from a wallet only under a permit signed for that deposit (VLT-081).
+A token the owner sends inside its own step (VLT-116) is not taken, and needs no permit.
 The refusal states the amount asked for, what the wallet holds and what the permit allows, so
 the owner sees which of them fell short.
 
@@ -2604,7 +2605,8 @@ the owner sees which of them fell short.
 - **For the mistake:** VLT-M05, refuse.
 - **Tests owed:** the defaults for a refusal, with an approval given to the vault and no permit,
   a permit below the amount, a permit past its deadline, a permit used once already, a permit
-  signed for another purpose, and a wallet that holds less than the amount.
+  signed for another purpose, a wallet that holds less than the amount, and a contract
+  owner's send inside its own step (not refused).
 
 ### VLT-303 · refusal
 

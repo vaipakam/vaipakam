@@ -175,7 +175,7 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-246 | N | New. Raised by threat PRC-T20. Approved by the owner on 2026-11-22, 14:31 UTC. | b9e1d78aa7928e20 |
 | VLT-300 | K | VO "Deposits, ownership, and free funds", first item. How each kind of asset arrives: VLT-081, VLT-116 and VLT-161, approved. The first deposit creating the vault: VLT-200. | bfa890c7e8badfbf |
 | VLT-301 | N | New. Raised by mistake VLT-M04. Approved by the owner on 2026-11-23, 01:42 UTC. | d6b77967f635c02a |
-| VLT-302 | N | New. Raised by mistake VLT-M05. Approved by the owner on 2026-11-23, 01:42 UTC. | 8cf722c1ed81421b |
+| VLT-302 | N | New. Raised by mistake VLT-M05. Approved by the owner on 2026-11-23, 01:42 UTC. Changed after the approval: the refusal is of a deposit the vault takes, and a contract owner's send inside its own step (VLT-116) needs no permit. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | 4c35fd8db827d061 |
 | VLT-303 | N | New. Raised by mistake VLT-M06. Approved by the owner on 2026-11-23, 01:42 UTC. | 8d2903874fcc6f83 |
 | VLT-304 | N | New. Raised by mistake VLT-M07. Approved by the owner on 2026-11-23, 01:42 UTC. | 39ab0113d7f948b0 |
 | VLT-305 | N | New. Raised by mistake VLT-M09. Approved by the owner on 2026-11-23, 01:42 UTC. | c8ccff09c4a0fe2a |
@@ -284,6 +284,9 @@ owner's confirmation. Each was read for conflict before it was entered.
 - The record's owed table lists three owed lines of the model of a vault.
 - VLT-140 lists the commitments it covers. VLT-115 and the model of a lien cite the statements
   that state a release of a lien (VLT-035, VLT-131).
+- VLT-302 says that its refusal is of a deposit the vault takes, and that a token a contract
+  owner sends inside its own step (VLT-116) is not taken and needs no permit. Its test names
+  that case. Raised by the review of this folder, after the owner's approval of section 4.
 - Two statements of the approved sections, and part of a third, are held outside this folder,
   under ids in the held range, at the security review's request. Citations of them are removed
   from this folder.
