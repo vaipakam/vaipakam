@@ -30,6 +30,7 @@ export {
   type ForkRelayedMessage,
   type ForkRelayReport,
   type LaneRamps,
+  type SavedForkRelay,
   type SentMessage,
 } from './forkRelay';
 export { ANVIL_DEV_KEYS } from './devKeys';

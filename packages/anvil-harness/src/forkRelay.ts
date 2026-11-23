@@ -129,6 +129,17 @@ export interface ForkRelayReport {
   limits: readonly string[];
 }
 
+/**
+ * A relay saved between processes: the run's relayer key (made for the run,
+ * funded only on the forks), the forks and the lanes found at install. Kept in
+ * the run's scratch folder, never published.
+ */
+export interface SavedForkRelay {
+  relayerKey: Hex;
+  ends: (Omit<ForkEnd, 'fromBlock'> & { fromBlock: string })[];
+  lanes: LaneRamps[];
+}
+
 /** A `CCIPMessageSent` as the source on-ramp emitted it. */
 export interface SentMessage {
   destChainSelector: bigint;
@@ -346,6 +357,47 @@ export class ForkCcipRelay {
     return new ForkCcipRelay(new Map(ends.map((e) => [e.chainId, e])), lanes, relayerKey, abis);
   }
 
+  /**
+   * Rejoin a relay {@link install} already set up on these forks, from what it
+   * saved ({@link saved}): the rehearsal driver runs each relay step as its
+   * own process. Nothing is redeployed. Each lane's off-ramp must still carry
+   * the stand-in, answering to this relayer key, or the step is refused.
+   */
+  static async attach(saved: SavedForkRelay): Promise<ForkCcipRelay> {
+    const ends = saved.ends.map((e) => ({ ...e, fromBlock: BigInt(e.fromBlock) }));
+    for (const e of ends) assertLoopbackUrl(e.url);
+    const abis = {
+      onRampEvents: compiledAbi(STAND_IN_SOURCE, 'IOnRampV2Events'),
+      reads: compiledAbi(STAND_IN_SOURCE, 'IRehearsalRampReads'),
+      standIn: compiledAbi(STAND_IN_SOURCE, 'RehearsalOffRamp'),
+    };
+    const relayer = privateKeyToAccount(saved.relayerKey).address;
+    const byId = new Map(ends.map((e) => [e.chainId, e]));
+    const lanes = new Map<string, LaneRamps>();
+    for (const l of saved.lanes) {
+      const src = ends.find((e) => e.name === l.from);
+      const dst = ends.find((e) => e.name === l.to);
+      if (!src || !dst) throw new Error(`relay: the saved lane ${l.from} -> ${l.to} names a fork this run does not have`);
+      const found = (await client(dst)
+        .readContract({ address: l.offRamp, abi: abis.standIn, functionName: 'relayer' } as never)
+        .catch(() => null)) as Address | null;
+      if (!found || found.toLowerCase() !== relayer.toLowerCase()) {
+        throw new Error(`relay: ${dst.name}'s off-ramp ${l.offRamp} no longer carries this run's stand-in; install the relay again`);
+      }
+      lanes.set(laneKey(src.chainId, dst.chainId), l);
+    }
+    return new ForkCcipRelay(byId, lanes, saved.relayerKey, abis);
+  }
+
+  /** What {@link attach} needs to rejoin this relay from another process. */
+  saved(): SavedForkRelay {
+    return {
+      relayerKey: this.relayerKey,
+      ends: [...this.ends.values()].map((e) => ({ ...e, fromBlock: e.fromBlock.toString() })),
+      lanes: [...this.lanes.values()],
+    };
+  }
+
   private end(chainId: number): ForkEnd {
     const e = this.ends.get(chainId);
     if (!e) throw new Error(`relay: no fork with chain id ${chainId}`);
@@ -379,10 +431,16 @@ export class ForkCcipRelay {
   }
 
   /** Deliver every pending message from `fromChainId` to `toChainId`, in
-   *  send order. A delivery that fails throws: it is a failed step. */
-  async deliver(fromChainId: number, toChainId: number): Promise<ForkRelayedMessage[]> {
+   *  send order. A delivery that fails throws: it is a failed step.
+   *  `onDelivered` is called as each delivery lands, so a caller can record
+   *  the ones already executed before a later one throws. */
+  async deliver(fromChainId: number, toChainId: number, onDelivered?: (m: ForkRelayedMessage) => void): Promise<ForkRelayedMessage[]> {
     const out: ForkRelayedMessage[] = [];
-    for (const m of await this.pending(fromChainId, toChainId)) out.push(await this.deliverOne(fromChainId, toChainId, m));
+    for (const m of await this.pending(fromChainId, toChainId)) {
+      const done = await this.deliverOne(fromChainId, toChainId, m);
+      out.push(done);
+      onDelivered?.(done);
+    }
     return out;
   }
 

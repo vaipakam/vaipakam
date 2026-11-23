@@ -33,7 +33,7 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #                                         as not covered; the run stops there
 #                                         and the verdict is never green
 #   relay <from> <to>                     deliver pending cross-chain messages
-#                                         (RH_RELAY; not covered without it)
+#                                         from one fork to the other (#3892)
 #
 # The plan comes from the desired-state file (#3111), never typed by hand:
 #   node script/deploy-plan.mjs plan deployments/testnets.desired.json \
@@ -115,6 +115,12 @@ if [ -e "$SCRATCH" ]; then
   exit 2
 fi
 mkdir -p "$LOGS"
+# The relay between forks (#3892, design section 15): installed once, before
+# the first step, when the plan relays; each relay step rejoins it from here.
+# RH_RELAY replaces the command (tests); it takes install / deliver / report.
+RELAY_STATE="$SCRATCH/relay"
+RH_RELAY="${RH_RELAY:-pnpm --silent --dir $REPO_ROOT --filter @vaipakam/anvil-harness exec tsx src/forkRelayCli.ts}"
+HAS_RELAY=0
 
 # ── The chain registry: slug → chain id and the RPC variable to fork from.
 # The same table as the deploy scripts' (deploy-testnet.sh, deploy-mainnet.sh).
@@ -225,7 +231,7 @@ JSON
       echo
     fi
     echo "## Not run in this rehearsal"
-    [ -n "${RH_RELAY:-}" ] || echo "- The relay between forks (#3892): cross-chain messages are not delivered."
+    [ "$HAS_RELAY" = 1 ] || echo "- The relay between forks: the plan has no relay step, so no cross-chain message was delivered."
     echo "- The indexer, keeper and app against the forks, and the smoke flows (#3894, #3895, #3896)."
     echo
     echo "## Limits (design section 10)"
@@ -239,6 +245,13 @@ JSON
       echo "| Chain | Feed | Source | How | Answer | Time before | Time after |"
       echo "| --- | --- | --- | --- | --- | --- | --- |"
       awk -F'\t' '{ printf "| %s | %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6, $7 }' "$FEEDS_TSV"
+      echo
+    fi
+    # The relay's own section (lanes, every delivered message with its fee,
+    # gas limit and gas used, and what is not rehearsed), refreshed after the
+    # install and after each relay step.
+    if [ -s "$RELAY_STATE/report.md" ]; then
+      cat "$RELAY_STATE/report.md"
       echo
     fi
     if [ -n "$READBACK_SUMMARY" ]; then
@@ -307,7 +320,7 @@ while IFS= read -r line || [ -n "$line" ]; do
       # Deliver every pending cross-chain message from one fork to another.
       [ "${#words[@]}" -eq 3 ] || { log "✗ plan:$lineno: relay <from-chain> <to-chain>"; exit 1; }
       STEP_LINES+=("$lineno|$line")
-      [ -n "${RH_RELAY:-}" ] || UNCOVERED+=("plan:$lineno relay ${words[1]} to ${words[2]}: the relay between forks is not wired into the driver yet (#3892)")
+      HAS_RELAY=1
       ;;
     *) log "✗ plan:$lineno: unknown step kind ${words[0]}"; exit 1 ;;
   esac
@@ -431,6 +444,42 @@ restamp_feeds() {
 
 # ── 6. steps ───────────────────────────────────────────────────────────
 stage steps
+# The relay's report section, rewritten after the install and each relay step.
+# A report that cannot be written never leaves an older one standing (it could
+# say no message was delivered when one was): the section says the report is
+# unavailable, and the caller fails the run.
+relay_report() {
+  rm -f "$RELAY_STATE/report.md"
+  if $RH_RELAY report --state "$RELAY_STATE" 2> >(rh_redact > "$LOGS/relay-report.log") | rh_redact > "$RELAY_STATE/report.md.new" \
+     && [ -s "$RELAY_STATE/report.md.new" ]; then
+    mv "$RELAY_STATE/report.md.new" "$RELAY_STATE/report.md"
+    return 0
+  fi
+  rm -f "$RELAY_STATE/report.md.new"
+  printf '## Cross-chain relay\n\nThe relay report could not be written (logs/relay-report.log), so this run does not state which messages were delivered or what they cost.\n' > "$RELAY_STATE/report.md"
+  return 1
+}
+relay_report_or_fail() {
+  relay_report && return 0
+  FAILED_STAGE="steps (relay report)"
+  log "  ✗ the relay report could not be written; see logs/relay-report.log"
+  exit 1
+}
+if [ "$HAS_RELAY" = 1 ]; then
+  # Every fork of the run takes part, so each lane between them is found and
+  # each destination gets the stand-in once. Each router is CCIP_ROUTER_<PREFIX>
+  # as load_env_file set it above: one reading of the env file, the deploy's.
+  relay_forks=()
+  for c in "${CHAINS[@]}"; do relay_forks+=("$c=${FORK_URL[$c]}@${FORK_BLOCK[$c]}"); done
+  log "  → relay: installing the stand-in off-ramps across ${CHAINS[*]}"
+  mkdir -p "$RELAY_STATE"
+  if ! $RH_RELAY install --state "$RELAY_STATE" "${relay_forks[@]}" 2>&1 | rh_redact > "$LOGS/relay-install.log"; then
+    FAILED_STAGE="steps (relay install)"
+    tail -20 "$LOGS/relay-install.log" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
+    exit 1
+  fi
+  relay_report_or_fail
+fi
 n=0
 for s in "${STEP_LINES[@]}"; do
   n=$((n + 1))
@@ -492,16 +541,14 @@ for s in "${STEP_LINES[@]}"; do
     relay)
       from="${words[1]}"; to="${words[2]}"
       log "  → [$n] plan:$ln relay $from to $to"
-      if [ -z "${RH_RELAY:-}" ]; then
-        FAILED_STAGE="steps (plan:$ln not covered: the relay between forks, #3892)"
-        exit 1
-      fi
       steplog="$LOGS/$(printf '%03d' "$n")-relay-$from-$to.log"
-      if ! $RH_RELAY "$from" "${FORK_URL[$from]}" "$to" "${FORK_URL[$to]}" 2>&1 | rh_redact > "$steplog"; then
+      if ! $RH_RELAY deliver --state "$RELAY_STATE" "$from" "$to" 2>&1 | rh_redact > "$steplog"; then
+        relay_report || true
         FAILED_STAGE="steps (plan:$ln relay $from to $to)"
         tail -20 "$steplog" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
         exit 1
       fi
+      relay_report_or_fail
       ;;
     cmd)
       # The hand step runs under `set -eo pipefail`: a compound step stops at

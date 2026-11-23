@@ -38,7 +38,7 @@ echo "{}" > "contracts/$VAIPAKAM_REHEARSAL_ROOT/$1/$3.json"
 exit 0
 S
 chmod +x "$WORK/bin/stub-ok" "$WORK/deploy"
-printf 'DEPLOYER_ADDRESS=0x3333333333333333333333333333333333333333\nADMIN_ADDRESS=0x4444444444444444444444444444444444444444\nDEPLOYER_PRIVATE_KEY=0xnotloaded\nBASE_SEPOLIA_RPC_URL=https://p.example/v2/SECRETKEY\n' > "$WORK/.env"
+printf 'DEPLOYER_ADDRESS=0x3333333333333333333333333333333333333333\nADMIN_ADDRESS=0x4444444444444444444444444444444444444444\nDEPLOYER_PRIVATE_KEY=0xnotloaded\nBASE_SEPOLIA_RPC_URL=https://p.example/v2/SECRETKEY\nCCIP_ROUTER_BASE_SEPOLIA="0x00000000000000000000000000000000000000a0" # the router\n' > "$WORK/.env"
 
 fails=0
 ok() { echo "ok    $1"; }
@@ -140,17 +140,46 @@ grep -q "not covered" "$RUNDIR/verdict.json" && ok "the verdict says the step is
 grep -q "close the first reward day by hand" "$RUNDIR/report.md" && ok "the report lists the uncovered step" || bad "report misses the uncovered step"
 [ -f "$RUNDIR/logs/001-base-sepolia-preflight.log" ] && ok "the steps before it still run" || bad "earlier steps did not run"
 
-drive norelay $'chains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia'
-[ "$RC" -ne 0 ] && grep -q "the relay between forks" "$RUNDIR/verdict.json" \
-  && ok "a relay step without the relay is not covered" || bad "relay without the relay: rc $RC"
+# The relay stub records each call; `report` prints a section, and
+# STUB_RELAY_FAIL=<command> makes that command fail.
 cat > "$WORK/bin/relay" <<'S'
 #!/usr/bin/env bash
 echo "RELAY $*"
+[ "$1" = install ] && echo "ROUTER ${CCIP_ROUTER_BASE_SEPOLIA:-unset}"
+[ "${STUB_RELAY_FAIL:-}" = "$1" ] && { echo "relay: $1 refused"; exit 1; }
+[ "$1" = report ] && printf '## Cross-chain relay\n\nstub lanes\n'
+exit 0
 S
 chmod +x "$WORK/bin/relay"
-drive relay "$DESIRED_LINE"$'\nchains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia' RH_RELAY="$WORK/bin/relay"
-[ "$RC" -eq 0 ] && grep -q "RELAY base-sepolia http://127.0.0.1:1 arb-sepolia http://127.0.0.1:2" "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" \
-  && ok "a relay step runs the relay with both forks" || { bad "relay step: rc $RC"; echo "$OUT" | tail -5; }
+RELAY_PLAN="$DESIRED_LINE"$'\nchains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia'
+drive relay "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay"
+[ "$RC" -eq 0 ] && grep -q "RELAY install --state $RUNDIR/relay base-sepolia=http://127.0.0.1:1@0 arb-sepolia=http://127.0.0.1:2@0" "$RUNDIR/logs/relay-install.log" \
+  && ok "the relay is installed once across every fork before the steps" || { bad "relay install: rc $RC $(head -1 "$RUNDIR/logs/relay-install.log" 2>/dev/null)"; echo "$OUT" | tail -5; }
+grep -qx "ROUTER 0x00000000000000000000000000000000000000a0" "$RUNDIR/logs/relay-install.log" \
+  && ok "the relay reads each router as the deploy's env reader set it (quoted, trailing comment)" || bad "router seen by the relay: $(grep ROUTER "$RUNDIR/logs/relay-install.log")"
+grep -q "RELAY deliver --state $RUNDIR/relay base-sepolia arb-sepolia" "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" \
+  && ok "a relay step delivers from the saved relay" || bad "relay deliver: $(head -1 "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" 2>/dev/null)"
+grep -q "## Cross-chain relay" "$RUNDIR/report.md" && ! grep -q "the plan has no relay step" "$RUNDIR/report.md" \
+  && ok "the report carries the relay's section" || bad "no relay section in the report"
+
+drive relayinstall "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay" STUB_RELAY_FAIL=install
+[ "$RC" -ne 0 ] && grep -q '"failedStage": "steps (relay install)"' "$RUNDIR/verdict.json" \
+  && ok "a relay install that fails stops the run" || bad "a failed relay install passed: rc $RC"
+[ ! -f "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" ] && ok "no relay step runs without the install" || bad "a relay step ran after a failed install"
+
+drive relaydeliver "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay" STUB_RELAY_FAIL=deliver
+[ "$RC" -ne 0 ] && grep -q '"failedStage": "steps (plan:3 relay base-sepolia to arb-sepolia)"' "$RUNDIR/verdict.json" \
+  && ok "a delivery that fails fails the step" || bad "a failed delivery passed: rc $RC $(grep failedStage "$RUNDIR/verdict.json")"
+
+drive relayreport "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay" STUB_RELAY_FAIL=report
+[ "$RC" -ne 0 ] && grep -q '"failedStage": "steps (relay report)"' "$RUNDIR/verdict.json" \
+  && ok "a relay report that cannot be written fails the run" || bad "a failed relay report passed: rc $RC"
+grep -q "The relay report could not be written" "$RUNDIR/report.md" && ! grep -q "stub lanes" "$RUNDIR/report.md" \
+  && ok "the report says the relay section is unavailable, never an older one" || bad "relay report failure not disclosed"
+
+drive norelay "$GOOD" RH_RELAY="$WORK/bin/relay"
+[ ! -f "$RUNDIR/logs/relay-install.log" ] && grep -q "the plan has no relay step" "$RUNDIR/report.md" \
+  && ok "a plan with no relay step installs nothing and says so" || bad "relay installed for a plan without relay steps"
 
 drive armed $'chains base-sepolia\nclock armed base-sepolia'
 # The fake fork answers nothing, so the armed day cannot be read: the run

@@ -71,6 +71,7 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "tsx": "^4.19.2",
     "typescript": "~6.0.2",
     "viem": "^2.48.4",
     "vitest": "^4.1.4"
