@@ -294,7 +294,7 @@ It can be cancelled until then, and removed at any time after.
 **Proposed answer:** Undo.
 **Wanted statement:** a queued payout can be cancelled until it is released.
 A cancelled payout leaves the asset in the vault, free.
-**Waits for:** vault section 6
+**Answered by:** VLT-512.
 
 ### VLT-M29 · A wrong signer
 
@@ -530,3 +530,99 @@ route failed, expecting the payment to lower the debt and free some of the colla
 **Wanted statement:** while the lien is split, a repayment is of all the loan owes, or the borrower
 adds collateral to cure it; a part payment is refused and says those two ways (VLT-155).
 **Answered by:** VLT-155.
+
+## 12. Scheduled payments
+
+### VLT-M52 · A scheduled payment to a wallet you no longer control
+
+**Who:** the owner of a protected account.
+**Does:** sets a scheduled payment to a destination, then loses that wallet, or picked the wrong
+one.
+**Proposed answer:** Undo.
+**Wanted statement:** only the owner's wallet or a destination in force that has shown it is
+controlled can be paid (VLT-540). While the setting waits, the owner or any
+signer can cancel it. Once it is live, either can end it at once, and removing the destination
+ends every payment to it (VLT-541, VLT-543). A period already paid cannot be undone.
+**Answered by:** VLT-541.
+
+### VLT-M53 · Expecting a missed period to catch up
+
+**Who:** the owner.
+**Does:** expects a period that nobody paid to be paid later, with the next one.
+**Proposed answer:** Stated.
+**Wanted statement:** a period that ends unpaid lapses and is never made up, and nothing is held
+for it (VLT-542). Anyone may make the payment and is paid nothing for it, so no one is bound to.
+**Answered by:** VLT-542.
+
+### VLT-M54 · Not enough free balance when a period opens
+
+**Who:** the owner.
+**Does:** leaves the token tied up in a loan, an offer, a reserve or the Ready balance, or keeps
+too little of it, and expects the payment to take what there is.
+**Proposed answer:** Stated.
+**Wanted statement:** a payment takes exactly its amount from the free balance and never from the
+Ready balance. If the free balance is short by any amount, nothing moves and the period can lapse
+(VLT-542).
+**Answered by:** VLT-542.
+
+### VLT-M55 · An amount or a period in the wrong unit
+
+**Who:** the owner, including a direct caller.
+**Does:** sets the amount in whole tokens instead of the token's smallest units, or the period in
+hours or seconds instead of days.
+**Proposed answer:** Undo.
+**Wanted statement:** the period is a whole number of days within its bounds (PRM-091), and the
+number of periods has a most (PRM-092) (VLT-540). A setting waits the account's delay, and the
+owner or any signer can cancel it before it applies (VLT-541). An amount too small for any bound to
+catch is paid as set; the owner can lower or end it at once.
+**Answered by:** VLT-541.
+
+### VLT-M56 · Raising a payment and expecting the new amount at once
+
+**Who:** the owner.
+**Does:** raises the amount, shortens the period or adds periods, and expects the next period to
+pay on the new terms.
+**Proposed answer:** Stated.
+**Wanted statement:** a change that can pay more waits like a setting and needs a signer's
+signature where the account has signers. Until it applies, the old terms run. A change that can
+only pay less applies at once (VLT-541).
+**Answered by:** VLT-541.
+
+### VLT-M57 · Expecting a paused payment to pay the paused periods afterwards
+
+**Who:** the owner.
+**Does:** pauses a scheduled payment, then resumes it and expects the paused periods to be paid.
+**Proposed answer:** Stated.
+**Wanted statement:** while it is paused its periods lapse, and resuming does not make them up.
+A resume to higher terms is a change to pay more and waits (VLT-541, VLT-542).
+**Answered by:** VLT-542.
+
+### VLT-M58 · Expecting it to come back after a lock or a new owner wallet
+
+**Who:** the owner.
+**Does:** locks the account, replaces the owner wallet, switches protection off or removes a
+destination, and expects the scheduled payments to carry on afterwards.
+**Proposed answer:** Stated.
+**Wanted statement:** each of those ends every scheduled payment it touches, waiting or live, and
+nothing brings one back. The owner sets it again, and it waits again. Before such a change is
+asked, the platform reports the scheduled payments it would end (VLT-543).
+**Answered by:** VLT-543.
+
+### VLT-M59 · Setting one on an account that is not protected
+
+**Who:** the owner, or a direct caller.
+**Does:** tries to set a scheduled payment on an account without protected mode, or while it is
+locked or in a replacement's cool-down.
+**Proposed answer:** Refuse.
+**Wanted statement:** the setting is refused and names which of the three holds, with the time a
+cool-down ends (VLT-545).
+**Answered by:** VLT-545.
+
+### VLT-M60 · One more scheduled payment than the most
+
+**Who:** the owner.
+**Does:** sets a sixth scheduled payment while five are waiting or live.
+**Proposed answer:** Refuse.
+**Wanted statement:** the setting is refused with the most allowed. A scheduled payment counts
+until it ends, a paused one included (VLT-545).
+**Answered by:** VLT-545.

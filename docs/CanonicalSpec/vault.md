@@ -2,8 +2,8 @@
 
 A vault holds one owner's assets, and nothing leaves it except as these statements allow.
 Figures are named by parameter id and are in the parameters table (`parameters.md`).
-Sections 1 to 5 are entered. Sections 6 and 7 follow: the payout of a protected account, its
-queue and co-signing; the recovery address, the clawback and a recovered account.
+Sections 1 to 6 are entered. Sections 7 and 8 follow: the recovery address, the clawback and a
+recovered account; the limits on outflow over time.
 
 ## Section 1: what may leave a vault
 
@@ -231,6 +231,7 @@ price, at the widest discount the settings allow [PRM-004].
 
 A withdrawal pays the owner's own wallet.
 With protection on, it may instead pay a destination in force for that account (section 5).
+A scheduled payment of a protected account pays the same addresses (VLT-540).
 
 - **Tests owed:** the defaults for a rule.
 
@@ -415,7 +416,7 @@ The owner can withdraw the free balance to their own wallet, without anyone else
 - **From:** a vault that is open.
 - **By:** withdraw. While paused, the escape withdrawal.
 - **Except under:** a pause, for no longer than the escape period (VLT-091);
-  protection, for the account's own delay, and a lock for as long as it lasts (section 5);
+  protection, for the account's own delay (VLT-500), and a lock for as long as it lasts (section 5);
   a flag on the wallet, for as long as it lasts (PLT-060);
   and an asset whose own code refuses the transfer.
   While a recovery address is in force, the escape withdrawal pays that address (VLT-091).
@@ -889,9 +890,9 @@ The free balance falls in these ways only:
 the owner's withdrawal (section 1.4);
 a commitment the owner made, which moves the amount under a lien or a reserved commitment;
 a payment the owner authorized from it, then or by a standing commitment: a repayment,
-a purchase or a fee (VLT-151);
+a purchase, a fee (VLT-151) or a scheduled payment (VLT-542);
 an amount moved into the held record when a token refuses its delivery (VLT-072);
-and a move into the Ready balance or into a queued payout (sections 4 and 6).
+and a move into the Ready balance or into a queued payout (VLT-325, VLT-510).
 Section 7 adds the ways of a recovery.
 
 - **Tests owed:** the defaults for a rule, one path for each way.
@@ -933,7 +934,7 @@ The free balance also rises when the vault frees, for its own owner, an amount i
 the release to its owner of an amount held for a position its owner holds (VLT-037);
 the release of a lien or a reserved commitment to its own side (VLT-128, VLT-035, VLT-140);
 a queued payout that is cancelled, or an amount that comes back out of the Ready balance
-(sections 4 and 6);
+(VLT-512, VLT-326);
 and an adoption (VLT-170).
 Nothing moves in any of these. A release to another vault's owner is VLT-154.
 Each is refused unless the vault then holds that amount free of everything else (VLT-038).
@@ -2811,7 +2812,7 @@ The Ready balance never pays a wallet. A withdrawal reaches only the protected b
 (VLT-014).
 The Ready balance leaves the vault for a wallet only after it is moved back to the protected
 balance, and then as any payout of a protected account does
-(VLT owed: the payout of a protected account).
+(VLT-500).
 
 - **Against:** VLT-T32.
 - **Watch:** every payment from a protected account's vault to a wallet against the protected
@@ -3145,9 +3146,10 @@ No step of this section sets a price or reads one.
 ## Section 5: protection settings
 
 The platform's rules (PLT) and sections 1 to 4 apply throughout and are cited by id.
-What a protected account pays out, and what it may commit, belong to section 6. The recovery
-address and the clawback belong to section 7. This section states the settings: on and off,
-the delay, the lock, the signers, the destinations and the replacement of the owner wallet.
+What a protected account pays out belongs to section 6, and what it may commit at once to
+section 4. The recovery address and the clawback belong to section 7. This section states the
+settings: on and off, the delay, the lock, the signers, the destinations and the replacement of
+the owner wallet.
 
 ## 5.1 Protection on and off
 
@@ -3161,7 +3163,7 @@ Protection is the owner's choice. The owner switches it on with a delay within i
 It is switched on only once a recovery address is set for the account, in force or still
 waiting (VLT owed: the recovery address).
 From then on a payout to the owner's wallet waits the delay
-(VLT owed: the payout of a protected account), a balance is committed at once only from the
+(VLT-500), a balance is committed at once only from the
 Ready balance (VLT-321), and the vault's pin delay is raised (VLT-232).
 Protection never delays what the account owes another party (VLT-092).
 
@@ -3211,7 +3213,7 @@ Until it is applied the account counts as protected in every rule.
 When it is applied the account has no signers, and nothing asks for a co-signature. The Ready
 balance ends (VLT-328), and every waiting change of a destination or a signer ends (VLT-412).
 The recovery address stays set. What happens to payouts that wait is stated with them
-(VLT owed: the payout queue).
+(VLT-515).
 It is refused for good on a recovered account (VLT owed: a recovered account).
 
 - **Tests owed:** the defaults for a rule, with a payout asked while the switch-off waits, a
@@ -3224,14 +3226,14 @@ It is refused for good on a recovered account (VLT owed: a recovered account).
 **Who:** a vault's owner.
 **When:** the owner asks for a change to a protected account's settings.
 
-A change that loosens the account's protection waits the account's delay as it stands when
-asked, or longer if the delay is raised meanwhile (VLT-402). A tightening applies at once.
-The loosening changes are: adding a destination, adding or removing a signer, lowering the
-delay, an unlock, switching protection off, switching the holder lock off (VLT-470), a move
-into the Ready balance and a longer idle period (VLT-325, VLT-329), and a move of position
-tokens (VLT-457).
-Only the owner asks for one. Each is refused while the account is locked, an unlock apart, and
-during the cool-down of a replacement (VLT-453).
+A change that loosens the account's protection waits the account's delay as it stands when asked, or
+longer if the delay is raised meanwhile (VLT-402). A tightening applies at once. The loosening
+changes are: adding a destination, adding or removing a signer, lowering the delay, an unlock,
+switching protection off, switching the holder lock off (VLT-470), a move into the Ready balance and
+a longer idle period (VLT-325, VLT-329), a move of position tokens (VLT-457), switching co-signing
+off (VLT-521), and setting a scheduled payment or a change that can make it pay more (VLT-541). Only
+the owner asks for one. Each is refused while the account is locked, an unlock apart, and during the
+cool-down of a replacement (VLT-453).
 
 - **Tests owed:** the defaults for a rule, with each loosening change asked, each tightening
   change applied at once, and each loosening change asked while locked and in a cool-down.
@@ -3365,11 +3367,11 @@ It stays possible while the platform is paused (VLT-413).
 **Who:** the vault, and the platform's side of a lock.
 **When:** a lock is applied.
 
-In the same transaction (VLT-184): every payout that waits is cancelled
-(VLT owed: the payout queue); every change that waits or has waited, and the owner's own
-proposal of a replacement, end (VLT-412); the Ready balance returns to the protected balance
-(VLT-328); the account's position tokens are held fast (POS owed: the holder lock); and the
-owner's standing permissions end (VLT-425).
+In the same transaction (VLT-184): every payout that waits is cancelled (VLT-513); every scheduled
+payment ends (VLT-543); every change that waits or has waited, and the owner's own proposal of a
+replacement, end (VLT-412); the Ready balance returns to the protected balance (VLT-328); the
+account's position tokens are held fast (POS owed: the holder lock); and the owner's standing
+permissions end (VLT-425).
 
 - **For the mistake:** VLT-M30, undo. An unlock opens the account again after the delay, and
   what the lock ended is asked for again.
@@ -3470,12 +3472,12 @@ The account's first owner wallet and its owner wallet on record are never signer
 **Who:** a signer of a protected account.
 **When:** it acts on the account.
 
-A signer may lock the account (VLT-420), cancel a change or a payout that waits (VLT-411),
-co-sign a payout (VLT owed: co-signing), move the Ready balance back (VLT-326), and, with a
-majority of the signers, replace the owner wallet (VLT-450).
-A signer never moves value, never names a destination, and never loosens anything.
-Removing a signer is a loosening change the owner asks for. Any other signer may cancel it.
-The signer being removed may not.
+A signer may lock the account (VLT-420), cancel a change or a payout that waits (VLT-411, VLT-512),
+co-sign a payout, the setting of a scheduled payment or a change that can make it pay more (VLT-522,
+VLT-541), end a scheduled payment (VLT-541), move the Ready balance back (VLT-326), and, with a
+majority of the signers, replace the owner wallet (VLT-450). A signer never moves value, never names
+a destination, and never loosens anything. Removing a signer is a loosening change the owner asks
+for. Any other signer may cancel it. The signer being removed may not.
 
 - **Against:** VLT-T35.
 - **Watch:** every payout, every destination added and every loosening change of a protected
@@ -3510,7 +3512,7 @@ A destination may show it is controlled: by its own call, or by its signature bo
 account, the platform and that request to add it (PLT-112).
 Cancelling or voiding the request clears the proof. A later request needs its own.
 While the account has signers, a payout to a destination that has not shown this needs a
-signer's co-signature (VLT owed: co-signing). A signer never co-signs a payout to itself.
+signer's co-signature (VLT-520). A signer never co-signs a payout to itself.
 The owner's own wallet needs no proof.
 
 - **Tests owed:** the defaults for a rule, with a proof given for another account, another
@@ -3566,19 +3568,21 @@ owner wallet cannot turn aside a replacement made against it.
 **Who:** the new owner wallet, and the wallet it replaced.
 **When:** a replacement completes.
 
-The vault's owner record names the new wallet (VLT-180). The vault is the same vault, at the
-same address, with every record it kept. A flagged new wallet's completion is refused (PLT-060).
-From that moment only the new wallet gives the owner's authority (VLT-181).
-The replaced wallet, and every keeper it approved, lose every right over the account at once:
-over its offers, its amounts set aside to lend, its reserves, its balances, its lock and
-its pin. Every consent it gave stops counting. A reserve still pays its loan (VLT-140).
-The Ready balance ends (VLT-328), and the changes the replaced wallet asked for end (VLT-412).
+The vault's owner record names the new wallet (VLT-180). The vault is the same vault, at the same
+address, with every record it kept. A flagged new wallet's completion is refused (PLT-060). From
+that moment only the new wallet gives the owner's authority (VLT-181). The replaced wallet, and
+every keeper it approved, lose every right over the account at once: over its offers, its amounts
+set aside to lend, its reserves, its balances, its lock and its pin. Every consent it gave stops
+counting. A reserve still pays its loan (VLT-140). The Ready balance ends (VLT-328), and the changes
+the replaced wallet asked for end (VLT-412). Every destination is removed in the same transaction,
+and every payout that waits is cancelled (VLT-513).
 
 - **Against:** VLT-T36.
 - **Watch:** every step taken with the owner's authority on an account after a replacement
   completed. Each is the wallet on record's, and none the replaced wallet's or its keeper's.
 - **Tests owed:** the defaults for a never, with each right tried by the replaced wallet and by
-  a keeper it approved straight after completion, and the vault's address and records compared.
+  a keeper it approved straight after completion, the vault's address and records compared, the
+  destinations read straight after completion, and a payout queued to a destination before it.
 
 ### VLT-453 · rule
 
@@ -3636,20 +3640,19 @@ Where such a step asks for the Terms (PLT-070), the wallet asked is the one that
 **Who:** the new owner wallet, the wallet it replaced, and anyone who would fill an offer.
 **When:** an account's owner wallet has been replaced.
 
-After its owner wallet is replaced an account opens no new position and takes no deposit.
-Servicing an existing loan is not a deposit here (VLT-423).
-An offer of it that was open is never filled. The new wallet may cancel it, and what it held
-is free in the vault again. Neither wallet changes its terms or its amount, or uses it for
-any other step.
-The new wallet services the account, collects for it and is paid out from it. Its new
-business is its own account's (VLT-200).
+After its owner wallet is replaced an account opens no new position, takes no deposit and adds no
+destination. Servicing an existing loan is not a deposit here (VLT-423). An offer of it that was
+open is never filled. The new wallet may cancel it, and what it held is free in the vault again.
+Neither wallet changes its terms or its amount, or uses it for any other step. The new wallet
+services the account, collects for it and is paid out from it. Its new business is its own account's
+(VLT-200).
 
 - **Against:** VLT-T38, VLT-T36.
 - **Watch:** every fill against an offer that was open when its account's replacement
   completed, and every position opened or deposit taken for a replaced account. There is none.
 - **Tests owed:** the defaults for a never, with a fill, a change and a cancel tried by each
   wallet and by a third party, and a new offer, a new position and a deposit tried for the
-  replaced account by each wallet.
+  replaced account by each wallet, and a destination added by the new wallet.
 
 ### VLT-457 · rule
 
@@ -3743,3 +3746,469 @@ A cell names the statement that decides it. "Open" means the condition does not 
 | Running a move of position tokens | PLT-040 | Open | PLT-060, for the wallet that receives them | Open for a wallet never confirmed flagged (PLT-065) | Open (PLT-071) |
 
 No step of this section moves an asset out of a vault.
+
+## Section 6: a protected account's payouts
+
+The platform's rules (PLT) and sections 1 to 5 apply throughout and are cited by id.
+This section states how a protected account pays out: a payout and its queue, its release and
+its cancel, co-signing, the room for payouts that wait, and scheduled payments. The recovery
+address and the clawback belong to section 7, and the limits on outflow over time, which bind
+every account, to section 8.
+
+## 6.1 The payout of a protected account
+
+### VLT-500 · rule
+
+**Who:** the owner of a protected account.
+**When:** a payout to the owner's wallet or to a destination is asked.
+
+A payout from a protected account's vault to a wallet is never paid at once, with three exceptions:
+a scheduled payment's period (VLT-542), never its setting, which waits the delay (VLT-541); the
+escape withdrawal to a recovery address in force (VLT-091); and the clawback
+(VLT owed: the clawback). Every other such payout is queued, and released once the account's delay
+has passed (VLT-510, VLT-511): the owner's own withdrawal, on every route that pays a wallet from
+the vault, and the escape withdrawal when no recovery address is in force. Each queued payout and
+each scheduled payment counts against the account's outflow limits (VLT owed: the outflow limits).
+
+- **Tests owed:** the defaults for a rule, with each route of the owner's withdrawal, each of the
+  three exceptions, a scheduled payment's setting tried at once, and an escape withdrawal with and
+  without a recovery address in force.
+
+### VLT-501 · rule
+
+**Who:** a protected account, and the parties it pays.
+**When:** a step pays the owner from outside the vault, or pays another party.
+
+Anything the platform would pay the owner's wallet from outside the vault is paid into the vault
+instead, as free balance. What a step owes another party is never queued (VLT-092), wherever it is
+paid. The owner's own payout to a destination that is itself protected is queued as any other, and
+is paid in that destination's vault (VLT-511). A listing the account posts pays its fee recipients
+only the owner's wallet or a destination in force, read again at every fill
+(EXT owed: a protected account's listing).
+
+- **Tests owed:** the defaults for a rule, with a payment the platform makes to the owner as a
+  non-party, a payment owed to another party into its wallet and into its vault, a payout to a
+  protected destination, and a listing whose fee recipient is removed as a destination before a
+  fill.
+
+### VLT-502 · rule
+
+**Who:** the owner of a protected account, its signers, and anyone.
+**When:** the platform is paused.
+
+Asking a payout stays open in a pause, for it moves nothing out of the vault (VLT-090). So do
+cancelling a payout (VLT-512), switching co-signing on, a co-signature, and a change that can only
+make a scheduled payment pay less, its pause and its end (VLT-541). Asking for or applying
+co-signing off, a scheduled payment's setting or a change that can make it pay more is refused
+(PLT-040). A release waits as VLT-511 says, and a period's payment is refused and lapses (VLT-542).
+A wait, and the time before a lapse, are read from the clock alone (VLT-413).
+
+- **Tests owed:** the defaults for a rule, with each step of this section taken in a pause, and a
+  payout asked in a pause and released when the escape opens.
+
+## 6.2 The payout queue
+
+### VLT-510 · rule
+
+**Who:** the vault of a protected account.
+**When:** a payout is queued.
+
+The vault records the payout: the asset and, for an NFT, its id, the amount, the recipient,
+and the time from which it may be released. That time is the moment it was asked plus the
+account's delay, as VLT-402 measures a wait: a raise since makes it the longer of the two,
+and a lowering never shortens it.
+The amount leaves the free balance at once and is held for the payout (VLT-014). Nothing else
+may spend it, and only its release or its cancel frees it.
+A payout to a destination is bound to that destination as it stands in force when queued.
+
+- **Tests owed:** the defaults for a rule, with each kind of asset, a delay raised and lowered
+  while a payout waits, a release an instant before and after each of the two times, and a
+  spend of the held amount tried by every other step.
+
+### VLT-511 · rule
+
+**Who:** anyone.
+**When:** a queued payout's time has come.
+
+Anyone may release it, and receives nothing for it
+(KPR owed: the pass that releases payouts and makes scheduled payments). The release pays the
+payout's amount, and only that, to its recorded recipient, a protected one in its own vault
+(VLT-442). It is released only while the account is not locked, and with any co-signature VLT-520
+asks for. A flagged owner, recipient or sender is refused (PLT-060), and what is booked is what
+arrived (VLT-070). In a pause it is released at the later of its own time and the opening of the
+escape route (VLT-091), to its recorded recipient even while a recovery address is in force: that
+address takes only the escape withdrawal itself.
+
+- **Tests owed:** the defaults for a rule, with a release an instant early, by the owner, a signer
+  and a stranger, to a protected recipient, under each condition of the platform, by a flagged
+  sender and for a flagged owner, a payout asked in a pause released an instant before and after the
+  later of its two times, with a recovery address in force, and of a token that arrives short.
+
+### VLT-512 · rule
+
+**Who:** the owner of a protected account, or any of its signers.
+**When:** a payout waits.
+
+The owner or any signer may cancel it at once, until it is released, by its own call or by a
+signature that anyone relays (VLT-181). This stays open while the platform is paused.
+A cancelled payout moves nothing. Its amount is free balance again and counts again as the
+owner's own (VLT-115), and the payout can never be released.
+
+- **For the mistake:** VLT-M28, undo. The payout is cancelled and its amount stays in the
+  vault, free.
+- **Tests owed:** the defaults for a rule, with a cancel by the owner, by each signer, by a
+  flagged signer and by a stranger, a relayed signature used twice, a cancel in a pause, and a
+  release tried after it.
+
+### VLT-513 · rule
+
+**Who:** the platform and the vault, with the change that ends a payout.
+**When:** a protected account is locked, its owner wallet is replaced, a destination is removed,
+or the account is clawed back or recovered.
+
+A lock and a completed replacement each cancel every payout that waits, in the change's own
+transaction (VLT-184). A removal of a destination cancels every payout that waits for it. The
+clawback (VLT owed: the clawback) and a claim by the recovery address
+(VLT owed: a recovered account) cancel every one. Each is cancelled as VLT-512 cancels. The vault
+reads this from its own record, so a payout queued before such a change is never released after it:
+its release cancels it instead. An unlock, or the same destination added again, never brings one
+back.
+
+- **Tests owed:** the defaults for a rule, with payouts to the owner and to two destinations, each
+  change with the platform's side brought in line afterwards, a payout to a destination queued
+  before a replacement and cancelled, not paid, a destination removed and added again, and an
+  unlock.
+
+### VLT-514 · never
+
+**Who:** the platform and the vault.
+**When:** a queued payout is released.
+
+A queued payout is paid at most once, never before its time, never to anyone but its
+recorded recipient, and never more than its amount.
+A payout queued before a lock, a replacement or the removal of its destination is never paid.
+One asked after an unlock is never cancelled by an earlier lock applied late (VLT-184).
+The vault checks each release against its own record before anything moves (VLT-004).
+
+- **Against:** VLT-T40.
+- **Watch:** every release against its own payout's queued record only: the same recipient and
+  amount, a time at or after its own, and no lock, replacement or removal of its destination
+  between them. A payout asked after an unlock is never cancelled by a lock that came before it.
+- **Tests owed:** the defaults for a never, with a release tried twice, early, to another
+  recipient, for more, and after each change of VLT-513.
+
+### VLT-515 · rule
+
+**Who:** a vault's owner.
+**When:** a switch-off of protection has waited while a payout still waits.
+
+The switch-off is applied only once no payout waits: the owner cancels them or lets them be
+released. Until then it waits on, and it never holds back another change that is due. A payout asked
+after the switch-off has waited keeps it from applying, so it lapses (VLT-411) unless the owner
+cancels that payout in time. A payout asked while a switch-off waits is queued as any other, for the
+account counts as protected until the switch-off applies (VLT-403).
+
+- **Tests owed:** the defaults for a rule, with a switch-off applied the instant the last payout is
+  released and the instant it is cancelled, a payout asked after the switch-off has waited,
+  cancelled before the lapse and not, and a switch-off that lapses with a payout still waiting.
+
+### Model: a queued payout
+
+**States:**
+
+- Not asked (start): no payout waits.
+- Queued: the owner asked, and the payout waits for its time.
+- Released (end): it was paid to its recipient.
+- Cancelled (end): the owner or a signer cancelled it, or a change of VLT-513 ended it.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Not asked | Ask a payout | The owner | VLT-500, VLT-502, VLT-510, VLT-530 | Queued |
+| Queued | Co-sign | A signer | VLT-522 | Queued |
+| Queued | Release | Anyone | VLT-511, VLT-514, VLT-520 | Released |
+| Queued | Release after a lock, a replacement or the removal of its destination | Anyone | VLT-513 | Cancelled |
+| Queued | Cancel | The owner or a signer | VLT-512 | Cancelled |
+| Queued | End with a lock, a replacement of the owner wallet, the removal of its destination, the clawback or a recovery claim | The platform, with that change | VLT-513 | Cancelled |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Ask a payout | A locked account, VLT-422. A full queue, VLT-530. An address the account may not pay, VLT-031. More than the free balance, VLT-012. A flagged owner or recipient, PLT-060 |
+| Co-sign | By anyone but a signer, by the recipient itself, or by a flagged signer, VLT-522 |
+| Release | Before its time, or with the account locked, VLT-511. With no co-signature where one is needed, VLT-520. In a pause, before the later of its time and the escape's opening, VLT-511. A flagged owner, recipient or sender, PLT-060 |
+| Release after a lock, a replacement or the removal of its destination | Nothing refuses it: the release only cancels, VLT-513 |
+| Cancel | By anyone but the owner or a signer, or once released, VLT-512 |
+| End with a lock, a replacement of the owner wallet, the removal of its destination, the clawback or a recovery claim | A change applied in part, VLT-184, VLT-513 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| The kind of asset | A token; a single NFT; a multi-unit NFT | VLT-510 |
+| The recipient | The owner's wallet; a destination that showed control; one that did not; a protected destination | VLT-511, VLT-520 |
+| Signers | None; some | VLT-520 |
+| Co-signing | Off; in force; ended by the last signer's removal | VLT-521 |
+| The account's delay | As when asked; raised since; lowered since | VLT-510 |
+| The platform | Running; paused; paused past the escape period | VLT-502, VLT-511 |
+| A recovery address | None; in force | VLT-500, VLT-511 |
+
+## 6.3 Co-signing
+
+### VLT-520 · rule
+
+**Who:** anyone who releases a queued payout, and the account's signers.
+**When:** the payout is released.
+
+The payout needs one signer's co-signature when, at its release, either holds: the account's
+co-signing is in force (VLT-521), or the payout names a destination that has not shown it is
+controlled (VLT-441) and the account has a signer.
+A payout to the owner's own wallet needs one only by the first.
+Whether a payout needs a co-signature, and whether it has one, is one rule: the release
+applies it, and the platform reports it for each payout, never from the setting alone.
+
+- **Tests owed:** the defaults for a rule, with each of the two reasons, both and neither,
+  each with no signer and with signers, and the report read against the release in each case.
+
+### VLT-521 · rule
+
+**Who:** the owner of a protected account.
+**When:** the owner switches co-signing on or off.
+
+The owner switches co-signing on at once, for it only tightens. It cannot be switched on
+while the account has no signer.
+Switching it off is a loosening change (VLT-410): it waits, any signer may cancel it, and a
+lock ends it (VLT-412).
+When the account's last signer is removed, co-signing ends for good. A signer added later does
+not bring it back: the owner switches it on again. Switching protection off ends it too
+(VLT-403).
+
+- **Tests owed:** the defaults for a rule, with a switch-on with no signer, a switch-off
+  cancelled by a signer and ended by a lock, the last signer removed while co-signing is in
+  force and while its switch-off waits, and a signer added afterwards.
+
+### VLT-522 · rule
+
+**Who:** a signer of a protected account.
+**When:** it co-signs a payout.
+
+A co-signature is for one payout. A signer gives it by its own call or by a signature that anyone
+relays, bound to that payout (VLT-181). It never co-signs a payout to itself, and a flagged signer's
+co-signature is refused (PLT-060). A co-signature counts only if, when the payout is released, the
+wallet that gave it is still a signer and is not flagged; while the screen cannot be read it does
+not count (PLT-065). A co-signature moves nothing and loosens nothing (VLT-431).
+
+- **Tests owed:** the defaults for a rule, with a co-signature by a stranger, by the
+  recipient, by a flagged signer, relayed twice, given for another payout, given by a signer
+  removed before the release, given and then its giver flagged before the release, and a release
+  while the screen cannot be read.
+
+## 6.4 The room for payouts
+
+### VLT-530 · refusal
+
+**Who:** the owner of a protected account.
+**When:** the owner asks a payout while the account's most payouts already wait [PRM-090].
+
+The payout is refused. Nothing moves, and nothing is queued (VLT-053).
+The queue never refuses or holds back anything paid into the vault, nor anything the account
+owes another party (VLT-092).
+
+- **Refused as:** the queue is full, with its most.
+- **Tests owed:** the defaults for a refusal, with the payout that would make one more than
+  the most, the same payout after one is released and after one is cancelled, and a repayment
+  and a collection arriving while the queue is full.
+
+## 6.5 Scheduled payments
+
+### VLT-540 · rule
+
+**Who:** the owner of a protected account.
+**When:** the owner sets a scheduled payment.
+
+A scheduled payment pays a fixed amount of one token, to the owner's wallet or to one
+destination in force that has shown it is controlled (VLT-441), once in each period, for a
+stated number of periods [PRM-092].
+A period is a whole number of days, from [PRM-094] to [PRM-091]. The periods are fixed when it
+is set, the first opening no earlier than the setting applies, and it ends after the last.
+An account holds no more than its most scheduled payments that have not ended [PRM-093].
+Nobody can make one pay more, earlier, more often, or to anyone else.
+It is the owner's own record, held by the vault (VLT-180).
+
+- **Tests owed:** the defaults for a rule, with a period at each bound and one outside them,
+  the most periods and one more, a first period before the setting applies, a destination in
+  force that has not shown it is controlled (refused), and a paused one counted towards the most.
+
+### VLT-541 · rule
+
+**Who:** the owner of a protected account, and its signers.
+**When:** a scheduled payment is set, changed or ended.
+
+Setting one is a loosening change (VLT-410): it waits, any signer may cancel it, and it lapses if
+not applied in time (VLT-411). Where the account has a signer, one signer must also sign it, with or
+without co-signing in force and even to the owner's own wallet. A signer never signs one that pays
+its own address, and a signature counts as VLT-522 counts a co-signature, when the setting applies.
+A change that can pay more is set the same way: a higher amount, a shorter period, more periods, an
+earlier start, another token or destination. Until it applies, the old terms run. A change that can
+only pay less applies at once: a lower amount, fewer periods, a pause, a resume to the same or lower
+terms, an end. Any signer may end one at once, a flagged one included.
+
+- **For the mistake:** VLT-M52 and VLT-M55, undo: a setting is cancelled while it waits, and
+  a live one is lowered or ended at once; VLT-M56, warn only: a raise waits the delay by
+  design, and the app says so before the owner asks for it.
+- **Tests owed:** the defaults for a rule, with each change that can pay more and each that can only
+  pay less, a setting with and without signers, one to the owner's own wallet with co-signing off
+  and in force, a signer that signs one paying its own address, a signer removed or flagged before
+  the setting applies, a signer that tries to set or raise one, and a resume to higher terms.
+
+### VLT-542 · rule
+
+**Who:** anyone.
+**When:** a period of a live scheduled payment is open and unpaid.
+
+Anyone may make the period's payment, and receives nothing for it
+(KPR owed: the pass that releases payouts and makes scheduled payments). It pays exactly the amount,
+in no queue, from the free balance and never the Ready balance (VLT-320), to the destination, a
+protected one in its own vault (VLT-442). If the free balance is short at all, nothing moves. It is
+refused while the platform is paused, the account is not protected or is locked, or the owner, the
+destination or the sender is flagged (PLT-060). A pause of the token alone does not stop it
+(PLT-051). A period that ends unpaid, or while the payment is paused, lapses and is never made up,
+and nothing is held for it. The vault checks each payment against its own record first (VLT-004).
+
+- **For the mistake:** VLT-M53, VLT-M54 and VLT-M57, warn only: a payment is all or nothing
+  and a lapsed period is never made up, so that nothing is ever held back for one.
+- **Tests owed:** the defaults for a rule, with a free balance that covers the amount and one short
+  by its smallest part, each condition that stops it, the token paused, two payments tried in one
+  period, a period that falls while the payment is paused and is not paid after the resume, and a
+  period that lapses before a long pause ends.
+
+### VLT-543 · rule
+
+**Who:** the platform and the vault, with the change that ends a scheduled payment.
+**When:** a protected account is locked, its owner wallet is replaced, protection is switched
+off, a destination is removed, or the account is clawed back or recovered.
+
+A lock, a completed replacement and a switch-off each end every scheduled payment, waiting, live or
+paused, with the platform's side (VLT-184). A removal of a destination ends every one that pays it.
+The clawback (VLT owed: the clawback) and a claim by the recovery address
+(VLT owed: a recovered account) end them too. The vault reads this from its own record. Nothing
+brings one back, not an unlock, the destination added again or a new owner wallet: the owner sets it
+again, and it waits again. Before such a change is asked, the platform reports the scheduled
+payments it would end and the payouts that wait which it would cancel (VLT-513).
+
+- **For the mistake:** VLT-M58, warn only: the change must still apply at once, so the report before
+  it is asked is the answer.
+- **Tests owed:** the defaults for a rule, with each change against a waiting, a live and a
+  paused scheduled payment, the report read before each, and a payment tried after each.
+
+### VLT-544 · never
+
+**Who:** the platform and the vault.
+**When:** a scheduled payment pays.
+
+A scheduled payment never pays more than its amount in a period, never pays a period twice or
+one that lapsed, and never pays anyone but its destination.
+It never pays after a change of VLT-543, nor on terms that have not yet waited.
+
+- **Against:** VLT-T41.
+- **Watch:** every payment of a scheduled payment against its record: its amount, its
+  destination, at most one payment in each period, and no change of VLT-543 since it was set.
+- **Tests owed:** the defaults for a never, with a payment tried for more, twice in a period,
+  for a lapsed period, to another address, on terms still waiting, and after each change of
+  VLT-543.
+
+### VLT-545 · refusal
+
+**Who:** a vault's owner.
+**When:** a scheduled payment is set on an account that is not protected, is locked or is in a
+replacement's cool-down, or that already holds its most scheduled payments [PRM-093].
+
+The setting is refused. Nothing is set, nothing waits, and nothing moves (VLT-053). A scheduled
+payment counts towards the most until it ends, a paused one included (VLT-543). These are four of a
+setting's refusals. The others are a pause (PLT-040, VLT-502), a destination or terms outside
+VLT-540, and a missing or wrong signature (VLT-541).
+
+- **Refused as:** which of the four holds: the account is not protected; it is locked; it is
+  in a replacement's cool-down, with the time it ends; or it holds its most, with the most.
+- **For the mistake:** VLT-M59 and VLT-M60, refuse.
+- **Tests owed:** the defaults for a refusal, with each of the four, a setting the instant the
+  cool-down ends and after an unlock, and one after a scheduled payment ends.
+
+### Model: a scheduled payment
+
+**States:**
+
+- Not set (start): no scheduled payment.
+- Waiting: the owner set it, and it has not applied yet.
+- Live: it applies, and pays once in each period.
+- Paused: the owner paused it, and its periods lapse.
+- Ended (end): ended by its owner, a signer or VLT-543, or cancelled, lapsed or past its end.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Not set | Set | The owner, with a signer's signature where the account has one | VLT-540, VLT-541, VLT-545 | Waiting |
+| Waiting | Apply after the wait | The owner | VLT-541 | Live |
+| Waiting | Cancel | The owner or a signer | VLT-541 | Ended |
+| Waiting | Lapse | Nobody: the clock | VLT-411, VLT-541 | Ended |
+| Live | Pay a period | Anyone | VLT-542, VLT-544 | Live |
+| Live | Change to pay less | The owner | VLT-541 | Live |
+| Live | Ask a change to pay more | The owner, with a signer's signature where the account has one | VLT-541 | Live |
+| Live | Apply a change to pay more after its wait | The owner | VLT-411, VLT-541 | Live |
+| Live | Pause | The owner | VLT-541 | Paused |
+| Paused | Resume to the same or lower terms | The owner | VLT-541 | Live |
+| Live | End | The owner or a signer | VLT-541 | Ended |
+| Paused | End | The owner or a signer | VLT-541 | Ended |
+| Live | The last period passes | Nobody: the clock | VLT-540 | Ended |
+| Paused | The last period passes | Nobody: the clock | VLT-540 | Ended |
+| Waiting | End with a lock, a replacement, a switch-off, the removal of its destination, the clawback or a recovery claim | The platform, with that change | VLT-543 | Ended |
+| Live | End with a lock, a replacement, a switch-off, the removal of its destination, the clawback or a recovery claim | The platform, with that change | VLT-543 | Ended |
+| Paused | End with a lock, a replacement, a switch-off, the removal of its destination, the clawback or a recovery claim | The platform, with that change | VLT-543 | Ended |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Set | By anyone but the owner, VLT-410. On an account that is not protected, is locked or is in a replacement's cool-down, or that holds its most, VLT-545. A destination not in force or not shown to be controlled, VLT-540. Without a signer's signature where one is needed, or signed by a signer it pays, VLT-541. A pause, VLT-502 |
+| Apply after the wait | Before the wait has passed, or after it lapsed, VLT-411, VLT-541 |
+| Cancel | By anyone but the owner or a signer, VLT-541 |
+| Lapse | Nothing brings it forward, VLT-411 |
+| Pay a period | A period paid or lapsed, a short free balance, the platform's pause, a lock, or a flagged owner, destination or sender, VLT-542 |
+| Change to pay less | By anyone but the owner, VLT-541 |
+| Ask a change to pay more | As for a setting, VLT-541 |
+| Apply a change to pay more after its wait | Before its wait has passed, or after it lapsed, VLT-411, VLT-541 |
+| Pause | By anyone but the owner, VLT-541 |
+| Resume to the same or lower terms | By anyone but the owner, or to higher terms, which is a change to pay more, VLT-541 |
+| End | By anyone but the owner or a signer, VLT-541 |
+| The last period passes | Nothing brings it forward, VLT-540 |
+| End with a lock, a replacement, a switch-off, the removal of its destination, the clawback or a recovery claim | A change applied in part, VLT-184, VLT-543 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| The destination | The owner's wallet; a destination that showed control; one that did not (refused); a protected destination | VLT-540, VLT-542 |
+| Signers | None; some | VLT-541 |
+| The free balance in a period | Covers the amount; short of it | VLT-542 |
+| The platform | Running; paused | VLT-542 |
+| The token | Running; paused | VLT-542, PLT-051 |
+
+## Outcome under each condition of the platform (section 6)
+
+A cell names the statement that decides it. "Open" means the condition does not refuse the step.
+
+| Step | Paused | Asset paused | Caller flagged | Payee flagged | Screen cannot be read | Terms not current |
+| --- | --- | --- | --- | --- | --- | --- |
+| Asking a payout | Open (VLT-502) | Open (PLT-051) | PLT-060 | PLT-060 | PLT-065 | Open (PLT-071) |
+| The release of a queued payout | Waits for the escape as well as its time (VLT-511) | Open (PLT-051) | PLT-060, for the owner and the sender (VLT-511). A co-signature whose giver is flagged does not count (VLT-522) | PLT-060 | PLT-065. A needed co-signature does not count (VLT-522) | Open (PLT-071) |
+| Cancelling a payout, and switching co-signing on | Open (VLT-502) | Open | Open | Never pays | Open | Open (PLT-071) |
+| A co-signature | Open (VLT-502) | Open | Refused (PLT-060, VLT-522) | Never pays | Given, but counts only if the screen answers at the release (VLT-522) | Open (PLT-071) |
+| Asking for, or applying, co-signing off | PLT-040, VLT-502 | Open | Open | Never pays | Open | Open (PLT-071) |
+| Setting a scheduled payment, or a change that can make it pay more, asked or applied | PLT-040, VLT-502 | Open | PLT-060. A flagged signer's signature does not count (VLT-541) | PLT-060 | PLT-065 | Open (PLT-071) |
+| A change that can only pay less, a pause and an end of a scheduled payment | Open (VLT-502) | Open | Open | Never pays | Open | Open (PLT-071) |
+| A period's payment | Refused, and the period lapses (VLT-542) | Open (VLT-542, PLT-051) | PLT-060, for the owner and the sender (VLT-542) | PLT-060 (VLT-542) | PLT-065 | Open (PLT-071) |
+
+Asking a payout and every step of 6.3 and 6.5 but a period's payment move nothing out of a vault.

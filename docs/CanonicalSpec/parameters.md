@@ -80,6 +80,11 @@ The ids are permanent.
 | PRM-087 | The most signers a protected account may have | 5 | signers | Fixed | Nobody | None | VLT-430 |
 | PRM-088 | The most destinations a protected account may name | 5 | destinations | Fixed | Nobody | None | VLT-440 |
 | PRM-089 | The least signers an account needs before their majority may replace its owner wallet | 3 | signers | Fixed | Nobody | None | VLT-450 |
+| PRM-090 | The most payouts that may wait at once for a protected account | 16 | payouts | Fixed | Nobody | None | VLT-530 |
+| PRM-091 | The longest period of a scheduled payment, a whole number of days | 366 | days | Fixed | Nobody | None | VLT-540 |
+| PRM-092 | The most periods a scheduled payment may have | 60 | periods | Fixed | Nobody | None | VLT-540 |
+| PRM-093 | The most scheduled payments a protected account may hold that have not ended | 5 | scheduled payments | Fixed | Nobody | None | VLT-540, VLT-545 |
+| PRM-094 | The shortest period of a scheduled payment | 1 | days | Fixed | Nobody | None | VLT-540 |
 
 The sale slippage setting that lies inside PRM-003, and the liquidation discount of each tier
 that lies inside PRM-004, are other parameters. They are owed by the close-out rules.
