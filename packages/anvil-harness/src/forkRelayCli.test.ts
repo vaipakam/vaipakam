@@ -101,7 +101,7 @@ describe('main', () => {
     await expect(main(['deliver', '--state', '/nonexistent/relay', 'base-sepolia', 'arb-sepolia'])).rejects.toThrow(/no relay installed for this run/);
   });
   it('refuses an unknown command', async () => {
-    await expect(main(['launch', '--state', '/tmp/x'])).rejects.toThrow(/unknown command "launch"/);
+    await expect(main(['launch', '--state', '/nonexistent/relay'])).rejects.toThrow(/unknown command "launch"/);
   });
   it('records each delivery as it lands, so a later failure never hides it', async () => {
     const state = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-cli-'));

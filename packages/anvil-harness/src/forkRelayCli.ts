@@ -135,9 +135,9 @@ export async function main(argv: string[]): Promise<number> {
     }
     compileForkRelay();
     const relay = await ForkCcipRelay.install(ends, generatePrivateKey());
-    fs.mkdirSync(state, { recursive: true });
+    fs.mkdirSync(state, { recursive: true, mode: 0o700 });
     fs.writeFileSync(relayFile(state), JSON.stringify(relay.saved(), null, 2), { mode: 0o600 });
-    fs.writeFileSync(messagesFile(state), '');
+    fs.writeFileSync(messagesFile(state), '', { mode: 0o600 });
     for (const l of relay.saved().lanes) console.log(`relay: lane ${l.from} -> ${l.to}: on-ramp ${l.onRamp}, off-ramp ${l.offRamp} (stand-in installed)`);
     return 0;
   }
@@ -154,7 +154,7 @@ export async function main(argv: string[]): Promise<number> {
     // Each delivery is logged as it lands, so a later message that fails
     // never hides the ones already executed on the destination.
     const delivered = await relay.deliver(id(from), id(to), (m) => {
-      fs.appendFileSync(messagesFile(state), `${jsonRow(m)}\n`);
+      fs.appendFileSync(messagesFile(state), `${jsonRow(m)}\n`, { mode: 0o600 });
       console.log(`relay: delivered ${m.messageId} ${from} -> ${to}: fee ${m.fee}, gas limit ${m.gasLimit}, gas used ${m.gasUsed} (tx ${m.destinationTx as Hex})`);
     });
     if (delivered.length === 0) console.log(`relay: nothing pending from ${from} to ${to}`);
