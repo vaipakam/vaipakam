@@ -447,12 +447,13 @@ stage steps
 relay_report() { $RH_RELAY report --state "$RELAY_STATE" 2>/dev/null | rh_redact > "$RELAY_STATE/report.md.new" && mv "$RELAY_STATE/report.md.new" "$RELAY_STATE/report.md"; }
 if [ "$HAS_RELAY" = 1 ]; then
   # Every fork of the run takes part, so each lane between them is found and
-  # each destination gets the stand-in once.
+  # each destination gets the stand-in once. Each router is CCIP_ROUTER_<PREFIX>
+  # as load_env_file set it above: one reading of the env file, the deploy's.
   relay_forks=()
   for c in "${CHAINS[@]}"; do relay_forks+=("$c=${FORK_URL[$c]}@${FORK_BLOCK[$c]}"); done
   log "  → relay: installing the stand-in off-ramps across ${CHAINS[*]}"
   mkdir -p "$RELAY_STATE"
-  if ! $RH_RELAY install --state "$RELAY_STATE" --env-file "$RH_ENV_FILE" "${relay_forks[@]}" 2>&1 | rh_redact > "$LOGS/relay-install.log"; then
+  if ! $RH_RELAY install --state "$RELAY_STATE" "${relay_forks[@]}" 2>&1 | rh_redact > "$LOGS/relay-install.log"; then
     FAILED_STAGE="steps (relay install)"
     tail -20 "$LOGS/relay-install.log" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
     exit 1

@@ -431,10 +431,16 @@ export class ForkCcipRelay {
   }
 
   /** Deliver every pending message from `fromChainId` to `toChainId`, in
-   *  send order. A delivery that fails throws: it is a failed step. */
-  async deliver(fromChainId: number, toChainId: number): Promise<ForkRelayedMessage[]> {
+   *  send order. A delivery that fails throws: it is a failed step.
+   *  `onDelivered` is called as each delivery lands, so a caller can record
+   *  the ones already executed before a later one throws. */
+  async deliver(fromChainId: number, toChainId: number, onDelivered?: (m: ForkRelayedMessage) => void): Promise<ForkRelayedMessage[]> {
     const out: ForkRelayedMessage[] = [];
-    for (const m of await this.pending(fromChainId, toChainId)) out.push(await this.deliverOne(fromChainId, toChainId, m));
+    for (const m of await this.pending(fromChainId, toChainId)) {
+      const done = await this.deliverOne(fromChainId, toChainId, m);
+      out.push(done);
+      onDelivered?.(done);
+    }
     return out;
   }
 

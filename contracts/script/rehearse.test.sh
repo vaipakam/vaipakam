@@ -38,7 +38,7 @@ echo "{}" > "contracts/$VAIPAKAM_REHEARSAL_ROOT/$1/$3.json"
 exit 0
 S
 chmod +x "$WORK/bin/stub-ok" "$WORK/deploy"
-printf 'DEPLOYER_ADDRESS=0x3333333333333333333333333333333333333333\nADMIN_ADDRESS=0x4444444444444444444444444444444444444444\nDEPLOYER_PRIVATE_KEY=0xnotloaded\nBASE_SEPOLIA_RPC_URL=https://p.example/v2/SECRETKEY\n' > "$WORK/.env"
+printf 'DEPLOYER_ADDRESS=0x3333333333333333333333333333333333333333\nADMIN_ADDRESS=0x4444444444444444444444444444444444444444\nDEPLOYER_PRIVATE_KEY=0xnotloaded\nBASE_SEPOLIA_RPC_URL=https://p.example/v2/SECRETKEY\nCCIP_ROUTER_BASE_SEPOLIA="0x00000000000000000000000000000000000000a0" # the router\n' > "$WORK/.env"
 
 fails=0
 ok() { echo "ok    $1"; }
@@ -145,6 +145,7 @@ grep -q "close the first reward day by hand" "$RUNDIR/report.md" && ok "the repo
 cat > "$WORK/bin/relay" <<'S'
 #!/usr/bin/env bash
 echo "RELAY $*"
+[ "$1" = install ] && echo "ROUTER ${CCIP_ROUTER_BASE_SEPOLIA:-unset}"
 [ "${STUB_RELAY_FAIL:-}" = "$1" ] && { echo "relay: $1 refused"; exit 1; }
 [ "$1" = report ] && printf '## Cross-chain relay\n\nstub lanes\n'
 exit 0
@@ -152,8 +153,10 @@ S
 chmod +x "$WORK/bin/relay"
 RELAY_PLAN="$DESIRED_LINE"$'\nchains base-sepolia arb-sepolia\nrelay base-sepolia arb-sepolia'
 drive relay "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay"
-[ "$RC" -eq 0 ] && grep -q "RELAY install --state $RUNDIR/relay --env-file $WORK/.env base-sepolia=http://127.0.0.1:1@0 arb-sepolia=http://127.0.0.1:2@0" "$RUNDIR/logs/relay-install.log" \
+[ "$RC" -eq 0 ] && grep -q "RELAY install --state $RUNDIR/relay base-sepolia=http://127.0.0.1:1@0 arb-sepolia=http://127.0.0.1:2@0" "$RUNDIR/logs/relay-install.log" \
   && ok "the relay is installed once across every fork before the steps" || { bad "relay install: rc $RC $(head -1 "$RUNDIR/logs/relay-install.log" 2>/dev/null)"; echo "$OUT" | tail -5; }
+grep -qx "ROUTER 0x00000000000000000000000000000000000000a0" "$RUNDIR/logs/relay-install.log" \
+  && ok "the relay reads each router as the deploy's env reader set it (quoted, trailing comment)" || bad "router seen by the relay: $(grep ROUTER "$RUNDIR/logs/relay-install.log")"
 grep -q "RELAY deliver --state $RUNDIR/relay base-sepolia arb-sepolia" "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" \
   && ok "a relay step delivers from the saved relay" || bad "relay deliver: $(head -1 "$RUNDIR/logs/001-relay-base-sepolia-arb-sepolia.log" 2>/dev/null)"
 grep -q "## Cross-chain relay" "$RUNDIR/report.md" && ! grep -q "the plan has no relay step" "$RUNDIR/report.md" \

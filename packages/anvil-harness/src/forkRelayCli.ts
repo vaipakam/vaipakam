@@ -5,7 +5,7 @@
  * so the relay is installed once and every later step rejoins it from the
  * run's scratch folder.
  *
- *   install --state <dir> --env-file <file> <slug>=<url>@<forkBlock> ...
+ *   install --state <dir> <slug>=<url>@<forkBlock> ...
  *       Find every lane between the forks, refuse any ramp version the
  *       stand-in was not built for, install the stand-in on each destination,
  *       and save the relay (its key is made here, for this run only).
@@ -20,8 +20,11 @@
  *
  * Each fork's chain id is read from the fork; its CCIP selector comes from
  * the deploy scripts' chain list (`contracts/script/deploy-plan.mjs`), and
- * its router from the env file's `CCIP_ROUTER_<PREFIX>`, the value the
- * deploy itself wires. Run with `tsx`.
+ * its router from `CCIP_ROUTER_<PREFIX>` in this command's environment, the
+ * value the deploy itself wires. The driver loads the env file with the
+ * deploy's own reader (`contracts/script/lib/load-env.sh`) before it runs
+ * this command, so there is one reading of that file, never a second parser
+ * here that could read it differently. Run with `tsx`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,34 +59,19 @@ export function parseForkArg(arg: string): ForkArg {
   return { name: m[1], url: m[2], forkBlock: BigInt(m[3]) };
 }
 
-/** `KEY=VALUE` lines of an env file; quotes stripped, comments skipped. */
-export function parseEnvFile(text: string): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const raw of text.split('\n')) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!m) continue;
-    let v = m[2].trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    else v = v.replace(/\s+#.*$/, '');
-    out.set(m[1], v);
-  }
-  return out;
-}
-
 /**
  * The relay's view of one fork: the chain the fork says it is must be the one
- * the slug names, the selector is the deploy scripts', the router the env
- * file's, and messages are read from the first block after the fork point.
+ * the slug names, the selector is the deploy scripts', the router the
+ * environment's (as the deploy's env reader set it), and messages are read
+ * from the first block after the fork point.
  */
-export function forkEnd(fork: ForkArg, chainId: number, chains: Record<string, KnownChain>, env: Map<string, string>): ForkEnd {
+export function forkEnd(fork: ForkArg, chainId: number, chains: Record<string, KnownChain>, env: Readonly<Record<string, string | undefined>>): ForkEnd {
   const known = chains[fork.name];
   if (!known) throw new Error(`relay: ${fork.name} is not a chain the deploy scripts know`);
   if (known.chainId !== chainId) throw new Error(`relay: the fork named ${fork.name} answers chain id ${chainId}, not ${known.chainId}`);
   const key = `CCIP_ROUTER_${known.prefix}`;
-  const router = env.get(key);
-  if (!router || !/^0x[0-9a-fA-F]{40}$/.test(router)) throw new Error(`relay: the env file sets no address for ${key}, the router the deploy wires on ${fork.name}`);
+  const router = env[key];
+  if (!router || !/^0x[0-9a-fA-F]{40}$/.test(router)) throw new Error(`relay: the environment carries no address for ${key}, the router the deploy wires on ${fork.name}`);
   return { name: fork.name, url: fork.url, chainId, chainSelector: known.ccipSelector, router: router as Address, fromBlock: fork.forkBlock + 1n };
 }
 
@@ -137,14 +125,13 @@ export async function main(argv: string[]): Promise<number> {
   const args = [...rest];
   const state = path.resolve(option(args, '--state'));
   if (cmd === 'install') {
-    const env = parseEnvFile(fs.readFileSync(option(args, '--env-file'), 'utf8'));
     if (args.length < 2) throw new Error('relay: install needs at least two forks');
     const chains = await loadChains();
     const ends: ForkEnd[] = [];
     for (const a of args) {
       const fork = parseForkArg(a);
       const chainId = await createPublicClient({ transport: http(fork.url) }).getChainId();
-      ends.push(forkEnd(fork, chainId, chains, env));
+      ends.push(forkEnd(fork, chainId, chains, process.env));
     }
     compileForkRelay();
     const relay = await ForkCcipRelay.install(ends, generatePrivateKey());
@@ -164,11 +151,12 @@ export async function main(argv: string[]): Promise<number> {
       return e.chainId;
     };
     const relay = await ForkCcipRelay.attach(saved);
-    const delivered = await relay.deliver(id(from), id(to));
-    for (const m of delivered) {
+    // Each delivery is logged as it lands, so a later message that fails
+    // never hides the ones already executed on the destination.
+    const delivered = await relay.deliver(id(from), id(to), (m) => {
       fs.appendFileSync(messagesFile(state), `${jsonRow(m)}\n`);
       console.log(`relay: delivered ${m.messageId} ${from} -> ${to}: fee ${m.fee}, gas limit ${m.gasLimit}, gas used ${m.gasUsed} (tx ${m.destinationTx as Hex})`);
-    }
+    });
     if (delivered.length === 0) console.log(`relay: nothing pending from ${from} to ${to}`);
     return 0;
   }
