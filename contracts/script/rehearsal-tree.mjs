@@ -138,6 +138,27 @@ export function compare(before, after) {
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/**
+ * One listed entry's content, decided by the read itself rather than by a
+ * stat taken before it, so nothing can change between the check and the use:
+ * a symlink is its target text, a file its sha256, and a directory (a
+ * submodule, contracts/lib/*) the digest of its own checked-out tree, taken
+ * the same way, recursively (#3896).
+ */
+function entryContent(abs) {
+  try {
+    return `link:${readlinkSync(abs)}`;
+  } catch (e) {
+    if (e.code !== 'EINVAL') throw e; // not a symlink
+  }
+  try {
+    return sha256(readFileSync(abs));
+  } catch (e) {
+    if (e.code !== 'EISDIR') throw e;
+  }
+  return existsSync(join(abs, '.git')) ? `submodule:${treeDigest(abs).digest}` : 'submodule:not checked out';
+}
+
 /** The tree digest (§18): commit + every tracked or untracked, not ignored,
  *  file outside contracts/deployments, by path and content as on disk. */
 export function treeDigest(root = REPO_ROOT) {
@@ -157,14 +178,7 @@ export function treeDigest(root = REPO_ROOT) {
   for (const p of tracked) {
     let content;
     try {
-      const abs = join(root, p);
-      const st = lstatSync(abs);
-      if (st.isSymbolicLink()) content = `link:${readlinkSync(abs)}`;
-      // A submodule (contracts/lib/*) is a directory: its checked-out commit
-      // and its own working tree are part of what a deploy builds, so its
-      // digest is taken the same way, recursively (#3896).
-      else if (st.isDirectory()) content = existsSync(join(abs, '.git')) ? `submodule:${treeDigest(abs).digest}` : 'submodule:not checked out';
-      else content = sha256(readFileSync(abs));
+      content = entryContent(join(root, p));
     } catch {
       content = 'missing';
     }
