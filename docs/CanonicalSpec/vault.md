@@ -268,13 +268,13 @@ write.
 Until it is released the amount rests in the vault recorded for that side of the position,
 held for the position, or in the paying vault when it cannot be delivered there (VLT-072).
 It is released to the holder's own vault (VLT-200), which must be a genuine vault (section 3)
-whose own owner record names that holder, or names the owner wallet on record that replaced
-that holder there (VLT-452). It is never paid to a wallet.
+whose own owner record names that holder, or, once that holder has been replaced there as
+owner (VLT-452), the owner wallet on record. It is never paid to a wallet.
 
 - **Tests owed:** the defaults for a rule, with the first holder, with a later one, with a
-  holder whose wallet was replaced as its own vault's owner, once and twice, and a release
-  refused where the vault at the holder's address names an owner that never replaced the
-  holder by VLT-452.
+  holder whose wallet was replaced as its own vault's owner, once and twice, a holder that
+  manages a second vault by a replacement (never paid into it), and a holder with no vault of
+  its own (the amount stays held, VLT-034).
 
 ### VLT-034 · rule
 
@@ -303,8 +303,8 @@ The amount is released at once into the holder's vault as free balance.
 
 An amount held for a position leaves in one way only: to whoever holds that position's token
 at that moment.
-It becomes free balance in the same vault if that vault's owner is the holder, and is paid to
-the holder's vault otherwise.
+It becomes free balance in the same vault if that vault is the holder's own vault (VLT-200),
+and is paid to the holder's vault otherwise.
 Neither the owner of the vault that holds it nor the platform can withdraw it, spend it or
 send it anywhere else.
 
@@ -1261,7 +1261,9 @@ the vault's free balance. What was drawn stays under its lien.
 
 - **Tests owed:** the defaults for a rule, with a draw in the same block before and after,
   with a loan's token sold while its reserve and its plan stand (no draw, and the seller takes
-  the reserve back), and with a lender's token sold while a consent stands (no draw).
+  the reserve back), with a lender's token sold while a consent stands (no draw), and with a
+  reserve for a loan whose token moved to the replaced wallet, after a second replacement (no
+  draw, and the owner on record takes the reserve back).
 
 ### VLT-141 · rule
 
@@ -1905,14 +1907,14 @@ the authority rules and is cited in the owed form.
 **Who:** anyone.
 **When:** a wallet has no vault on a network.
 
-Anyone may create the vault of any wallet, by the step whose only purpose is that.
-Creating it gives the creator no right over it, and moves nothing.
-A wallet has no vault until one is created for it, and it is created once. A wallet's own
-vault is the one its address gives (VLT-201), and asking again returns that vault. A vault it
-owns by a replacement is a second one, which it manages (VLT-452).
-No other step creates a vault for anyone but its own caller: a payment never creates one
-for the party it pays (VLT-034), and a payer's first payment creates only the payer's own.
-Only the wallet created for is screened: a flagged creator may create a clean wallet's vault.
+Anyone may create the vault of any wallet, by the step whose only purpose is that. Creating it gives
+the creator no right over it, and moves nothing. A wallet has no vault until one is created for it,
+and it is created once. A wallet's own vault is the one its address gives (VLT-201), and asking
+again returns that vault. A vault it owns by a replacement is a second one, which it manages
+(VLT-452). Wherever a statement speaks of a wallet's, a holder's or a caller's vault, it means its
+own vault. No other step creates a vault for anyone but its own caller: a payment never creates one
+for the party it pays (VLT-034), and a payer's first payment creates only the payer's own. Only the
+wallet created for is screened: a flagged creator may create a clean wallet's vault.
 
 - **For the mistake:** VLT-M03, bound. The harm is the network fee the creator paid.
 - **Tests owed:** the defaults for a rule, with a creator who is not the wallet, and with a
@@ -2599,8 +2601,8 @@ than the permit allows or the wallet holds.
 The deposit is refused, and nothing moves.
 An approval the owner gave to the vault's address, or to the platform's, is never used: the
 vault takes a token from a wallet only under a permit signed for that deposit (VLT-081).
-A token the owner sends inside its own step is not taken: it is booked under VLT-116 and needs
-no permit. A token sent outside such a step is untracked (VLT-162), never a deposit.
+A token the owner sends inside its own step is not taken: it is booked as a deposit under VLT-116
+and needs no permit. A token sent outside such a step is untracked (VLT-162), never a deposit.
 The refusal states the amount asked for, what the wallet holds and what the permit allows, so
 the owner sees which of them fell short.
 
@@ -3083,7 +3085,7 @@ an order outlives the teardown (VLT-352).
 
 - **For the mistake:** VLT-M49, undo through adoption.
 - **Tests owed:** the defaults for a rule, with a token and a single NFT taken before and after
-  the teardown, the listed collection named as the asset, a caller who is not the owner, an
+  the teardown, the listed collection named as the asset, a caller who is not the owner, a
   listing-locker another vault created, an adoption that names the listing-locker as the source, an
   adoption that names a flagged sender, an approval and an order tried after the teardown, and a
   token that calls back into the listing-locker or the vault during the send.

@@ -46,10 +46,10 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-030 | K | Owner decision 2026-11-06, OP "2", "Own wallet only". PD "2", item 2. | c670965df6fb42e1 |
 | VLT-031 | K | Same. Mistake VLT-M16. | 9cffcb5cd0780641 |
 | VLT-032 | K | VO "Vault-owned authority and signed changes". OP "3.7.9". Mistake VLT-M17. | 3a79893b427a1c4f |
-| VLT-033 | K | OP "2", "A vault-held lien record". OP "3.3", Counterparty, layer 2. OP "3.7.5", first paragraph. Restated to say where the amount rests, PD "4.2". Changed after the approval of section 5: a replaced holder's own vault, whose owner record names the owner wallet on record, takes the release. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | bd938b7aff6d3cc0 |
+| VLT-033 | K | OP "2", "A vault-held lien record". OP "3.3", Counterparty, layer 2. OP "3.7.5", first paragraph. Restated to say where the amount rests, PD "4.2". Changed after the approval of section 5: the release goes to the holder's own vault, whose owner record names that holder or, once that holder has been replaced there as owner, the owner wallet on record, and never to a wallet. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | fe2ff9d4acec5354 |
 | VLT-034 | K | PD "4.2", second item. OP "3.7.2", item 5. | f66339ae53745aeb |
 | VLT-035 | K | PD "4.2", first item. | 9624ceaf5d3ba45e |
-| VLT-037 | K | OP "3.7.2", item 5. PD "2.1", "Held for a position" | 354569a4cf2ac465 |
+| VLT-037 | K | OP "3.7.2", item 5. PD "2.1", "Held for a position". Changed after the approval of section 5: an amount held for a position becomes free balance in the same vault only if that vault is the holder's own vault, and is otherwise paid to the holder's own vault. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | 3364a51edb4a3bb4 |
 | VLT-038 | K | PD "4.1", the own-balance release. | 3cd7a713bc54c0dd |
 | VLT-039 | K | VO "Independent boundaries on value leaving a vault", first item. | 6b45328308c401d2 |
 | VLT-040 | K | VO same section, third item. OP "3.7.4", the swap row. | c2682f7685096935 |
@@ -112,7 +112,7 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-137 | K | OP "3.7.3", "A loan that pays off another". OP "3.7.2", item 4, the payment with two purposes. OP "3.7.7" | f688238fee0206e6 |
 | VLT-138 | K | Same three places. | ecb9d022946ab557 |
 | VLT-139 | K | OP "3.7.3", "An NFT rental". OI "The NFT rental", for the daily rent. | a653b9bc317fa40f |
-| VLT-140 | C | OP "3.7.2", item 2, last sentence, and OP "3.7.4", the row on a mandate or a reserve: "the owner's own call". A loan reserve: PR "Standing Instructions", "The reserve belongs to whoever deposited it .. whether or not they still hold the position .. an extension draws only the current holder's reserve". Drawn only while its owner holds the token: the same line, the due-date plan design ("live for the current holder") and the exit instruction's skip "the holder is no longer the wallet that set it". Changed: the statement lists the commitments it covers. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. Changed again with section 5: after a replacement the holding of the wallet whose own vault it is counts as the owner's. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. | d622cc08d59dbdb8 |
+| VLT-140 | C | OP "3.7.2", item 2, last sentence, and OP "3.7.4", the row on a mandate or a reserve: "the owner's own call". A loan reserve: PR "Standing Instructions", "The reserve belongs to whoever deposited it .. whether or not they still hold the position .. an extension draws only the current holder's reserve". Drawn only while its owner holds the token: the same line, the due-date plan design ("live for the current holder") and the exit instruction's skip "the holder is no longer the wallet that set it". Changed: the statement lists the commitments it covers. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. Changed again with section 5, and after its approval: after a replacement the holding of the wallet whose own vault it is counts as the owner's. The owner confirmed the clause with section 5 on 2026-11-23, 01:42 UTC; its present words, raised by the review of this folder, are entered for his confirmation with this folder. | 245c384b4ac775d8 |
 | VLT-141 | K | OP "3.7.2", item 2 (the lending mandate, a loan's two reserves) and "A borrowing holds no lien". | b40abafdeab3eb70 |
 | VLT-142 | K | OP "3.7.4", the rows "A lien released into free balance", "A payment to the other side" and "What is left of a lien". OP "3.7.6". OI "The backstop's buyout". | 04ab51fecb99b961 |
 | VLT-143 | K | OI "The held-amount families" (the custody after a failed sale stays under the collateral lien) and "The backstop's buyout" (the split, the slice, valued once when the split is recorded). Changed: the record keeps the price read and the amount owed that the slice was valued against. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. | 97a0d326e26f39af |
@@ -145,7 +145,7 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-183 | K | VO same section, first item: "can be voided". PR "Protected Account Mode", first paragraph. Mistake VLT-M32. | d86a826ec77e7df3 |
 | VLT-184 | K | VO same section, third item. | e94761af6404079c |
 | VLT-185 | C | OP "3.7.5", first paragraph: a lien's "actions need the new holder's authorization". Its first item: a record "accepted only from the replaced token's holder or that holder's genuine vault". PD "4.7". The three forms are written here: the sources give the rule and not the form. Changed with the owner's approval of 2026-11-22, 09:56 UTC. Changed with section 5: once the holder's wallet was replaced, the key is the owner the holder's own vault records. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. | 36d953e6b20ac6cb |
-| VLT-200 | N | New. Raised by mistake VLT-M03; the conflict read. Approved by the owner on 2026-11-22, 09:56 UTC. Changed with section 5: a wallet's own vault is the one its address gives, and one owned by a replacement is a second one. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. | 1c375375f41d4f48 |
+| VLT-200 | N | New. Raised by mistake VLT-M03; the conflict read. Approved by the owner on 2026-11-22, 09:56 UTC. Changed with section 5: a wallet's own vault is the one its address gives, and one owned by a replacement is a second one. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. Changed again after that approval: wherever a statement speaks of a wallet's, a holder's or a caller's vault, it means its own vault. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | cebf04bb4ed190f3 |
 | VLT-201 | K | OI "Which vault makes the pull": "A vault's address is known before the vault exists". VO "Vault-owned authority and signed changes": the address follows from the first owner. OP "3.7.9": a replacement owner wallet controls the same vault. | 57be11f861062259 |
 | VLT-202 | N | New. Raised by the conflict read. Approved by the owner on 2026-11-22, 09:56 UTC. | f656cb7d6925f18a |
 | VLT-210 | K | OP "3.4". The sentence on the backstop's vault: OI "The backstop's buyout", "at its address fixed in the vault code" The address half: OP's build notes for #3393 and VO, "Its address is derived from its original owner, so a forged owner record in an unrelated look-alike vault cannot qualify that vault as a protocol payee". | 191a414cff943376 |
@@ -175,7 +175,7 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-246 | N | New. Raised by threat PRC-T20. Approved by the owner on 2026-11-22, 14:31 UTC. | b9e1d78aa7928e20 |
 | VLT-300 | K | VO "Deposits, ownership, and free funds", first item. How each kind of asset arrives: VLT-081, VLT-116 and VLT-161, approved. The first deposit creating the vault: VLT-200. | bfa890c7e8badfbf |
 | VLT-301 | N | New. Raised by mistake VLT-M04. Approved by the owner on 2026-11-23, 01:42 UTC. | d6b77967f635c02a |
-| VLT-302 | N | New. Raised by mistake VLT-M05. Approved by the owner on 2026-11-23, 01:42 UTC. Changed after the approval: the refusal is of a deposit the vault takes, and a contract owner's send inside its own step (VLT-116) needs no permit. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | 88f4b6aa5fa38eb8 |
+| VLT-302 | N | New. Raised by mistake VLT-M05. Approved by the owner on 2026-11-23, 01:42 UTC. Changed after the approval: the refusal is of a deposit the vault takes, and a contract owner's send inside its own step is booked as a deposit under VLT-116 and needs no permit. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | 47b9b4148ebce0a7 |
 | VLT-303 | N | New. Raised by mistake VLT-M06. Approved by the owner on 2026-11-23, 01:42 UTC. | 8d2903874fcc6f83 |
 | VLT-304 | N | New. Raised by mistake VLT-M07. Approved by the owner on 2026-11-23, 01:42 UTC. | 39ab0113d7f948b0 |
 | VLT-305 | N | New. Raised by mistake VLT-M09. Approved by the owner on 2026-11-23, 01:42 UTC. | c8ccff09c4a0fe2a |
@@ -199,7 +199,7 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-352 | K | OP "3.5", item 3: "On cancel or expiry it returns what is left to the vault, which re-opens the lien for it". The lien is stated as never leaving the lot (VLT-350), which is the same outcome in the approved words of VLT-061. Refused by no condition: follows from PLT-041, since a full repayment in a pause ends the lien. | 698fb14812698654 |
 | VLT-353 | N | New. Raised by mistakes VLT-M48, VLT-M50. Approved by the owner on 2026-11-23, 01:42 UTC. | a7480576a7c419b5 |
 | VLT-354 | K | The reading of what a vault holds of a multi-unit NFT is written once here, for VLT-011, VLT-038, VLT-113 to VLT-115 and VLT-162. OP, the build notes, "The free-balance check reads the tracked holding for NFTs": a lot in the vault's own listing-locker is still the vault's and still under its lien. VLT-014 and VLT-013 for the withdrawal. Mistake VLT-M47. | 46ac393f8ccdeaa1 |
-| VLT-355 | N | New. Raised by mistake VLT-M49. The listing-locker obeying only its vault: OP "3.5", item 3. Naming the true source: VLT-170 and VLT-173. Approved by the owner on 2026-11-23, 01:42 UTC. | 781b64f04e21d34c |
+| VLT-355 | N | New. Raised by mistake VLT-M49. The listing-locker obeying only its vault: OP "3.5", item 3. Naming the true source: VLT-170 and VLT-173. Approved by the owner on 2026-11-23, 01:42 UTC. | f2d2e0598142f49a |
 | VLT-400 | K | VO "Optional account protection", first item. VO "Recovery address and clawback", first item, and RA "3.5": switching on needs a recovery address set, in force or waiting. The pin delay: VLT-232. Mistake VLT-M33. | 17e92dec0d0ff9e2 |
 | VLT-401 | K | VO "Optional account protection", first item, for the bounds. RA "3.5". Mistake VLT-M25. | 82b1197dec4cf845 |
 | VLT-402 | C | VO "Delayed changes and account replacement", first item. Mistake VLT-M26. Changed: a change that already waits takes the longer of its own wait and a delay raised since, which no document states. Raised by the security review. Approved by the owner on 2026-11-23, 01:42 UTC. | 96209409eee84539 |
@@ -285,14 +285,18 @@ owner's confirmation. Each was read for conflict before it was entered.
 - VLT-140 lists the commitments it covers. VLT-115 and the model of a lien cite the statements
   that state a release of a lien (VLT-035, VLT-131).
 - VLT-302 says that its refusal is of a deposit the vault takes. A token a contract owner sends
-  inside its own step is booked under VLT-116 and needs no permit, and a token sent outside
-  such a step is untracked (VLT-162). Its test names that case. Raised by the review of this
-  folder, after the owner's approval of section 4.
+  inside its own step is booked as a deposit under VLT-116 and needs no permit, and a token
+  sent outside such a step is untracked (VLT-162). Its test names that case. Raised by the
+  review of this folder, after the owner's approval of section 4.
 - VLT-454 names the account's position tokens: those held by the wallet whose own vault the
   account is. A later replacement never holds fast the tokens of a wallet that once managed
-  the account. VLT-140 reads the same holding. VLT-033 releases a payment to a replaced
-  holder's own vault, whose owner record then names the owner wallet on record, and never to a
-  wallet. Raised by the review of this folder, after the owner's approval of section 5.
+  the account. VLT-140 reads the same holding, and its test names a token moved to a replaced
+  wallet before a second replacement. VLT-033 releases a payment to the holder's own vault,
+  whose owner record names that holder or, once that holder has been replaced there as owner,
+  the owner wallet on record, and never to a wallet. VLT-037 makes a held amount free balance
+  in the same vault only if that vault is the holder's own. VLT-200 says that a wallet's, a
+  holder's or a caller's vault, wherever a statement speaks of one, is its own vault. Raised by
+  the review of this folder, after the owner's approval of section 5.
 - The contract a vault creates for one listing of a multi-unit NFT is called a listing-locker,
   in sections 2 and 4, the mistake list and the outline: one hyphenated word, never two words
   and never the second alone. No rule changes. The owner chose the word after approving
