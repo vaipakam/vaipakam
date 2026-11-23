@@ -658,7 +658,7 @@ hidden, எனவே ineligible offer-இல் தற்செயலாக tick
   recipients-க்கு directly route செய்கிறது; executor diamond-க்கு
   **net proceeds** (listed price minus அந்த marketplace /
   creator fee legs)-ஐ மட்டுமே pass செய்கிறது. Diamond அந்த net
-  amount-ஐ உங்கள் vault-இல் escrow செய்கிறது, NFT buyer-க்கு
+  amount-ஐ உங்கள் vault-இல் வரவு வைக்கிறது, NFT buyer-க்கு
   transfer ஆகிறது, மற்றும் offer `consumed_by_sale`-உடன் mark
   ஆகிறது (My Offers, Activity, மற்றும் Offer Details-இல்
   distinct "Sold" status-ஆக visible). எந்த loan-ம் உருவாக்கப்படவில்லை;

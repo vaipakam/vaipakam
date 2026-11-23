@@ -689,7 +689,7 @@ pouvez pas accidentellement le cocher sur une offre non éligible.
   destinataires configurés en premier ; l'executor passe
   uniquement les **recettes nettes** (prix listé moins ces legs
   de frais place de marché / créateur) au diamond. Le diamond
-  escrowe ce montant net dans votre vault, le NFT se transfère à
+  dépose ce montant net dans votre vault, le NFT se transfère à
   l'acheteur, et l'offre est marquée `consumed_by_sale` (visible
   comme statut "Sold" distinct dans Mes Offres, Activity, et
   Détails de l'Offre). Aucun prêt n'a jamais été créé ; vous

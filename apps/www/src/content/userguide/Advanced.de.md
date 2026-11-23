@@ -695,8 +695,8 @@ auf einem nicht berechtigten Angebot ankreuzen kannst.
   und Creator-Fee-Legs zuerst direkt an ihre konfigurierten
   Empfänger; der Executor übergibt nur die **Netto-Erlöse**
   (gelisteter Preis minus diese Marketplace- / Creator-Fee-Legs)
-  an den Diamond. Der Diamond escrowed diesen Netto-Betrag in
-  deinem Vault, das NFT transferiert sich an den Käufer und das
+  an den Diamond. Der Diamond legt diesen Netto-Betrag in
+  deinem Vault ab, das NFT transferiert sich an den Käufer und das
   Angebot wird mit `consumed_by_sale` markiert (sichtbar als
   eigener "Sold"-Status in Meine Angebote, Activity und Angebot-
   Details). Es wurde nie ein Kredit erstellt; du behältst die

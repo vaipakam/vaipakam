@@ -305,7 +305,7 @@
       "vault": {
         "q": "Comment fonctionne le vault par utilisateur ?",
         "a1": "Chaque utilisateur reçoit son propre proxy du vault UUPS upgradable, déployé à la première utilisation par <c>VaultFactoryFacet</c> (modèle clone-factory). Les actifs ne sont jamais mélangés à ceux d'autrui.",
-        "a2": "Le Diamond orchestre les mouvements entre séquestres, mais les droits de réclamation sont liés au NFT de position Vaipakam — la garde par vault est donc strictement contrainte par l'état on-chain de la position."
+        "a2": "Le Diamond orchestre les mouvements entre vaults, mais les droits de réclamation sont liés au NFT de position Vaipakam — la garde par vault est donc strictement contrainte par l'état on-chain de la position."
       },
       "default": {
         "q": "Que se passe-t-il en cas de défaut de l'emprunteur ?",

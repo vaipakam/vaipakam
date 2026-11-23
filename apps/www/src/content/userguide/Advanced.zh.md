@@ -523,7 +523,7 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
   listed price。在强制费用集合上，Seaport 首先将 OpenSea
   protocol-fee 和 creator-fee 腿直接路由到其配置的接收者；
   executor 仅将 **净收益**（listed price 减去这些 市场
-  / creator fee 腿）传递给 diamond。Diamond 将该净额托管在
+  / creator fee 腿）传递给 diamond。Diamond 将该净额存入
   您的 vault 中，NFT 转移给买家，并且报价标记为
   `consumed_by_sale`（在 My Offers、Activity 和 Offer Details
   中作为不同的 "Sold" 状态可见）。从未创建过贷款；您保留净
@@ -2078,7 +2078,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### 你的金库：读取什么
 
-金库是 `VaultFactoryFacet.getUserVaultAddress(wallet)`；`getOrCreateUserVault(wallet)` 创建它（一级制裁筛查，无暂停门槛），完成卡片读取 `UserVaultCreated`。每项资产在同一区块读取：金库自身的余额（ERC-20 用 `balanceOf`，ERC-721 用 `ownerOf`，ERC-1155 用 `balanceOf`）、`getTrackedHolding`、`withdrawableNow` 和 `untrackedHolding`。“在你的金库中”取余额与跟踪持有量中较小者；“现在可自由提取”即原样返回的 `withdrawableNow`（存入持有量，以 `freeHolding` 为上限：跟踪量减去留置再减去保护模式的预留）；“被你的头寸占用”是计入数量减去该值。资产来自 `getDepositoryAssets(wallet, offset, limit)`，按页读取直到返回的总数（在此之前出现空页视为不完整），每个列出合约的标准通过 ERC-165 读取，并加上 `getUserLoansPaginated(wallet)` 中每笔贷款以及钱包持有其头寸的每笔贷款的各条腿（出借资产、抵押品、租赁预付费用代币），每笔都在同一区块通过 `getLoanDetails` 读取，以及其创建过的每个报价（`getUserOffersPaginated(wallet)`，逐个用 `getOffer` 读取）的各条腿：报价的托管资产在其头寸 NFT 转出后仍留在创建者的金库中。还会加上 `getLenderIntentsByOwner(wallet)` 中每个常设报价（包括已取消的）所出借的资产：为常设报价注资会把该资产放入金库，而不在存入记录中留下条目。记录不保存 NFT 代币 ID，因此每个已存入的 NFT 集合都会在一条说明中列名，只有贷款或报价涉及的代币才带数字列出。尘额是大于零且小于一个完整代币 1e-11 的计入数量。
+金库是 `VaultFactoryFacet.getUserVaultAddress(wallet)`；`getOrCreateUserVault(wallet)` 创建它（一级制裁筛查，无暂停门槛），完成卡片读取 `UserVaultCreated`。每项资产在同一区块读取：金库自身的余额（ERC-20 用 `balanceOf`，ERC-721 用 `ownerOf`，ERC-1155 用 `balanceOf`）、`getTrackedHolding`、`withdrawableNow` 和 `untrackedHolding`。“在你的金库中”取余额与跟踪持有量中较小者；“现在可自由提取”即原样返回的 `withdrawableNow`（存入持有量，以 `freeHolding` 为上限：跟踪量减去留置再减去保护模式的预留）；“被你的头寸占用”是计入数量减去该值。资产来自 `getDepositoryAssets(wallet, offset, limit)`，按页读取直到返回的总数（在此之前出现空页视为不完整），每个列出合约的标准通过 ERC-165 读取，并加上 `getUserLoansPaginated(wallet)` 中每笔贷款以及钱包持有其头寸的每笔贷款的各条腿（出借资产、抵押品、租赁预付费用代币），每笔都在同一区块通过 `getLoanDetails` 读取，以及其创建过的每个报价（`getUserOffersPaginated(wallet)`，逐个用 `getOffer` 读取）的各条腿：报价预留的资产在其头寸 NFT 转出后仍留在创建者的金库中。还会加上 `getLenderIntentsByOwner(wallet)` 中每个常设报价（包括已取消的）所出借的资产：为常设报价注资会把该资产放入金库，而不在存入记录中留下条目。记录不保存 NFT 代币 ID，因此每个已存入的 NFT 集合都会在一条说明中列名，只有贷款或报价涉及的代币才带数字列出。尘额是大于零且小于一个完整代币 1e-11 的计入数量。
 
 <a id="vault-deposit"></a>
 

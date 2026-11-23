@@ -593,7 +593,7 @@ partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
   먼저 구성된 수신자에게 직접 라우팅합니다; executor는 **net
   proceeds** (listed price에서 해당 마켓플레이스 / creator fee leg을
   뺀 것)만 diamond로 전달합니다. Diamond는 그 net 금액을 당신의
-  볼트에 에스크로하고, NFT는 구매자에게 전송되며, 오퍼는
+  볼트에 입금하고, NFT는 구매자에게 전송되며, 오퍼는
   `consumed_by_sale`로 마크됩니다 (My Offers, Activity, Offer
   Details에 구별된 "Sold" 상태로 표시). 대출이 절대 생성되지
   않았습니다; 당신은 net 판매 수익을 유지합니다.

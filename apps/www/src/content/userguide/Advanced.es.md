@@ -691,7 +691,7 @@ en una oferta no elegible.
   creador directamente a sus destinatarios configurados primero;
   el executor pasa solo los **ingresos netos** (precio listado
   menos esos legs de tarifa de mercado / creador) al diamond.
-  El diamond pone en escrow ese monto neto en tu vault, el NFT
+  El diamond deposita ese monto neto en tu vault, el NFT
   se transfiere al comprador, y la oferta se marca
   `consumed_by_sale` (visible como estado "Sold" distinto en Mis
   Ofertas, Actividad, y Detalles de Oferta). Nunca se creó un

@@ -637,7 +637,7 @@ fill モードを自動的に `Aon` にピン留めします — parallel-sale
   creator-fee レッグを最初に設定された受信者に直接ルーティング
   します;executor は **net proceeds**(listed price からそれらの
   マーケットプレイス / creator fee レッグを引いたもの)のみを diamond に
-  渡します。Diamond はその net 額をあなたのボルトでエスクロー
+  渡します。Diamond はその net 額をあなたのボルトに入金
   し、NFT は購入者に転送され、オファーは `consumed_by_sale`
   でマークされます(My Offers、Activity、Offer Details で
   個別の "Sold" ステータスとして表示)。ローンは決して作成
