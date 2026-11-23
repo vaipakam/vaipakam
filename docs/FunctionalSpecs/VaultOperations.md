@@ -115,9 +115,8 @@ The functional summaries below retain that precedence.
   Each lock cancels the work pending at that lock. A later unlock cannot
   revive it, and late application of an old lock cannot cancel requests made
   after that unlock. Anyone may request reconciliation of the platform side.
-- Queued payout rows still belong to the platform until Stage B3. Release
-  reads the vault's lock even before a cancelled row is reconciled, so a
-  waiting cancellation cannot make the payout releasable.
+- The vault owns the payout queue. Release reads its lock and the individual
+  payout verdict; a waiting cancellation cannot make the payout releasable.
 
 ## Optional account protection
 
