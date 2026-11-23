@@ -8,6 +8,7 @@ import type { CopyAccess } from '../../shared/copy/useCopy';
 import {
   identityOf,
   listSignedOrder,
+  type ListAnswer,
   readSignReview,
   refusalSentence,
   signBlockers,
@@ -16,7 +17,7 @@ import {
   type SignDraft,
   type SignedRecord,
 } from '../../shared/desk/signNew';
-import { SIGNED_OFFER_TYPES, signedOfferDomain, typedMessage, type BookAnswer } from '../../shared/desk/signedOrder';
+import { SIGNED_OFFER_TYPES, signedOfferDomain, typedMessage } from '../../shared/desk/signedOrder';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { GUIDE_ORIGIN, guideUrl } from '../../shared/help/guide';
 import { RISK_GUIDE } from '../../shared/post/postCopy';
@@ -28,6 +29,7 @@ import { termsUrl, type TermsState } from '../../shared/terms/terms';
 import { useStoredValue } from '../../shared/tx/txStore';
 import { Notice } from '../../shared/ui/Notice';
 import { Receipt } from '../../shared/ui/Receipt';
+import { ServiceReference } from '../../shared/ui/ServiceReference';
 import { shortAddress } from '../../shared/ui/format';
 import { useNow } from '../../shared/ui/useNow';
 import { useMode } from '../../app/ModeContext';
@@ -44,7 +46,7 @@ type Step =
   | { orderHash: Hex; step: 'signing' }
   | { orderHash: Hex; step: 'not-signed'; reason: string }
   | { orderHash: Hex; step: 'listing' }
-  | { orderHash: Hex; step: 'answered'; answer: BookAnswer };
+  | { orderHash: Hex; step: 'answered'; answer: ListAnswer };
 
 const BLOCKER_TEXT: Readonly<Record<SignBlocker, Parameters<CopyAccess['text']>[0]>> = {
   'no-book': 'signNew.noBook',
@@ -175,11 +177,13 @@ export function SignOrder({
         {a.kind === 'refused' && (
           <Notice tone="danger" tier="A">
             {refusalSentence(a.code, copy)} {text('signNew.refusedForgotten')}
+            <ServiceReference reference={a.reference} />
           </Notice>
         )}
         {a.kind === 'unknown' && (
           <Notice tone="warn" tier="A">
             {format('signNew.unknown', { reason: a.reason })}
+            <ServiceReference reference={a.reference} />
           </Notice>
         )}
         <p className="actions">

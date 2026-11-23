@@ -11,6 +11,7 @@ import { useOwnRead, type OwnRead } from '../reads/useOwnRead';
 
 import type { LiveLoans } from '../positions/reads';
 import { formatUtcDate, shortAddress } from '../ui/format';
+import { ServiceReference } from '../ui/ServiceReference';
 import {
   formAsset,
   goalBody,
@@ -317,7 +318,13 @@ function RunLine({ run }: { run: SignedRun<GoalAnswer> }) {
   }
   if (run.phase === 'declined') return <p className="tier-b" data-testid="goals-run">{text('goals.declined')}</p>;
   if (run.phase === 'not-offered') return <p className="tier-a" data-testid="goals-run" data-offered="false">{text('goals.notOffered')}</p>;
-  if (run.phase === 'unreachable') return <p className="tier-a" data-testid="goals-run">{format('goals.unreachable', { reason: run.message })}</p>;
+  if (run.phase === 'unreachable')
+    return (
+      <p className="tier-a" data-testid="goals-run">
+        {format('goals.unreachable', { reason: run.message })}
+        <ServiceReference reference={run.reference} />
+      </p>
+    );
   if (run.phase !== 'answered') return null;
   const a = run.answer;
   if (a.ok) {
@@ -351,6 +358,7 @@ function RunLine({ run }: { run: SignedRun<GoalAnswer> }) {
   return (
     <p className="tier-a" data-testid="goals-run" data-outcome={a.problem}>
       {line}
+      <ServiceReference reference={run.reference} />
     </p>
   );
 }

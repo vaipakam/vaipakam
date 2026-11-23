@@ -18,6 +18,7 @@ import { useTermsGate } from '../../shared/terms/useTermsGate';
 import { formatUtc, shortAddress } from '../../shared/ui/format';
 import { useStoredValue } from '../../shared/tx/txStore';
 import { Notice } from '../../shared/ui/Notice';
+import { ServiceReference } from '../../shared/ui/ServiceReference';
 import { useNow } from '../../shared/ui/useNow';
 
 type Hex = `0x${string}`;
@@ -447,10 +448,13 @@ function PendingRequest({ pending, nowS, busy, finishBlocked, onFinish, onDiscar
 function RunLine({ run, chain, copy }: { run: AlertRun; chain: SupportedChain; copy: CopyAccess }) {
   if (run.phase === 'idle') return null;
   const [tone, line] = runWords(run, chain, copy);
+  // The reference names the request that failed (#3922); a success needs none.
+  const reference = run.phase === 'unreachable' || (run.phase === 'answered' && !run.answer.ok) ? run.reference : null;
   return (
     <div data-testid="alert-run" data-phase={run.phase} data-problem={run.phase === 'answered' && !run.answer.ok ? run.answer.problem : ''}>
       <Notice tone={tone} tier={tone === 'warn' ? 'A' : 'B'}>
         {line}
+        <ServiceReference reference={reference} />
       </Notice>
     </div>
   );

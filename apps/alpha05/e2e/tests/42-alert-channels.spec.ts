@@ -207,6 +207,8 @@ test('a declined signature sends nothing, and a request already used is refused'
   await controlAgent({ next: { path: '/thresholds', status: 409, body: { error: 'request-already-used' } } });
   await page.getByTestId('alert-due-toggle').click();
   await expect(page.getByTestId('alert-run')).toContainText('That signed request was already used; sign again to repeat it.', { timeout: 30_000 });
+  // #3922 — a refused write names its request reference, to quote to support.
+  await expect(page.getByTestId('alert-run').getByTestId('service-reference')).toHaveText(/Reference [0-9A-HJKMNP-TV-Z]{10}: quote it/);
   await expect(page.getByTestId('alert-due-state')).toContainText('on unless they were switched off elsewhere');
 });
 

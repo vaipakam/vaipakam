@@ -28,6 +28,7 @@ export const copy = {
       'This is the next version of the Vaipakam app, being built page by page. A page not built yet says so and links to the current app, which still serves it. Every signature asked for here shows its receipt first.',
     ),
     build: B('Build {{hash}} · {{time}}'),
+    serviceReference: B('Reference {{reference}}: quote it if you contact support.'),
   },
   help: {
     why: B('Why?'),

@@ -8,7 +8,7 @@ const client = (status: number, data: Record<string, unknown> | null) => {
     origin: 'https://agent.example',
     request: async (...args) => {
       asked.push(args);
-      return { status, data };
+      return { status, data, reference: null };
     },
   };
   return { c, asked };

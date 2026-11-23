@@ -10,14 +10,15 @@ type Hex = `0x${string}`;
  *  wallet refused to sign, and nothing was sent. `unreachable`: the service
  *  could not be asked, and nothing is known to have changed. `not-offered`:
  *  the service this build uses has no such route, so no signature was asked
- *  for and nothing was sent. */
+ *  for and nothing was sent. An answer and an unreachable request carry the
+ *  request reference (#3922) when one is known, for the person to quote. */
 export type SignedRun<A> =
   | { phase: 'idle' }
   | { phase: 'checking' | 'signing' | 'sending' }
-  | { phase: 'answered'; answer: A }
+  | { phase: 'answered'; answer: A; reference: string | null }
   | { phase: 'declined' }
   | { phase: 'not-offered' }
-  | { phase: 'unreachable'; message: string };
+  | { phase: 'unreachable'; message: string; reference: string | null };
 
 /**
  * Whether the alert service offers a route, asked before any signature: an
@@ -78,7 +79,7 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
           return null;
         }
       } catch (e) {
-        setRun({ phase: 'unreachable', message: e instanceof AgentUnavailable ? e.message : (e as Error).message });
+        setRun(unreachable(e));
         return null;
       }
       setRun({ phase: 'signing' });
@@ -87,7 +88,8 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
       try {
         signature = await signMessageFor(config, chainId, { account: wallet, message: route.message(action, wallet, chainId, issuedAt) });
       } catch (e) {
-        setRun(isUserRejection(e) ? { phase: 'declined' } : { phase: 'unreachable', message: (e as Error).message });
+        // Nothing was sent, so there is no request to name.
+        setRun(isUserRejection(e) ? { phase: 'declined' } : { phase: 'unreachable', message: (e as Error).message, reference: null });
         return null;
       }
       setRun({ phase: 'sending' });
@@ -95,10 +97,10 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
         const res = await client.request('POST', route.path(action), route.body(action, wallet, chainId, issuedAt, signature));
         const answer = route.read(action, res.status, res.data);
         if (live.current !== asked) return null;
-        setRun({ phase: 'answered', answer });
+        setRun({ phase: 'answered', answer, reference: res.reference });
         return answer;
       } catch (e) {
-        setRun({ phase: 'unreachable', message: e instanceof AgentUnavailable ? e.message : (e as Error).message });
+        setRun(unreachable(e));
         return null;
       }
     },
@@ -106,6 +108,12 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
   );
 
   return { run, busy, send, off: client.origin === null, who };
+}
+
+/** An unreachable step, carrying the reference of the request that failed
+ *  when the failure came from the service client. */
+function unreachable(e: unknown): { phase: 'unreachable'; message: string; reference: string | null } {
+  return e instanceof AgentUnavailable ? { phase: 'unreachable', message: e.message, reference: e.reference } : { phase: 'unreachable', message: (e as Error).message, reference: null };
 }
 
 /** The identity a signed request belongs to: the network, the wallet and
