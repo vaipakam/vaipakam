@@ -267,10 +267,12 @@ The holder is read from the position token itself, which no lending step of the 
 write.
 Until it is released the amount rests in the vault recorded for that side of the position,
 held for the position, or in the paying vault when it cannot be delivered there (VLT-072).
-It is released to the holder's own vault, which must be a genuine vault (section 3) whose own
-owner record names that holder.
+It is released to the holder's own vault (VLT-200), which must be a genuine vault (section 3)
+whose own owner record names that holder, or, once that holder was replaced there as owner,
+the owner wallet on record (VLT-452).
 
-- **Tests owed:** the defaults for a rule, with the first holder and with a later one.
+- **Tests owed:** the defaults for a rule, with the first holder, with a later one, and with a
+  holder whose wallet was replaced as its own vault's owner, once and twice.
 
 ### VLT-034 · rule
 
@@ -1250,7 +1252,7 @@ Each of these commitments answers to the owner of the vault that holds it: an am
 aside to lend, a loan reserve, a due-date plan, standing instructions, and a lender's standing
 consent.
 One made for a loan is drawn only while that owner holds that side's token of the loan. After
-a replacement, the replaced wallet's holding counts as the owner's (VLT-454, VLT-455).
+a replacement, the holding of the wallet whose own vault it is counts as the owner's (VLT-454).
 Lowering or cancelling is that one's own step alone: an owner who sold a loan's token still
 takes back its reserve. It takes effect at once for what is not drawn, which is released to
 the vault's free balance. What was drawn stays under its lien.
@@ -3592,21 +3594,25 @@ A completed replacement leaves a lock in place. The new wallet leaves it only by
 
 ### VLT-454 · never
 
-**Who:** the new owner wallet, and the wallet it replaced.
-**When:** a replacement completes, and the replaced wallet holds position tokens.
+**Who:** the new owner wallet, and the wallet whose own vault the account is.
+**When:** a replacement completes, and the wallet whose own vault the account is holds position
+tokens.
 
-A replacement moves no position token. The tokens stay where they are and are held fast: they
-are neither moved nor approved by anyone, and the replaced wallet may not ask to free them.
-They leave only by the move of VLT-457, and only to the owner wallet on record.
+A replacement moves no position token. The account's position tokens are those held by the
+wallet whose own vault the account is (VLT-200). They stay where they are and are held fast:
+they are neither moved nor approved by anyone, and that wallet may not ask to free them.
+A token another wallet holds is not the account's, even if that wallet once owned the account.
+The account's tokens leave only by the move of VLT-457, and only to the owner wallet on record.
 Until they move, the new wallet acts on those positions for the account (VLT-455), and every
 payout of theirs still goes to the account's vault, under the account's protection.
 
 - **For the mistake:** VLT-M43, warn only. Leaving the tokens in place is intended.
 - **Against:** VLT-T37.
-- **Watch:** every move of a position token out of a replaced wallet. Each is a move of VLT-457
-  and ends at the owner wallet on record at that moment.
+- **Watch:** every move of a position token out of the wallet whose own vault a replaced
+  account is. Each is a move of VLT-457 and ends at the owner wallet on record at that moment.
 - **Tests owed:** the defaults for a never, with a transfer and an approval tried by the
-  replaced wallet, by an operator it approved earlier and by a marketplace.
+  replaced wallet, by an operator it approved earlier and by a marketplace, and a second
+  replacement, after which the tokens of the wallet replaced second are not held fast.
 
 ### VLT-455 · rule
 
