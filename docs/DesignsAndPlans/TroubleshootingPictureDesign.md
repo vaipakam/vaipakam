@@ -1,6 +1,7 @@
 # The troubleshooting picture: six questions answered from records alone
 
-Status: **design, direction decided by the owner** (2026-11-22). Not built.
+Status: **design, direction decided by the owner** (2026-11-22). Being built
+part by part; section 4.6 records how the request reference was built.
 No part of it needs a contract change, and four parts can be built beside
 the current batch. Choices the decision left open are marked **Default**.
 
@@ -44,7 +45,7 @@ None of these records is served by a public route.
 | Facet history | Which code served each function, from each change to the Diamond | None | For the life of the deployment | The shared database |
 | Build history | Which build of each service was running, from when | None | For the life of the deployment | The shared database |
 | Keeper switch history | Which passes were switched on, from when. Names and on or off, never a secret's value | None | For the life of the deployment | The keeper's private database |
-| Service errors | A failed or refused request: the service, the route, the status, the request reference, the build, the time | None. No address, no wallet, no network address of the caller | 90 days | The shared database |
+| Service errors | A failed or refused request: the service, the method, the route as a pattern (never the path as sent), the status, the request reference and who made it, the build, the time. Every server failure; a refusal only from the app's own origins; capped per service, with a count of what the cap left out (4.6) | None. No address, no wallet, no network address of the caller | 90 days (operator setting, 7 to 400) | The shared database |
 | The app's error record | Unchanged (section 4.7) | As assessed in 2026 | 90 days | The shared database |
 
 ## 4. The parts
@@ -367,12 +368,67 @@ three columns for that event, `last_event_block`, `last_event_tx_index` and
 static check fails any write that leaves them unset. Triggers in the database
 were not taken, because they would spend the query budget of each block.
 
-**A request reference.** The app sends a short random reference with every
-request to a service. The service returns it and writes it into its log line
-and into the service error record when the request fails or is refused. When
-the app shows a failure that came from a service, it shows the reference. It
-is random for each request, is not derived from anything about the user, and
-is not stored in the browser.
+**A request reference.** A short random code ties a failure the user saw to
+the service's record of it. It is ten characters from an alphabet without
+letters that read alike, random for each request, not derived from anything
+about the user, and held in the app's memory only, never in browser storage.
+
+As built (the first plan had the app send a reference with every request):
+
+- **Who makes it.** A write (any request other than a read) carries the
+  app's own reference, because a write is already checked by the browser
+  before it is sent and one more header costs nothing. A read carries none,
+  and the service makes one: a custom header on a plain read would make the
+  browser check every read first, which roughly doubles the indexer's
+  requests. A reference that is not well formed is treated as absent, and
+  the service makes its own.
+- **What comes back.** Every response returns the reference in the same
+  header, readable by the app wherever the response is readable at all. The
+  app shows the reference the response carries, never one it made itself.
+- **What is recorded.** A request that fails or is refused writes one log
+  line naming the reference and one row in the service error record (section
+  3). A request that succeeds writes nothing. The write happens after the
+  response is sent and never changes it.
+- **The route as a pattern.** A path can carry an address, so the row keeps
+  only the words the service's own routing code names, and every other part
+  of the path becomes a placeholder by its shape: a number, a hex value, or
+  anything else. A test derives the list of route words from the service's
+  source, so it cannot fall behind. A word missing from the list only makes
+  the pattern less specific; it never lets a value through. The query string
+  is never read.
+- **Which failures get a row.** Every server failure, from anyone. A refusal
+  only when the request came from one of the app's own origins: a scanner
+  probing for paths gets refusals from anywhere, and they would crowd out
+  the failures a user actually saw.
+- **The caps.** An origin can be forged, so each service keeps at most 25
+  rows an hour and 300 a day. The hour's counter keeps counting past either
+  cap, so the record says how many failures it did not keep. Two services,
+  300 rows a day and 90 days bound the table at about 54,000 rows, well
+  inside the nightly backup's ceiling.
+
+**Unavailable states that mix sources.** A screen can fail on a read from
+the indexer, on a read from the network, or on both. The reference follows
+the source that failed:
+
+- A failed indexer read keeps its reference, and the screen whose read it
+  was shows it.
+- Where an indexer read falls back to the network and the fallback
+  succeeds, nothing is unavailable and no reference is shown.
+- Where both fail, the screen shows the indexer read's reference and says
+  that the network read failed too and has no reference.
+- A failed network read says so plainly: the network read failed, and there
+  is no reference for it. The unknown is stated, never left blank.
+
+The read-only network proxy is the platform's own service, but it keeps no
+error record, so it gives no reference: a reference with no record behind
+it would lead nowhere. If the proxy later keeps a record, it takes the same
+treatment.
+
+Alternatives considered for the unavailable states: (a) per source, as
+above; (b) every unavailable screen shows the latest indexer failure of the
+last minute, which is cheap but can name an unrelated failure; (c) references
+on writes only. Recommendation and choice: (a), the only one that never
+pins a failure on the wrong cause.
 
 ### 4.7 Replaying a refused attempt
 
@@ -531,7 +587,12 @@ the record does not reach far enough.
     exists in the event history. An informational event with no handler is
     in the event history too.
 11. A request the agent refuses returns its reference, and the service error
-    record holds the same reference and no address.
+    record holds the same reference and no address. A write keeps the app's
+    reference; a read, and a write with a malformed reference, get one the
+    service made. A path holding an address is recorded with a placeholder
+    in its place. A refusal from an origin that is not the app's writes no
+    row, and a server failure from anywhere writes one. Past the hour's cap
+    the counter still rises and no row is written.
 12. A case file for a loan with no failed transaction says that none was
     found and how far back the record reaches.
 13. Each drill of section 5 passes on a testnet.
@@ -570,6 +631,11 @@ the record does not reach far enough.
 21. A network whose list cannot be read runs in sends and audit mode, and
     its health line states the share of the day that is watched and says
     the rest is not.
+22. A screen whose indexer read fails shows that read's reference. One whose
+    indexer read fails and whose network fallback succeeds shows no
+    unavailable state. One where both fail shows the indexer reference and
+    says the network read has none. One whose network read alone fails says
+    there is no reference, and shows none.
 
 ## 9. Residuals
 
@@ -599,6 +665,11 @@ the record does not reach far enough.
   record in a replaced block reads as current.
 - **Service logs themselves** are kept only for the short window the hosting
   plan gives. The service error record is what lasts.
+- **A failure past a cap is counted, not kept.** A burst of forged refusals
+  can use up the hour's or the day's rows, and a real failure in the same
+  hour then has no row of its own. The counter says how many were left out.
+- **A network read has no reference.** The read-only network proxy keeps no
+  record, so a failure there is named as a network failure and nothing more.
 
 ## 10. Alternatives considered
 
