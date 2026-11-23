@@ -50,7 +50,7 @@ test catalogue.
 | Code | Domain | Status | Held |
 | --- | --- | --- | --- |
 | PLT | The platform's rules | Canonical. Open until the domains it owes rules to are entered | 2 |
-| VLT | Vaults | Sections 1 to 3 of 7 are canonical. Sections 4 to 7 are not entered | 3 |
+| VLT | Vaults | Sections 1 to 5 of 7 are canonical. Sections 6 and 7 are not entered | 4 |
 | PRC | Prices | Sections 1 to 7 are canonical. Open until the domains it owes rules to are entered | 9 |
 
 "Held" is the count of statements held outside this folder.

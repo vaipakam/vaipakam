@@ -2,8 +2,8 @@
 
 A vault holds one owner's assets, and nothing leaves it except as these statements allow.
 Figures are named by parameter id and are in the parameters table (`parameters.md`).
-Sections 1 to 3 are entered. Sections 4 to 7 follow: deposits, the Ready balance and listing
-escrows; protection; the protected account; recovery.
+Sections 1 to 5 are entered. Sections 6 and 7 follow: the payout of a protected account, its
+queue and co-signing; the recovery address, the clawback and a recovered account.
 
 ## Section 1: what may leave a vault
 
@@ -143,6 +143,7 @@ balance, or an open allowance's reservation.
 
 - **Against:** VLT-T05.
 - **Watch:** after every withdrawal, the vault's balance is at least the sum of everything held.
+  A multi-unit NFT's balance is read as VLT-354 states.
 - **Tests owed:** the defaults for a never.
 
 ### VLT-015 · rule
@@ -753,8 +754,10 @@ section 3.
 **Who:** a wallet.
 **When:** it uses the platform on a network.
 
-A wallet has at most one vault on a network, and a vault has one owner.
-A wallet's free balance on a network rests only in its own vault.
+A wallet has at most one vault of its own on a network (VLT-200), and a vault has one owner
+on record at a time. A wallet becomes the owner on record of another wallet's vault only by
+a replacement (VLT-452), and manages it beside its own.
+A wallet's free balance on a network rests only in its own vault or in one it manages.
 What is held for a position that wallet holds may rest in another vault until it is collected
 or its custody is moved (VLT-033, VLT-045).
 No vault holds another owner's free balance.
@@ -770,8 +773,8 @@ A vault answers to three voices, and none can speak for another.
 The platform alone asks it to move an asset, and only within section 1.
 The owner alone, with the signers the owner named, gives its authority: what the owner
 commits, and the owner record of VLT-180.
-The holder of a position's token alone gives the authority for that position's own lien
-(VLT-131, VLT-185), and for nothing else in the vault. The platform can give none of it.
+A position's holder alone (after a replacement, the owner of VLT-455) gives the authority for
+that position's own lien (VLT-131, VLT-185), and for nothing else there. The platform gives none.
 Every other caller a vault answers is named in its own statement, and none of them can
 move an asset out except as section 7 states.
 
@@ -833,8 +836,8 @@ Any figure the platform gives for a vault's balance is a read of the vault.
 | Step | Refused by |
 | --- | --- |
 | Create | A vault that exists is returned and not created again, VLT-200. An address that cannot have a vault, a flagged wallet, or a pause, VLT-202 |
-| Lock | Section 5 states them (VLT owed: the refusals of a lock). The platform's side is applied whole or the change is refused, VLT-184 |
-| Unlock | Section 5 states them (VLT owed: the refusals of an unlock). As for a lock, VLT-184 |
+| Lock | By anyone but the owner, a signer or a keeper the owner approved for locking only, VLT-420. The platform's side is applied whole or the change is refused, VLT-184 |
+| Unlock | By anyone but the owner, before its wait is over, after it lapsed, or cancelled by a signer, VLT-411, VLT-424. As for a lock, VLT-184 |
 | Recover | Section 7 states them (VLT owed: the refusals of a recovery). Until then a recovery is named only by VLT-111 and VLT-112 |
 
 ### Notes on the life of a vault
@@ -901,7 +904,8 @@ holding. VLT-011 then bounds what may leave
 (LON owed: what such a fall does to a lien).
 
 - **Against:** VLT-T16.
-- **Watch:** for every vault and asset, the sum of the recorded figures against the balance.
+- **Watch:** for every vault and asset, the sum of the recorded figures against the balance,
+  a multi-unit NFT's balance read as VLT-354 states.
   An asset counted under two kinds is caught by PLT-110's watch, not by this one.
 - **Tests owed:** the defaults for a never, for each kind of asset, and a token that shrinks.
 
@@ -1245,11 +1249,11 @@ How it ends is stated in VLT-148.
 Each of these commitments answers to the owner of the vault that holds it: an amount set
 aside to lend, a loan reserve, a due-date plan, standing instructions, and a lender's standing
 consent.
-One made for a loan is drawn only while that owner holds that side's token of the loan.
+One made for a loan is drawn only while that owner holds that side's token of the loan. After
+a replacement, the replaced wallet's holding counts as the owner's (VLT-454, VLT-455).
 Lowering or cancelling is that one's own step alone: an owner who sold a loan's token still
-takes back its reserve.
-It takes effect at once for what is not drawn, which is released to the vault's free balance.
-What was drawn stays under its lien.
+takes back its reserve. It takes effect at once for what is not drawn, which is released to
+the vault's free balance. What was drawn stays under its lien.
 
 - **Tests owed:** the defaults for a rule, with a draw in the same block before and after,
   with a loan's token sold while its reserve and its plan stand (no draw, and the seller takes
@@ -1331,7 +1335,7 @@ It is a draw on the due-date plan of the borrower's side's holder (VLT-140), and
 in the same call, the lender's side's vault confirms its own consent to renew.
 The interest owed and the renewal's fee leave that holder's vault as a repayment and a fee
 (VLT-151): from the loan's payment reserve first, then from the free balance
-(VLT owed: beyond the reserve, a protected account draws only from its Ready balance).
+(beyond the reserve, a protected account draws only from its Ready balance, VLT-333).
 The lien stays and takes the renewal's terms in one step (date, highest rate, budgets), with
 no highest rate above the plan's. What the loan could owe is carried over (VLT-016).
 
@@ -1620,19 +1624,21 @@ escrow.
 The NFT is refused, and stays with the sender.
 Every send of a multi-unit NFT asks, so every such send from anyone else is refused.
 The owner's own send is accepted (VLT-111).
-So is a delivery inside a step of the platform: from a genuine vault, from the vault's own
-listing escrow, or as the return of a rental.
+So is a delivery inside a step of the platform: from a genuine vault, the return of a listed
+lot from the vault's own listing escrow, up to the lot left, or the return of a rental.
 
 - **Refused as:** the vault accepts an NFT only from its owner or inside a step.
 - **For the mistake:** VLT-M12, refuse.
 - **Tests owed:** the defaults for a refusal, for each standard and each kind of sender, and
-  a lot coming back from a listing escrow that is torn down.
+  a lot coming back from a listing escrow that is torn down, and a return that carries more
+  than the lot left.
 
 ### VLT-162 · rule
 
 **Who:** anyone who sends an asset straight to a vault.
 **When:** a token arrives by a plain transfer, an NFT by a send that does not ask, a token is
-issued to the vault's address, or a token's balance grows by itself.
+issued to the vault's address, a token's balance grows by itself, or an asset comes from the
+vault's own listing escrow other than the lot left.
 
 What arrived is untracked: the vault's balance of the asset less everything it records.
 It is in no figure of VLT-110, and no step moves it, counts it or shows it as a balance.
@@ -1852,7 +1858,8 @@ Anyone may ask the platform to bring its side in line with a vault's record.
 **When:** the holder authorizes a step of that lien.
 
 The right key is the holder's, read from the position's token at that moment and never from
-the vault's owner record.
+the owner record of the vault that holds the lien. Once the holder's wallet was replaced, the
+key is the owner that the holder's own vault records, read from that vault itself (VLT-455).
 The holder authorizes by its own call, by its signature under PLT-112, or through its own
 genuine vault acting under one of those.
 The authorization reaches that position's lien and what is held for the position, and
@@ -1897,8 +1904,9 @@ the authority rules and is cited in the owed form.
 
 Anyone may create the vault of any wallet, by the step whose only purpose is that.
 Creating it gives the creator no right over it, and moves nothing.
-A wallet has no vault until one is created for it, and it is created once. A wallet's vault
-is the one whose owner record names it (VLT-180), and asking again returns that vault.
+A wallet has no vault until one is created for it, and it is created once. A wallet's own
+vault is the one its address gives (VLT-201), and asking again returns that vault. A vault it
+owns by a replacement is a second one, which it manages (VLT-452).
 No other step creates a vault for anyone but its own caller: a payment never creates one
 for the party it pays (VLT-034), and a payer's first payment creates only the payer's own.
 Only the wallet created for is screened: a flagged creator may create a clean wallet's vault.
@@ -2534,3 +2542,1193 @@ A cell names the statement that decides it. "Open" means the condition does not 
 
 No step of this section sets a price, and none is moved by a sequencer outage. VLT-246 states
 what a vault's own read of a price never does.
+
+## Section 4: deposits, the Ready balance and listing escrows
+
+The platform's rules (PLT) and sections 1 to 3 apply throughout and are cited by id.
+Protection itself belongs to section 5, and what a protected account pays out to section 6.
+A listing and its sale are owed by the exits rules. This section states the deposit, the Ready
+balance, and the escrow of a listed lot.
+
+## 4.1 A deposit
+
+### VLT-300 · rule
+
+**Who:** a vault's owner.
+**When:** the owner puts an asset of their own into their own vault.
+
+A deposit moves an asset from the owner's wallet into the owner's own vault, where it joins the
+free balance (VLT-111).
+The vault itself takes a token, under a permit the owner signed for that deposit (VLT-081).
+An NFT is never taken: the owner sends it by a send that asks, to a vault that exists, and
+the vault accepts its owner's send (VLT-161).
+An owner that is a contract and does not sign sends a token as VLT-116 states.
+A wallet's first deposit of a token creates its vault (VLT-200).
+A deposit opens no position and commits nothing.
+
+- **Tests owed:** the defaults for a rule, with one deposit of each kind of asset, a first
+  deposit of a token, an NFT sent before the vault exists, and a deposit by a contract that
+  does not sign.
+
+### VLT-301 · rule
+
+**Who:** a vault's owner.
+**When:** a deposit is booked.
+
+The vault adds to the free balance exactly what arrived, measured in the vault (VLT-070).
+A deposit that delivers less than it states is refused whole (VLT-071). So a deposit happens
+in full or not at all.
+The amount is the figure the owner stated, in the asset's own smallest unit. The vault corrects
+no figure and assumes no number of decimals.
+What was deposited stays the owner's to withdraw (VLT-050), with the account's own delay where
+protection is on.
+
+- **For the mistake:** VLT-M04, undo. A withdrawal returns an amount deposited by mistake.
+- **Tests owed:** the defaults for a rule, with a token that delivers less than it sends, and
+  a withdrawal of the whole deposit afterwards, with protection off and on.
+
+### VLT-302 · refusal
+
+**Who:** a vault's owner.
+**When:** a deposit of a token has no permit for it, or asks for more than the permit allows
+or the wallet holds.
+
+The deposit is refused, and nothing moves.
+An approval the owner gave to the vault's address, or to the platform's, is never used: a
+token leaves a wallet only under a permit signed for that deposit (VLT-081).
+The refusal states the amount asked for, what the wallet holds and what the permit allows, so
+the owner sees which of them fell short.
+
+- **Refused as:** no permit covers this deposit, with the amount asked for, the wallet's
+  balance and the permit's amount.
+- **For the mistake:** VLT-M05, refuse.
+- **Tests owed:** the defaults for a refusal, with an approval given to the vault and no permit,
+  a permit below the amount, a permit past its deadline, a permit used once already, a permit
+  signed for another purpose, and a wallet that holds less than the amount.
+
+### VLT-303 · refusal
+
+**Who:** a vault's owner.
+**When:** a deposit states an amount of nil.
+
+The deposit is refused, and nothing moves.
+This holds for a token and for one id of a multi-unit NFT.
+
+- **Refused as:** the amount is nil.
+- **For the mistake:** VLT-M06, refuse.
+- **Tests owed:** the defaults for a refusal, for a token and for a multi-unit NFT.
+
+### VLT-304 · refusal
+
+**Who:** a vault's owner.
+**When:** a deposit states a kind of asset the asset does not answer as, or a kind the
+platform does not know.
+
+The deposit is refused, and nothing moves (PLT-110).
+The vault decides by what the asset answers as, and never by what is stated.
+No amount is ever stated with a single NFT: it is sent, and never taken (VLT-300).
+
+- **Refused as:** the asset is not of the stated kind.
+- **For the mistake:** VLT-M07, refuse.
+- **Tests owed:** the defaults for a refusal, with each kind stated for each other kind, a kind
+  the platform does not know, and an asset that answers as no kind.
+
+### VLT-305 · rule
+
+**Who:** any party.
+**When:** a party wants to fund a vault.
+
+A deposit goes only from the caller's own wallet into the caller's own vault.
+No deposit names another party's vault, and nobody deposits for another.
+Payments between parties go through the steps of an offer or a loan.
+An asset sent straight to another party's vault is untracked there, and only that vault's owner
+can adopt it (VLT-162, VLT-163).
+
+- **For the mistake:** VLT-M09, warn only. There is no deposit for another party to refuse.
+- **Tests owed:** the defaults for a rule, with a deposit that names another wallet's vault.
+
+### VLT-306 · rule
+
+**Who:** a vault's owner.
+**When:** a deposit is asked for under a condition of the platform.
+
+A deposit is refused while the platform is paused (PLT-040). A pause of the asset does not
+refuse it, for a deposit opens no position (PLT-050). It never asks for the Terms (PLT-071).
+A flagged wallet's deposit is refused (PLT-060). While the screen cannot be read, a wallet
+never confirmed flagged may deposit, for a deposit takes no commitment (PLT-065). If the screen
+later flags it, the deposit stays in its vault and is not withdrawn while flagged (VLT-050).
+A lock of the account does not refuse a deposit (VLT-422), and no rule asks an owner to
+protect the account before one (VLT-460).
+
+- **Tests owed:** the defaults for a rule, with one deposit under each condition, a wallet
+  confirmed flagged before the screen stopped answering, and a wallet flagged after it deposited
+  while the screen could not be read.
+
+## 4.2 The Ready balance
+
+### VLT-320 · rule
+
+**Who:** the owner of a protected account.
+**When:** the vault holds a token.
+
+A protected account's vault keeps two parts of each token that nothing else holds: the Ready
+balance and the protected balance.
+The protected balance is the account's free balance (VLT-011). The Ready balance is held apart
+from it (VLT-014).
+The Ready balance is nil until the owner funds it. It never fills or grows by itself:
+returned principal, interest and every collection join the protected balance.
+An account with protection off has no Ready balance, and every step of this part is refused
+on it.
+
+- **For the mistake:** VLT-M24, refuse.
+- **Tests owed:** the defaults for a rule, with a repayment and a collection arriving in a
+  vault whose Ready balance is above nil and in one whose Ready balance a fee emptied, and
+  each step of this part on an account with
+  protection off.
+
+### VLT-321 · never
+
+**Who:** the owner of a protected account.
+**When:** at any time.
+
+The protected balance is never committed at once. A step that commits, at once, a balance
+already in the vault draws only on the Ready balance. There are three such steps (VLT-333).
+What comes from the wallet in the same step is new, and is never delayed.
+The protected balance reaches such a step only by a move into the Ready balance (VLT-325).
+
+- **Against:** VLT-T31.
+- **Watch:** every draw by one of the three steps against the Ready balance recorded before it
+  (VLT-332). No draw is larger, and none follows a move that had not yet waited.
+- **Tests owed:** the defaults for a never, with each of the three steps drawing on a Ready
+  balance that covers it, covers part of it and is nil, and each step tried the instant before
+  a move comes to count.
+
+### VLT-333 · rule
+
+**Who:** the owner of a protected account, whoever fills that owner's signed offer, and
+whoever runs the renewal of that owner's loan.
+**When:** one of the three steps of VLT-321 runs.
+
+The three steps are: a fill of an offer the owner signed off the book and backed with the
+vault's balance; a borrow on the instant market, for the collateral already in the vault, the
+wallet paying what the Ready balance does not cover (VLT-081); and a renewal's charge beyond
+the loan's own reserve (VLT-145). A due-date plan sets nothing aside beyond that reserve, so
+that charge is no draw on a commitment already made.
+A draw does not pass through the free balance. It goes under a lien, for a filled offer or a
+borrow's collateral, or out of the vault as a repayment and its fee, for a renewal (VLT-151).
+Each is still within VLT-121.
+
+- **Tests owed:** the defaults for a rule, with each of the three steps and where its draw is
+  recorded afterwards, a borrow whose rest the wallet pays, and a renewal run by a third party.
+
+### VLT-322 · refusal
+
+**Who:** the owner of a protected account, or whoever fills that owner's signed offer.
+**When:** a signed offer's fill or a renewal's charge needs more than the Ready balance holds.
+
+The step is refused, and nothing moves. The protected balance never makes up the difference.
+The refusal states what was needed and what the Ready balance holds.
+
+- **Refused as:** more than the Ready balance, with the amount needed and the Ready balance.
+- **Tests owed:** the defaults for a refusal, with a Ready balance one smallest part short,
+  one that stopped counting an instant before, and a protected balance that would cover it.
+
+### VLT-323 · rule
+
+**Who:** the owner of a protected account.
+**When:** a balance that is already committed moves, or a fee is paid from the vault.
+
+These are not held to the Ready balance, for none commits a free balance to a new position:
+a draw on a commitment the owner already made, such as an amount set aside to lend, a loan
+reserve or an open offer's lien (VLT-121, VLT-124); a movement of what is already under a lien;
+and a fee the vault pays in the platform's token on a settlement, which its own rule bounds
+(FEE owed: the fee paid from a vault in the platform's token).
+Such a fee is paid from the protected balance first. For the rest, that part of the Ready
+balance returns to the protected balance and is paid in the same step (VLT-115, VLT-112).
+It is gone from the Ready balance for good, and does not start the idle period again.
+
+- **Tests owed:** the defaults for a rule, with a fill from an amount set aside to lend and a
+  draw on a loan reserve while the Ready balance is nil, a fee larger than the protected
+  balance, and a repayment arriving after such a fee.
+
+### VLT-324 · rule
+
+**Who:** the owner of a protected account.
+**When:** the owner funds the Ready balance from the wallet.
+
+A deposit may be made straight into the Ready balance. It is a deposit, held to every statement
+on a deposit (VLT-300 to VLT-306), and it counts at once: what comes from the wallet is new.
+
+- **Tests owed:** the defaults for a rule, with a deposit into the Ready balance under each
+  refusal of a deposit.
+
+### VLT-325 · rule
+
+**Who:** the owner of a protected account.
+**When:** the owner asks to move an amount of the protected balance into the Ready balance.
+
+The move waits the account's delay, as VLT-402 and VLT-410 measure it.
+When it has waited it counts as Ready with no further step.
+One move waits for each token. A new ask replaces the one that waits, and its wait starts
+again: the two amounts do not add up.
+Only the owner asks. A move counts for no more than the vault holds of the token free of
+everything else at the moment it comes to count (VLT-113). What it lacks then is not made up
+later.
+
+- **For the mistake:** VLT-M22, warn only. The record of the new ask states the amount replaced.
+- **Tests owed:** the defaults for a rule, with a second ask an instant before and after the
+  first has waited, the delay changed while a move waits, a move larger than the protected
+  balance at the time it comes to count, and a repayment arriving just after.
+
+### VLT-326 · rule
+
+**Who:** the owner of a protected account, or any of its signers.
+**When:** a move into the Ready balance waits, or the Ready balance is above nil.
+
+The owner or any signer may cancel a move that waits.
+The owner or any signer may move any part of the Ready balance back to the protected balance,
+at once. Both only tighten, so neither waits.
+Both stay possible while the platform is paused: the escape withdrawal reaches only the
+protected balance (VLT-014, VLT-091).
+
+- **Tests owed:** the defaults for a rule, with each step by the owner, by a signer and by
+  anyone else, and each step in a pause followed by the escape withdrawal.
+
+### VLT-327 · never
+
+**Who:** the owner of a protected account.
+**When:** at any time.
+
+The Ready balance never pays a wallet. A withdrawal reaches only the protected balance
+(VLT-014).
+The Ready balance leaves the vault for a wallet only after it is moved back to the protected
+balance, and then as any payout of a protected account does
+(VLT owed: the payout of a protected account).
+
+- **Against:** VLT-T32.
+- **Watch:** every payment from a protected account's vault to a wallet against the protected
+  balance recorded before it. None is larger, and no record of VLT-332 shows the Ready balance
+  falling by a payment to a wallet.
+- **Tests owed:** the defaults for a never, with a withdrawal of more than the protected balance
+  while the Ready balance would cover it, and a move back followed at once by a withdrawal.
+
+### VLT-328 · rule
+
+**Who:** the owner of a protected account, or its signers.
+**When:** the account is locked, its protection is switched off, or its owner wallet is
+replaced.
+
+The Ready balance returns to the protected balance, and a move that waits ends, for good
+(VLT-414 for a lock).
+This happens in the same transaction as the change (VLT-184).
+After an unlock the Ready balance is nil, and the owner funds it again, with the wait.
+
+- **Tests owed:** the defaults for a rule, with each of the three changes, a move that had
+  waited but was not yet drawn on, and an unlock followed by a step of VLT-321.
+
+### VLT-329 · setting
+
+**Who:** the owner of a protected account.
+**When:** the owner sets, changes or removes the idle period of the Ready balance.
+
+The owner may set an idle period, no shorter than its least [PRM-085] and no longer than its
+most [PRM-086]. With none set, the Ready balance does not lapse.
+Setting one, or shortening it, applies at once. Lengthening it, or removing it, waits the
+account's delay (VLT-402), counts with no further step, and ends with the changes of VLT-328.
+
+- **Parameter:** PRM-085, PRM-086.
+- **Tests owed:** the defaults for a setting, with a period set, shortened, lengthened and
+  removed, and a lengthening that waits when the account is locked.
+
+### VLT-330 · rule
+
+**Who:** the owner of a protected account.
+**When:** an idle period is set.
+
+A token's Ready balance that is neither funded nor drawn on for the idle period returns to the
+protected balance at that moment, with no step by anyone.
+Each funding of it, each move that comes to count, and each draw on it starts the period again.
+The owner may keep a token's Ready balance counting until a time the owner names, at once, no
+further ahead than the longest idle period [PRM-086].
+
+- **Tests owed:** the defaults for a rule, with a draw one instant before and after the period
+  ends, a funding that restarts it, and a time named one instant inside the longest period.
+
+### VLT-331 · refusal
+
+**Who:** the owner of a protected account.
+**When:** the owner sets an idle period outside its bounds, or names a time to keep the Ready
+balance until that has passed or lies beyond the longest idle period [PRM-086].
+
+The step is refused, and nothing changes.
+
+- **Refused as:** outside the bounds of the idle period, with the bounds.
+- **For the mistake:** VLT-M23, refuse.
+- **Tests owed:** the defaults for a refusal, with a period one instant below its least and
+  above its most, and a time that has passed.
+
+### VLT-332 · rule
+
+**Who:** any surface or step that shows a protected account's balances.
+**When:** the Ready balance changes, or is read.
+
+Every move into the Ready balance, out of it, and every draw on it is recorded with the
+account, the token, the amount and the direction. So is each ask, each cancel and each end
+of a move that waits, with the amount.
+A read states, for each token: the Ready balance, a move that waits and when it comes to count,
+when the Ready balance lapses, and the reason whenever it counts as nil.
+No surface calls the protected balance savings.
+
+- **Tests owed:** the defaults for a rule, with one record checked for each kind of move, and
+  a read in each case where the Ready balance counts as nil.
+
+### Model: a move into the Ready balance
+
+**States:**
+
+- Not asked (start): no move of the token waits.
+- Waiting: the owner asked, and the account's delay has not passed.
+- Applied (end): the move has waited, and its amount counts as Ready.
+- Replaced (end): a new ask for the same token took its place.
+- Cancelled (end): the owner or a signer cancelled it, or a change of VLT-328 ended it.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Not asked | Ask for a move | The owner | VLT-320, VLT-325 | Waiting |
+| Waiting | The delay passes | Nobody: the clock | VLT-325 | Applied |
+| Waiting | Ask again for the same token | The owner | VLT-325 | Replaced |
+| Waiting | Cancel | The owner or a signer | VLT-326 | Cancelled |
+| Waiting | End with a lock, protection switched off, or a replacement of the owner wallet | The platform, with the owner's change | VLT-328 | Cancelled |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Ask for a move | An account with protection off, VLT-320. Anyone but the owner, VLT-325 |
+| The delay passes | Nothing brings the time forward, VLT-325 |
+| Ask again for the same token | As for the first ask, VLT-320, VLT-325 |
+| Cancel | By anyone but the owner or a signer, or with no move waiting, VLT-326 |
+| End with a lock, protection switched off, or a replacement of the owner wallet | A change applied in part, VLT-184, VLT-328 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| The account's delay | As it stood when the move was asked | VLT-325 |
+| What the vault holds free when the move comes to count | At least the amount; less than it | VLT-325 |
+| An idle period | None; set | VLT-329, VLT-330 |
+
+### Model: a Ready balance
+
+**States:**
+
+- Nil (start): nothing of the token counts as Ready.
+- Counting: an amount of the token counts as Ready.
+- Ended (end): protection is switched off, and the account has no Ready balance.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Nil | Fund from the wallet | The owner | VLT-324 | Counting |
+| Nil | A move comes to count | Nobody: the clock | VLT-325 | Counting |
+| Counting | Fund from the wallet | The owner | VLT-324 | Counting |
+| Counting | A move comes to count | Nobody: the clock | VLT-325 | Counting |
+| Counting | Draw part of it | One of the three steps | VLT-321, VLT-333 | Counting |
+| Counting | Draw all of it | One of the three steps | VLT-321, VLT-333 | Nil |
+| Counting | Move part of it back | The owner or a signer | VLT-326 | Counting |
+| Counting | Move all of it back | The owner or a signer | VLT-326 | Nil |
+| Counting | Pay the rest of a fee, leaving some | The settlement that charges the fee | VLT-323 | Counting |
+| Counting | Pay the rest of a fee, leaving none | The settlement that charges the fee | VLT-323 | Nil |
+| Counting | Lapse | Nobody: the clock | VLT-330 | Nil |
+| Counting | Return with a lock or a replacement of the owner wallet | The platform, with the change | VLT-328 | Nil |
+| Counting | Switch protection off | As section 5 states | VLT-328 | Ended |
+| Nil | Switch protection off | As section 5 states | VLT-320 | Ended |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Fund from the wallet | Every refusal of a deposit, VLT-302 to VLT-306. An account with protection off, VLT-320 |
+| A move comes to count | Nothing brings the time forward, VLT-325. A move ended by a change of VLT-328 never counts |
+| Draw part of it | More than the Ready balance, VLT-322 |
+| Draw all of it | More than the Ready balance, VLT-322 |
+| Move part of it back | By anyone but the owner or a signer, or more than the Ready balance, VLT-326 |
+| Move all of it back | By anyone but the owner or a signer, VLT-326 |
+| Pay the rest of a fee, leaving some | While the protected balance covers the fee, VLT-323 |
+| Pay the rest of a fee, leaving none | While the protected balance covers the fee, VLT-323 |
+| Lapse | With no idle period set, or before it has run, VLT-329, VLT-330 |
+| Return with a lock or a replacement of the owner wallet | A change applied in part, VLT-184, VLT-328 |
+| Switch protection off | While locked, in a cool-down or on a recovered account, VLT-403, VLT-410. The Ready balance returns whole or the change is refused, VLT-184, VLT-328 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| An idle period | None; set; kept counting until a named time | VLT-329, VLT-330 |
+| A move that waits for the token | None; one | VLT-325 |
+| The protected balance against a fee | Covers it; covers part; nil | VLT-323 |
+
+## 4.3 Listing escrows
+
+### VLT-350 · rule
+
+**Who:** a vault whose owner lists a lot of a multi-unit NFT that is under a lien.
+**When:** the listing is recorded.
+
+The vault moves exactly the listed id and amount into a listing escrow that it creates for
+that one listing. The lien never leaves the lot: the move is a reservation inside the lien, as
+an allowance's is (VLT-061).
+It does so because a marketplace takes a multi-unit NFT only under an approval over the whole
+collection, which a vault never grants (VLT-065). A token and a single NFT are listed from the
+vault itself, by an allowance (VLT-061).
+An escrow's address follows from its vault and its listing, and the vault's version fixes its
+code. A vault knows only the escrows it created, and keeps that record across its versions.
+
+- **Tests owed:** the defaults for a rule, with a lot above its lien, a lot under no lien, a
+  second listing of the same id, an escrow that another vault created, and a teardown after
+  the vault's version changed.
+
+### VLT-351 · never
+
+**Who:** a listing escrow.
+**When:** at any time.
+
+A listing escrow is never a way out of its vault. It holds the listed lot, obeys only its own
+vault, and sends the lot only to a buyer under the listing or back to its vault (VLT-352).
+It is the listing's seller toward the marketplace. It alone grants the marketplace's approval,
+and only to a listing conduit the vault code fixes (VLT-240, VLT-241).
+It answers that an order is signed only from its vault's record of the listing, and only to
+that marketplace (VLT-066). While the platform is paused its order reads as unsigned.
+The price is paid to the vault itself, within VLT-067, and never to the escrow.
+
+- **Against:** VLT-T33.
+- **Watch:** every approval an escrow grants names the fixed conduit. Every fall in an escrow's
+  holding of its lot is a sale under its vault's recorded listing or a return to its vault,
+  and the price of each sale arrives at the vault.
+- **Tests owed:** the defaults for a never, with an order the vault did not record, an approval
+  asked for another spender, a sale in a pause, a price paid to the escrow's address, and a
+  lot larger than the listing asked to leave.
+
+### VLT-352 · rule
+
+**Who:** the step that ends a listing.
+**When:** the listing ends: sold, cancelled or lapsed (EXT owed: when a listing ends).
+
+The escrow returns to its vault whatever is left of the lot, in the same transaction,
+withdraws the approval it gave, and grants nothing afterwards.
+The vault accepts the lot left (VLT-161) and holds it in the vault again, under the same lien.
+More of that id than the lot left, if any comes back with it, is untracked (VLT-162).
+An escrow is torn down once, and is never used for another listing.
+What was sold left the escrow for the buyer, and its price arrived at the vault.
+No condition of the platform refuses a teardown: it is open whenever the step that ends the
+listing is, so a lot never rests in an escrow after its lien has ended.
+
+- **Tests owed:** the defaults for a rule, with a listing that ends unsold, sold in part and
+  sold whole, a second teardown, an order and the approval tried after the teardown, a teardown
+  inside a full repayment in a pause, and a return that carries more of the id than the lot left.
+
+### VLT-353 · refusal
+
+**Who:** any sender other than the escrow's own vault.
+**When:** a multi-unit NFT, or the network's own coin, is sent to a listing escrow.
+
+It is refused, and stays with the sender. A listing escrow accepts nothing except from its own
+vault.
+
+- **Refused as:** a listing escrow accepts only from its own vault.
+- **For the mistake:** VLT-M48 and VLT-M50, refuse.
+- **Tests owed:** the defaults for a refusal, for each sender and each of the two assets.
+
+### VLT-354 · rule
+
+**Who:** a vault with a lot in one of its own listing escrows.
+**When:** its records are read, or its owner asks to withdraw the listed asset.
+
+A lot in the vault's own listing escrow is still the vault's, and still under its lien.
+For a multi-unit NFT, what a vault holds of an id is its own balance and what its own listing
+escrows hold of that id as their lots. Every statement that speaks of what the vault holds, or
+of the vault's balance, reads it so (VLT-011, VLT-038, VLT-113 to VLT-115, VLT-162).
+So the lot counts once, as held under that lien, and never makes another lien's release of the
+same id fall short.
+It never leaves by the owner's withdrawal (VLT-014). The refusal says that a listing holds it
+(VLT-013). It is free again only when the listing ends unsold and its lien is released.
+
+- **For the mistake:** VLT-M47, refuse.
+- **Tests owed:** the defaults for a rule, with a withdrawal of a listed lot, a release under
+  another lien of the same id while a listing is open, the vault's count before, during
+  and after a listing, and free units of the listed id read and withdrawn while it is listed.
+
+### VLT-355 · rule
+
+**Who:** a vault's owner.
+**When:** one of the vault's own listing escrows holds an asset other than its listed lot: a
+token, or a single NFT sent without asking.
+
+The owner may have the vault take that asset from the escrow into the vault: all the escrow
+holds of it. The escrow sends it only at its own vault's word, and only to that vault.
+It arrives untracked (VLT-162). The owner may adopt it, naming the address that sent it to the
+escrow and never the escrow. That is the owner's word, as for an asset sent straight to the
+vault, and the adoption screens the address named (VLT-170, VLT-173).
+The step never moves the listed lot or any unit of its collection, and pays nobody.
+After the teardown it is the escrow's only remaining action: no approval and no answer for an
+order outlives the teardown (VLT-352).
+
+- **For the mistake:** VLT-M49, undo through adoption.
+- **Tests owed:** the defaults for a rule, with a token and a single NFT taken before and after
+  the teardown, the listed collection named as the asset, a caller who is not the owner, an
+  escrow another vault created, an adoption that names the escrow as the source, an adoption
+  that names a flagged sender, an approval and an order tried after the teardown, and a token
+  that calls back into the escrow or the vault during the send.
+
+### Model: a listing escrow
+
+**States:**
+
+- Not created (start): no escrow exists for the listing.
+- Created: the escrow holds the listed lot, or what is left of it, for an open listing.
+- Torn down (end): the listing has ended, and what was left of the lot is back in the vault.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Not created | Create, and move the lot in | The vault, at its owner's listing | VLT-350 | Created |
+| Created | Sell the lot, or part of it | The marketplace, for a buyer | VLT-351, VLT-067 | Created |
+| Created | Tear down, returning what is left | The step that ends the listing | VLT-352 | Torn down |
+| Created | Take another asset into the vault | The vault, at its owner's ask | VLT-355 | Created |
+| Torn down | Take another asset into the vault | The vault, at its owner's ask | VLT-355 | Torn down |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Create, and move the lot in | A lot under no lien or above it, or an asset that is not a multi-unit NFT, VLT-350 |
+| Sell the lot, or part of it | An order the vault did not record, another marketplace, or a pause, VLT-351. After the teardown, VLT-352 |
+| Tear down, returning what is left | A second teardown, or a step that does not end the listing, VLT-352. No condition of the platform refuses it |
+| Take another asset into the vault | By anyone but the vault's owner. From an escrow the vault did not create. The listed lot, or any unit of its collection, VLT-355 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| The lot | Whole; sold in part; sold whole | VLT-352 |
+| The platform | Open; paused | VLT-351 |
+| Another asset in the escrow | None; a token; a single NFT | VLT-355 |
+
+## Outcome under each condition of the platform (section 4)
+
+A cell names the statement that decides it. "Open" means the condition does not refuse the step.
+
+| Step | Paused | Asset paused | Caller flagged | Screen cannot be read | Terms not current |
+| --- | --- | --- | --- | --- | --- |
+| A deposit, into the free balance or the Ready balance | PLT-040 (VLT-306) | Open (VLT-306) | PLT-060 (VLT-306) | Open for a wallet never confirmed flagged (VLT-306) | Open (PLT-071) |
+| Asking for a move into the Ready balance | PLT-040 | Open | Stated in section 5 | Stated in section 5 | Open (PLT-071) |
+| Cancelling a move, or moving the Ready balance back | Open (VLT-326) | Open | Stated in section 5 | Stated in section 5 | Open (PLT-071) |
+| A step that draws on the Ready balance | As the step itself (VLT-333) | As the step itself | As the step itself | As the step itself | As the step itself |
+| Setting, changing or removing the idle period | Stated in section 5 | Open | Stated in section 5 | Stated in section 5 | Open (PLT-071) |
+| Creating a listing escrow, and a sale from it | PLT-040. An order reads as unsigned (VLT-351) | The exits domain states it | The exits domain states it | The exits domain states it | The exits domain states it |
+| Tearing an escrow down | As the step that ends the listing (VLT-352) | Open | As the step that ends the listing (VLT-352) | As the step that ends the listing (VLT-352) | Open (PLT-071) |
+| Taking another asset from an escrow into its vault | PLT-040 | Open | Open: it arrives untracked, and its adoption is refused (PLT-060) | Open: its adoption states its own outcome (VLT-172) | Open (PLT-071) |
+
+No step of this section sets a price or reads one.
+
+## Section 5: protection settings
+
+The platform's rules (PLT) and sections 1 to 4 apply throughout and are cited by id.
+What a protected account pays out, and what it may commit, belong to section 6. The recovery
+address and the clawback belong to section 7. This section states the settings: on and off,
+the delay, the lock, the signers, the destinations and the replacement of the owner wallet.
+
+## 5.1 Protection on and off
+
+### VLT-400 · rule
+
+**Who:** a vault's owner.
+**When:** the owner chooses whether the account is protected.
+
+Protection is the owner's choice. The owner switches it on with a delay within its bounds
+[PRM-005], and it applies at once, for it only tightens.
+It is switched on only once a recovery address is set for the account, in force or still
+waiting (VLT owed: the recovery address).
+From then on a payout to the owner's wallet waits the delay
+(VLT owed: the payout of a protected account), a balance is committed at once only from the
+Ready balance (VLT-321), and the vault's pin delay is raised (VLT-232).
+Protection never delays what the account owes another party (VLT-092).
+
+- **For the mistake:** VLT-M33, bound. Switching it on only tightens, and the delay is bounded.
+- **Tests owed:** the defaults for a rule, with protection switched on at each bound of the
+  delay, with a recovery address in force and one that waits, and each of the three effects
+  read straight afterwards.
+
+### VLT-401 · refusal
+
+**Who:** a vault's owner.
+**When:** the owner switches protection on, or changes the delay, with a delay outside its
+bounds [PRM-005], or switches protection on with no recovery address set.
+
+The step is refused, and nothing changes.
+
+- **Refused as:** the delay is outside its bounds, with the bounds; or no recovery address is
+  set.
+- **For the mistake:** VLT-M25, refuse.
+- **Tests owed:** the defaults for a refusal, with a delay one instant below its least and
+  above its most, a delay given in another unit of time, and a recovery address that was
+  cancelled before the switch-on.
+
+### VLT-402 · rule
+
+**Who:** a vault's owner.
+**When:** the owner changes the delay of a protected account.
+
+The account's delay is the one figure every wait of this section is measured by.
+Raising it applies at once. Lowering it is a loosening change (VLT-410): it waits the delay in
+force when asked.
+A change that already waits then waits the longer of the wait it was asked under and the delay
+now in force, each counted from when it was asked. Lowering the delay never shortens a wait.
+
+- **For the mistake:** VLT-M26, bound. The delay never passes its most [PRM-005].
+- **Tests owed:** the defaults for a rule, with a raise and a lowering, a lowering cancelled by
+  a signer, and a change that waits across a raise and across a lowering, applied an instant
+  before and after each of the two waits.
+
+### VLT-403 · rule
+
+**Who:** a vault's owner.
+**When:** the owner asks to switch protection off.
+
+Switching protection off is a loosening change (VLT-410). Only the owner asks for it.
+Until it is applied the account counts as protected in every rule.
+When it is applied the account has no signers, and nothing asks for a co-signature. The Ready
+balance ends (VLT-328), and every waiting change of a destination or a signer ends (VLT-412).
+The recovery address stays set. What happens to payouts that wait is stated with them
+(VLT owed: the payout queue).
+It is refused for good on a recovered account (VLT owed: a recovered account).
+
+- **Tests owed:** the defaults for a rule, with a payout asked while the switch-off waits, a
+  switch-off cancelled by a signer, and the account's state straight after it is applied.
+
+## 5.2 Delayed changes
+
+### VLT-410 · rule
+
+**Who:** a vault's owner.
+**When:** the owner asks for a change to a protected account's settings.
+
+A change that loosens the account's protection waits the account's delay as it stands when
+asked, or longer if the delay is raised meanwhile (VLT-402). A tightening applies at once.
+The loosening changes are: adding a destination, adding or removing a signer, lowering the
+delay, an unlock, switching protection off, switching the holder lock off (VLT-470), a move
+into the Ready balance and a longer idle period (VLT-325, VLT-329), and a move of position
+tokens (VLT-457).
+Only the owner asks for one. Each is refused while the account is locked, an unlock apart, and
+during the cool-down of a replacement (VLT-453).
+
+- **Tests owed:** the defaults for a rule, with each loosening change asked, each tightening
+  change applied at once, and each loosening change asked while locked and in a cool-down.
+
+### VLT-411 · rule
+
+**Who:** a vault's owner, or any of its signers.
+**When:** a loosening change waits, or has waited.
+
+The owner or any signer may cancel a change that waits, at once.
+A change that has waited is applied by a further step of the owner's, unless its own
+statement says otherwise (VLT-325, VLT-329, VLT-450, VLT-457).
+A change that has waited and is not applied lapses one further delay after its wait ended,
+by the account's delay then in force. A lapsed change does nothing, and may be asked for again.
+
+- **Tests owed:** the defaults for a rule, with a cancel by the owner, by a signer and by
+  anyone else, and a change applied an instant before and after it has waited and it lapses.
+
+### VLT-412 · rule
+
+**Who:** a vault's owner, or its signers.
+**When:** the account is locked, its owner wallet is replaced, or protection is switched off.
+
+A lock ends every change that waits or has waited and is not applied (VLT-414), and the
+owner's own proposal of a replacement.
+A completed replacement and a switch-off end every such change of a destination or a
+signer. A replacement also ends every other change the replaced wallet asked for.
+What ended does not return (VLT-184). Each is asked for again, and waits again.
+
+- **Tests owed:** the defaults for a rule, with one change of each kind, still waiting and
+  waited but not applied, under each of the three events, and an unlock that brings none back.
+
+### VLT-413 · rule
+
+**Who:** a vault's owner, or any of its signers.
+**When:** the platform is paused.
+
+A lock, every other change that only tightens, and every cancel of this section stay open
+while the platform is paused: each only stops value leaving.
+An unlock may be asked for, cancelled and applied in a pause: it opens nothing there but the
+escape withdrawal (VLT-091).
+Asking for any other loosening change of this section, applying one, and completing a
+replacement are refused in a pause (PLT-040).
+A wait, a cool-down and the time before a lapse are read from the clock alone. A pause
+neither stops nor lengthens them.
+
+- **Tests owed:** the defaults for a rule, with each tightening step and each cancel taken in
+  a pause, each loosening step refused in one, an unlock asked and applied in one and the
+  escape withdrawal after it, and a change whose wait, and whose lapse, ends inside a pause.
+
+### VLT-414 · never
+
+**Who:** the owner of a locked account, and anyone acting for it.
+**When:** the account is locked.
+
+No change that loosens a protected account, in any domain, takes effect while the account is
+locked. A lock ends every such change, whether it still waits, has waited and is not applied,
+or would count by time alone, and nothing comes to count while locked.
+An unlock is the one loosening change asked for and applied while locked (VLT-424).
+A replacement by the signers loosens nothing, and a lock does not end it (VLT-451).
+A lock also ends a first recovery address that still waits
+(VLT owed: the recovery address).
+Every delayed loosening stated elsewhere follows this statement.
+
+- **Against:** VLT-T39.
+- **Watch:** every loosening change that takes effect against the account's lock at that
+  moment. None takes effect while locked, an unlock apart, and none asked before a lock takes
+  effect after it.
+- **Tests owed:** the defaults for a never, with a change of each kind in each of the three
+  states when the lock is placed, and a change that counts by time alone read while locked
+  and again after the unlock.
+
+### Model: a delayed change
+
+**States:**
+
+- Not asked (start): no change of that kind waits.
+- Requested: the owner asked, and the change is neither applied, cancelled nor lapsed.
+- In force (end): the change has waited and is applied.
+- Cancelled (end): the owner or a signer cancelled it, or an event of VLT-412 or VLT-414 ended it.
+- Lapsed (end): it had waited, and was not applied within one further delay.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Not asked | Ask | The owner | VLT-410 | Requested |
+| Requested | Apply after the wait | The owner, or whoever the change's own statement names | VLT-411 | In force |
+| Requested | Cancel | The owner or a signer | VLT-411 | Cancelled |
+| Requested | End with a lock, a replacement or a switch-off | The vault, with the event | VLT-412 | Cancelled |
+| Requested | Lapse | Nobody: the clock | VLT-411 | Lapsed |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Ask | By anyone but the owner, while locked, or in a cool-down, VLT-410. In a pause, an unlock apart, VLT-413 |
+| Apply after the wait | Before the wait is over, or after the change lapsed, VLT-411. While locked, VLT-414. In a pause, an unlock apart, VLT-413 |
+| Cancel | By anyone but the owner or a signer, or with nothing waiting, VLT-411. A signer's own removal, VLT-431 |
+| End with a lock, a replacement or a switch-off | An event applied in part, VLT-184, VLT-412 |
+| Lapse | Before one further delay has passed, VLT-411 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| The kind of change | Each loosening change of VLT-410 | VLT-410 |
+| The account's delay | As it stood when the change was asked; raised since; lowered since | VLT-402, VLT-410 |
+| The account | Open; locked; in a cool-down | VLT-410, VLT-453 |
+| The platform | Running; paused | VLT-413 |
+
+## 5.3 Lock and unlock
+
+### VLT-420 · rule
+
+**Who:** a vault's owner, any of its signers, or a keeper the owner approved for locking only.
+**When:** the account is to be locked.
+
+The owner or any signer may lock the account, by its own call or by a signature that anyone
+relays (VLT-181).
+A keeper the owner approved for locking only may lock it for the owner
+(KPR owed: the lock-only approval). That approval can do nothing else.
+A lock applies at once and waits for nothing: it only stops value leaving.
+It stays possible while the platform is paused (VLT-413).
+
+- **Tests owed:** the defaults for a rule, with a lock by each of the three, a relayed
+  signature used twice, a lock in a pause, and that keeper's approval tried for anything else.
+
+### VLT-421 · rule
+
+**Who:** the vault, and the platform's side of a lock.
+**When:** a lock is applied.
+
+In the same transaction (VLT-184): every payout that waits is cancelled
+(VLT owed: the payout queue); every change that waits or has waited, and the owner's own
+proposal of a replacement, end (VLT-412); the Ready balance returns to the protected balance
+(VLT-328); the account's position tokens are held fast (POS owed: the holder lock); and the
+owner's standing permissions end (VLT-425).
+
+- **For the mistake:** VLT-M30, undo. An unlock opens the account again after the delay, and
+  what the lock ended is asked for again.
+- **Tests owed:** the defaults for a rule, with one of each thing a lock ends present, and a
+  lock applied with too little of the network's fee measure to finish.
+
+### VLT-422 · refusal
+
+**Who:** the owner of a locked account, or anyone acting for it.
+**When:** the account is locked, and a step would let value leave it or open a position for it.
+
+Refused: the owner's withdrawal and every new payout; every new position or commitment for
+the account, by any route, the fill of its own open offers included; a release in part of
+its own collateral (VLT-128); a deposit into the Ready balance (VLT-324); and every loosening
+change but an unlock.
+Not refused, for none lets value leave: a deposit, funding the reserve of the account's own
+loan, lowering or cancelling a commitment (VLT-140), and cancelling an offer.
+
+- **Refused as:** the account is locked.
+- **Tests owed:** the defaults for a refusal, with each step refused, a fill of the account's
+  open offer by another party, and each of the four steps that are not refused.
+
+### VLT-423 · never
+
+**Who:** the other party of a locked account's loan, and the locked account itself.
+**When:** the account is locked, and one of its loans is serviced or settled.
+
+A lock never stops a loan being serviced. A repayment, collateral added, a reserve funded, a
+collection by the other side and every close-out stay open (VLT-092).
+The locked owner's own collection of what is held for its position stays open: it arrives.
+What a step pays the locked owner stays in the vault, and the step is not stopped by it.
+A setting that only applies the owner's own funds to the owner's own loan keeps running
+(VLT-425).
+
+- **Against:** VLT-T34.
+- **Watch:** every refusal of a repayment, a top-up of collateral, a collection or a close-out on
+  a loan with a locked party. None gives the lock as its reason.
+- **Tests owed:** the defaults for a never, with each servicing step on a loan of a locked
+  account on each side, and a settlement that owes the locked owner an amount.
+
+### VLT-424 · rule
+
+**Who:** the owner of a locked account.
+**When:** the owner asks to unlock.
+
+An unlock is a loosening change (VLT-410). Only the owner asks for it, and it is the one
+loosening change that may be asked while the account is locked.
+The owner or any signer may cancel it while it waits. A lock never lapses with time.
+A lock placed again while an unlock waits ends that unlock (VLT-184).
+When it is applied the account is open again. Nothing the lock ended returns (VLT-184).
+A lock that a signer keeps in place is left by a recovery (VLT owed: the clawback), or by
+the signers' replacement of the owner wallet (VLT-450).
+
+- **Tests owed:** the defaults for a rule, with an unlock asked by a signer, cancelled by a
+  signer, applied after the wait, a second lock placed while the unlock waits, and a lock left
+  standing for longer than any delay.
+
+### VLT-425 · rule
+
+**Who:** the owner of a locked account, and whoever would act under its standing permission.
+**When:** a lock is applied.
+
+A lock ends every standing permission of the owner's under which another party could later
+take the account's position, collateral or capital at terms fixed when it was given.
+It counts only while no lock has been applied since it was given. An unlock returns none.
+A setting that only applies the owner's own funds to the owner's own loan, at terms the loan
+already fixes, is not such a permission and does not end.
+Each is stated in its own domain (EXT owed: what a lock ends of a listing)
+(OFR owed: what a lock ends of an offer) (MKT owed: what a lock ends of a lending slot)
+(LON owed: what a lock ends of a plan).
+
+- **Tests owed:** the defaults for a rule, with each standing permission given before a lock
+  and used after it, used after the unlock, and a setting of the second kind run while locked.
+
+## 5.4 Signers
+
+### VLT-430 · rule
+
+**Who:** a vault's owner, and a wallet the owner nominates.
+**When:** the owner adds a signer to a protected account.
+
+An account has no more than its most signers [PRM-087].
+The owner nominates a wallet, which needs a recovery address set for the account. The wallet
+counts as a signer only after it has accepted with its own key and the wait of a loosening
+change is over (VLT-410), and only if a recovery address is then in force
+(VLT owed: the recovery address). Otherwise the addition waits on until it lapses.
+A nominee may withdraw before it counts.
+The account's first owner wallet and its owner wallet on record are never signers.
+
+- **For the mistake:** VLT-M29, refuse. A wallet that cannot sign never accepts, and the owner
+  cancels the nomination.
+- **Tests owed:** the defaults for a rule, with a nominee that never accepts, one that accepts
+  after the wait, one more than the most, each wallet that may never be a signer, and an
+  addition applied while the recovery address still waits.
+
+### VLT-431 · never
+
+**Who:** a signer of a protected account.
+**When:** it acts on the account.
+
+A signer may lock the account (VLT-420), cancel a change or a payout that waits (VLT-411),
+co-sign a payout (VLT owed: co-signing), move the Ready balance back (VLT-326), and, with a
+majority of the signers, replace the owner wallet (VLT-450).
+A signer never moves value, never names a destination, and never loosens anything.
+Removing a signer is a loosening change the owner asks for. Any other signer may cancel it.
+The signer being removed may not.
+
+- **Against:** VLT-T35.
+- **Watch:** every payout, every destination added and every loosening change of a protected
+  account against who asked for it. Each names the owner as the one who asked. A signer
+  appears on a payout only as its co-signer, and on a replacement only as one of a majority.
+- **Tests owed:** the defaults for a never, with each step a signer may take, each it may not,
+  and a signer cancelling its own removal.
+
+## 5.5 Destinations
+
+### VLT-440 · rule
+
+**Who:** the owner of a protected account.
+**When:** the owner names where the account's payouts may go.
+
+A payout of a protected account goes to the owner's wallet or to a destination in force, and
+nowhere else (VLT-050). An account has no more than its most destinations [PRM-088].
+Adding one is a loosening change (VLT-410, VLT-411). Removing one applies at once.
+The vault itself pays only a destination that its own record holds in force (VLT-180).
+
+- **For the mistake:** VLT-M27, undo. The owner or a signer cancels an addition that waits, and
+  the owner removes a destination in force at once.
+- **Tests owed:** the defaults for a rule, with a payout to a destination that waits, one in
+  force, one removed, one more than the most, and an addition that lapses.
+
+### VLT-441 · rule
+
+**Who:** a destination, and the signers of the account that names it.
+**When:** a destination is added, or a payout names it.
+
+A destination may show it is controlled: by its own call, or by its signature bound to the
+account, the platform and that request to add it (PLT-112).
+Cancelling or voiding the request clears the proof. A later request needs its own.
+While the account has signers, a payout to a destination that has not shown this needs a
+signer's co-signature (VLT owed: co-signing). A signer never co-signs a payout to itself.
+The owner's own wallet needs no proof.
+
+- **Tests owed:** the defaults for a rule, with a proof given for another account, another
+  request and another network, a payout to an unproven destination with and without signers,
+  and a signer co-signing a payout to itself.
+
+### VLT-442 · rule
+
+**Who:** a destination that is itself a protected account.
+**When:** a payout names it.
+
+It is paid in its own vault and not at its wallet, so its own protection covers what arrives.
+
+- **Tests owed:** the defaults for a rule, with a destination protected before and after it
+  was added.
+
+## 5.6 Replacing the owner wallet
+
+### VLT-450 · rule
+
+**Who:** the owner of a protected account, or a majority of its signers.
+**When:** the account's owner wallet is to be replaced.
+
+There are two ways. The owner proposes a new wallet. Or, on an account with at least the
+least number of signers for it [PRM-089], a majority of them names one.
+Either waits the account's delay: from the owner's proposal, or from the moment the majority
+is reached.
+When it has waited, the new wallet completes it with its own key, which shows the key works.
+It lapses as any change that has waited does (VLT-411).
+The new wallet is never one of the account's signers.
+
+- **For the mistake:** VLT-M31, undo. Until it completes, a replacement can be cancelled
+  (VLT-451).
+- **Tests owed:** the defaults for a rule, with each way, a majority reached by the last
+  signature, one signer short of it, fewer signers than the least, a signer named, and a
+  completion tried by anyone but the new wallet and after it lapsed.
+
+### VLT-451 · rule
+
+**Who:** the owner of a protected account, or any of its signers.
+**When:** a replacement waits.
+
+Any signer may cancel a replacement that waits, whoever asked for it.
+The owner may cancel its own proposal. A lock ends it (VLT-412).
+While a lock that a signer placed holds, only a signer cancels the signers' replacement: the
+owner wallet cannot turn aside a replacement made against it.
+
+- **Tests owed:** the defaults for a rule, with each cancel by each party, with no lock, under
+  the owner's lock and under a signer's lock.
+
+### VLT-452 · never
+
+**Who:** the new owner wallet, and the wallet it replaced.
+**When:** a replacement completes.
+
+The vault's owner record names the new wallet (VLT-180). The vault is the same vault, at the
+same address, with every record it kept. A flagged new wallet's completion is refused (PLT-060).
+From that moment only the new wallet gives the owner's authority (VLT-181).
+The replaced wallet, and every keeper it approved, lose every right over the account at once:
+over its offers, its amounts set aside to lend, its reserves, its balances, its lock and
+its pin. Every consent it gave stops counting. A reserve still pays its loan (VLT-140).
+The Ready balance ends (VLT-328), and the changes the replaced wallet asked for end (VLT-412).
+
+- **Against:** VLT-T36.
+- **Watch:** every step taken with the owner's authority on an account after a replacement
+  completed. Each is the wallet on record's, and none the replaced wallet's or its keeper's.
+- **Tests owed:** the defaults for a never, with each right tried by the replaced wallet and by
+  a keeper it approved straight after completion, and the vault's address and records compared.
+
+### VLT-453 · rule
+
+**Who:** the new owner wallet.
+**When:** a replacement has just completed.
+
+For one account's delay after a replacement completes, every loosening change is refused.
+This is the cool-down. Every tightening change stays open in it.
+A completed replacement leaves a lock in place. The new wallet leaves it only by an unlock
+(VLT-424).
+
+- **Tests owed:** the defaults for a rule, with each loosening change an instant before and
+  after the cool-down ends, a lock placed inside it, and a replacement completed on a locked
+  account.
+
+### VLT-454 · never
+
+**Who:** the new owner wallet, and the wallet it replaced.
+**When:** a replacement completes, and the replaced wallet holds position tokens.
+
+A replacement moves no position token. The tokens stay where they are and are held fast: they
+are neither moved nor approved by anyone, and the replaced wallet may not ask to free them.
+They leave only by the move of VLT-457, and only to the owner wallet on record.
+Until they move, the new wallet acts on those positions for the account (VLT-455), and every
+payout of theirs still goes to the account's vault, under the account's protection.
+
+- **For the mistake:** VLT-M43, warn only. Leaving the tokens in place is intended.
+- **Against:** VLT-T37.
+- **Watch:** every move of a position token out of a replaced wallet. Each is a move of VLT-457
+  and ends at the owner wallet on record at that moment.
+- **Tests owed:** the defaults for a never, with a transfer and an approval tried by the
+  replaced wallet, by an operator it approved earlier and by a marketplace.
+
+### VLT-455 · rule
+
+**Who:** whoever acts on a position whose holder's account had its owner wallet replaced.
+**When:** a step needs the holder's authority.
+
+That authority is given by the owner wallet on record of the holder's own vault, and never by
+the replaced wallet. This is the one case in which the key of VLT-185 is not the wallet that
+holds the token.
+The one who acts pays with its own funds. What the position is owed goes to the holder's
+account, and nowhere else. Acting on a position of the account one manages earns no incentive.
+Where such a step asks for the Terms (PLT-070), the wallet asked is the one that acts.
+
+- **Tests owed:** the defaults for a rule, with each step of a position tried by the replaced
+  wallet and by the new one, and where each payment comes from and goes.
+
+### VLT-456 · never
+
+**Who:** the new owner wallet, the wallet it replaced, and anyone who would fill an offer.
+**When:** an account's owner wallet has been replaced.
+
+After its owner wallet is replaced an account opens no new position and takes no deposit.
+Servicing an existing loan is not a deposit here (VLT-423).
+An offer of it that was open is never filled. The new wallet may cancel it, and what it held
+is free in the vault again. Neither wallet changes its terms or its amount, or uses it for
+any other step.
+The new wallet services the account, collects for it and is paid out from it. Its new
+business is its own account's (VLT-200).
+
+- **Against:** VLT-T38, VLT-T36.
+- **Watch:** every fill against an offer that was open when its account's replacement
+  completed, and every position opened or deposit taken for a replaced account. There is none.
+- **Tests owed:** the defaults for a never, with a fill, a change and a cancel tried by each
+  wallet and by a third party, and a new offer, a new position and a deposit tried for the
+  replaced account by each wallet.
+
+### VLT-457 · rule
+
+**Who:** the owner wallet on record of a replaced account.
+**When:** it wants the account's position tokens moved to itself.
+
+The move is a loosening change (VLT-410). Only the owner wallet on record asks for it, and
+only once a replacement has completed and its cool-down is over.
+The owner or any signer may cancel it while it waits.
+Once it has waited, anyone may run it, until one further delay later, when it lapses.
+The tokens go to the owner wallet on record at that moment. Nobody names another place.
+It is the account's own owner taking the account's own positions, and asks for no Terms
+(PLT-071). A move that lapsed may be asked for again.
+
+- **For the mistake:** VLT-M44, undo. The owner wallet asks again.
+- **Tests owed:** the defaults for a rule, with the move run by a third party an instant
+  before and after it has waited and it lapses, and a second replacement while it waits.
+
+### VLT-458 · refusal
+
+**Who:** anyone who asks for, or runs, a move of a replaced account's position tokens.
+**When:** the move is asked by anyone but the owner wallet on record, before any replacement,
+while the account is locked or in a cool-down, or on an account that was recovered.
+
+The move is refused, and no token moves.
+A lock, a further replacement and a clawback each end a move that waits. A move is refused
+while the account is locked, whether it has waited or not.
+On a recovered account it is refused for good (VLT owed: a recovered account).
+
+- **Refused as:** the move is not open to this caller, or not at this time, with the reason.
+- **For the mistake:** VLT-M45 and VLT-M46, refuse.
+- **Tests owed:** the defaults for a refusal, with each case, and a move that had waited when
+  the lock was placed.
+
+### VLT-459 · rule
+
+**Who:** the new owner wallet.
+**When:** the position tokens have moved to it.
+
+A position that has moved is the new wallet's own. It is covered by that wallet's own
+protection, if it has any, and no longer by the replaced account's.
+Every surface that offers the move says so before the request (APP owed: the move's warning).
+
+- **Tests owed:** the defaults for a rule, with a payout of a moved position and of one that
+  has not moved.
+
+## 5.7 Protection is never required
+
+### VLT-460 · rule
+
+**Who:** a vault's owner.
+**When:** the value in an unprotected account grows, by any step.
+
+Protection is offered and never required. No rule of a vault or of the platform refuses a
+deposit, a position or any other step because the account is not protected, at any value.
+Where a surface asks an owner to choose once the account's value passes a figure, the asking
+and its record belong to that surface (APP owed: the protection prompt).
+
+- **Tests owed:** the defaults for a rule, with each step that adds value or opens a position
+  taken by an unprotected account at a large value.
+
+## 5.8 The holder lock on position tokens
+
+### VLT-470 · rule
+
+**Who:** the owner of a protected account.
+**When:** the owner switches the holder lock on or off.
+
+The holder lock belongs to the position token: while it is on for a holder, that holder's
+position tokens are neither moved nor approved, and there is no queue of transfers
+(POS owed: the holder lock).
+It is a choice of its own: switching protection on does not switch it on. For a protected
+account, switching it on applies at once. Switching it off is a loosening change of the
+account (VLT-410), and leaves the rest of protection as it is.
+A lock of the account holds the tokens whatever this setting says (VLT-421).
+
+- **Tests owed:** the defaults for a rule, with a transfer and an approval tried with the
+  setting on, while its switch-off waits, and on a locked account with the setting off.
+
+## Outcome under each condition of the platform (section 5)
+
+A cell names the statement that decides it. "Open" means the condition does not refuse the step.
+
+| Step | Paused | Asset paused | Caller flagged | Screen cannot be read | Terms not current |
+| --- | --- | --- | --- | --- | --- |
+| A lock | Open (VLT-420) | Open | Open | Open | Open (PLT-071) |
+| Every other tightening change, and a cancel | Open (VLT-413) | Open | Open | Open | Open (PLT-071) |
+| Asking for, or applying, an unlock | Open (VLT-413) | Open | Open | Open | Open (PLT-071) |
+| Asking for, or applying, any other loosening change | PLT-040, VLT-413 | Open | Open | Open | Open (PLT-071) |
+| Completing a replacement | PLT-040, VLT-413 | Open | VLT-452, for the new wallet | Open for a wallet never confirmed flagged (PLT-065) | Open (PLT-071) |
+| Running a move of position tokens | PLT-040 | Open | PLT-060, for the wallet that receives them | Open for a wallet never confirmed flagged (PLT-065) | Open (PLT-071) |
+
+No step of this section moves an asset out of a vault.
