@@ -167,20 +167,119 @@ epic; see below). One doc per functional domain:
 
 This list is a starting proposal; the baseline epic may re-slice it.
 
+## Sections replaced by the canonical specification
+
+[`docs/CanonicalSpec/`](../CanonicalSpec/README.md) states intended
+behaviour one numbered statement at a time. Where one of its sections is
+canonical, it wins over this folder for what that section covers; this
+folder stays in force for everything else, until every domain is
+canonical and these files move to `docs/OlderDocs/`.
+
+**Every row is "in part".** The canonical folder wins for what the
+statements named in the row state. Anything else under the same heading
+stays in force here. A section is marked replaced whole only when its
+domain's closing check has mapped everything in it (CanonicalSpecDesign
+sections 15 and 23); none is yet.
+
+The heading is where the cited paragraph sat when the list was made,
+resolved from the name the canonical record gives. Headings move, so check
+a row against the document before relying on its heading. A long cited
+phrase is shown by its first seventy characters.
+
+### PLT, the platform's rules
+
+| Document | Heading | Paragraph or phrase cited | Statements | Replaced |
+| --- | --- | --- | --- | --- |
+| ProjectDetailsREADME.md | 16. Regulatory Compliance Considerations | 16. Regulatory Compliance Considerations | PLT-060 | in part |
+| ProjectDetailsREADME.md | Funds Received, Held, and Paid | The platform does not support tokens that deliver less than they send | PLT-041 | in part |
+| ProjectDetailsREADME.md | Measures for Phase 1 | Sanctions Wind-Down Carve-Out | PLT-061, PLT-063 | in part |
+| ProjectDetailsREADME.md | Measures for Phase 1 | Sanctioned Proceeds and Position Freeze | PLT-062 | in part |
+| ProjectDetailsREADME.md | Measures for Phase 1 | Secondary-Market Protection | PLT-064 | in part |
+| ProjectDetailsREADME.md | Measures for Phase 1 | Sanctions Oracle Availability | PLT-065 | in part |
+| ProjectDetailsREADME.md | Processes | A Distrusted Price Refuses The Close-Out; It Never Gives The Lender Ev | PLT-080 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Loan Deadlines Wait Out An L2 Sequencer Outage (#3410, owner decision  | PLT-090 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Reentrancy Guards: Applied to all functions involving external calls o | PLT-111 | in part |
+
+### VLT, vaults, sections 1 to 3
+
+| Document | Heading | Paragraph or phrase cited | Statements | Replaced |
+| --- | --- | --- | --- | --- |
+| ProjectDetailsREADME.md | Claiming Funds/Assets | Liquidation fallback | VLT-147 | in part |
+| ProjectDetailsREADME.md | Funds Received, Held, and Paid | The platform does not support tokens that deliver less than they send | VLT-070 | in part |
+| ProjectDetailsREADME.md | Lending and Collateral Assets | Backstop | VLT-212 | in part |
+| ProjectDetailsREADME.md | Processes | Standing Instructions | VLT-140 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Tracked Vault Holdings (every asset kind) | VLT-110 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Depository Vault | VLT-111, VLT-112, VLT-115 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Tracked-Holding Display and Utility Rule | VLT-114 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Protected Account Mode | VLT-115, VLT-183 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Tracked Vault Holdings | VLT-162 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Adopting and Disowning Untracked Assets | VLT-170 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | An adoption can never exceed the untracked part | VLT-171 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Sanctions-Aware Adoption | VLT-172, VLT-173 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | Adopting and Disowning | VLT-176 | in part |
+| ProjectDetailsREADME.md | Protocol Responsibilities and Safety | any registered, non-revoked version | VLT-231 | in part |
+| ProjectDetailsREADME.md | Standing lending intents (v1) | Treasury | VLT-242 | in part |
+| ProjectDetailsREADME.md | Treasury Fees | Moving the treasury is a vault code change | VLT-224 | in part |
+| VaultOperations.md | Adopting or disowning an untracked asset | Adopting or disowning an untracked asset | VLT-170 | in part |
+| VaultOperations.md | Adopting or disowning an untracked asset | Adopting or disowning | VLT-175 | in part |
+| VaultOperations.md | Deposits, ownership, and free funds | Deposits, ownership, and free funds | VLT-006, VLT-100 | in part |
+| VaultOperations.md | Deposits, ownership, and free funds | Deposits | VLT-014, VLT-101, VLT-161 | in part |
+| VaultOperations.md | Independent boundaries on value leaving a vault | Independent boundaries on value leaving a vault | VLT-039, VLT-068 | in part |
+| VaultOperations.md | Independent boundaries on value leaving a vault | An open allowance blocks other vault movements | VLT-062 | in part |
+| VaultOperations.md | Independent boundaries on value leaving a vault | Independent boundaries | VLT-066 | in part |
+| VaultOperations.md | Optional account protection | Optional account protection | VLT-050, VLT-053, VLT-092 | in part |
+| VaultOperations.md | Pause escape and implementation pinning | Pause escape and implementation pinning | VLT-050, VLT-091 | in part |
+| VaultOperations.md | Pause escape and implementation pinning | no part of the Diamond can change | VLT-220 | in part |
+| VaultOperations.md | Pause escape and implementation pinning | A revoked version is never restored | VLT-226 | in part |
+| VaultOperations.md | Vault-owned authority and signed changes | Vault-owned authority and signed changes | VLT-032, VLT-101, VLT-180, VLT-201 | in part |
+| VaultOperations.md | Vault-owned authority and signed changes | can be voided | VLT-183 | in part |
+| VaultOperations.md | Vault-owned authority and signed changes | Its address is derived from its original owner, so a forged owner reco | VLT-210 | in part |
+| VaultOperations.md | Pause escape and implementation pinning | no vault is ever left on old code because nobody upgraded it | VLT-221 | in part |
+| VaultOperations.md | Pause escape and implementation pinning | a pending pin change can be cancelled, and none is accepted while the  | VLT-233 | in part |
+
+### PRC, prices, sections 1 to 7
+
+| Document | Heading | Paragraph or phrase cited | Statements | Replaced |
+| --- | --- | --- | --- | --- |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | except where the other leg has no usable price at all: there the missi | PRC-011 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | A price of zero must be refused rather than used | PRC-103 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Peg-Aware Stable Staleness | PRC-104 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Secondary Oracle Quorum | PRC-121 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Secondary Oracle Identity Comes With the Feed Registration | PRC-140 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Liquidity Determination Process | PRC-501 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Illiquid Assets | PRC-503, PRC-530 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Slippage and Depth-Tiered LTV Risk Model | PRC-510 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | On-Chain Precedence | PRC-531 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | On-Chain Verification | PRC-532 | in part |
+| ProjectDetailsREADME.md | Asset Viability, Oracles, and Liquidity Determination | Explicit Storage | PRC-533 | in part |
+| ProjectDetailsREADME.md | Current Functional Consolidation Through 2026-11-15 | Progressive Risk Access | PRC-512 | in part |
+| ProjectDetailsREADME.md | Frontend Warnings (Reiteration) | a forced sale's slippage floor is tighter where the sale is safe to ti | PRC-650 | in part |
+| ProjectDetailsREADME.md | Lending and Collateral Assets | A price read never depends on the caller's gas | PRC-040 | in part |
+| ProjectDetailsREADME.md | Lending and Collateral Assets | carries on without one that fails | PRC-135 | in part |
+| ProjectDetailsREADME.md | Processes | Oracle-Unavailable Fallback Branch | PRC-010 | in part |
+| ProjectDetailsREADME.md | Processes | Discount Fixed at Loan Start | PRC-525, PRC-620 | in part |
+| ProjectDetailsREADME.md | Processes | Per-Tier Liquidation Thresholds | PRC-610, PRC-614 | in part |
+| ProjectDetailsREADME.md | Processes | Collateral Concentration | PRC-630 | in part |
+| ProjectDetailsREADME.md | Triggers | LTV Breach | PRC-601 | in part |
+
+This table changes only with the canonical folder, by the thread that
+keeps it.
+
 ## How the corpus stays current — the maintenance rule
 
-**Every behaviour-changing PR updates the relevant
-`docs/FunctionalSpecs/<domain>.md` in the same diff as its release-note
-fragment.** The author writes the **intended** behaviour they set out to
-build — *stating intent* — and never transcribes the code they just
-wrote. (If that code has a bug, the spec stays correct, and the
-divergence audit catches `code ≠ spec` later.)
+**Pull requests do not edit this folder.** Intended behaviour changes
+first in a design the owner approves. Where a canonical section covers the
+behaviour, the design brings its statement changes and the thread that
+keeps the canonical folder writes them. Where none does, a line found out
+of date here goes on the owner's list of specification lines, which the
+design thread keeps (CanonicalSpecDesign §15).
 
-The release-note fragment is the "what changed" lens; the Functional
-Spec edit is the "intended current behaviour" lens. A non-blocking CI
-check (`.github/workflows/release-notes-drift.yml`) warns in the Actions
-tab if a merge changed `contracts/src/` or `apps/` but touched no
-`docs/FunctionalSpecs/` doc.
+A behaviour-changing pull request names the canonical statements it
+implements in its description, or says "No behaviour change", or "No
+canonical section covers this change". A non-blocking check
+(`.github/workflows/release-notes-drift.yml`) reads the merged pull
+request's description and warns in the Actions tab when none of the three
+is there. The release-note fragment stays the "what changed" lens.
 
 ## Baseline
 

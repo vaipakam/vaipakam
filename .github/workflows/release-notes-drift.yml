@@ -2,11 +2,15 @@
 #
 # Non-blocking backstop for two per-PR documentation conventions:
 #   - the release-note fragment  (docs/ReleaseNotes/unreleased/)
-#   - the functional-spec update (docs/FunctionalSpecs/)
+#   - the statements a behaviour change implements (CanonicalSpecDesign
+#     section 15): the merged pull request's description names canonical
+#     statement ids (docs/CanonicalSpec/), or says "no behaviour change",
+#     or says no canonical section covers what it changes yet
 #
 # On every push to main, if the merge changed contracts or app code but
-# touched neither doc family, emit a warning + job-summary note so the
-# gap is visible in the Actions tab. It never fails the run — these are
+# carried no release-note fragment, or its description names no
+# statements, emit a warning + job-summary note so the gap is visible in
+# the Actions tab. It never fails the run — these are
 # disciplines, not merge gates.
 #
 # It also runs a BLOCKING docs path gate: no operator runbook may cite a
@@ -29,7 +33,7 @@
 #
 # (Filename kept as release-notes-drift.yml for stable references; the
 # check now covers functional specs and the mechanical check too.)
-name: Docs-drift check (release notes + functional specs + path gate)
+name: Docs-drift check (release notes + statements + path gate)
 
 on:
   push:
@@ -46,6 +50,8 @@ on:
 
 permissions:
   contents: read
+  # Read the merged pull request's description (the statement ids).
+  pull-requests: read
 
 jobs:
   drift:
@@ -56,11 +62,13 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Check for release-note + functional-spec updates
+      - name: Check for release-note + statement updates
         if: github.event_name == 'push'
         env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -79,7 +87,6 @@ jobs:
           changed="$(git diff --no-renames --name-only "$BEFORE" "$AFTER")"
           work="$(printf '%s\n' "$changed" | grep -E '^(contracts/src/|apps/)' || true)"
           notes="$(printf '%s\n' "$changed" | grep -E '^docs/ReleaseNotes/' || true)"
-          specs="$(printf '%s\n' "$changed" | grep -E '^docs/FunctionalSpecs/' || true)"
 
           ok=1
 
@@ -95,16 +102,67 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          if [ -n "$work" ] && [ -z "$specs" ]; then
-            ok=0
-            echo "::warning title=Functional-specs drift::This merge changed contracts/ or apps/ but touched no docs/FunctionalSpecs/ doc. Update the relevant domain spec to the new behaviour — see docs/FunctionalSpecs/README.md."
-            {
-              echo "### ⚠️ Functional-specs drift"
-              echo ""
-              echo "This merge touched \`contracts/src/\` or \`apps/\` but updated no"
-              echo "\`docs/FunctionalSpecs/\` doc. Rewrite the affected domain spec to"
-              echo "the new current-state behaviour — see \`docs/FunctionalSpecs/README.md\`."
-            } >> "$GITHUB_STEP_SUMMARY"
+          # The statements the merge implements (CanonicalSpecDesign section
+          # 15). The description is the merged pull request's, read through
+          # the API and handled only as data: written to a file, never
+          # interpolated into a command.
+          if [ -n "$work" ]; then
+            body_file="$RUNNER_TEMP/pr-body.md"
+            : > "$body_file"
+            if ! gh api "repos/$REPO/commits/$AFTER/pulls" --jq '.[0].body // ""' > "$body_file" 2>/dev/null; then
+              echo "Could not read the merged pull request's description; the statement check reads it as empty."
+            fi
+            verdict="$(node .github/scripts/statement-ids.mjs --body "$body_file" --folder docs/CanonicalSpec)"
+            kind="$(printf '%s' "$verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).verdict))')"
+            unknown="$(printf '%s' "$verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).unknown.join(" ")))')"
+            reserved="$(printf '%s' "$verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).reserved))')"
+            # A reserved id is reported by count only, never repeated here.
+            if [ "$reserved" != "0" ]; then
+              ok=0
+              echo "::warning title=Reserved statement id::The description carries $reserved id(s) from the reserved range 900 to 999. Public text never carries one; edit the description to remove it."
+              {
+                echo "### ⚠️ Reserved statement id"
+                echo ""
+                echo "The description carries $reserved id(s) from the reserved range 900"
+                echo "to 999. Public text never carries one, nor says what such a statement"
+                echo "covers. Edit the description to remove it."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ "$kind" = "missing" ]; then
+              ok=0
+              echo "::warning title=Statements drift::This merge changed contracts/ or apps/ but the Statements section of its description names no canonical statement ids, does not say \"no behaviour change\", and does not say no canonical section covers it. See docs/CanonicalSpec/README.md."
+              {
+                echo "### ⚠️ Statements drift"
+                echo ""
+                echo "This merge touched \`contracts/src/\` or \`apps/\`, and its pull request"
+                echo "description's Statements section names no statement it implements. A behaviour change names"
+                echo "its statement ids (e.g. a vault statement), or says \"no behaviour change\","
+                echo "or says \"no canonical section covers\" what it changes and names the domain looked in — see"
+                echo "\`docs/CanonicalSpec/README.md\` and the pull request template."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ "$kind" = "not-covered-unnamed" ]; then
+              ok=0
+              echo "::warning title=Statements drift::The description says no canonical section covers this change but names no domain the author looked in (a code such as OFR or LON, on the same line)."
+              {
+                echo "### ⚠️ Statements drift"
+                echo ""
+                echo "The description says no canonical section covers this change, but"
+                echo "names no domain the author looked in. Write the domain code on the"
+                echo "same line (for example \"No canonical section covers this change;"
+                echo "looked in OFR\") so a reviewer can check it."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -n "$unknown" ]; then
+              ok=0
+              echo "::warning title=Unknown statement ids::The description names ids no statement in docs/CanonicalSpec/ carries: $unknown"
+              {
+                echo "### ⚠️ Unknown statement ids"
+                echo ""
+                echo "The description names ids that no statement heading in"
+                echo "\`docs/CanonicalSpec/\` carries: \`$unknown\`."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
           if [ "$ok" = 1 ]; then
@@ -180,6 +238,15 @@ jobs:
           node .github/scripts/check-cron-slots.mjs --selftest
           node .github/scripts/check-cron-slots.mjs
           echo "Cron-slot gate + selftest OK." >> "$GITHUB_STEP_SUMMARY"
+
+      # The reader the statement check above uses on main (section 15 of
+      # CanonicalSpecDesign). Its fixtures run on every pull request, so a
+      # change to the reader is checked before it decides a merge's warning.
+      - name: Statement id reader (selftest)
+        run: |
+          set -euo pipefail
+          node .github/scripts/statement-ids.mjs --selftest
+          echo "Statement id reader selftest OK." >> "$GITHUB_STEP_SUMMARY"
 
       # Release-note assembler tests. The assembler decides which pending
       # fragments belong to the day being assembled, and gets that decision

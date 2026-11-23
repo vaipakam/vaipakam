@@ -204,7 +204,11 @@ final stage.
 ☐ Commits follow §2.2 format + are signed (§2.3)
 ☐ Release-notes fragment at docs/ReleaseNotes/unreleased/<task-id>-<slug>.md
    (only if the PR changes behaviour — skip for pure docs / chore / CI-config PRs)
-☐ FunctionalSpecs updated if behaviour changed (see §6)
+☐ "Statements" section of the description: the canonical statement ids
+   implemented, or "No behaviour change", or "No canonical section covers
+   this change; looked in <domain code>" (see §6.3). Ids 900 to 999 are
+   reserved: never write one. Never edit docs/CanonicalSpec/ or
+   docs/FunctionalSpecs/ in a PR
 ☐ Locally green:
    `cd contracts && forge build && bash script/predeploy-check.sh`
    then (from repo root) per-workspace typechecks matching CI —
@@ -521,7 +525,8 @@ Every merge to `main` triggers THREE updates in the SAME session:
 If the merge changed behaviour (contracts/src/* or apps/*), also:
 
 ```
-☐ FunctionalSpecs domain doc updated (§6).
+☐ The description's "Statements" section named the statements (§6.3);
+   the drift check on main warns if it did not.
 ```
 
 ---
@@ -861,25 +866,38 @@ Behaviours to know:
 asserts all of the above and runs on every PR — run it after touching the
 assembler.
 
-### 6.3 FunctionalSpecs corpus — DOC-SOURCED, NEVER code-sourced
+### 6.3 The specification — DOC-SOURCED, NEVER code-sourced
 
-`docs/FunctionalSpecs/` is the code-INDEPENDENT specification of what
-the platform is **intended** to do — the test oracle. **Load-bearing
-rule: it is sourced from the documents, never transcribed from the
-contract code.** A spec derived from code can't catch a bug — it just
-confirms "the code does what the code does" and locks bugs in.
+Intended behaviour is stated in `docs/CanonicalSpec/` (numbered
+statements, where a section is canonical; its README lists each domain's
+status) and in `docs/FunctionalSpecs/` for everything no canonical section
+covers yet. Neither is ever transcribed from the code: a specification
+derived from code can't catch a bug — it just confirms "the code does what
+the code does" and locks bugs in. The rules are section 15 of
+`docs/DesignsAndPlans/CanonicalSpecDesign.md`:
 
-Every behaviour-changing PR updates the relevant
-`docs/FunctionalSpecs/<domain>.md` in the same diff as its release-note
-fragment — same flow, not a post-merge step.
+- **No PR edits either folder.** Out-of-date lines in
+  `docs/FunctionalSpecs/` go on the owner's list, which the design thread
+  keeps.
+- **A design that changes behaviour a canonical section covers brings its
+  statement changes to the owner with the design**, as text. The folder
+  changes only after the owner approves, and only by the thread that keeps
+  it.
+- **A behaviour-changing PR names the statements it implements** in the
+  description's "Statements" section, or says "No behaviour change", or
+  "No canonical section covers this change" with the domain looked in named
+  on the same line (a code such as `OFR`). The drift check
+  (`.github/workflows/release-notes-drift.yml`) reads the merged PR's
+  description and warns when none is there, when the not-covered answer
+  names no domain, or when an id is unknown.
+- **Ids 900 to 999 are reserved.** Public text never carries one, nor says
+  what such a statement covers; the drift check warns on one.
+- `docs/procedures/FunctionalSpecsCodeVsDocsAudit.md` records code-vs-spec
+  divergences (candidate bugs OR stale docs). Code-observed behaviour
+  enters either folder ONLY via a recorded owner decision.
 
-`docs/FunctionalSpecs/_CodeVsDocsAudit.md` records code-vs-spec
-divergences (candidate bugs OR stale docs). Code-observed behaviour
-enters the spec ONLY via an explicit human intent-decision — never
-silently.
-
-See `docs/FunctionalSpecs/README.md` for the doc set, the domain
-slicing, the conflict-precedence rule, and the full rules.
+See `docs/CanonicalSpec/README.md` and `docs/FunctionalSpecs/README.md`
+for each folder's own rules.
 
 ### 6.4 GitHub Releases — auto-drafted by `release-drafter`
 
