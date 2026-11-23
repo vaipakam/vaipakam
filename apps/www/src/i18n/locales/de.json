@@ -288,7 +288,7 @@
         "a2": "Vaipakam behält niemals einen Anteil am Gas — es geht direkt ans Netzwerk. Eine L2 (Base, Arbitrum, Optimism, Polygon) hält das Gas in der Regel bei wenigen Cent pro Aktion, weshalb die meisten Nutzer sie für den Alltag dem Ethereum-Mainnet vorziehen."
       },
       "basics-custody": {
-        "q": "Wer verwahrt mein Geld eigentlich, während ein Kredit aktiv ist?",
+        "q": "Wer hält mein Geld eigentlich, während ein Kredit aktiv ist?",
         "a1": "Niemand im klassischen Sinn. Die Vermögenswerte liegen in einem Smart-Contract-Vault, den nur der Nutzer und die protokolleigenen Regeln bewegen können. Jeder Nutzer hat seinen eigenen isolierten Vault — Mittel werden niemals mit Fremden zusammengelegt — und jede Freigabe folgt einer Regel, die schon vor dem Klick auf „Akzeptieren\" on-chain veröffentlicht war.",
         "a2": "Die Verträge sind quelloffen, und vor dem Mainnet-Deployment sind Drittparteien-Audits erforderlich. Vaipakam kann Guthaben nicht umleiten oder zurückholen; im Notfall kann das Team höchstens neue Aktionen pausieren, während bestehende Rückzahlungs-, Anspruchs- oder Ausstiegswege verfügbar bleiben."
       },
@@ -305,7 +305,7 @@
       "vault": {
         "q": "Wie funktioniert der Vault pro Nutzer?",
         "a1": "Jeder Nutzer erhält seinen eigenen UUPS-aufrüstbaren Vault-Proxy, der bei der ersten Nutzung von <c>VaultFactoryFacet</c> bereitgestellt wird (Clone-Factory-Muster). Vermögenswerte werden niemals mit denen anderer vermischt.",
-        "a2": "Das Diamond orchestriert Bewegungen zwischen Vaults, doch Anspruchsrechte sind an das Vaipakam-Positions-NFT gebunden — die Verwahrung im Vault ist also strikt an den On-Chain-Status der Position gekoppelt."
+        "a2": "Das Diamond orchestriert Bewegungen zwischen Vaults, doch Anspruchsrechte sind an das Vaipakam-Positions-NFT gebunden — was einen Vault verlässt, ist also strikt an den On-Chain-Status der Position gekoppelt."
       },
       "default": {
         "q": "Was passiert, wenn ein Kreditnehmer ausfällt?",

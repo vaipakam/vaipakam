@@ -22,7 +22,7 @@
 一个 upgradeable per-user contract — 您在这条 chain 上的私人 vault
 — 会在您第一次参与 loan 时为您创建。每个 address、每条 chain 只有
 一个 vault。它持有与您 loan positions 相关的 ERC-20、ERC-721 和
-ERC-1155 balances。没有混合保管：其他用户的 assets 永远不会进入
+ERC-1155 balances。没有资金混合：其他用户的 assets 永远不会进入
 这个 contract。
 
 vault 是 collateral、出借 assets 和您锁定的 VPFI 所在的唯一位置。

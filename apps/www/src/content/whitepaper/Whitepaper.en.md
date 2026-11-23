@@ -16,7 +16,7 @@ through a mutually agreed extension or a borrower handover that compensates the
 lender (section 4). The protocol supports
 over-collateralized ERC-20 lending against ERC-20 or NFT collateral, and true
 NFT rental in which the renter receives on-chain usage rights while the asset
-never leaves vault custody. Every user's assets are held in an isolated
+never leaves its owner's vault. Every user's assets are held in an isolated
 per-user vault; every open position is represented by a transferable on-chain
 position NFT whose current holder carries the position's claim rights; and the
 protocol's safety-critical actions — liquidation and default resolution — are
@@ -127,7 +127,7 @@ The platform's user-facing surface, as specified for the reference web applicati
 
 **Borrower.** Creates borrowing offers (locking collateral) or accepts lender offers. Receives principal net of the loan-initiation fee, must maintain the loan's health constraints, and holds the borrower-side position NFT, which carries the rights to reclaim collateral and any surplus at settlement.
 
-**NFT owner / renter.** The rental-market specialization of lender and borrower. The NFT owner lists a rentable ERC-4907-compliant NFT at a daily rate; the NFT itself remains vault-controlled for the whole rental. The renter locks an ERC-20 prepayment (total rental fees plus the 5% buffer) and receives only temporary user rights — never custody or ownership of the NFT.
+**NFT owner / renter.** The rental-market specialization of lender and borrower. The NFT owner lists a rentable ERC-4907-compliant NFT at a daily rate; the NFT itself remains vault-controlled for the whole rental. The renter locks an ERC-20 prepayment (total rental fees plus the 5% buffer) and receives only temporary user rights — never possession or ownership of the NFT.
 
 **Liquidator (permissionless).** Any address may call `triggerLiquidation` when a loan's Health Factor falls below 1.0, and `triggerDefault` once the grace period has expired. The caller earns a bounded incentive but has no discretion over terms; liquidation is deliberately independent of every keeper whitelist and access switch.
 
@@ -300,7 +300,7 @@ Illiquid assets are handled by a deliberately simple, consent-first regime:
 - **Zero valuation, no Health Factor math.** An Illiquid asset contributes `$0` to every LTV and Health Factor computation. A loan whose collateral is Illiquid has no meaningful LTV, so price-based liquidation does not apply to it; the only default trigger is time-based (non-repayment past the grace period).
 - **Explicit dual consent.** Both parties must acknowledge the illiquid terms through the single mandatory risk-and-terms consent (section 5.4) before the offer can be created or accepted, and the acceptance confirmation must name each specific illiquid asset in the exact offer being accepted — a worthless asset can never hide behind a blanket consent.
 - **In-kind transfer on default.** On default, the **entire** illiquid ERC-20 collateral is allocated to the lender. There is no auction, no DEX sale, and no LTV-proportional split; recovery may be materially less than the value lent, and the parties consented to exactly that. The transfer is realized through the standard position-NFT claim model rather than an automatic push: the holder of the lender-side position NFT claims the collateral (section 6.5).
-- **NFT rentals.** A rented NFT never leaves vault custody, so it needs no liquidation path of its own: on rental default the borrower forfeits the ERC-20 prepayment — the rental-fee portion (net of the treasury share) goes to the lender, the 5% buffer goes to treasury — and the vaulted NFT returns to the lender through the settlement flow.
+- **NFT rentals.** A rented NFT never leaves its owner's vault, so it needs no liquidation path of its own: on rental default the borrower forfeits the ERC-20 prepayment — the rental-fee portion (net of the treasury share) goes to the lender, the 5% buffer goes to treasury — and the vaulted NFT returns to the lender through the settlement flow.
 
 ### 4.4 Same-Asset Guard and Fail-Closed Behavior
 
@@ -388,7 +388,7 @@ Before signing, a read-only acceptance preview exposes the resolved principal, r
 
 ### 6.1 Loan Terms
 
-A Vaipakam loan is defined at initiation by its principal (asset and amount), collateral (asset, amount, and stored liquidity status), interest rate in basis points, duration in days, interest mode, and the fee rates snapshotted at origination. An NFT rental is the same lifecycle with a different economic leg: a daily rental rate and a locked prepayment (total fees plus the 5% buffer) in place of an APR on principal, with the rented NFT held in vault custody throughout.
+A Vaipakam loan is defined at initiation by its principal (asset and amount), collateral (asset, amount, and stored liquidity status), interest rate in basis points, duration in days, interest mode, and the fee rates snapshotted at origination. An NFT rental is the same lifecycle with a different economic leg: a daily rental rate and a locked prepayment (total fees plus the 5% buffer) in place of an APR on principal, with the rented NFT held in its owner's vault throughout.
 
 - **Duration.** The launch product range is **1 to 365 days**, with the live maximum exposed through protocol configuration. The primary create flow presents standard buckets — 7, 14, 30, 60, 90, 180, and 365 days — because Range Orders match duration as an exact value, so bucketing improves match density without duration-range semantics; specialized flows (refinance, preclose) keep free-form entry. The 365-day product maximum is a product default, not a protocol invariant: the on-chain governance ceiling for the configurable maximum is approximately **4,385 days**, so longer-tenor products can be enabled later without a contract change. Both the interface and the on-chain initiation path enforce the live configured bound.
 - **Interest modes.** The protocol default is **full-term interest**: the borrower commits to the interest for the entire agreed term, even if repaid early. An offer may opt into **pro-rata** interest, which accrues only for the days the loan is actually outstanding. The mode is fixed at the offer and disclosed in the mandatory consent (section 5.4).
@@ -785,20 +785,20 @@ The doctrine's asymmetry is deliberate: a stale or missing feed can prevent a *n
 
 ## 10. NFT Rental
 
-Vaipakam treats NFT lending as a rental transaction, not a custody transfer to the borrower. A lender (the NFT owner)
+Vaipakam treats NFT lending as a rental transaction, not a transfer of the NFT to the borrower. A lender (the NFT owner)
 lists an ERC-4907-compatible ERC-721 or ERC-1155 NFT at a daily rental charge; a borrower (the renter) prepays the
 rental cost and receives temporary usage rights. Only ERC-20 tokens may serve as the value-bearing prepayment asset
-for a rental; no separate NFT collateral is required, because the rented NFT never leaves protocol custody and can be
+for a rental; no separate NFT collateral is required, because the rented NFT never leaves its owner's vault and can be
 returned to the owner directly at closure or default.
 
-### 10.1 Custody and Usage Rights
+### 10.1 Where the NFT Is Held, and Usage Rights
 
-- **Vault-held custody.** For the full rental period the NFT is held by the Vaipakam Vault contract. For ERC-721
-  tokens, the token is transferred into the vault, giving the vault controller owner-level custody so it can assign,
+- **Held in the vault.** For the full rental period the NFT is held by the Vaipakam Vault contract. For ERC-721
+  tokens, the token is transferred into the vault, giving the vault controller owner-level control so it can assign,
   revoke, or reassign only the ERC-4907 `user` right. For ERC-1155 tokens, the tokens are likewise held in the vault,
   and the vault controller assigns ERC-4907-style user rights while the tokens remain vault-controlled.
 - **Owner keeps ownership; renter gets usage.** The borrower receives only a temporary `user` assignment — never
-  custody, never ownership, and never transfer authority over the underlying NFT. Ownership economics stay with the
+  possession, never ownership, and never transfer authority over the underlying NFT. Ownership economics stay with the
   lender-side position throughout.
 - **Stable integration surface.** The vault acts as the ERC-4907-style wrapper for vaulted rental positions. External
   applications query the vault (by underlying NFT contract and token id) for the current user, the user expiry, and —
@@ -806,8 +806,8 @@ returned to the owner directly at closure or default.
   active ERC-1155 rentals share a contract and token id in one vault, the reported expiry is the minimum (earliest)
   active rental expiry for the aggregated position. Integrators must not assume the underlying NFT contract itself
   exposes a uniform rental interface; the vault is the intended read surface.
-- **Position transfers change assignment, not custody.** A borrower preclose or obligation transfer on a rental
-  changes only the temporary user assignment; the custody model is untouched. The platform revokes the outgoing
+- **Position transfers change assignment, not where the NFT is held.** A borrower preclose or obligation transfer on a rental
+  changes only the temporary user assignment; where the NFT is held is untouched. The platform revokes the outgoing
   borrower's user rights and assigns rights to the incoming borrower for the remaining permitted term.
 
 ### 10.2 Prepayment and Buffer
@@ -860,7 +860,7 @@ from the rental flow above, where the NFT is the lent asset): the borrower-side 
 NFT collateral on an external marketplace before default, so a sale can repay the loan from proceeds without weakening
 the lender's default rights.
 
-- **Opt-in and custody.** The lender offer must explicitly allow NFT collateral sale. The listed NFT never leaves the
+- **Opt-in, and where the NFT stays.** The lender offer must explicitly allow NFT collateral sale. The listed NFT never leaves the
   borrower's vault until a valid marketplace fill atomically pays the settlement waterfall and transfers the NFT to
   the buyer; the borrower never gains raw transfer authority merely by listing. Marketplace operator approvals are
   limited to governance-approved conduits.
