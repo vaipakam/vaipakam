@@ -13,8 +13,8 @@ Each row has:
 - **Waits for:** the section that will answer it, while that section is not entered.
 
 Mistake ids use the form `VLT-M<nn>`, and they are permanent.
-Of the 51 rows, 24 are answered by sections 1 to 3 and the platform's rules, and 27 wait for
-sections 4 to 7. The vault's rules are not complete while a row still waits.
+Of the 51 rows, 47 are answered by sections 1 to 5 and the platform's rules, and 4 wait for
+sections 6 and 7. The vault's rules are not complete while a row still waits.
 
 ## 1. Having a vault
 
@@ -59,7 +59,7 @@ The one exception is an account in protected mode, where it waits that account's
 **Wanted statement:** a deposit of an asset the owner holds and approved always succeeds in full
 or not at all.
 The deposited amount stays the owner's to withdraw.
-**Waits for:** vault section 4
+**Answered by:** VLT-301.
 
 ### VLT-M05 · Approving the vault address instead of the platform
 
@@ -68,7 +68,7 @@ The deposited amount stays the owner's to withdraw.
 **Proposed answer:** Refuse.
 **Wanted statement:** a deposit is refused unless the owner approved the platform for the amount.
 The refusal names the missing approval.
-**Waits for:** vault section 4
+**Answered by:** VLT-302.
 
 ### VLT-M06 · A zero amount
 
@@ -76,7 +76,7 @@ The refusal names the missing approval.
 **Does:** deposits zero units of a token, or of one id of a multi-token.
 **Proposed answer:** Refuse.
 **Wanted statement:** a deposit of zero is refused, and nothing moves.
-**Waits for:** vault section 4
+**Answered by:** VLT-303.
 
 ### VLT-M07 · The wrong kind of asset
 
@@ -86,7 +86,7 @@ or gives a kind number the platform does not know.
 **Proposed answer:** Refuse.
 **Wanted statement:** a deposit whose stated kind does not match what arrives is refused,
 and nothing moves.
-**Waits for:** vault section 4
+**Answered by:** VLT-304.
 
 ### VLT-M08 · A token that takes a fee on transfer
 
@@ -104,7 +104,7 @@ and the refusal states what arrived.
 **Proposed answer:** Stated.
 **Wanted statement:** a party deposits only into their own vault, from their own wallet.
 Payments between parties go through the steps of a loan or an offer.
-**Waits for:** vault section 4
+**Answered by:** VLT-305.
 
 ## 3. Sending assets to the platform outside its steps
 
@@ -237,7 +237,7 @@ Reason: replacing is the rule, and it keeps only one waiting move per asset.
 The event records the cancelled amount.
 **Wanted statement:** a new move into Ready replaces any move of the same asset still waiting,
 and its wait starts again.
-**Waits for:** vault section 4
+**Answered by:** VLT-325.
 
 ### VLT-M23 · An idle period or a date in the wrong unit
 
@@ -247,7 +247,7 @@ or gives a "keep until" date that has passed or is too far ahead.
 **Proposed answer:** Refuse.
 **Wanted statement:** an idle period outside its bounds [PRM] is refused.
 So is a keep-until date already past or beyond the longest idle period.
-**Waits for:** vault section 4
+**Answered by:** VLT-331.
 
 ### VLT-M24 · Using Ready without protected mode
 
@@ -256,7 +256,7 @@ So is a keep-until date already past or beyond the longest idle period.
 **Proposed answer:** Refuse.
 **Wanted statement:** the Ready balance exists only for an account in protected mode.
 A Ready step on any other account is refused.
-**Waits for:** vault section 4
+**Answered by:** VLT-320.
 
 ## 6. Protected mode
 
@@ -267,7 +267,7 @@ A Ready step on any other account is refused.
 large.
 **Proposed answer:** Refuse.
 **Wanted statement:** a protected-mode delay outside its bounds [PRM] is refused.
-**Waits for:** vault section 5
+**Answered by:** VLT-401.
 
 ### VLT-M26 · Raising the delay by mistake
 
@@ -276,7 +276,7 @@ large.
 **Proposed answer:** Bound. The delay can never pass its largest value.
 **Wanted statement:** raising the delay applies at once.
 Lowering it waits the delay in force.
-**Waits for:** vault section 5
+**Answered by:** VLT-402.
 
 ### VLT-M27 · A wrong destination on the allowlist
 
@@ -285,7 +285,7 @@ Lowering it waits the delay in force.
 **Proposed answer:** Undo.
 **Wanted statement:** a new destination counts only after the delay.
 It can be cancelled until then, and removed at any time after.
-**Waits for:** vault section 5
+**Answered by:** VLT-440.
 
 ### VLT-M28 · A queued payout to the wrong recipient or the wrong amount
 
@@ -304,7 +304,7 @@ A cancelled payout leaves the asset in the vault, free.
 A signer that cannot sign can never accept, and the request can be cancelled.
 **Wanted statement:** a signer counts only after it accepts with its own key and the delay has
 passed.
-**Waits for:** vault section 5
+**Answered by:** VLT-430.
 
 ### VLT-M30 · Locking the vault by mistake
 
@@ -314,7 +314,7 @@ passed.
 **Wanted statement:** a lock applies at once and stops value leaving.
 Only the owner may unlock, and the unlock waits the delay.
 Changes the lock dropped must be asked for again.
-**Waits for:** vault section 5
+**Answered by:** VLT-421.
 
 ### VLT-M31 · Replacing the owner wallet with the wrong wallet
 
@@ -324,7 +324,7 @@ Changes the lock dropped must be asked for again.
 **Wanted statement:** a replacement takes effect only after the delay, and can be cancelled until
 then.
 Once it completes, the old wallet has no right over the account.
-**Waits for:** vault section 5
+**Answered by:** VLT-450.
 
 ### VLT-M32 · A signed authorization left lying around
 
@@ -342,7 +342,7 @@ Once it completes, the old wallet has no right over the account.
 Switching it on only tightens, and the delay is at most its largest value.
 **Wanted statement:** switching protected mode on applies at once.
 Switching it off waits the delay.
-**Waits for:** vault section 5
+**Answered by:** VLT-400.
 
 ## 7. Recovery address and clawback
 
@@ -417,7 +417,7 @@ is de-listed, and credits nothing.
 **Wanted statement:** an adoption is refused while the screen cannot be read.
 **Answered by:** VLT-172.
 
-## 10. Second pass: rebasing tokens, the position move, listing escrows
+## 10. Second pass: rebasing tokens, the position move, listing-lockers
 
 ### VLT-M41 · Depositing a token whose balance grows by itself
 
@@ -451,7 +451,7 @@ cannot
 take them at once.
 **Wanted statement:** a replacement does not move the account's position tokens.
 They move only on a move the new owner wallet asks for, after the delay.
-**Waits for:** vault section 5
+**Answered by:** VLT-454.
 
 ### VLT-M44 · Letting the position move lapse
 
@@ -460,7 +460,7 @@ They move only on a move the new owner wallet asks for, after the delay.
 **Proposed answer:** Undo, by asking again.
 **Wanted statement:** a position move that is not run within its window lapses.
 A new one may be asked for.
-**Waits for:** vault section 5
+**Answered by:** VLT-457.
 
 ### VLT-M45 · Asking for the position move on a locked or recovered account
 
@@ -471,7 +471,7 @@ or after a clawback.
 **Wanted statement:** a position move is refused while the account is locked or in cool-down,
 and on a recovered account.
 A lock, a replacement or a clawback drops a waiting move.
-**Waits for:** vault section 5
+**Answered by:** VLT-458.
 
 ### VLT-M46 · Asking for the position move with the old wallet
 
@@ -480,7 +480,7 @@ A lock, a replacement or a clawback drops a waiting move.
 **Proposed answer:** Refuse.
 **Wanted statement:** only the owner wallet on record asks for a position move, and only after a
 replacement.
-**Waits for:** vault section 5
+**Answered by:** VLT-458.
 
 ### VLT-M47 · Expecting to withdraw a listed lot
 
@@ -489,35 +489,35 @@ replacement.
 **Proposed answer:** Refuse.
 **Wanted statement:** an asset held for an open listing never leaves the vault by a withdrawal.
 It is free again only when the listing ends unfilled.
-**Waits for:** vault section 4
+**Answered by:** VLT-354.
 
-### VLT-M48 · Sending a multi-token straight to a listing escrow
+### VLT-M48 · Sending a multi-token straight to a listing-locker
 
 **Who:** any party.
-**Does:** sends a multi-token to the address of a listing escrow, thinking it is the vault or the
-listing.
+**Does:** sends a multi-token to the address of a listing-locker, thinking it is the vault or
+the listing.
 **Proposed answer:** Refuse.
-**Wanted statement:** a listing escrow accepts nothing except from its own vault.
-**Waits for:** vault section 4
+**Wanted statement:** a listing-locker accepts nothing except from its own vault.
+**Answered by:** VLT-353.
 
-### VLT-M49 · Sending a token or a single NFT straight to a listing escrow
+### VLT-M49 · Sending a token or a single NFT straight to a listing-locker
 
 **Who:** any party.
-**Does:** sends a token, or a single NFT without asking it to accept, to the address of a listing
-escrow.
+**Does:** sends a token, or a single NFT without asking it to accept, to the address of a
+listing-locker.
 **Proposed answer:** Stated.
-**Wanted statement:** an asset other than the listed lot that reaches a listing escrow cannot leave
-it.
+**Wanted statement:** an asset other than the listed lot that reaches a listing-locker cannot
+leave it.
 No step recovers it.
-**Waits for:** vault section 4
+**Answered by:** VLT-355.
 
-### VLT-M50 · The network's own coin sent to a listing escrow
+### VLT-M50 · The network's own coin sent to a listing-locker
 
 **Who:** any party.
-**Does:** sends the native coin to a listing escrow.
+**Does:** sends the native coin to a listing-locker.
 **Proposed answer:** Refuse.
-**Wanted statement:** a listing escrow never accepts the native coin.
-**Waits for:** vault section 4
+**Wanted statement:** a listing-locker never accepts the native coin.
+**Answered by:** VLT-353.
 
 ## 11. A loan whose collateral sale failed
 

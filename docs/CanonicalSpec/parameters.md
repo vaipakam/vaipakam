@@ -11,7 +11,7 @@ The ids are permanent.
 | PRM-002 | The vault code wait | 7 | days | Fixed | Nobody. A longer wait needs a new version registry | None | Section 3 |
 | PRM-003 | The widest sale slippage a vault accepts | 2,500 | basis points | Fixed in the vault code. It equals the ceiling of the sale slippage setting, and a test holds the two equal | Nobody. A new figure needs new vault code | The vault code wait | VLT-040 |
 | PRM-004 | The widest liquidation discount a vault accepts | 1,500 | basis points | Fixed in the vault code. It equals the ceiling of the thinnest tier's discount setting, and a test holds the two equal | Nobody. A new figure needs new vault code | The vault code wait | VLT-020 |
-| PRM-005 | The longest delay a protected account may choose for its payouts | 5 | days | 2 to 5. Always shorter than the vault code wait | The account's owner, within the bounds. The upper bound: nobody, short of a new version registry with a longer wait | The account's own delay, to lower it | VLT-223, section 5 |
+| PRM-005 | The longest delay a protected account may choose for its payouts | 5 | days | 2 to 5. Always shorter than the vault code wait | The account's owner, within the bounds. The upper bound: nobody, short of a new version registry with a longer wait | The account's own delay, to lower it | VLT-223, VLT-400, VLT-401, VLT-402 |
 | PRM-006 | The longest pin delay that protection sets | 2 | days | Fixed. Only the owner's own authorization raises a vault's pin delay further | The protection settings, up to this figure | The pin delay in force, to lower it | VLT-232 |
 | PRM-007 | The earlier conduits one version of the vault code may list | 2 | conduits | Fixed in the vault code | Nobody. A new figure needs new vault code | The vault code wait | VLT-241 |
 | PRM-008 | The most versions of the vault code registered and not revoked at once | 8 (proposed) | versions | Fixed in the version registry | Nobody. A new figure needs a new version registry | None | VLT-226, VLT-229 |
@@ -75,6 +75,11 @@ The ids are permanent.
 | PRM-082 | The tight floor of a forced sale for each tier | 4.5, 3.5 and 2.5 | percent | Each at or above the least of 1 percent (proposed) and below the most a forced sale may lose, and not rising from the first tier to the third | Governance | The delay of the setting | PRC-621, PRC-650 |
 | PRM-083 | The least cap for collateral with no tier, also at high concentration | 20 | percent | 10 to 40, below the lowest default cap of a tier, and below the lowest liquidation line by the margin (PRM-084) | Governance | The delay of the setting | PRC-615, PRC-618, PRC-632 |
 | PRM-084 | The least margin between a cap for collateral with no tier and the lowest liquidation line of any tier | 10 | percentage points | 5 to 30 | Governance | The delay of the setting | PRC-618 |
+| PRM-085 | The least idle period of a Ready balance | 1 | day | Fixed | Nobody | None | VLT-329, VLT-331 |
+| PRM-086 | The longest idle period of a Ready balance, and the furthest ahead a Ready balance may be kept counting | 30 | days | Fixed | Nobody | None | VLT-329, VLT-330, VLT-331 |
+| PRM-087 | The most signers a protected account may have | 5 | signers | Fixed | Nobody | None | VLT-430 |
+| PRM-088 | The most destinations a protected account may name | 5 | destinations | Fixed | Nobody | None | VLT-440 |
+| PRM-089 | The least signers an account needs before their majority may replace its owner wallet | 3 | signers | Fixed | Nobody | None | VLT-450 |
 
 The sale slippage setting that lies inside PRM-003, and the liquidation discount of each tier
 that lies inside PRM-004, are other parameters. They are owed by the close-out rules.
