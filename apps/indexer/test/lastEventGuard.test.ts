@@ -8,14 +8,13 @@
  *  1. Every table of the shared database is CLASSIFIED below: an event-derived
  *     row (it must carry the three last-event columns), or not, with the
  *     reason. A new table fails here until someone decides which it is.
- *  2. Every event-derived table carries the columns, except those still
- *     PENDING. The pending list only shrinks: a pending table that has gained
- *     the columns fails until it leaves the list, so the list cannot go stale.
- *     It reaches empty one handler group at a time.
- *  3. Every write to an event-derived table that is not pending, anywhere in
- *     the Workers and the shared library, sets the columns: an INSERT names
- *     all three, an UPDATE (or an upsert's DO UPDATE) ends with
- *     `${LAST_EVENT_SET}`, or the statement carries the SQL comment
+ *  2. Every event-derived table carries the columns (migrations 0127-0130
+ *     added them one handler group at a time; none is left out).
+ *  3. Every write to an event-derived table, anywhere in the Workers and the
+ *     shared library, sets the columns: an INSERT names all three, an UPDATE
+ *     ends with `${LAST_EVENT_SET}`, an upsert's DO UPDATE sets
+ *     `${LAST_EVENT_UPSERT_SET}` (or `${LAST_EVENT_SET}`), or the statement
+ *     carries the SQL comment
  *     `last-event: unchanged — <reason>` for a write that changes no figure
  *     an event produced.
  *
@@ -125,22 +124,6 @@ const CLASSIFICATION: Record<string, Classification> = {
   failed_tx_range: PRODUCER_STATE,
   service_build_history: BORN_OFF_CHAIN,
 };
-
-/**
- * Event-derived tables that do not carry the columns YET. Only shrinks: each
- * handler group's change adds its migration and removes its tables here.
- */
-const PENDING = new Set<string>([
-  // The reward and recycling ledgers.
-  'keeper_commitment_reconciled',
-  'recycle_chain_reported',
-  'recycle_prelaunch',
-  'recycle_day_pool',
-  'reward_loop_totals',
-  'reward_loop_day',
-  'reward_day_user',
-  'reward_retention',
-]);
 
 function migratedSchema(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
@@ -262,7 +245,7 @@ describe('every derived row names the event that last changed it (#3921 B2)', ()
   const columnsOf = (t: string) =>
     (db.prepare(`SELECT name FROM pragma_table_info(?)`).all(t) as { name: string }[]).map((c) => c.name);
   const required = Object.entries(CLASSIFICATION)
-    .filter(([t, c]) => c.eventRow && !PENDING.has(t))
+    .filter(([, c]) => c.eventRow)
     .map(([t]) => t);
   const all = SOURCE_DIRS.flatMap((d) => sourceFiles(new URL(`${d}/`, REPO))).flatMap(literals);
   const found = writes(all);
@@ -273,14 +256,6 @@ describe('every derived row names the event that last changed it (#3921 B2)', ()
     expect(Object.keys(CLASSIFICATION).filter((t) => !tables.includes(t)), 'classified tables that do not exist').toEqual([]);
     for (const [t, c] of Object.entries(CLASSIFICATION)) {
       if (!c.eventRow) expect(c.reason.length, `${t} needs a reason`).toBeGreaterThan(10);
-    }
-  });
-
-  it('the pending list names only event-derived tables that lack the columns', () => {
-    for (const t of PENDING) {
-      expect(CLASSIFICATION[t]?.eventRow, `${t} is pending but not an event-derived table`).toBe(true);
-      const has = LAST_EVENT_COLUMNS.filter((c) => columnsOf(t).includes(c));
-      expect(has, `${t} has gained the columns: take it off the pending list`).toEqual([]);
     }
   });
 

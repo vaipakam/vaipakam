@@ -77,6 +77,7 @@ ratio-critical apply-one path, then stamps
  */
 
 import type { Env } from './env';
+import { LAST_EVENT_UPSERT_SET } from './lastEvent';
 
 /**
  * `indexer_cursor.kind` of the INGEST TIME WATERMARK: `last_block` holds a
@@ -109,6 +110,8 @@ export interface RewardLoopLog {
   args: Record<string, unknown>;
   blockNumber: bigint;
   transactionHash: string;
+  /** Optional: a log replayed from a stored event may not carry it. */
+  transactionIndex?: number | null;
   logIndex: number;
 }
 
@@ -148,6 +151,8 @@ const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
 interface LedgerEvent {
   blockNumber: number;
+  /** Null for an event replayed from `activity_events`, which keeps none. */
+  txIndex: number | null;
   logIndex: number;
   txHash: string;
   kind: string;
@@ -169,6 +174,10 @@ async function applyOne(
   ev: LedgerEvent,
 ): Promise<boolean> {
   const dayId = Math.floor(ev.blockAt / 86400);
+  // #3921 B2 — every ledger row this event changes names it. The rows
+  // accumulate many events and the columns move forward only, so each names
+  // the latest event folded into it.
+  const at = [ev.blockNumber, ev.txIndex, ev.logIndex] as const;
 
   // Exactly-once gate: skip events already applied by a prior scan or
   // by the backfill (same key space).
@@ -212,21 +221,24 @@ async function applyOne(
         ev.blockAt,
       ),
       env.DB.prepare(
-        `INSERT INTO reward_loop_day (chain_id, day_id, absorbed)
-         VALUES (?, ?, ?)
+        `INSERT INTO reward_loop_day
+           (chain_id, day_id, absorbed, last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (chain_id, day_id)
-         DO UPDATE SET absorbed = excluded.absorbed`,
+         DO UPDATE SET absorbed = excluded.absorbed, ${LAST_EVENT_UPSERT_SET}`,
       ).bind(
         chainId,
         dayId,
         (big(dayAbs?.absorbed) + ev.amount).toString(),
+        ...at,
       ),
       env.DB.prepare(
-        `INSERT INTO reward_loop_totals (chain_id, cum_absorbed)
-         VALUES (?, ?)
+        `INSERT INTO reward_loop_totals
+           (chain_id, cum_absorbed, last_event_block, last_event_tx_index, last_event_log_index)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (chain_id)
-         DO UPDATE SET cum_absorbed = excluded.cum_absorbed`,
-      ).bind(chainId, (big(totalsAbs?.cum_absorbed) + ev.amount).toString()),
+         DO UPDATE SET cum_absorbed = excluded.cum_absorbed, ${LAST_EVENT_UPSERT_SET}`,
+      ).bind(chainId, (big(totalsAbs?.cum_absorbed) + ev.amount).toString(), ...at),
     ]);
     return true;
   }
@@ -305,20 +317,23 @@ async function applyOne(
       ev.blockAt,
     ),
     env.DB.prepare(
-      `INSERT INTO reward_retention (chain_id, user, retained)
-       VALUES (?, ?, ?)
+      `INSERT INTO reward_retention
+         (chain_id, user, retained, last_event_block, last_event_tx_index, last_event_log_index)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (chain_id, user)
-       DO UPDATE SET retained = excluded.retained`,
-    ).bind(chainId, ev.user, retained.toString()),
+       DO UPDATE SET retained = excluded.retained, ${LAST_EVENT_UPSERT_SET}`,
+    ).bind(chainId, ev.user, retained.toString(), ...at),
     env.DB.prepare(
       `INSERT INTO reward_day_user
          (chain_id, day_id, user, distributed, vault_delivered,
-          reward_funded_debits)
-       VALUES (?, ?, ?, ?, ?, ?)
+          reward_funded_debits,
+          last_event_block, last_event_tx_index, last_event_log_index)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (chain_id, day_id, user)
        DO UPDATE SET distributed = excluded.distributed,
                      vault_delivered = excluded.vault_delivered,
-                     reward_funded_debits = excluded.reward_funded_debits`,
+                     reward_funded_debits = excluded.reward_funded_debits,
+                     ${LAST_EVENT_UPSERT_SET}`,
     ).bind(
       chainId,
       dayId,
@@ -326,15 +341,18 @@ async function applyOne(
       distributed.toString(),
       vaultDelivered.toString(),
       rewardFundedDebits.toString(),
+      ...at,
     ),
     env.DB.prepare(
       `INSERT INTO reward_loop_totals
-         (chain_id, cum_distributed, retained_stock)
-       VALUES (?, ?, ?)
+         (chain_id, cum_distributed, retained_stock,
+          last_event_block, last_event_tx_index, last_event_log_index)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (chain_id)
        DO UPDATE SET cum_distributed = excluded.cum_distributed,
-                     retained_stock = excluded.retained_stock`,
-    ).bind(chainId, cumDistributed.toString(), retainedStock.toString()),
+                     retained_stock = excluded.retained_stock,
+                     ${LAST_EVENT_UPSERT_SET}`,
+    ).bind(chainId, cumDistributed.toString(), retainedStock.toString(), ...at),
   ]);
   return true;
 }
@@ -371,6 +389,7 @@ function eventFromActivityRow(row: {
     if (!user.startsWith('0x')) return null;
     return {
       blockNumber: row.block_number,
+      txIndex: null,
       logIndex: row.log_index,
       txHash: row.tx_hash,
       kind: row.kind,
@@ -463,6 +482,7 @@ export async function ensureRewardLoopBackfill(
 
   await env.DB.prepare(
     `INSERT INTO reward_loop_totals (chain_id, backfill_done)
+     /* last-event: unchanged — the backfill's progress flag */
      VALUES (?, 1)
      ON CONFLICT (chain_id) DO UPDATE SET backfill_done = 1`,
   )
@@ -527,6 +547,7 @@ export async function applyRewardLoopLedger(
 
     const fresh = await applyOne(env, chainId, {
       blockNumber: Number(log.blockNumber),
+      txIndex: log.transactionIndex ?? null,
       logIndex: log.logIndex,
       txHash: log.transactionHash,
       kind: log.eventName,

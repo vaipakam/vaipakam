@@ -575,7 +575,7 @@ export async function markReconciledDayConsumed(
 ): Promise<void> {
   await db
     .prepare(
-      `UPDATE keeper_commitment_reconciled SET consumed_at = ?5
+      `UPDATE keeper_commitment_reconciled /* last-event: unchanged — the keeper's consumed stamp */ SET consumed_at = ?5
        WHERE base_chain_id = ?1 AND base_diamond = ?2
          AND mirror_chain_id = ?3 AND day_id = ?4 AND consumed_at IS NULL`,
     )

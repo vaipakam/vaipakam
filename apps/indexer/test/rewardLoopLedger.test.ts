@@ -100,6 +100,33 @@ async function retained(h: SqliteD1, user: string): Promise<string> {
   return row?.retained ?? '0';
 }
 
+
+describe('the reward ledger rows name their last event (#3921 B2)', () => {
+  it('each row names the latest event folded into it', async () => {
+    const { h, env } = makeHarness();
+    const U = '0x00000000000000000000000000000000000000a1';
+    await scanPass(
+      [
+        { ...log('RewardDeliveredToVault', U, 10n, 300n), transactionIndex: 4, logIndex: 2 },
+        { ...log('InteractionRewardsClaimed', U, 3n, 301n), transactionIndex: 1, logIndex: 0 },
+      ],
+      env,
+      CHAIN,
+      ts([
+        [300n, 86_400 * 5],
+        [301n, 86_400 * 5 + 10],
+      ]),
+    );
+    const at = (sql: string) => Object.values(h.db.prepare(sql).get() as object);
+    const cols = 'last_event_block, last_event_tx_index, last_event_log_index';
+    // Every reward event rewrites the user's retention row (a claim with the
+    // figure unchanged), so it names the later event too.
+    expect(at(`SELECT ${cols} FROM reward_retention`)).toEqual([301, 1, 0]);
+    expect(at(`SELECT ${cols} FROM reward_day_user`)).toEqual([301, 1, 0]);
+    expect(at(`SELECT ${cols} FROM reward_loop_totals`)).toEqual([301, 1, 0]);
+  });
+});
+
 describe('applyRewardLoopLedger', () => {
   it('credits retention on vault delivery and records the day flow', async () => {
     const { h, env } = makeHarness();
