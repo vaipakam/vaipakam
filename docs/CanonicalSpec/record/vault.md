@@ -46,7 +46,7 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-030 | K | Owner decision 2026-11-06, OP "2", "Own wallet only". PD "2", item 2. | c670965df6fb42e1 |
 | VLT-031 | K | Same. Mistake VLT-M16. | 9cffcb5cd0780641 |
 | VLT-032 | K | VO "Vault-owned authority and signed changes". OP "3.7.9". Mistake VLT-M17. | 3a79893b427a1c4f |
-| VLT-033 | K | OP "2", "A vault-held lien record". OP "3.3", Counterparty, layer 2. OP "3.7.5", first paragraph. Restated to say where the amount rests, PD "4.2". Changed after the approval of section 5: a replaced holder's own vault, whose owner record names the owner wallet on record, takes the release. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | 67a11f35b875c96a |
+| VLT-033 | K | OP "2", "A vault-held lien record". OP "3.3", Counterparty, layer 2. OP "3.7.5", first paragraph. Restated to say where the amount rests, PD "4.2". Changed after the approval of section 5: a replaced holder's own vault, whose owner record names the owner wallet on record, takes the release. Raised by the review of this folder. Entered for the owner's confirmation with this folder. | bd938b7aff6d3cc0 |
 | VLT-034 | K | PD "4.2", second item. OP "3.7.2", item 5. | f66339ae53745aeb |
 | VLT-035 | K | PD "4.2", first item. | 9624ceaf5d3ba45e |
 | VLT-037 | K | OP "3.7.2", item 5. PD "2.1", "Held for a position" | 354569a4cf2ac465 |
@@ -129,8 +129,8 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-153 | K | OP "3.7.2", item 4, first paragraph, from "What arrives is held for the position" | 96a6ebc0bd1f8e83 |
 | VLT-154 | K | PD "4.1" and "4.2": what is released to a position's holder goes to the holder's vault. OP "3.7.2", item 4, names purposes only for a payment for a position, so a release carries none. | 04284a17f34193db |
 | VLT-160 | N | New. Raised by mistake VLT-M13. Approved by the owner on 2026-11-22, 09:56 UTC. | c5c35b915fb95041 |
-| VLT-161 | K | VO "Deposits", third item: a vault may deliver an NFT to another vault and "this does not open receipt to arbitrary senders". OP "3.7.1", "An NFT is sent, never pulled", for the owner's own send. OI "The receive hooks", for the listing locker and the rental return. Mistake VLT-M12. Changed with section 4: from the vault's own listing locker, only the return of a listed lot up to the lot left is tracked. Confirmed by the owner with section 4 on 2026-11-23, 01:42 UTC. | a7239c6f3d2d83b7 |
-| VLT-162 | K | PR "Tracked Vault Holdings" and "Adopting and Disowning Untracked Assets". Changed with section 4: anything else from the vault's own listing locker arrives untracked. Confirmed by the owner with section 4 on 2026-11-23, 01:42 UTC. | ffc65b6ff91e5de9 |
+| VLT-161 | K | VO "Deposits", third item: a vault may deliver an NFT to another vault and "this does not open receipt to arbitrary senders". OP "3.7.1", "An NFT is sent, never pulled", for the owner's own send. OI "The receive hooks", for the listing-locker and the rental return. Mistake VLT-M12. Changed with section 4: from the vault's own listing-locker, only the return of a listed lot up to the lot left is tracked. Confirmed by the owner with section 4 on 2026-11-23, 01:42 UTC. | e5af8e8a3c997c8b |
+| VLT-162 | K | PR "Tracked Vault Holdings" and "Adopting and Disowning Untracked Assets". Changed with section 4: anything else from the vault's own listing-locker arrives untracked. Confirmed by the owner with section 4 on 2026-11-23, 01:42 UTC. | 6cc10b5335991b8d |
 | VLT-163 | N | New. Raised by mistake VLT-M11. Approved by the owner on 2026-11-22, 09:56 UTC. | 8a5a95d081ce919e |
 | VLT-170 | K | PR "Adopting and Disowning Untracked Assets". VO "Adopting or disowning an untracked asset", first two items. | f381a4c83a522c7b |
 | VLT-171 | K | PR same paragraph: "An adoption can never exceed the untracked part". VO same section, third item, for the wrong standard. Mistake VLT-M38. | b240db6ab235efe3 |
@@ -194,12 +194,12 @@ The sources of section 5 were read at commit `4ce59b35aa` of the main branch.
 | VLT-330 | K | VO "Ready balance", fifth item. RB "3", rule 8. | a7d76f6775d77ea8 |
 | VLT-331 | K | RB "3", rule 8, for the bounds. Mistake VLT-M23. | b51da12c39166611 |
 | VLT-332 | K | VO "Ready balance", seventh item. RB "5" | 174183f08c4a6642 |
-| VLT-350 | K | OP "3.5", item 3: a listing of a multi-unit NFT first moves exactly the listed id and amount out of the vault, against its lien, into a minimal contract for that one listing, created by the vault with a known code hash. The design names that contract with another word. | 8ed5ec76e1d25083 |
-| VLT-351 | K | OP "3.5", item 3: the contract holds nothing else, and it is the listing's offerer. OP, the build notes on spender rights and on order signatures, for the conduit and for whom the contract answers. VLT-066, VLT-067. | c054c6dbd3dfb480 |
-| VLT-352 | K | OP "3.5", item 3: "On cancel or expiry it returns what is left to the vault, which re-opens the lien for it". The lien is stated as never leaving the lot (VLT-350), which is the same outcome in the approved words of VLT-061. Refused by no condition: follows from PLT-041, since a full repayment in a pause ends the lien. | 3436f38d73c8c591 |
-| VLT-353 | N | New. Raised by mistakes VLT-M48, VLT-M50. Approved by the owner on 2026-11-23, 01:42 UTC. | 4b616b09a06933d5 |
-| VLT-354 | K | The reading of what a vault holds of a multi-unit NFT is written once here, for VLT-011, VLT-038, VLT-113 to VLT-115 and VLT-162. OP, the build notes, "The free-balance check reads the tracked holding for NFTs": a lot in the vault's own listing locker is still the vault's and still under its lien. VLT-014 and VLT-013 for the withdrawal. Mistake VLT-M47. | 6368ab857d17ffd4 |
-| VLT-355 | N | New. Raised by mistake VLT-M49. The locker obeying only its vault: OP "3.5", item 3. Naming the true source: VLT-170 and VLT-173. Approved by the owner on 2026-11-23, 01:42 UTC. | bc13d0cf82695bf8 |
+| VLT-350 | K | OP "3.5", item 3: a listing of a multi-unit NFT first moves exactly the listed id and amount out of the vault, against its lien, into a minimal contract for that one listing, created by the vault with a known code hash. The design names that contract with another word. | c85efde29029f7f0 |
+| VLT-351 | K | OP "3.5", item 3: the contract holds nothing else, and it is the listing's offerer. OP, the build notes on spender rights and on order signatures, for the conduit and for whom the contract answers. VLT-066, VLT-067. | bc7c8acb0c64ac2c |
+| VLT-352 | K | OP "3.5", item 3: "On cancel or expiry it returns what is left to the vault, which re-opens the lien for it". The lien is stated as never leaving the lot (VLT-350), which is the same outcome in the approved words of VLT-061. Refused by no condition: follows from PLT-041, since a full repayment in a pause ends the lien. | 698fb14812698654 |
+| VLT-353 | N | New. Raised by mistakes VLT-M48, VLT-M50. Approved by the owner on 2026-11-23, 01:42 UTC. | a7480576a7c419b5 |
+| VLT-354 | K | The reading of what a vault holds of a multi-unit NFT is written once here, for VLT-011, VLT-038, VLT-113 to VLT-115 and VLT-162. OP, the build notes, "The free-balance check reads the tracked holding for NFTs": a lot in the vault's own listing-locker is still the vault's and still under its lien. VLT-014 and VLT-013 for the withdrawal. Mistake VLT-M47. | 46ac393f8ccdeaa1 |
+| VLT-355 | N | New. Raised by mistake VLT-M49. The listing-locker obeying only its vault: OP "3.5", item 3. Naming the true source: VLT-170 and VLT-173. Approved by the owner on 2026-11-23, 01:42 UTC. | 781b64f04e21d34c |
 | VLT-400 | K | VO "Optional account protection", first item. VO "Recovery address and clawback", first item, and RA "3.5": switching on needs a recovery address set, in force or waiting. The pin delay: VLT-232. Mistake VLT-M33. | 17e92dec0d0ff9e2 |
 | VLT-401 | K | VO "Optional account protection", first item, for the bounds. RA "3.5". Mistake VLT-M25. | 82b1197dec4cf845 |
 | VLT-402 | C | VO "Delayed changes and account replacement", first item. Mistake VLT-M26. Changed: a change that already waits takes the longer of its own wait and a delay raised since, which no document states. Raised by the security review. Approved by the owner on 2026-11-23, 01:42 UTC. | 96209409eee84539 |
@@ -291,17 +291,18 @@ owner's confirmation. Each was read for conflict before it was entered.
 - VLT-454 names the account's position tokens: those held by the wallet whose own vault the
   account is. A later replacement never holds fast the tokens of a wallet that once managed
   the account. VLT-140 reads the same holding. VLT-033 releases a payment to a replaced
-  holder's own vault, whose owner record then names the owner wallet on record. Raised by the
-  review of this folder, after the owner's approval of section 5.
-- The contract a vault creates for one listing of a multi-unit NFT is called a listing locker,
-  in sections 2 and 4, the mistake list and the outline. No rule changes. The owner chose the
-  word after approving section 4.
+  holder's own vault, whose owner record then names the owner wallet on record, and never to a
+  wallet. Raised by the review of this folder, after the owner's approval of section 5.
+- The contract a vault creates for one listing of a multi-unit NFT is called a listing-locker,
+  in sections 2 and 4, the mistake list and the outline: one hyphenated word, never two words
+  and never the second alone. No rule changes. The owner chose the word after approving
+  section 4.
 - Two statements of the approved sections, and part of a third, are held outside this folder,
   under ids in the held range, at the security review's request. Citations of them are removed
   from this folder.
 - Entered with sections 4 and 5, and confirmed by the owner with them: VLT-161 accepts as
-  tracked, from the vault's own listing locker, only the return of a listed lot up to the
-  lot left, and VLT-162 treats anything else from that locker as arriving untracked. The
+  tracked, from the vault's own listing-locker, only the return of a listed lot up to the
+  lot left, and VLT-162 treats anything else from that listing-locker as arriving untracked. The
   watches of VLT-014 and VLT-113 read a multi-unit NFT's holding as VLT-354 states. VLT-145
   cites VLT-333.
 - Entered with section 5 in the same way: a wallet's own vault is the one its address gives,

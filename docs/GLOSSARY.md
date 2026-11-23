@@ -277,6 +277,19 @@ DEX failover when HF < 1e18; (2) time-based, after grace period
 expires (`DefaultedFacet`), with liquid assets swapped and illiquid
 transferred whole to the lender.
 
+**Listing-locker** — the small contract a vault creates for one listing
+of a multi-unit NFT. It holds only the listed lot, obeys only the vault
+that created it, sends the lot only to a buyer or back to that vault, and
+the sale price is paid to the vault. The lot stays under the vault's lien
+while it is there. One per listing, never per user and never shared.
+Always one hyphenated word: `listing-locker` in prose, `ListingLocker` for
+contract, type and event names, `listingLocker` for fields and variables,
+`LISTING_LOCKER_…` for constants. Never two words and never "locker"
+alone; the canonical specification's check refuses both. Today's code
+still names it `ListingEscrow` (`LibListingEscrow`, `ListingEscrowOpened`
+/ `ListingEscrowClosed`); the refactor renames those to this term. See
+the vault domain, section 4, in [`docs/CanonicalSpec/`](CanonicalSpec/).
+
 **LockReleaseTokenPool** — the canonical-chain (Base) CCIP TokenPool
 for VPFI. Locks VPFI on outbound CCIP message, releases on inbound.
 
