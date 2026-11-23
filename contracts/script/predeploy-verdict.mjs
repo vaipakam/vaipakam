@@ -25,8 +25,13 @@
  * The context is everything outside the tree that changes what the check
  * decides, worked out in one place ({@link checkContext}): the forge version,
  * every FOUNDRY_* setting in the environment (a profile can leave tests out),
- * and for the full check the resolved commit its gas-budget raise rule
- * compares against (GAS_BUDGETS_BASE_REF, else where HEAD left origin/main).
+ * and for the full check two more: the resolved commit its gas-budget raise
+ * rule compares against (GAS_BUDGETS_BASE_REF, else where HEAD left
+ * origin/main), and the regression plan itself, as `run-regression.sh
+ * --list-chunks` prints it. The plan is the regression's own statement of
+ * which suites it runs, so anything that changes the coverage (a FORK_URL_*
+ * that adds the fork suites, --invariants, a new suite) changes it, without
+ * this file keeping a list of such inputs.
  * A storage-layout baseline (STORAGE_LAYOUT_BASE) names a file outside the
  * tree, so a run with one is never recorded or reused (predeploy-check.sh,
  * lib/predeploy-once.sh).
@@ -37,6 +42,7 @@
  * who means to skip the check.
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,14 +74,32 @@ export function gasBudgetsBase(env = process.env, root = REPO_ROOT) {
   }
 }
 
+/** The digest of the full check's regression plan, from run-regression.sh itself. */
+export function regressionPlan(env = process.env) {
+  try {
+    const out = execFileSync('bash', [join(REPO_ROOT, 'contracts', 'script', 'run-regression.sh'), '--list-chunks'], {
+      cwd: join(REPO_ROOT, 'contracts'),
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return createHash('sha256').update(out).digest('hex');
+  } catch {
+    return 'unavailable';
+  }
+}
+
 /** Everything outside the tree that changes what the check decides. */
-export function checkContext(mode, { env = process.env, tool = toolchain, gasBase = gasBudgetsBase } = {}) {
+export function checkContext(mode, { env = process.env, tool = toolchain, gasBase = gasBudgetsBase, plan = regressionPlan } = {}) {
   const foundry = Object.keys(env)
     .filter((k) => k.startsWith('FOUNDRY_') && !(k === 'FOUNDRY_PROFILE' && env[k] === 'default'))
     .sort()
     .map((k) => `${k}=${env[k]}`);
   const ctx = { toolchain: tool(), foundry: foundry.join(' ') || 'none' };
-  if (mode === 'full') ctx.gasBudgetsBase = gasBase(env);
+  if (mode === 'full') {
+    ctx.gasBudgetsBase = gasBase(env);
+    ctx.regressionPlan = plan(env);
+  }
   return ctx;
 }
 

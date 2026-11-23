@@ -5,13 +5,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkContext, KIND, main, verdictPath, whyNot } from '../../../contracts/script/predeploy-verdict.mjs';
+import { checkContext, KIND, regressionPlan, main, verdictPath, whyNot } from '../../../contracts/script/predeploy-verdict.mjs';
 import { treeDigest } from '../../../contracts/script/rehearsal-tree.mjs';
 
 const H = (c) => c.repeat(64);
 const TOOL = 'forge Version: 1.8.6-stable';
 const CTX = { toolchain: TOOL, foundry: 'none' };
-const FULL_CTX = { ...CTX, gasBudgetsBase: 'b'.repeat(40) };
+const FULL_CTX = { ...CTX, gasBudgetsBase: 'b'.repeat(40), regressionPlan: H('p') };
 const pass = { kind: KIND, version: 1, result: 'pass', mode: 'default', commit: 'c'.repeat(40), treeDigest: H('a'), context: CTX };
 const ctxFn = (c = CTX, f = FULL_CTX) => (mode) => (mode === 'full' ? f : c);
 
@@ -53,11 +53,19 @@ function quiet(fn) {
 }
 
 test('the context reads every FOUNDRY_ setting, treats the default profile as none, and adds the gas base for the full check', () => {
-  const opts = (env) => ({ env, tool: () => TOOL, gasBase: () => 'g'.repeat(40) });
+  const opts = (env) => ({ env, tool: () => TOOL, gasBase: () => 'g'.repeat(40), plan: (e) => (e.FORK_URL_MAINNET ? H('f') : H('p')) });
   assert.deepEqual(checkContext('default', opts({ FOUNDRY_PROFILE: 'default', PATH: '/bin' })), CTX);
   assert.equal(checkContext('default', opts({ FOUNDRY_PROFILE: 'quick', FOUNDRY_FUZZ_RUNS: '5' })).foundry, 'FOUNDRY_FUZZ_RUNS=5 FOUNDRY_PROFILE=quick');
   assert.equal(checkContext('full', opts({})).gasBudgetsBase, 'g'.repeat(40));
   assert.equal(checkContext('default', opts({})).gasBudgetsBase, undefined);
+  assert.notEqual(checkContext('full', opts({ FORK_URL_MAINNET: 'x' })).regressionPlan, checkContext('full', opts({})).regressionPlan);
+});
+
+test('the regression plan comes from run-regression.sh and changes when a fork RPC adds the fork suites', () => {
+  const plain = regressionPlan({ ...process.env, FORK_URL_MAINNET: '', FORK_URL_BASE_SEPOLIA: '', FORK_URL_ARB_SEPOLIA: '' });
+  assert.match(plain, /^[0-9a-f]{64}$/);
+  const withFork = regressionPlan({ ...process.env, FORK_URL_MAINNET: 'http://127.0.0.1:1' });
+  assert.notEqual(withFork, plain);
 });
 
 test('record then covers over the real tree; a stronger verdict is not replaced by a weaker one', () => {
