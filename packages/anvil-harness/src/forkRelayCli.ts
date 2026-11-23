@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPublicClient, http, type Address, type Hex } from 'viem';
 import { generatePrivateKey } from 'viem/accounts';
 import { compileForkRelay, FORK_RELAY_LIMITS, ForkCcipRelay, type ForkEnd, type ForkRelayedMessage, type SavedForkRelay } from './forkRelay';
+import { redactSecrets, summarizeFailure } from '@vaipakam/lib/errorDescription';
 import { assertLoopbackUrl } from './rpc';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -183,7 +184,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (e: unknown) => {
-      console.error(e instanceof Error ? e.message : String(e));
+      // The command's own refusals are written to be read (`relay: ...`);
+      // anything else comes from a dependency and is summarised, redacted.
+      const own = e instanceof Error && e.message.startsWith('relay: ');
+      console.error(own ? redactSecrets(e.message) : summarizeFailure(e));
       process.exit(1);
     },
   );
