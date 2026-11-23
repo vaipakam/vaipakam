@@ -106,5 +106,6 @@
   "0127_offers_loans_last_event.sql",
   "0128_loan_side_last_event.sql",
   "0129_signed_offers_last_event.sql",
-  "0130_ledgers_last_event.sql"
+  "0130_ledgers_last_event.sql",
+  "0131_service_errors.sql"
 ]

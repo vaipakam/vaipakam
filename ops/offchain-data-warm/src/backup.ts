@@ -154,6 +154,12 @@ const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
   //   - service_build_history (#3921, migration 0126) — which build of each
   //     service ran from when, noted as it ran. No replay recreates it.
   { table: 'service_build_history', migrationPrefix: '0126' },
+  //   - service_errors, service_error_hours (#3922, migration 0131) — each
+  //     failed or refused request to a service, with its reference, and the
+  //     per-hour counts. Seen as the requests failed; no replay recreates
+  //     them. Kept 90 days and capped per hour, so small.
+  { table: 'service_errors', migrationPrefix: '0131' },
+  { table: 'service_error_hours', migrationPrefix: '0131' },
 ];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).

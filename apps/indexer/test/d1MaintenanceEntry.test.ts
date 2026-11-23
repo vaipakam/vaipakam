@@ -147,3 +147,16 @@ describe('scheduled, on a build with no D1 binding', () => {
     expect(ctx.waitUntil).not.toHaveBeenCalled();
   });
 });
+
+describe('the request reference (#3922)', () => {
+  it('makes a reference for a read and exposes it to the browser', async () => {
+    const res = await worker.fetch(
+      new Request('https://indexer.example/loans?chain=84532', { headers: { Origin: 'https://app.example' } }),
+      NO_BINDINGS,
+      fakeCtx(),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-request-ref')).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/);
+    expect(res.headers.get('access-control-expose-headers')).toBe('x-request-ref');
+  });
+});

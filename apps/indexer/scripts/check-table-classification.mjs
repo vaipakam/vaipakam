@@ -102,6 +102,14 @@ export const CLASSIFICATION = {
     reason: 'the failed transaction record (#3918): errors and explanations decoded while the node still had the state, which no replay can give back',
   },
   failed_tx_cursor: { class: 'born-off-chain', reason: 'the failed-tx pass\'s position per network (#3918), kept with the records it covers' },
+  service_errors: {
+    class: 'born-off-chain',
+    reason: 'each failed or refused request to a service, with its reference (#3922): seen as it failed, so no replay recreates it',
+  },
+  service_error_hours: {
+    class: 'born-off-chain',
+    reason: 'the per-hour count of failed requests the service error record is capped by (#3922)',
+  },
   service_build_history: {
     class: 'born-off-chain',
     reason: 'which build of each service ran from when (#3921): seen as it ran, so no replay recreates it',
@@ -737,6 +745,10 @@ const EXTERNAL_WRITERS = {
   // #3921 — the build history is written through the shared library, which
   // the indexer and agent Workers and the failed-tx write route all call.
   service_build_history: { script: 'packages/lib/src/buildHistory.ts' },
+  // #3922 — the service error record is written through the shared library's
+  // request wrapper, which the indexer and agent Workers both install.
+  service_errors: { script: 'packages/lib/src/serviceErrors.ts' },
+  service_error_hours: { script: 'packages/lib/src/serviceErrors.ts' },
 };
 
 const dead = Object.keys(CLASSIFICATION)

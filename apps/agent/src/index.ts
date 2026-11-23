@@ -197,6 +197,9 @@ import {
   type ChannelDeps,
 } from './alertChannelFlow';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { withRequestReference } from '@vaipakam/lib/serviceErrors';
+import routeWordList from './routeWords.json';
+import { REQUEST_REF_HEADER } from '@vaipakam/lib/requestReference';
 import { noteServiceBuild, UNSTAMPED } from '@vaipakam/lib/buildHistory';
 
 /** A signed alert request: a few fields plus a wallet signature. A
@@ -225,7 +228,7 @@ let notedVersion: string | null = null;
 /** #1722 — the agent's Telegram state object; wrangler binds it as TG_STATE. */
 export { TelegramState } from './telegramState/object';
 
-export default {
+const worker = {
   async scheduled(
     controller: ScheduledController,
     env: WorkerEnv,
@@ -659,6 +662,29 @@ export default {
 
     return new Response('Not found', { status: 404 });
   },
+} satisfies ExportedHandler<WorkerEnv>;
+
+const ROUTE_WORDS: ReadonlySet<string> = new Set(routeWordList);
+
+/**
+ * #3922 — every request goes through the request reference and the service
+ * error record (`@vaipakam/lib/serviceErrors`): the response carries the
+ * reference, and a failed or refused request leaves one log line and one row
+ * in the shared database. Wrapped here, around the whole handler, so no route
+ * can be missed.
+ */
+export default {
+  ...worker,
+  fetch: withRequestReference(worker.fetch, {
+    service: 'agent',
+    // The words this Worker's routing code names (test/routeWords.test.ts
+    // re-derives them); every other path segment is recorded as a placeholder.
+    routeWords: ROUTE_WORDS,
+    db: (env: WorkerEnv) => (hasD1Binding(env.DB) ? (env.DB as D1Database) : null),
+    frontendOrigins: (env: WorkerEnv) => env.FRONTEND_ORIGIN,
+    corsOrigin: (req: Request, env: WorkerEnv) => resolveAllowedOrigin(req, env),
+    version: (env: WorkerEnv) => env.CF_VERSION_METADATA,
+  }),
 } satisfies ExportedHandler<WorkerEnv>;
 
 // ─── HTTP handlers ─────────────────────────────────────────────────
@@ -1415,7 +1441,8 @@ function preflight(req: Request, env: CorsEnv): Response {
     headers: {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      // #3922 — a write carries the app's request reference.
+      'Access-Control-Allow-Headers': `Content-Type, ${REQUEST_REF_HEADER}`,
       'Access-Control-Max-Age': '86400',
     },
   });

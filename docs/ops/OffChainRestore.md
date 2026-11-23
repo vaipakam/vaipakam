@@ -1469,8 +1469,10 @@ For each table:
    archives), `telegram_links`, `support_tickets`,
    `loan_orphans` (absent from pre-#2197 archives), `signed_offers`
    (absent from pre-#1481 archives), `failed_tx`, `failed_tx_cursor`
-   and `failed_tx_range` (absent from pre-#3918 archives), and
-   `service_build_history` (absent from pre-#3921 archives).
+   and `failed_tx_range` (absent from pre-#3918 archives),
+   `service_build_history` (absent from pre-#3921 archives), and
+   `service_errors` and `service_error_hours` (absent from pre-#3922
+   archives).
 
    > **The failed transaction record is restored, not replayed** (#3918).
    > `failed_tx` holds each failed transaction with its error and the

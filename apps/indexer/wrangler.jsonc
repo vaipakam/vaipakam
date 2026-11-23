@@ -197,6 +197,9 @@
   //   - CANCELLED_OFFER_RETENTION_DAYS — int days (default 30 inside
   //                                      the prune helper). Coerced
   //                                      from string + clamped >= 1.
+  //   - SERVICE_ERROR_RETENTION_DAYS — int days the service error record
+  //                                      is kept (#3922); default 90 when
+  //                                      unset, held to 7..400.
   "vars": {
     "CANCELLED_OFFER_RETENTION_DAYS": "30",
     // #3921 — the static builds whose `build.json` the build history reads

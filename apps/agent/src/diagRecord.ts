@@ -61,6 +61,7 @@
  * non-erasable row.
  */
 
+import { REQUEST_REF_HEADER } from '@vaipakam/lib/requestReference';
 import type { Env } from './env';
 import { slotRefusalStatus, takeCallerSlot } from './rateLimit';
 import { isListedOrigin } from '@vaipakam/lib/originAllowList';
@@ -256,7 +257,8 @@ function corsHeaders(env: Env, origin: string | null): HeadersInit {
   return {
     'access-control-allow-origin': matched ? origin! : 'null',
     'access-control-allow-methods': 'POST, OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    // #3922 — the app's writes carry its request reference.
+    'access-control-allow-headers': `content-type, ${REQUEST_REF_HEADER}`,
     'access-control-max-age': '86400',
     vary: 'origin',
   };
