@@ -120,6 +120,8 @@ const CLASSIFICATION: Record<string, Classification> = {
   telegram_links: BORN_OFF_CHAIN,
   support_tickets: BORN_OFF_CHAIN,
   failed_tx: not('a failed transaction, keyed by its own hash and block'),
+  service_errors: not('a failed request to a service, not derived from any event (#3922)'),
+  service_error_hours: not('a per-hour count of failed requests, not derived from any event (#3922)'),
   failed_tx_cursor: PRODUCER_STATE,
   failed_tx_range: PRODUCER_STATE,
   service_build_history: BORN_OFF_CHAIN,

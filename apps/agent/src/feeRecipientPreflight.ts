@@ -51,6 +51,7 @@
  * (NOT `"passed"`) so the dapp UI surfaces residual uncertainty.
  */
 
+import { REQUEST_REF_HEADER } from '@vaipakam/lib/requestReference';
 import type { Env } from './env';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 
@@ -197,7 +198,8 @@ function jsonResponse(
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': resolvedOrigin,
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      // #3922 — the app's writes carry its request reference.
+      'Access-Control-Allow-Headers': `Content-Type, ${REQUEST_REF_HEADER}`,
     },
   });
 }

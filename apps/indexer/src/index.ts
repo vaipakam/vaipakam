@@ -118,6 +118,7 @@ import { readBodyText } from '@vaipakam/lib/requestBody';
 import { isListedOrigin } from '@vaipakam/lib/originAllowList';
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { pruneServiceErrors, serviceErrorRetentionDays, withRequestReference } from '@vaipakam/lib/serviceErrors';
 
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
@@ -169,7 +170,7 @@ import {
 } from './loanRoutes';
 import { runBuildHistoryPass } from './buildHistoryPass';
 
-export default {
+const worker = {
   async scheduled(
     controller: ScheduledController,
     env: WorkerEnv,
@@ -388,6 +389,14 @@ export default {
       pruneOldFailedTx(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldFailedTx pass failed:', redactedError(err));
+      }),
+    );
+    // #3922 — the service error record is kept 90 days unless the operator
+    // sets SERVICE_ERROR_RETENTION_DAYS (held to 7..400).
+    runPass(
+      pruneServiceErrors(resolved.DB, serviceErrorRetentionDays(resolved.SERVICE_ERROR_RETENTION_DAYS)).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] pruneServiceErrors pass failed:', redactedError(err));
       }),
     );
     // #757 — prune the webhook delivery dedupe table (short retention window).
@@ -842,6 +851,24 @@ export default {
 
     return new Response('Not found', { status: 404 });
   },
+} satisfies ExportedHandler<WorkerEnv>;
+
+/**
+ * #3922 — every request goes through the request reference and the service
+ * error record (`@vaipakam/lib/serviceErrors`): the response carries the
+ * reference, and a failed or refused request leaves one log line and one row.
+ * Wrapped here, around the whole handler, so no route can be missed.
+ */
+export default {
+  ...worker,
+  fetch: withRequestReference(worker.fetch, {
+    service: 'indexer',
+    db: (env: WorkerEnv) => (hasD1Binding(env.DB) ? (env.DB as D1Database) : null),
+    frontendOrigins: (env: WorkerEnv) => env.FRONTEND_ORIGIN,
+    // The REST routes' CORS is open (T-041).
+    corsOrigin: () => '*',
+    version: (env: WorkerEnv) => env.CF_VERSION_METADATA,
+  }),
 } satisfies ExportedHandler<WorkerEnv>;
 
 /**

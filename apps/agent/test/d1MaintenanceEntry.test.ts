@@ -143,3 +143,30 @@ describe('scheduled cadence (#2236)', () => {
     }
   });
 });
+
+describe('the request reference (#3922)', () => {
+  it('returns the app reference on a refused write, readable by the browser, and the preflight allows it', async () => {
+    const env = { FRONTEND_ORIGIN: 'https://app.example' } as WorkerEnv;
+    const pre = await worker.fetch(
+      new Request('https://agent.example/thresholds', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://app.example', 'Access-Control-Request-Headers': 'content-type, x-request-ref' },
+      }),
+      env,
+      fakeCtx(),
+    );
+    expect(pre.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('x-request-ref');
+
+    const res = await worker.fetch(
+      new Request('https://agent.example/thresholds', {
+        method: 'PUT',
+        headers: { Origin: 'https://app.example', 'x-request-ref': 'ABCDE12345' },
+      }),
+      env,
+      fakeCtx(),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-request-ref')).toBe('ABCDE12345');
+    expect(res.headers.get('access-control-expose-headers')).toBe('x-request-ref');
+  });
+});

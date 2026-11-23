@@ -100,6 +100,8 @@ export interface WorkerEnv {
   RPC_BNB_TESTNET?: SecretBinding;
   RPC_POLYGON_AMOY?: SecretBinding;
   CANCELLED_OFFER_RETENTION_DAYS?: string;
+  /** #3922 — days the service error record is kept (default 90, held to 7..400). A plain var. */
+  SERVICE_ERROR_RETENTION_DAYS?: string;
   // #3918 — the failed-transaction pass's write token for
   // `POST /internal/failed-tx`, a plain Worker secret
   // (`wrangler secret put FAILED_TX_WRITER_TOKEN`) shared with that pass's
@@ -296,6 +298,8 @@ export interface Env {
   // 2026-05-08 — cancelled-offer retention in days. Default 30.
   // String → int coerce + clamp at >= 1 inside the prune helper.
   CANCELLED_OFFER_RETENTION_DAYS?: string;
+  /** #3922 — days the service error record is kept (default 90, held to 7..400). A plain var. */
+  SERVICE_ERROR_RETENTION_DAYS?: string;
 
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
@@ -370,6 +374,7 @@ export async function resolveEnv(
     CF_VERSION_METADATA: raw.CF_VERSION_METADATA,
     BUILD_FILE_ORIGINS: raw.BUILD_FILE_ORIGINS,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
+    SERVICE_ERROR_RETENTION_DAYS: raw.SERVICE_ERROR_RETENTION_DAYS,
     OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,

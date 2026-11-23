@@ -116,6 +116,10 @@ export const BORN_OFF_CHAIN_TABLES = new Set([
   'failed_tx_range',
   // #3921 (migration 0126) — the build history, noted as each service ran.
   'service_build_history',
+  // #3922 (migration 0131) — the service error record and its hourly counts,
+  // noted as each request failed.
+  'service_errors',
+  'service_error_hours',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -190,6 +194,8 @@ const ERA_GATED_TABLES = {
   failed_tx_cursor: 'migration 0123 (#3918)',
   failed_tx_range: 'migration 0123 (#3918)',
   service_build_history: 'migration 0126 (#3921)',
+  service_errors: 'migration 0131 (#3922)',
+  service_error_hours: 'migration 0131 (#3922)',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -264,6 +270,10 @@ const REQUIRED_TABLE_COLUMNS = {
     'marked', 'replaced_at', 'recorded_at',
   ],
   service_build_history: ['service', 'seen_at', 'build', 'version_id', 'source'],
+  // The reference is what an operator searches by; without it a restored row
+  // cannot be tied to what the user saw.
+  service_errors: ['id', 'service', 'method', 'route', 'status', 'reference', 'reference_source', 'build', 'version_id', 'at'],
+  service_error_hours: ['service', 'hour_start', 'failures'],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -288,6 +298,8 @@ const TRUSTED_PRIMARY_KEYS = {
   failed_tx_cursor: ['chain_id'],
   failed_tx_range: ['chain_id', 'kind', 'from_block', 'to_block'],
   service_build_history: ['service', 'seen_at', 'build'],
+  service_errors: ['id'],
+  service_error_hours: ['service', 'hour_start'],
 };
 
 // Every OTHER uniqueness the schema declares on a born-off-chain table,
@@ -319,6 +331,14 @@ const TRUSTED_COLUMN_SHAPES = {
   // Written only through @vaipakam/lib/buildHistory, which stores the deploy
   // stamp's tag or 'unstamped' and nothing else.
   service_build_history: { build: /^(?:[0-9a-f]{12}(?:-dirty)?|unstamped)$/ },
+  // Written only through @vaipakam/lib/serviceErrors: a Crockford reference,
+  // a route pattern (plain words and placeholders, never an address) and the
+  // deploy stamp's tag or 'unstamped'.
+  service_errors: {
+    reference: /^[0-9A-HJKMNP-TV-Z]{10}$/,
+    route: /^\/(?:(?:[a-z][a-z0-9_-]{0,31}|:n|:hex|:x|:more)(?:\/|$))*$/,
+    build: /^(?:[0-9a-f]{12}(?:-dirty)?|unstamped)$/,
+  },
 };
 
 /**

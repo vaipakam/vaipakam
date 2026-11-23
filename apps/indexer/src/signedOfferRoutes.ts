@@ -27,6 +27,7 @@
  * order, which reverts at accept.
  */
 
+import { REQUEST_REF_HEADER } from '@vaipakam/lib/requestReference';
 import { type Address, type Hex } from 'viem';
 import { createPublicClient, http } from 'viem';
 import { type Env, getChainConfigs, type ChainConfig } from './env';
@@ -1145,7 +1146,8 @@ export function handleSignedOffersPreflight(): Response {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      // #3922 — the app's POST carries its request reference.
+      'Access-Control-Allow-Headers': `Content-Type, ${REQUEST_REF_HEADER}`,
       'Access-Control-Max-Age': '86400',
     },
   });
