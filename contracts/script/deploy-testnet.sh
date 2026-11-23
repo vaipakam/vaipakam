@@ -1417,7 +1417,7 @@ EOF
   "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
   "deployer": "$DEPLOYER_ADDR",
   "diamond": "$DIAMOND_NOW",
-  "rehearsalGate": ${REHEARSAL_GATE_RESULT:-null}
+  "rehearsalGate": $(rehearsal_gate_source_value "$MARKERS_DIR")
 }
 EOF
   mark_phase_done "contracts"

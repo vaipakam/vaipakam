@@ -26,6 +26,12 @@
 #   rehearsal_gate_mark_phase <phase-marker-file>
 #       After the phase marker is written: an override's reason is appended
 #       to it.
+#   rehearsal_gate_source_value <markers-dir>
+#       The value written as `rehearsalGate` in deployment_source.json: this
+#       run's result, or, when this run did not check (a resume past the
+#       Diamond step, a rerun on a recorded Diamond), the record the gate
+#       left in the markers when that Diamond was deployed, so a later run
+#       never erases it. `null` when there is neither.
 #
 # A rehearsal (REHEARSE=1) is what produces a verdict, so it never runs the
 # gate. The verdict is a local file: the gate guards against mistakes, and
@@ -69,4 +75,11 @@ rehearsal_gate_record() {
 rehearsal_gate_mark_phase() {
   [ "$REHEARSAL_GATE_OVERRIDE_SET" = 1 ] && [ -n "$REHEARSAL_GATE_RESULT" ] || return 0
   printf 'without-rehearsal: %s\n' "$REHEARSAL_GATE_OVERRIDE_REASON" >> "$1"
+}
+
+rehearsal_gate_source_value() {
+  local f="$1/rehearsal-gate.json"
+  if [ -n "$REHEARSAL_GATE_RESULT" ]; then printf '%s' "$REHEARSAL_GATE_RESULT"; return; fi
+  if [ -f "$f" ] && jq -ce . "$f" >/dev/null 2>&1; then jq -ce . "$f"; return; fi
+  printf 'null'
 }

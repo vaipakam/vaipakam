@@ -105,6 +105,14 @@ else
   bad "an override with a reason was refused: $(cat "$WORK/err")"
 fi
 
+# ── a later run that did not check keeps the recorded gate result ──
+saved_result="$REHEARSAL_GATE_RESULT"; REHEARSAL_GATE_RESULT=""
+[ "$(rehearsal_gate_source_value "$WORK/m" | jq -r .reason)" = "incident fix, forks unavailable" ] \
+  && ok "a resumed run writes the Diamond's recorded gate result, not null" || bad "a resumed run erased the gate record"
+[ "$(rehearsal_gate_source_value "$WORK/none")" = null ] && ok "with no record and no check the source value is null" || bad "source value without a record"
+REHEARSAL_GATE_RESULT="$saved_result"
+[ "$(rehearsal_gate_source_value "$WORK/none" | jq -r .gate)" = overridden ] && ok "this run's own result wins" || bad "this run's result not used"
+
 # ── no input digest, no gate ──
 reset; REHEARSAL_GATE_PLAN="$WORK/plan"; saved="$REHEARSAL_GATE_INPUT_DIGEST"; REHEARSAL_GATE_INPUT_DIGEST=""
 if rehearsal_gate_check testnet base-sepolia 2>"$WORK/err"; then bad "the gate passed with no input digest"

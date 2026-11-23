@@ -1179,7 +1179,7 @@ cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
   "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
   "deployer": "$DEPLOYER_ADDR",
   "diamond": "$DIAMOND_FOR_HEALTH",
-  "rehearsalGate": ${REHEARSAL_GATE_RESULT:-null}
+  "rehearsalGate": $(rehearsal_gate_source_value "$MARKERS_DIR")
 }
 EOF
 echo "  ✓ deployment_source.json written ($(echo "$COMMIT_HASH" | head -c 8)$COMMIT_DIRTY)"
