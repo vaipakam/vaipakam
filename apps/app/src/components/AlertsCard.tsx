@@ -85,7 +85,14 @@ export function AlertsCard() {
   // so the card's controls wait for it too.
   const [phraseBusy, setPhraseBusy] = useState(false);
   const anyBusy = busy || phraseBusy;
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNoticeText] = useState<string | null>(null);
+  // #3922 — a notice can report a refusal the agent answered (Push not
+  // saved); its reference rides beside it and is cleared with it.
+  const [noticeRef, setNoticeRef] = useState<string | null>(null);
+  const setNotice = (text: string | null, reference: string | null = null) => {
+    setNoticeText(text);
+    setNoticeRef(text === null ? null : reference);
+  };
   const [error, setErrorText] = useState<string | null>(null);
   // #3922 — the agent's request reference for the failure shown, if it came
   // from the agent; cleared with the message.
@@ -213,7 +220,7 @@ export function AlertsCard() {
       // carry that lane's state, so they are sent only when this save
       // is the user touching the toggle or the advanced numbers — any
       // other save omits them and the agent preserves what is stored.
-      const push = await saveAlertPrefs(address, chainId, next, {
+      const { push, pushRefusalReference } = await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
         bandsChanged: opts?.bandsChanged,
         signMessage: signForRequest,
@@ -230,7 +237,7 @@ export function AlertsCard() {
         setPrefs(saved);
         if (refusedEnable) {
           void pushStatus.refetch();
-          setNotice(copy.alerts.pushNotSaved);
+          setNotice(copy.alerts.pushNotSaved, pushRefusalReference);
         } else {
           setNotice(copy.alerts.saved);
         }
@@ -693,7 +700,12 @@ export function AlertsCard() {
             <PaidPushConsent billing={pushStatus.data.billing} />
           ) : null}
 
-          {notice ? <p className="muted" style={{ margin: 0 }}>{notice}</p> : null}
+          {notice ? (
+            <p className="muted" style={{ margin: 0 }}>
+              {notice}
+              <ServiceReference reference={noticeRef} />
+            </p>
+          ) : null}
           {error ? (
             <div className="banner banner-danger" role="alert">
               <span className="banner-body">

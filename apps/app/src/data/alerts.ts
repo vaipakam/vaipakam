@@ -407,12 +407,20 @@ export interface SaveAlertPrefsOptions {
  *  and the save was repeated without it so the rest of it landed. */
 export type PushSaveOutcome = 'not-requested' | 'stored' | 'unavailable';
 
+/** What a save reports (#3922): the Push outcome, and the request reference
+ *  of the agent's Push refusal when this call received it (null otherwise,
+ *  including a kept save finished later: the reference is never kept). */
+export interface AlertSaveResult {
+  push: PushSaveOutcome;
+  pushRefusalReference: string | null;
+}
+
 export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
   prefs: AlertPrefs,
   opts: SaveAlertPrefsOptions,
-): Promise<PushSaveOutcome> {
+): Promise<AlertSaveResult> {
   // Bands travel ONLY when this save is the user changing the risky
   // lane (#2000) — mirroring the due-date field's omission rule. Sent
   // unconditionally, a fresh device's DEFAULT lane state (defaults on,
@@ -485,8 +493,10 @@ export async function saveAlertPrefs(
   let pushRefused =
     opts.resume?.kind === 'save-settings' &&
     (opts.resume.context as { pushRefused?: unknown } | undefined)?.pushRefused === true;
+  let pushRefusalReference: string | null = null;
   if (res.status === 409 && res.data?.error === 'push-unavailable') {
     pushRefused = true;
+    pushRefusalReference = res.reference;
     res = await attempt(false);
   }
   if (!res.ok) {
@@ -510,9 +520,9 @@ export async function saveAlertPrefs(
     }
     throw failure(res, `saving alert settings failed (${res.status})`);
   }
-  if (pushRefused) return 'unavailable';
-  if (!prefs.pushEnabled) return 'not-requested';
-  return 'stored';
+  if (pushRefused) return { push: 'unavailable', pushRefusalReference };
+  if (!prefs.pushEnabled) return { push: 'not-requested', pushRefusalReference: null };
+  return { push: 'stored', pushRefusalReference: null };
 }
 
 /** #3836 — the plain-words reason for a signed request the alert service
