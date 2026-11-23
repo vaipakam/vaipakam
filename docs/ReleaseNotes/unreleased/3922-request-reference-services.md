@@ -1,4 +1,4 @@
-## Troubleshooting — a request reference and a kept record of service errors (PR #<n>)
+## Troubleshooting — a request reference and a kept record of service errors (PR #4037)
 
 The indexer and the agent now give every response a short reference, ten characters that can be read out without ambiguity, in a response header the browser is allowed to read. When the app's request is a write, the reference is the one the app sent; on a plain read the service makes it, because a custom header on a read would turn every indexer read into two requests. The reference is random each time and is derived from nothing about the user.
 
