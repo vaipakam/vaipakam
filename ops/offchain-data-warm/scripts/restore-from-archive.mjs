@@ -332,11 +332,13 @@ const TRUSTED_COLUMN_SHAPES = {
   // stamp's tag or 'unstamped' and nothing else.
   service_build_history: { build: /^(?:[0-9a-f]{12}(?:-dirty)?|unstamped)$/ },
   // Written only through @vaipakam/lib/serviceErrors: a Crockford reference,
-  // a route pattern (plain words and placeholders, never an address) and the
+  // a route pattern (the service's own route words and placeholders, never
+  // an address; a word is lower case, may start with a digit, `1inch`, but
+  // is never all digits or hex-shaped) and the
   // deploy stamp's tag or 'unstamped'.
   service_errors: {
     reference: /^[0-9A-HJKMNP-TV-Z]{10}$/,
-    route: /^\/(?:(?:[a-z][a-z0-9_-]{0,31}|:n|:hex|:x|:more)(?:\/|$))*$/,
+    route: /^\/(?:(?:(?!(?:0x)?[0-9a-f]+(?:\/|$))(?![0-9]+(?:\/|$))[a-z0-9][a-z0-9_-]{0,31}|:n|:hex|:x|:more)(?:\/|$))*$/,
     build: /^(?:[0-9a-f]{12}(?:-dirty)?|unstamped)$/,
   },
 };

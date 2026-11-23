@@ -198,6 +198,7 @@ import {
 } from './alertChannelFlow';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { withRequestReference } from '@vaipakam/lib/serviceErrors';
+import routeWordList from './routeWords.json';
 import { REQUEST_REF_HEADER } from '@vaipakam/lib/requestReference';
 import { noteServiceBuild, UNSTAMPED } from '@vaipakam/lib/buildHistory';
 
@@ -663,6 +664,8 @@ const worker = {
   },
 } satisfies ExportedHandler<WorkerEnv>;
 
+const ROUTE_WORDS: ReadonlySet<string> = new Set(routeWordList);
+
 /**
  * #3922 — every request goes through the request reference and the service
  * error record (`@vaipakam/lib/serviceErrors`): the response carries the
@@ -674,6 +677,9 @@ export default {
   ...worker,
   fetch: withRequestReference(worker.fetch, {
     service: 'agent',
+    // The words this Worker's routing code names (test/routeWords.test.ts
+    // re-derives them); every other path segment is recorded as a placeholder.
+    routeWords: ROUTE_WORDS,
     db: (env: WorkerEnv) => (hasD1Binding(env.DB) ? (env.DB as D1Database) : null),
     frontendOrigins: (env: WorkerEnv) => env.FRONTEND_ORIGIN,
     corsOrigin: (req: Request, env: WorkerEnv) => resolveAllowedOrigin(req, env),

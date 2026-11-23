@@ -119,6 +119,7 @@ import { isListedOrigin } from '@vaipakam/lib/originAllowList';
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { pruneServiceErrors, serviceErrorRetentionDays, withRequestReference } from '@vaipakam/lib/serviceErrors';
+import routeWordList from './routeWords.json';
 
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
@@ -853,6 +854,8 @@ const worker = {
   },
 } satisfies ExportedHandler<WorkerEnv>;
 
+const ROUTE_WORDS: ReadonlySet<string> = new Set(routeWordList);
+
 /**
  * #3922 — every request goes through the request reference and the service
  * error record (`@vaipakam/lib/serviceErrors`): the response carries the
@@ -863,6 +866,9 @@ export default {
   ...worker,
   fetch: withRequestReference(worker.fetch, {
     service: 'indexer',
+    // The words this Worker's routing code names (test/routeWords.test.ts
+    // re-derives them); every other path segment is recorded as a placeholder.
+    routeWords: ROUTE_WORDS,
     db: (env: WorkerEnv) => (hasD1Binding(env.DB) ? (env.DB as D1Database) : null),
     frontendOrigins: (env: WorkerEnv) => env.FRONTEND_ORIGIN,
     // The REST routes' CORS is open (T-041).

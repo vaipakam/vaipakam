@@ -11,6 +11,8 @@ import {
 import {
   pruneServiceErrors,
   routePattern,
+  extractRouteWords,
+  SERVICE_ERROR_DAILY_CAP,
   SERVICE_ERROR_HOURLY_CAP,
   SERVICE_ERROR_RETENTION_DAYS,
   serviceErrorRetentionDays,
@@ -52,6 +54,7 @@ function wrap(handler: (req: Request) => Promise<Response> | Response, now = 1_8
   const pending: Promise<unknown>[] = [];
   const fetch = withRequestReference<Env, { waitUntil(p: Promise<unknown>): void }>(async (req) => handler(req), {
     service: 'agent',
+    routeWords: WORDS,
     db: (env) => env.DB,
     frontendOrigins: (env) => env.FRONTEND_ORIGIN,
     corsOrigin: () => APP,
@@ -69,6 +72,8 @@ function wrap(handler: (req: Request) => Promise<Response> | Response, now = 1_8
     },
   };
 }
+
+const WORDS: ReadonlySet<string> = new Set(['loans', 'by-participant', 'name', 'telegram', 'phrase']);
 
 const ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
 
@@ -96,13 +101,25 @@ describe('request reference', () => {
 
 describe('route pattern', () => {
   it('never carries an address, an id or a free-text value', () => {
-    expect(routePattern(`/loans/by-participant/${ADDRESS}`)).toBe('/loans/by-participant/:hex');
-    expect(routePattern('/loans/123')).toBe('/loans/:n');
-    expect(routePattern('/x/deadbeefcafe')).toBe('/x/:hex');
-    expect(routePattern('/name/vitalik.eth')).toBe('/name/:x');
-    expect(routePattern('/a/b/c/d/e/f/g/h/i/j')).toBe('/a/b/c/d/e/f/g/h/:more');
-    expect(routePattern('/')).toBe('/');
-    expect(routePattern('/Telegram/Phrase')).toBe('/telegram/phrase');
+    expect(routePattern(`/loans/by-participant/${ADDRESS}`, WORDS)).toBe('/loans/by-participant/:hex');
+    expect(routePattern('/loans/123', WORDS)).toBe('/loans/:n');
+    expect(routePattern('/x/deadbeefcafe', WORDS)).toBe('/:x/:hex');
+    expect(routePattern('/name/vitalik.eth', WORDS)).toBe('/name/:x');
+    expect(routePattern('/a/b/c/d/e/f/g/h/i/j', WORDS)).toBe('/:hex/:hex/:hex/:hex/:hex/:hex/:x/:x/:more');
+    expect(routePattern('/', WORDS)).toBe('/');
+    // Only an exact route word survives: a near-match (case, a free-text
+    // segment that happens to look like a word) is a placeholder.
+    expect(routePattern('/Telegram/Phrase', WORDS)).toBe('/:x/:x');
+    expect(routePattern('/repayment-record/alice-smith', WORDS)).toBe('/:x/:x');
+  });
+
+  it('takes its words from path literals and path regexes in the source', () => {
+    const src = [
+      "if (url.pathname === '/telegram/phrase') {}",
+      'const m = /^\\/loans\\/by-participant\\/(0x[0-9a-f]{40})$/i.exec(p);',
+      "const t = `/name/${x}`;",
+    ];
+    expect(extractRouteWords(src)).toEqual(['by-participant', 'loans', 'name', 'phrase', 'telegram']);
   });
 });
 
@@ -236,6 +253,25 @@ describe('withRequestReference', () => {
     expect(rows(raw)).toHaveLength(SERVICE_ERROR_HOURLY_CAP);
     const hour = raw.prepare('SELECT failures FROM service_error_hours').get() as { failures: number };
     expect(hour.failures).toBe(SERVICE_ERROR_HOURLY_CAP + 3);
+  });
+
+  it('keeps at most the daily cap of rows across the hours of one day', async () => {
+    const { d1, raw } = db();
+    const dayStart = Math.floor(1_800_000_000 / 86_400) * 86_400;
+    const hours = Math.ceil(SERVICE_ERROR_DAILY_CAP / SERVICE_ERROR_HOURLY_CAP) + 2;
+    for (let h = 0; h < hours; h++) {
+      const { call } = wrap(() => new Response('down', { status: 500 }), (dayStart + h * 3600) * 1000);
+      for (let i = 0; i < SERVICE_ERROR_HOURLY_CAP; i++) {
+        await call({ DB: d1 }, new Request('https://idx.example/offers/active'));
+      }
+    }
+    expect(rows(raw)).toHaveLength(SERVICE_ERROR_DAILY_CAP);
+    // The next UTC day starts a fresh allowance.
+    const { call } = wrap(() => new Response('down', { status: 500 }), (dayStart + 86_400) * 1000);
+    await call({ DB: d1 }, new Request('https://idx.example/offers/active'));
+    expect(rows(raw)).toHaveLength(SERVICE_ERROR_DAILY_CAP + 1);
+    const counted = raw.prepare('SELECT SUM(failures) AS n FROM service_error_hours').get() as { n: number };
+    expect(counted.n).toBe(hours * SERVICE_ERROR_HOURLY_CAP + 1);
   });
 
   it('passes a WebSocket upgrade through untouched', async () => {

@@ -20,8 +20,10 @@
 -- Every 5xx is recorded; a 4xx only from one of the app's own origins.
 --
 -- service_error_hours counts every failure considered for the record per
--- service per hour; rows are kept only while the count is within the hourly
--- cap, so the counter says how many were not kept.
+-- service per hour. A row is kept only while the rows already kept for that
+-- service are under 25 this hour and 300 this UTC day, so the counter says
+-- how many were not kept, and the table stays bounded (two services, 90 days:
+-- at most 54,000 rows).
 --
 -- Not served by any public route. Kept 90 days by default
 -- (SERVICE_ERROR_RETENTION_DAYS); the indexer cron prunes older rows.
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS service_errors (
 );
 CREATE INDEX IF NOT EXISTS idx_service_errors_at ON service_errors (at);
 CREATE INDEX IF NOT EXISTS idx_service_errors_reference ON service_errors (reference);
+CREATE INDEX IF NOT EXISTS idx_service_errors_service_at ON service_errors (service, at);
 
 CREATE TABLE IF NOT EXISTS service_error_hours (
   service    TEXT    NOT NULL,
