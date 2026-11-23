@@ -31,6 +31,8 @@ import {
   type DiagErasureStatus,
 } from '../data/diagErasure';
 import { isUserRejection } from '../lib/errors';
+import { referenceOf } from '../lib/serviceRequest';
+import { ServiceReference } from './ServiceReference';
 
 type CardResult =
   | { kind: 'erased' }
@@ -41,10 +43,11 @@ type CardResult =
   // named none; the banner then describes the scope without a name.
   | { kind: 'erasedChainOnly'; chainId: number | null }
   | { kind: 'status'; status: DiagErasureStatus }
-  | { kind: 'unavailable' }
-  | { kind: 'expired' }
-  | { kind: 'unverifiable' }
-  | { kind: 'error' };
+  // #3922 — a failure the agent answered carries its request reference.
+  | { kind: 'unavailable'; reference: string | null }
+  | { kind: 'expired'; reference: string | null }
+  | { kind: 'unverifiable'; reference: string | null }
+  | { kind: 'error'; reference: string | null };
 
 export function DiagErasureCard() {
   // The wallet's ACTUAL chain, not the app's read chain (#2008 round
@@ -131,12 +134,12 @@ export function DiagErasureCard() {
             : res.outcome === 'processedChainOnly'
               ? { kind: 'erasedChainOnly', chainId: res.chainId }
               : res.outcome === 'unavailable'
-                ? { kind: 'unavailable' }
+                ? { kind: 'unavailable', reference: res.reference }
                 : res.outcome === 'expired'
-                  ? { kind: 'expired' }
+                  ? { kind: 'expired', reference: res.reference }
                   : res.outcome === 'unverifiable'
-                    ? { kind: 'unverifiable' }
-                    : { kind: 'error' },
+                    ? { kind: 'unverifiable', reference: res.reference }
+                    : { kind: 'error', reference: res.reference },
         );
       } else {
         const status = await requestDiagErasureStatus(
@@ -146,20 +149,20 @@ export function DiagErasureCard() {
         );
         publish(
           status.status === 'unavailable'
-            ? { kind: 'unavailable' }
+            ? { kind: 'unavailable', reference: status.reference }
             : status.status === 'expired'
-              ? { kind: 'expired' }
+              ? { kind: 'expired', reference: status.reference }
               : status.status === 'unverifiable'
-                ? { kind: 'unverifiable' }
+                ? { kind: 'unverifiable', reference: status.reference }
                 : status.status === 'error'
-                  ? { kind: 'error' }
+                  ? { kind: 'error', reference: status.reference }
                   : { kind: 'status', status },
         );
       }
     } catch (e) {
       // A dismissed wallet prompt is a cancel, not a failure — the
       // card simply returns to rest. Anything else is reported.
-      if (!isUserRejection(e)) publish({ kind: 'error' });
+      if (!isUserRejection(e)) publish({ kind: 'error', reference: referenceOf(e) });
     } finally {
       setPendingRuns((prev) => {
         if (prev.get(forWallet) !== runId) return prev;
@@ -227,21 +230,25 @@ export function DiagErasureCard() {
           {shown?.kind === 'unavailable' ? (
             <div className="banner banner-danger" role="alert">
               {copy.dataRights.diagUnavailable}
+              <ServiceReference reference={shown.reference} />
             </div>
           ) : null}
           {shown?.kind === 'expired' ? (
             <div className="banner" role="alert">
               {copy.dataRights.diagExpired}
+              <ServiceReference reference={shown.reference} />
             </div>
           ) : null}
           {shown?.kind === 'unverifiable' ? (
             <div className="banner" role="alert">
               {copy.dataRights.diagVerifyUnavailable}
+              <ServiceReference reference={shown.reference} />
             </div>
           ) : null}
           {shown?.kind === 'error' ? (
             <div className="banner banner-danger" role="alert">
               {copy.dataRights.diagError}
+              <ServiceReference reference={shown.reference} />
             </div>
           ) : null}
 

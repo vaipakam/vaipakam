@@ -3169,7 +3169,8 @@
       "networkFallback": "network #{{id}}",
       "unknown": "अज्ञात",
       "amountTooPrecise": "{{symbol}} को इतने बारीक हिस्सों में नहीं बाँटा जा सकता — ज़्यादा से ज़्यादा {{decimals}} दशमलव स्थान इस्तेमाल करें।",
-      "amountBelowOfferFloor": "इस टोकन में प्रोटोकॉल जो सबसे छोटा ऑफ़र स्वीकार करता है, वह {{min}} {{symbol}} है। कम से कम इतनी राशि दर्ज करें।"
+      "amountBelowOfferFloor": "इस टोकन में प्रोटोकॉल जो सबसे छोटा ऑफ़र स्वीकार करता है, वह {{min}} {{symbol}} है। कम से कम इतनी राशि दर्ज करें।",
+      "serviceReference": "संदर्भ {{reference}}। सहायता से संपर्क करते समय इसे बताएँ।"
     },
     "stepNav": {
       "progressAria": "Progress",

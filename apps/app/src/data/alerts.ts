@@ -52,6 +52,7 @@ import {
 import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
 import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
+import { noteReference, serviceFetch } from '../lib/serviceRequest';
 import {
   newAlertRequest,
   signAndSendAlertRequest,
@@ -333,6 +334,9 @@ interface PostResult {
    *  disabled. An abort during the read rejects `json()`, which is
    *  caught and reads as a malformed body. */
   data: Record<string, unknown> | null;
+  /** #3922 — the request reference the agent returned (or the one sent), so
+   *  a failure built from this answer can show it. */
+  reference: string | null;
 }
 
 async function post(path: string, body: unknown): Promise<PostResult> {
@@ -341,7 +345,9 @@ async function post(path: string, body: unknown): Promise<PostResult> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${origin}${path}`, {
+    // A network failure throws `ServiceUnreachableError`, carrying the
+    // reference this write sent.
+    const { res, reference } = await serviceFetch(`${origin}${path}`, {
       method: path === '/thresholds' ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -351,10 +357,15 @@ async function post(path: string, body: unknown): Promise<PostResult> {
       string,
       unknown
     > | null;
-    return { ok: res.ok, status: res.status, data };
+    return { ok: res.ok, status: res.status, data, reference };
   } finally {
     clearTimeout(t);
   }
+}
+
+/** #3922 — an error for a failed agent answer, carrying its reference. */
+function failure(res: PostResult, message: string): Error {
+  return noteReference(new Error(message), res.reference);
 }
 
 export interface SaveAlertPrefsOptions {
@@ -396,12 +407,20 @@ export interface SaveAlertPrefsOptions {
  *  and the save was repeated without it so the rest of it landed. */
 export type PushSaveOutcome = 'not-requested' | 'stored' | 'unavailable';
 
+/** What a save reports (#3922): the Push outcome, and the request reference
+ *  of the agent's Push refusal when this call received it (null otherwise,
+ *  including a kept save finished later: the reference is never kept). */
+export interface AlertSaveResult {
+  push: PushSaveOutcome;
+  pushRefusalReference: string | null;
+}
+
 export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
   prefs: AlertPrefs,
   opts: SaveAlertPrefsOptions,
-): Promise<PushSaveOutcome> {
+): Promise<AlertSaveResult> {
   // Bands travel ONLY when this save is the user changing the risky
   // lane (#2000) — mirroring the due-date field's omission rule. Sent
   // unconditionally, a fresh device's DEFAULT lane state (defaults on,
@@ -474,8 +493,10 @@ export async function saveAlertPrefs(
   let pushRefused =
     opts.resume?.kind === 'save-settings' &&
     (opts.resume.context as { pushRefused?: unknown } | undefined)?.pushRefused === true;
+  let pushRefusalReference: string | null = null;
   if (res.status === 409 && res.data?.error === 'push-unavailable') {
     pushRefused = true;
+    pushRefusalReference = res.reference;
     res = await attempt(false);
   }
   if (!res.ok) {
@@ -483,25 +504,25 @@ export async function saveAlertPrefs(
       // Rollout window: the agent can't store an opt-out until its
       // storage migration lands. Honest, plain-words failure — the
       // opposite of silently pretending the switch worked.
-      throw new Error(copy.alerts.optoutUnavailable);
+      throw failure(res, copy.alerts.optoutUnavailable);
     }
     if (res.status === 503 && res.data?.error === 'verification-unavailable') {
-      throw new Error(copy.alerts.signatureCheckUnavailable);
+      throw failure(res, copy.alerts.signatureCheckUnavailable);
     }
     if (res.status === 409 && res.data?.error === 'request-already-used') {
-      throw new Error(copy.alerts.requestAlreadyUsed);
+      throw failure(res, copy.alerts.requestAlreadyUsed);
     }
     if (res.status === 409 && res.data?.error === 'request-superseded') {
-      throw new Error(copy.alerts.requestSuperseded);
+      throw failure(res, copy.alerts.requestSuperseded);
     }
     if (res.status === 503 && res.data?.error === 'order-unavailable') {
-      throw new Error(copy.alerts.serviceUpgrading);
+      throw failure(res, copy.alerts.serviceUpgrading);
     }
-    throw new Error(`saving alert settings failed (${res.status})`);
+    throw failure(res, `saving alert settings failed (${res.status})`);
   }
-  if (pushRefused) return 'unavailable';
-  if (!prefs.pushEnabled) return 'not-requested';
-  return 'stored';
+  if (pushRefused) return { push: 'unavailable', pushRefusalReference };
+  if (!prefs.pushEnabled) return { push: 'not-requested', pushRefusalReference: null };
+  return { push: 'stored', pushRefusalReference: null };
 }
 
 /** #3836 — the plain-words reason for a signed request the alert service
@@ -537,10 +558,10 @@ export async function issueTelegramLink(
           buildTelegramLinkMessage(wallet, chainId, issuedAt, keyHash),
         );
   const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
-  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `starting the Telegram link failed (${res.status})`);
+  if (!res.ok) throw failure(res, signedRequestRefusal(res) ?? `starting the Telegram link failed (${res.status})`);
   const code = res.data?.code;
   if (typeof code !== 'string' || !code) {
-    throw new Error('the alerts backend returned no link code');
+    throw failure(res, 'the alerts backend returned no link code');
   }
   const botUrl = res.data?.bot_url;
   return { code, botUrl: typeof botUrl === 'string' ? botUrl : null };
@@ -548,8 +569,9 @@ export async function issueTelegramLink(
 
 /** Result of a test-alert round-trip (UX-012). `sent` proves delivery
  *  (gate "linked" on it); `not-linked` means the bot handshake never
- *  completed; `error` is a transient/backend failure. */
-export type TestAlertResult = 'sent' | 'not-linked' | 'error';
+ *  completed, and carries the reference the agent's refusal returned
+ *  (#3922). A transient or backend failure is thrown, also carrying it. */
+export type TestAlertResult = { kind: 'sent' } | { kind: 'not-linked'; reference: string | null };
 
 /** Push ONE real test alert to the wallet's linked Telegram chat. Signs
  *  a free ownership proof first, then asks the agent to send. The agent
@@ -569,14 +591,14 @@ export async function sendTestTelegramAlert(
           buildTelegramTestMessage(wallet, chainId, issuedAt, keyHash),
         );
   const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
-  if (res.ok) return 'sent';
+  if (res.ok) return { kind: 'sent' };
   // Only a body-tagged `not-linked` is the fumbled-handshake case. A
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
   // as "your chat isn't linked" — fall through to the generic error.
-  if (res.status === 404) {
-    return res.data?.error === 'not-linked' ? 'not-linked' : 'error';
-  }
-  return 'error';
+  if (res.status === 404 && res.data?.error === 'not-linked') return { kind: 'not-linked', reference: res.reference };
+  // #3922 — any other answer is a service failure: thrown with its
+  // reference, so the card shows both.
+  throw failure(res, copy.alerts.testAlertError);
 }
 
 /** Clear the stored wallet ↔ Telegram link server-side. Signs the
@@ -598,9 +620,9 @@ export async function unlinkTelegram(
   // mode on, so it changed nothing (a failed read must never silence a
   // protected account's alerts).
   if (res.status === 503 && res.data?.error === 'protection-unknown') {
-    return { scope: 'wallet', pending: [], protectionUnknown: true };
+    return { scope: 'wallet', pending: [], protectionUnknown: true, reference: res.reference };
   }
-  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `unlinking Telegram failed (${res.status})`);
+  if (!res.ok) throw failure(res, signedRequestRefusal(res) ?? `unlinking Telegram failed (${res.status})`);
   const pending = Array.isArray(res.data?.pending)
     ? (res.data.pending as unknown[]).flatMap((p) => {
         const r = p as { chain_id?: unknown; effective_at?: unknown };
@@ -619,7 +641,7 @@ export async function unlinkTelegram(
   // only — the confirmation the card shows must match what actually
   // happened. A missing field (an agent from before the scoped
   // response) means the old wallet-wide behaviour.
-  return { scope: res.data?.scope === 'chain' ? 'chain' : 'wallet', pending, protectionUnknown: false };
+  return { scope: res.data?.scope === 'chain' ? 'chain' : 'wallet', pending, protectionUnknown: false, reference: null };
 }
 
 /** What an unlink did (#3246). `pending` lists the chains whose chat is NOT
@@ -632,6 +654,9 @@ export interface TelegramUnlinkOutcome {
    *  `effectiveAt` is null until the chat has been told (no end time yet). */
   pending: { chainId: number; effectiveAt: number | null }[];
   protectionUnknown: boolean;
+  /** #3922 — the request reference when `protectionUnknown` (a service
+   *  refusal the card shows); null otherwise. */
+  reference: string | null;
 }
 
 // ─── The alert phrase (#3346) ────────────────────────────────────────────
@@ -681,7 +706,8 @@ export async function fetchAlertPhraseStatus(wallet: string, chainId: number): P
  *  (on this network, for a contract wallet), and nothing changed. */
 export type AlertPhraseOutcome =
   | { kind: 'set'; groupLinked: boolean; scope: AlertPhraseScope | null }
-  | { kind: 'no-private-chat' };
+  // #3922 — a refusal the agent answered carries its request reference.
+  | { kind: 'no-private-chat'; reference: string | null };
 
 /** The rule a typed phrase breaks, or null. The same rule the service
  *  applies: a phrase is never cleaned, only accepted or refused. */
@@ -717,8 +743,8 @@ export async function setAlertPhrase(
     };
   }
   const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start', { phrase });
-  if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat' };
-  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `setting the alert phrase failed (${res.status})`);
+  if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat', reference: res.reference };
+  if (!res.ok) throw failure(res, signedRequestRefusal(res) ?? `setting the alert phrase failed (${res.status})`);
   return { kind: 'set', groupLinked: res.data?.groupLinked === true, scope: phraseScopeOf(res.data?.scope) };
 }
 
@@ -743,6 +769,6 @@ export async function clearAlertPhrase(
           buildAlertPhraseClearMessage(wallet, chainId, issuedAt, keyHash),
         );
   const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
-  if (!res.ok) throw new Error(signedRequestRefusal(res) ?? `removing the alert phrase failed (${res.status})`);
+  if (!res.ok) throw failure(res, signedRequestRefusal(res) ?? `removing the alert phrase failed (${res.status})`);
   return phraseScopeOf(res.data?.scope);
 }

@@ -7547,6 +7547,9 @@ const copySource = {
   common: {
     back: 'Back',
     tryAgain: 'Try again',
+    // #3922 — shown beside a failure that came from the app's own services
+    // (the indexer or the agent), and nowhere else.
+    serviceReference: tmpl('Reference {{reference}}. Quote it if you contact support.', ['reference']),
     waitingForWallet: 'Waiting for wallet…',
     // Fallback chain label when a chain id has no known name (offer-row,
     // rental prepay). "#42" style, so the number reads as an id.

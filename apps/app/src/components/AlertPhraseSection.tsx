@@ -37,6 +37,8 @@ import {
   type AlertPhraseScope,
 } from '../data/alerts';
 import type { PendingAlertRequest } from '../data/alertRequest';
+import { ServiceReference } from './ServiceReference';
+import { referenceOf } from '../lib/serviceRequest';
 
 interface Props {
   address: `0x${string}`;
@@ -78,7 +80,13 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
   const [phrase, setPhrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorText] = useState<string | null>(null);
+  // #3922 — the agent's request reference for the failure shown, if any.
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const setError = (text: string | null, reference: string | null = null) => {
+    setErrorText(text);
+    setErrorRef(text === null ? null : reference);
+  };
   const problem = phrase === '' ? null : alertPhraseProblem(phrase);
   const retyping = resume?.kind === 'set-phrase';
 
@@ -90,7 +98,7 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
     try {
       await work();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? e.message : String(e), referenceOf(e));
     } finally {
       setBusy(false);
       onBusyChange(false);
@@ -110,7 +118,7 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
     void run(async () => {
       const outcome = await setAlertPhrase(address, chainId, phrase, signMessage, retyping ? (resume ?? undefined) : undefined);
       if (outcome.kind === 'no-private-chat') {
-        setError(copy.alerts.phraseLinkFirst);
+        setError(copy.alerts.phraseLinkFirst, outcome.reference);
         return;
       }
       setPhrase('');
@@ -215,7 +223,10 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
       ) : null}
       {error ? (
         <div className="banner banner-danger" role="alert">
-          <span className="banner-body">{error}</span>
+          <span className="banner-body">
+            {error}
+            <ServiceReference reference={errorRef} />
+          </span>
         </div>
       ) : null}
     </div>

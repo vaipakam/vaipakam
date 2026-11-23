@@ -936,7 +936,8 @@ async function handler(req, res) {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        // #3922 — the app's writes carry a request reference, as the Worker allows.
+        'Access-Control-Allow-Headers': 'Content-Type, x-request-ref',
         'Access-Control-Max-Age': '86400',
       });
       return res.end();

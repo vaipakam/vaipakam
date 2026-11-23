@@ -3169,7 +3169,8 @@
       "networkFallback": "ネットワーク #{{id}}",
       "unknown": "不明",
       "amountTooPrecise": "{{symbol}} はそこまで細かく分けられません。小数点以下は最大 {{decimals}} 桁にしてください。",
-      "amountBelowOfferFloor": "このトークンでプロトコルが受け付ける最小のオファーは {{min}} {{symbol}} です。少なくともその額を入力してください。"
+      "amountBelowOfferFloor": "このトークンでプロトコルが受け付ける最小のオファーは {{min}} {{symbol}} です。少なくともその額を入力してください。",
+      "serviceReference": "参照番号 {{reference}}。サポートに連絡する際はこの番号をお伝えください。"
     },
     "stepNav": {
       "progressAria": "進行状況",

@@ -62,6 +62,8 @@ import {
   type PendingAlertRequest,
 } from '../data/alertRequest';
 import { AlertPhraseSection } from './AlertPhraseSection';
+import { ServiceReference } from './ServiceReference';
+import { referenceOf } from '../lib/serviceRequest';
 
 export function AlertsCard() {
   const { address } = useAccount();
@@ -83,8 +85,22 @@ export function AlertsCard() {
   // so the card's controls wait for it too.
   const [phraseBusy, setPhraseBusy] = useState(false);
   const anyBusy = busy || phraseBusy;
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNoticeText] = useState<string | null>(null);
+  // #3922 — a notice can report a refusal the agent answered (Push not
+  // saved); its reference rides beside it and is cleared with it.
+  const [noticeRef, setNoticeRef] = useState<string | null>(null);
+  const setNotice = (text: string | null, reference: string | null = null) => {
+    setNoticeText(text);
+    setNoticeRef(text === null ? null : reference);
+  };
+  const [error, setErrorText] = useState<string | null>(null);
+  // #3922 — the agent's request reference for the failure shown, if it came
+  // from the agent; cleared with the message.
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const setError = (text: string | null, reference: string | null = null) => {
+    setErrorText(text);
+    setErrorRef(text === null ? null : reference);
+  };
   // #3836 — a request this browser started and the wallet has not answered
   // yet (a multi-signature wallet's owners may take days). Re-read after
   // every request, since sending one keeps or drops it.
@@ -204,7 +220,7 @@ export function AlertsCard() {
       // carry that lane's state, so they are sent only when this save
       // is the user touching the toggle or the advanced numbers — any
       // other save omits them and the agent preserves what is stored.
-      const push = await saveAlertPrefs(address, chainId, next, {
+      const { push, pushRefusalReference } = await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
         bandsChanged: opts?.bandsChanged,
         signMessage: signForRequest,
@@ -221,13 +237,13 @@ export function AlertsCard() {
         setPrefs(saved);
         if (refusedEnable) {
           void pushStatus.refetch();
-          setNotice(copy.alerts.pushNotSaved);
+          setNotice(copy.alerts.pushNotSaved, pushRefusalReference);
         } else {
           setNotice(copy.alerts.saved);
         }
       });
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -259,7 +275,7 @@ export function AlertsCard() {
       const issued = await issueTelegramLink(address, chainId, signForRequest, resume);
       shown.ifShowing(mine, () => setLink(issued));
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -285,7 +301,7 @@ export function AlertsCard() {
         signForRequest,
         resume,
       );
-      if (result === 'sent') {
+      if (result.kind === 'sent') {
         const next = { ...prefs, telegramLinked: true };
         storeAlertPrefs(chainId, address, next);
         shown.ifShowing(mine, () => {
@@ -293,13 +309,11 @@ export function AlertsCard() {
           setLink(null);
           setNotice(copy.alerts.testAlertSent);
         });
-      } else if (result === 'not-linked') {
-        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked));
       } else {
-        shown.ifShowing(mine, () => setError(copy.alerts.testAlertError));
+        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked, result.reference));
       }
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -336,7 +350,7 @@ export function AlertsCard() {
         resume,
       );
       if (outcome.protectionUnknown) {
-        shown.ifShowing(mine, () => setError(copy.alerts.unlinkProtectionUnknown));
+        shown.ifShowing(mine, () => setError(copy.alerts.unlinkProtectionUnknown, outcome.reference));
         return;
       }
       // #3246 — under protected mode a chat is not removed at once: it
@@ -371,7 +385,7 @@ export function AlertsCard() {
         );
       });
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -686,10 +700,18 @@ export function AlertsCard() {
             <PaidPushConsent billing={pushStatus.data.billing} />
           ) : null}
 
-          {notice ? <p className="muted" style={{ margin: 0 }}>{notice}</p> : null}
+          {notice ? (
+            <p className="muted" style={{ margin: 0 }}>
+              {notice}
+              <ServiceReference reference={noticeRef} />
+            </p>
+          ) : null}
           {error ? (
             <div className="banner banner-danger" role="alert">
-              <span className="banner-body">{error}</span>
+              <span className="banner-body">
+                {error}
+                <ServiceReference reference={errorRef} />
+              </span>
             </div>
           ) : null}
         </div>

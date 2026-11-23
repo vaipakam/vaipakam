@@ -81,6 +81,7 @@ describe('requestDiagErasure', () => {
     expect(await requestDiagErasure(WALLET, async () => SIG)).toEqual({
       outcome: 'processedChainOnly',
       chainId: 84532,
+      reference: null,
     });
     // A chain-scoped answer that names no usable chain still reports
     // the honest scope — with a null chain for the nameless banner.
@@ -93,6 +94,7 @@ describe('requestDiagErasure', () => {
     expect(await requestDiagErasure(WALLET, async () => SIG)).toEqual({
       outcome: 'processedChainOnly',
       chainId: null,
+      reference: null,
     });
     stubAgent(
       () =>
@@ -205,8 +207,11 @@ describe('requestDiagErasure', () => {
     expect((await requestDiagErasure(WALLET, async () => SIG, 84532)).outcome).toBe(
       'unverifiable',
     );
+    // #3922 — a refusal carries the request reference (here the one sent:
+    // the stub returns none).
     expect(await requestDiagErasureStatus(WALLET, async () => SIG, 84532)).toEqual({
       status: 'unverifiable',
+      reference: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{10}$/),
     });
   });
 
@@ -228,6 +233,9 @@ describe('requestDiagErasure', () => {
     expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('expired');
     expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
       status: 'expired',
+      // #3922 — a refusal the service answered keeps a reference (the one
+      // sent, when the response carries none).
+      reference: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{10}$/),
     });
     // Any OTHER verification failure stays the generic error — a bad
     // signature is not a retryable expiry.
@@ -293,6 +301,7 @@ describe('requestDiagErasureStatus', () => {
     stubAgent(() => new Response('{}', { status: 200 }));
     expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
       status: 'error',
+      reference: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{10}$/),
     });
   });
 

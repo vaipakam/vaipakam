@@ -269,7 +269,9 @@ describe('saveAlertPrefs and a refused Push opt-in (#2251)', () => {
       dueDateChanged: true,
       signMessage: wallet.signMessage,
     });
-    expect(out).toBe('unavailable');
+    expect(out.push).toBe('unavailable');
+    // #3922 — the refusal's reference is reported beside the outcome.
+    expect(out.pushRefusalReference).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/);
     expect(bodies).toHaveLength(2);
     expect(bodies[0]!.push_channel).toBe('subscribed');
     expect(bodies[1]!.push_channel).toBeUndefined();
@@ -288,7 +290,7 @@ describe('saveAlertPrefs and a refused Push opt-in (#2251)', () => {
       await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }, {
         signMessage: recordingSigner().signMessage,
       }),
-    ).toBe('stored');
+    ).toEqual({ push: 'stored', pushRefusalReference: null });
   });
 
   it('still fails on any other 409', async () => {
@@ -346,6 +348,7 @@ describe('unlinkTelegram scope (#2013 r4)', () => {
       scope: 'wallet',
       pending: [{ chainId: 84532, effectiveAt: 1_800_000_000 }, { chainId: 97, effectiveAt: null }],
       protectionUnknown: false,
+      reference: null,
     });
   });
 

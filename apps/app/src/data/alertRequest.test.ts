@@ -253,6 +253,7 @@ describe('a kept save the agent refused Push for (#3836)', () => {
       signMessage: async () => '0xsig',
       resume: kept!,
     });
-    expect(outcome).toBe('unavailable');
+    // The refused request's reference is not kept, so a finish reports none.
+    expect(outcome).toEqual({ push: 'unavailable', pushRefusalReference: null });
   });
 });

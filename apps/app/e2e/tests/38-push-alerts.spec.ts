@@ -118,7 +118,8 @@ test.beforeAll(async () => {
     const cors = {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      // #3922 — the app's writes carry a request reference, as the Worker allows.
+      'Access-Control-Allow-Headers': 'Content-Type, x-request-ref',
     };
     if (req.method === 'OPTIONS') {
       res.writeHead(204, cors);

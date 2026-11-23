@@ -3169,7 +3169,8 @@
       "networkFallback": "red #{{id}}",
       "unknown": "desconocido",
       "amountTooPrecise": "{{symbol}} no se puede dividir tanto: usa como máximo {{decimals}} decimales.",
-      "amountBelowOfferFloor": "La oferta más pequeña que acepta el protocolo en este token es de {{min}} {{symbol}}. Introduce al menos esa cantidad."
+      "amountBelowOfferFloor": "La oferta más pequeña que acepta el protocolo en este token es de {{min}} {{symbol}}. Introduce al menos esa cantidad.",
+      "serviceReference": "Referencia {{reference}}. Indícala si contactas con soporte."
     },
     "stepNav": {
       "progressAria": "Progreso",
