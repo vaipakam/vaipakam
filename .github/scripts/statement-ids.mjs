@@ -3,7 +3,8 @@
 //
 // The canonical specification (docs/CanonicalSpec/) gives every statement a
 // permanent id such as VLT-001. A pull request that changes behaviour names
-// the statements it implements in its description, or says plainly that it
+// the statements it implements in its description's "## Statements"
+// section (only that section counts), or says there plainly that it
 // changes no behaviour, or that no canonical section covers what it changes
 // yet (CanonicalSpecDesign section 15). The docs-drift workflow calls this
 // script with the merged pull request's description and warns when none of
@@ -68,11 +69,34 @@ function visible(body) {
   return String(body ?? '').replace(/<!--[\s\S]*?-->/g, '');
 }
 
+/**
+ * The description's "## Statements" section, up to the next heading of the
+ * same or a higher level. Only this section declares what a change
+ * implements; an id mentioned elsewhere (a link to an earlier pull request,
+ * say) declares nothing. No section reads as empty.
+ */
+export function statementsSection(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const start = lines.findIndex((l) => /^#{1,2}\s+Statements\s*$/i.test(l.trim()));
+  if (start < 0) return '';
+  const out = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2}\s/.test(line.trim())) break;
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+const idsIn = (text) =>
+  [...new Set([...String(text).matchAll(ID)].map((m) => `${m[1]}-${m[2]}`))].sort();
+const isReserved = (id) => Number(id.slice(4)) >= RESERVED_FROM;
+
 export function evaluate(body, known) {
-  const text = visible(body);
-  const ids = [...new Set([...text.matchAll(ID)].map((m) => `${m[1]}-${m[2]}`))].sort();
-  const reserved = ids.filter((id) => Number(id.slice(4)) >= RESERVED_FROM);
-  const named = ids.filter((id) => !reserved.includes(id));
+  // A reserved id anywhere in the raw description counts, comments included:
+  // the source of a description is public even where it does not render.
+  const reserved = idsIn(body).filter(isReserved);
+  const text = statementsSection(visible(body));
+  const named = idsIn(text).filter((id) => !isReserved(id));
   const unknown = named.filter((id) => !known.has(id));
   const noBehaviourChange = NO_CHANGE.test(text);
   const notCoveredLine = text.match(NOT_COVERED)?.[0];
@@ -108,10 +132,17 @@ function selftest() {
     ['template comment ignored', '<!-- e.g. VLT-001 -->\nFixes the thing.', 'missing', []],
     ['empty body', '', 'missing', []],
     ['lowercase is not an id', 'vlt-001', 'missing', []],
+    ['an id outside the section declares nothing', '## What\n\nUnlike VLT-001, this changes matching.\n\n## Statements\n\n## Verification\n', 'missing', []],
+    ['no Statements section reads as empty', '## What\n\nImplements VLT-001.\n', 'missing', []],
+    ['the section ends at the next heading', '## Statements\n\nNo behaviour change.\n\n## Why\n\nVLT-001 matters.\n', 'no-behaviour-change', []],
+    ['a reserved id outside the section still counts', `## What\n\nSee ${res}.\n\n## Statements\n\nVLT-001\n`, 'ids', [], 1],
+    ['a reserved id in a comment still counts', `<!-- ${res} -->\n## Statements\n\nVLT-001\n`, 'ids', [], 1],
   ];
   let failed = 0;
+  // Each case body is the Statements section unless it brings its own headings.
+  const wrap = (b) => (/^## /m.test(b) ? b : `## What\n\nSomething.\n\n## Statements\n\n${b}\n`);
   for (const [name, body, verdict, unknown, reserved = 0] of cases) {
-    const r = evaluate(body, known);
+    const r = evaluate(wrap(body), known);
     const ok =
       r.verdict === verdict &&
       JSON.stringify(r.unknown) === JSON.stringify(unknown) &&

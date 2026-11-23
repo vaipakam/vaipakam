@@ -130,12 +130,12 @@ jobs:
             fi
             if [ "$kind" = "missing" ]; then
               ok=0
-              echo "::warning title=Statements drift::This merge changed contracts/ or apps/ but its description names no canonical statement ids, does not say \"no behaviour change\", and does not say no canonical section covers it. See docs/CanonicalSpec/README.md."
+              echo "::warning title=Statements drift::This merge changed contracts/ or apps/ but the Statements section of its description names no canonical statement ids, does not say \"no behaviour change\", and does not say no canonical section covers it. See docs/CanonicalSpec/README.md."
               {
                 echo "### ⚠️ Statements drift"
                 echo ""
                 echo "This merge touched \`contracts/src/\` or \`apps/\`, and its pull request"
-                echo "description names no statement it implements. A behaviour change names"
+                echo "description's Statements section names no statement it implements. A behaviour change names"
                 echo "its statement ids (e.g. a vault statement), or says \"no behaviour change\","
                 echo "or says \"no canonical section covers\" what it changes and names the domain looked in — see"
                 echo "\`docs/CanonicalSpec/README.md\` and the pull request template."
