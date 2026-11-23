@@ -121,3 +121,29 @@ test('an untracked file changes the tree digest; an ignored one does not', () =>
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a change inside a submodule changes the tree digest', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rehearsal-tree-sub-'));
+  try {
+    const git = (dir, ...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'protocol.file.allow=always', ...a], { encoding: 'utf8' });
+    const lib = join(root, 'lib-src');
+    const top = join(root, 'top');
+    mkdirSync(lib);
+    mkdirSync(top);
+    git(lib, 'init', '-q');
+    writeFileSync(join(lib, 'L.sol'), 'v1');
+    git(lib, 'add', '.');
+    git(lib, 'commit', '-qm', 'lib');
+    git(top, 'init', '-q');
+    git(top, 'submodule', '-q', 'add', lib, 'lib/dep');
+    git(top, 'commit', '-qm', 'top');
+    const base = treeDigest(top).digest;
+    writeFileSync(join(top, 'lib', 'dep', 'L.sol'), 'v2');
+    const edited = treeDigest(top).digest;
+    assert.notEqual(edited, base, 'an edit inside the submodule');
+    git(join(top, 'lib', 'dep'), 'commit', '-qam', 'v2');
+    assert.notEqual(treeDigest(top).digest, base, 'another submodule commit');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

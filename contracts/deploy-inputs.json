@@ -325,6 +325,10 @@
     {
       "pattern": "PREDEPLOY_CHECK_SCRIPT",
       "reason": "Which pre-deploy check script the once-per-tree helper runs (#3896): the rehearsal driver points it at RH_PREDEPLOY. It selects the check, never what the deploy sends."
+    },
+    {
+      "pattern": "STORAGE_LAYOUT_BASE",
+      "reason": "A baseline golden file the pre-deploy check compares the storage layout against (CI's merge check). It adds a check and changes nothing the deploy sends; the once-per-tree helper always runs the check when it is set."
     }
   ],
   "hashedPatterns": [

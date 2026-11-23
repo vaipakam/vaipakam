@@ -11,13 +11,18 @@
 #
 #   predeploy_check_once [--full]
 #       Returns the check's status. PREDEPLOY_CHECK_SCRIPT overrides the
-#       script (the rehearsal driver's tests pass a stand-in).
+#       script (the rehearsal driver's tests pass a stand-in). With
+#       STORAGE_LAYOUT_BASE set it always runs the check, since the baseline
+#       it compares against is not part of the tree digest.
 
 PREDEPLOY_ONCE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 predeploy_check_once() {
   local mode=default found script="${PREDEPLOY_CHECK_SCRIPT:-$PREDEPLOY_ONCE_LIB_DIR/../predeploy-check.sh}"
   [ "${1:-}" = "--full" ] && mode=full
+  # A requested storage-layout baseline comparison is never answered from a
+  # verdict: the baseline file is outside the tree digest.
+  if [ -n "${STORAGE_LAYOUT_BASE:-}" ]; then bash "$script" "$@"; return; fi
   if found=$(node "$PREDEPLOY_ONCE_LIB_DIR/../predeploy-verdict.mjs" covers --mode "$mode" 2>/dev/null); then
     echo "  ✓ the pre-deploy check already passed for this tree ($mode): $found"
     return 0

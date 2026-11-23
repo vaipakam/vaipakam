@@ -94,8 +94,10 @@
 # the deploy scripts and the rehearsal driver reuse it through
 # `lib/predeploy-once.sh` when it covers the present tree, toolchain and mode.
 # Not recorded: a shard of the regression (one shard is no verdict), a run
-# that honours acknowledged storage breaks (a weaker check), and a run during
-# which the tree changed.
+# with a storage-layout baseline (STORAGE_LAYOUT_BASE names a file outside
+# the tree digest, so its comparison is always run, never reused), a run that
+# honours acknowledged storage breaks (a weaker check), and a run during which
+# the tree changed.
 #
 set -euo pipefail
 
@@ -129,7 +131,7 @@ FAIL=0
 
 # The tree as the check starts, for the once-per-tree verdict (#3896).
 PREDEPLOY_START=""
-if (( ${#REGRESSION_ARGS[@]} == 0 )) && [ "${STORAGE_LAYOUT_HONOUR_ACKS:-}" != "1" ]; then
+if (( ${#REGRESSION_ARGS[@]} == 0 )) && [ -z "${STORAGE_LAYOUT_BASE:-}" ] && [ "${STORAGE_LAYOUT_HONOUR_ACKS:-}" != "1" ]; then
   PREDEPLOY_START=$(node "$SCRIPT_DIR/predeploy-verdict.mjs" start 2>/dev/null) || PREDEPLOY_START=""
 fi
 

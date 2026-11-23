@@ -22,7 +22,8 @@
  *       would see, tracked or untracked but not ignored, as it is on disk,
  *       excluding `contracts/deployments` (the one boundary the deploy scripts
  *       already use for their records). An untracked source file changes what
- *       a deploy builds, so it changes the digest too (#3896). Printed as hex.
+ *       a deploy builds, so it changes the digest too, and so does a submodule's
+ *       commit or working tree, digested the same way (#3896). Printed as hex.
  *
  * The left-out list may never hide deploy state: an entry at or under
  * `contracts/deployments`, a `broadcast` folder or a forge `cache` folder is
@@ -30,7 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -156,8 +157,14 @@ export function treeDigest(root = REPO_ROOT) {
   for (const p of tracked) {
     let content;
     try {
-      const st = lstatSync(join(root, p));
-      content = st.isSymbolicLink() ? `link:${readlinkSync(join(root, p))}` : sha256(readFileSync(join(root, p)));
+      const abs = join(root, p);
+      const st = lstatSync(abs);
+      if (st.isSymbolicLink()) content = `link:${readlinkSync(abs)}`;
+      // A submodule (contracts/lib/*) is a directory: its checked-out commit
+      // and its own working tree are part of what a deploy builds, so its
+      // digest is taken the same way, recursively (#3896).
+      else if (st.isDirectory()) content = existsSync(join(abs, '.git')) ? `submodule:${treeDigest(abs).digest}` : 'submodule:not checked out';
+      else content = sha256(readFileSync(abs));
     } catch {
       content = 'missing';
     }
