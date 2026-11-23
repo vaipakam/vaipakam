@@ -1,10 +1,14 @@
 # Vault and Protected Account Functional Specification
 
-This document consolidates the vault decisions in the November 2–15, 2026
+This document consolidates the vault decisions in the November 2–22, 2026
 release notes, while retaining later recorded intent. It defines intended
 behavior; a dated release or a deployed contract does not establish that a keeper duty is armed or an app capability
 is available. The keeper's dedicated Cloudflare database and Oracle Cloud VM
 remain governed by [Keeper Operations](KeeperOperations.md).
+
+Approved [canonical vault sections](../CanonicalSpec/README.md) govern the
+behaviour they cover, including the protected payout queue and its pause rules.
+The functional summaries below retain that precedence.
 
 ## Deposits, ownership, and free funds
 
@@ -43,6 +47,14 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   requires delayed vault code. Launch checks refuse endpoint mismatches, including a conduit key resolving
   to a different conduit. The treasury has one source: the vault code, not a
   second platform setting or registry entry.
+- A code version may retain up to two earlier price guards and two earlier
+  listing conduits with their keys, so existing loans and listings keep their
+  accepted endpoints after an upgrade. Duplicates, unordered entries, current
+  endpoints repeated as earlier ones, or missing conduit keys are refused.
+  A fresh deployment has no earlier entries. A listing and its approval may
+  use any listed conduit; any other endpoint is refused. Guard acceptance is
+  readable but does not itself establish independent vault price checks;
+  those checks remain the stated follow-up.
 - The vault hashes only orders whose terms name itself, or its own listing
   escrow, as seller and its own conduit. It answers signature checks only
   from the named marketplace or order protocol. Teardown withdraws the order.
@@ -60,8 +72,9 @@ remain governed by [Keeper Operations](KeeperOperations.md).
 - Ordinary claims, net principal, and repayment credits belong to the current
   position holder's own vault. Stored-party balances held for someone else's
   claim remain reserved and cannot become that stored party's free deposits.
-  The documented partial swap-to-repay lender payment and full swap surplus
-  retain their wallet destinations pending the separate swap-route change.
+  Open-loan receipts, including partial swap repayments, are reserved for the
+  position until its current holder claims; borrower swap surplus is likewise
+  claimable. No loan payout bypasses the vault through a wallet exception.
 
 ## Adopting or disowning an untracked asset
 
@@ -110,17 +123,18 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   Each lock cancels the work pending at that lock. A later unlock cannot
   revive it, and late application of an old lock cannot cancel requests made
   after that unlock. Anyone may request reconciliation of the platform side.
-- Queued payout rows still belong to the platform until Stage B3. Release
-  reads the vault's lock even before a cancelled row is reconciled, so a
-  waiting cancellation cannot make the payout releasable.
+- The vault owns the payout queue. Release reads its lock and the individual
+  payout verdict; a waiting cancellation cannot make the payout releasable.
 
 ## Optional account protection
 
 - The owner may enable protected mode and choose a delay of two to five days.
   Payouts from the vault to the owner's own wallet wait that delay, including
-  owner withdrawals. Ordinary net loan proceeds, claims, and open-loan
-  lender receipts credit the payee's own vault whether or not protection is
-  enabled; withdrawing that credit is a separate action. Protected-mode
+  owner withdrawals. Ordinary net loan proceeds and claims credit the payee's
+  own vault whether or not protection is enabled. Open-loan lender receipts
+  first remain reserved in the recorded lender's vault, after any seller
+  interest, until the current holder claims into their own vault. Withdrawing
+  that credit is a separate action. Protected-mode
   rerouting also catches other settlements that would pay the owner's wallet.
   An account's protection never delays payments it owes to counterparties.
 - Payout destinations are the owner or up to five allowlisted addresses.
@@ -150,13 +164,32 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   silently pays and queues nothing. A settlement may retain value safely;
   the app distinguishes that hold from a payment or queued withdrawal.
 - NFT protection is the position-NFT contract's holder lock (#3205). While it
-  is on, the holder's position NFTs cannot be transferred or approved; there
-  is no queue of NFT transfers. The owner may ask to unlock, which waits the
+  is on, plain transfers and outside-market transfers are refused; there is
+  no queue of NFT transfers. A protected, unlocked, non-retired account may
+  still sell a lender position or hand over a borrower obligation through the
+  protocol's protected routes, with proceeds in its own vault. A lender sale
+  covers full principal without shortfall and lists at the loan rate or lower;
+  earned seller interest remains claimable. A vault lock, retirement, or a
+  standalone NFT lock without protected mode does not qualify for this exit. The owner may ask to unlock, which waits the
   delay, without disabling the account's other protection. A lock still applies its own
   payout and new-position restrictions regardless of that setting.
 - A protected account's collateral or parallel-sale listing may pay
   marketplace fees only to its owner or allowed destinations. A locked or
   replaced account cannot post it; the protection check runs again at fill.
+
+- Position NFTs accept only per-token approvals; granting a collection-wide
+  operator is refused, while revoking one stays available. Locking invalidates
+  approvals. A missing standalone position-NFT address makes the deployment
+  unavailable; the app cannot substitute the protocol address.
+- Each value-out action advances the position's state version and updates its
+  metadata. Transfers never occur in that block. Holder-initiated value out
+  waits fifteen minutes by default (bounded from one minute to one hour);
+  other-party and keeper value out waits sixty seconds (one second to ten
+  minutes). A new action cannot shorten an existing wait.
+- A retired position receipt carries no rights. Refinance authority binds the
+  token identity as well as its transfer count; a new receipt cannot revive a
+  prior authority. Position NFTs cannot be collateral, rentals, or user-vault
+  deposits, and a claim-capable vault cannot own one.
 
 ## Ready balance (protected accounts)
 
@@ -202,7 +235,7 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   move the account to a new wallet after the delay. The new manager cannot also be a recovery signer.
   From completion, only the new wallet manages the account; the old wallet
   and its keepers lose their rights, including control of offers, intent
-  capital, extension reserves, vault VPFI, locks, and implementation pinning.
+  capital, payment reserves, vault VPFI, locks, and implementation pinning.
 - The replacement manager acts as holder for the account's existing
   positions. Old extension consent stops counting, and managing one's own
   recovered position earns no keeper reward.
@@ -241,6 +274,12 @@ remain governed by [Keeper Operations](KeeperOperations.md).
 - Contract authority and app coverage remain distinct: the extension-reserve
   card currently offers only the connected wallet's own reserves, so it does
   not yet expose withdrawing a replaced account's reserve for its controller.
+
+- Replacement is permanent for the original account: it cannot switch off
+  protection or add destinations to pay the retired wallet. The new manager
+  cannot unlock the original account's position NFTs directly. Listing new
+  collateral and funding a reserve still depend on the physical holder where
+  those routes lack manager support; recovering the NFTs may be needed first.
 
 ## Recovery address and clawback
 
@@ -296,12 +335,43 @@ The exit from a locked protected account (#3246 part 2; design:
 - Every setting, change, cancellation, drop, clawback and sweep is recorded
   with the account, the address and the amounts.
 
+## Optional recovery-address claim
+
+- The owner may enable an independent recovery claim. It starts off. Enabling
+  or shortening its wait follows the protection delay; disabling or lengthening
+  is immediate, including while locked. Switching protected mode off disables
+  it. The selected wait is thirty to 365 days.
+- Only the recovery address currently in force may request or execute a claim.
+  A pending recovery-address change prevents a request. Replacing that address
+  invalidates the earlier claim; the new recovery address may request at once,
+  with the full selected wait. A request freezes no assets and may be made
+  while the account is locked.
+- The claim opens after the selected wait and expires thirty days later. Only
+  the recovery address may execute it, with the same irreversible retirement,
+  free-balance sweep, and later-arrival rules as clawback. Liened funds remain
+  reserved. Lapse does not extend because execution was unavailable.
+- The owner or an active signer may cancel, including during pause or lock.
+  A lock, replacement, or clawback ends a pending claim. A direct owner write
+  to the protected account record also cancels it; submission of a stored
+  owner signature by a relay does not establish fresh owner liveness.
+- Cancellation or dropping the claim requires thirty days before the same
+  recovery address can request again; simple lapse adds no such wait. Execution is refused during global pause,
+  including pause escape, and until twenty-four hours after the latest
+  sequencer-outage window. An unread outage state refuses execution; a network
+  without a sequencer has no such sequencer wait.
+- A stolen owner key can keep cancelling recovery claims. Recovery signers
+  remain the defence against that case. The claim is a contract capability;
+  its app setup, alerts, and keeper automation remain follow-ups, off by default.
+
 ## Pause escape and implementation pinning
 
 - A continuous administrative pause lasting the escape period opens the
-  owner's escape withdrawal route from their own vault to their own wallet.
+  owner's escape withdrawal route from their own vault. It pays the recovery
+  address while one is in force, otherwise the owner's own wallet.
   An automatic pause during that period does not restart the count. Queued
-  payouts remain releasable.
+  payouts release only at the later of their own release time and the
+  opening of pause escape, to their recorded recipient. A recovery address
+  redirects the escape withdrawal itself, not an existing queued payout.
 - The escape period is seven days by default; the admin may set it between
   seven and ten days. It is never shorter than the vault code delay, so a
   vault code fix registered when a pause starts is live before the escape
@@ -320,7 +390,9 @@ The exit from a locked protected account (#3246 part 2; design:
   itself, so owners can see a change coming and pin before it lands. The
   Pauser Safe may cancel a pending change but never propose or hurry one.
   While the protocol is paused, and only then, it may also revoke a version
-  at once, moving vaults only onto code already registered.
+  at once, moving vaults only onto code registered at least seven days earlier.
+  Every replacement-code route preserves that registration age; only the
+  initial registry bootstrap has its stated exception.
 - A pin promises: your vault runs version N until you change the pin, or
   until governance revokes N. A revoke moves a pinned vault to the current
   version without its owner's consent. A revoked version is never restored.
@@ -408,3 +480,8 @@ The exit from a locked protected account (#3246 part 2; design:
 - [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md): vault-held
   protection, request-bound verification and signatures, permanent replacement,
   current-manager pin authority, and Stage B3/B4 coverage limits.
+
+Additional sources: [November 19](../ReleaseNotes/ReleaseNotes-2026-11-19.md)
+for claim routing and position authority; [November 20](../ReleaseNotes/ReleaseNotes-2026-11-20.md)
+for the optional recovery-address claim. The [November 22](../ReleaseNotes/ReleaseNotes-2026-11-22.md)
+closing-mode rules are in the [platform specification](ProjectDetailsREADME.md#closing-mode-and-backstop-exposure).

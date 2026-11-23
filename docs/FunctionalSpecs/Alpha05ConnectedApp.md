@@ -1,7 +1,7 @@
 # Alpha05 Connected App Functional Specification
 
 This document defines the intended experience of the new app in `apps/alpha05`,
-consolidating the November 5–15, 2026 release decisions. It supplements the
+consolidating the November 5–22, 2026 release decisions. It supplements the
 [platform](ProjectDetailsREADME.md), [tokenomics](TokenomicsTechSpec.md),
 [vault](VaultOperations.md), and [keeper](KeeperOperations.md) specifications.
 The [existing app](Alpha02ConnectedApp.md) remains the production entry at
@@ -35,7 +35,8 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   A refusal without its reason is retried through another source before it
   becomes an unknown refusal. Old answers cannot populate a new identity.
 - Offers, pair books, offer details, and the Rate Desk are read only after a
-  wallet connects on a supported network. A disconnected or wrong-network
+  wallet connects on a supported network and completes the required Terms
+  step, or enters the explicitly limited close-out-only experience. A disconnected or wrong-network
   visitor does not trigger a fallback offer-book read. The governance queue
   remains public and readable without a wallet.
 
@@ -137,8 +138,9 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
 ## Borrow, lend, and offers
 
 - Borrow and Lend each name taking an existing offer and posting one's own
-  terms. Borrow's lender ladder runs from lowest rate upward and names each
-  offer's individual amount; it never promises their sum as one available loan.
+  terms. The lender ladder names each offer's individual amount and rate;
+  instant borrowing shows each actual loan slice separately. A sum of offers
+  is never promised as one loan.
   Rate and Advanced LTV filters count what they hide, keep unknown LTV rows,
   and disclose unread filters instead of silently applying them.
 - A request form states funded standing lenders' count, largest available
@@ -426,7 +428,7 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   it were the unchanged earlier quote.
 - Seller-interest claims stay in individual rows outside Claim everything,
   with live fee, principal-first shortfall, oldest-seller allocation, and unpaid
-  remainder disclosed. Extension reserves use authoritative owner checks.
+  remainder disclosed. Payment reserves use authoritative owner checks.
   Indexed discovery has manual loan lookup where that can resolve a missing row;
   incomplete ownership reads cannot make a reserve appear safe to withdraw.
 - Claim everything accepts at most thirty selected payouts. It may include
@@ -445,7 +447,7 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   most 32. Waiting outside reachable work never advances expiry. The earliest
   removal date is conditional on claimability and includes the full ninety-day
   final notice; it is not presented as a guaranteed expiry date. Rewards can
-  follow the delivery choice below and do not promise yield. An unavailable
+  follow the vault-only delivery rule below and do not promise yield. An unavailable
   receiving vault is not silently presented as a successful vault credit.
 - Rewards states this network's programme role, start time, delivered funds,
   recycled funds net of reservations, custody, detachment, and claim-removal
@@ -481,15 +483,16 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
 
 ### Reward delivery, waiting reasons, and paid history
 
-- Default reward delivery follows account kind: an ordinary wallet, including
-  delegated EIP-7702 accounts, chooses its vault; a contract wallet chooses
-  its wallet. Advanced offers both venues with the actual fee-tier effect:
-  counted home-network vault VPFI affects the tier, wallet VPFI does not, and
-  mirror balances do not determine the home tier. The review binds the choice,
-  the simulation checks it, and the outcome names the actual arrival.
-- Protected mode forces reward delivery to the vault, states the withdrawal
-  delay, and removes the wallet option. An unread mode chooses the vault and
-  is rechecked before signing. Claim everything keeps its rewards at the vault.
+- Every account kind receives rewards in its own vault, including contract
+  wallets and delegated accounts. The supported claim route opens a vault when
+  needed. There is no Advanced wallet-delivery choice or silent wallet fallback.
+  A refused credit cannot be presented as paid. Counted home-network vault VPFI
+  affects the holding tier; mirror holdings do not establish a home tier.
+- The review and outcome name the actual vault credit and separate subsequent
+  withdrawal. Protected withdrawal retains its delay. Claim everything uses
+  the same route. Rewards come from the rewards phase, without a promised
+  return; until holding discounts launch, the app says no holding discount,
+  while still showing any substantiated referral or other fee reduction.
 - The claim card explains the exact blocking day at the claim's read block:
   reporting or finalization waits on the home network, broadcast or each
   funding component on a mirror, or mismatched declared wholes that require
@@ -503,8 +506,8 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   can pay later claims even after fresh allocation is exhausted.
 - Lifetime claimed totals come from indexed payment records on this network,
   with the paid UTC day and coverage timestamp. They include released held
-  rewards and show the vault-delivered subset separately. A fallback wallet
-  payment counts only in the overall total. Incomplete or unread history is
+  rewards. Historical wallet payments remain identifiable in past totals;
+  they do not imply a wallet option for a new claim. Incomplete or unread history is
   unknown, never zero; a confirmed claim refreshes the total.
 
 ### Claim and withdraw
@@ -522,15 +525,15 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   a completed withdrawal is not offered again. Pending follow-ups retain their
   state, keep the finish card open, and run only on the same account and chain.
 - Claim everything withdraws only its loan-payout legs; other rows keep their
-  disclosed venues. Open-loan receipts require their separate claim-routing
-  change before this flow is represented as covering them.
+  disclosed routes. Open-loan receipts use the position's current claimable
+  held amount; they are never shown as already received wallet payments.
 - Home and Claims total Ready to claim per asset using the same eligibility
   verdict as each row. Waiting, unread, and fallback-variable amounts are
   counted separately, never added as fixed receivables or described as received.
 
 ## Vault and protection
 
-- The vault is opened only when a deposit or offer needs it. Asset reads
+- The vault is opened when a supported deposit, offer, or reward claim needs it. Asset reads
   distinguish actual, tracked, held, and free balances, use the lesser of
   actual and tracked where backing is short, and expose underfunding. Creator
   offer escrow remains the creator's even if its token moved. Dust hiding
@@ -547,7 +550,8 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   release times, application windows, and lapses by chain time. Cancels,
   applications, removals, locking, and unlock requests each have their own
   review and measured outcome; removing a destination names cancelled payouts.
-  NFT protection is a holder lock, not an NFT-transfer queue. Protection
+  NFT protection is a holder lock with the qualified protected sale and
+  handover exits in [Vault Operations](VaultOperations.md); it has no NFT-transfer queue. Protection
   changes read and write the vault directly. Contract relays await the Stage B4
   app surface; owner lock and proposed-replacement alerts await vault-event
   indexing, and only ledger-discovered matured changes are keeper-finalized.
@@ -659,7 +663,9 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   this term ends); and an early repayment (the whole term's interest still
   owed, or about half the interest halfway through a pro-rata loan, with the
   initiation fee not returned). The late fee's amount is shown once the
-  protocol publishes its schedule.
+  protocol publishes its schedule: the current schedule is 1% of principal
+  for the first late day plus 0.5% per further day, capped at 5%. Unread live
+  settings remain unknown; the illustration never silently assumes them.
 - A published Terms version takes effect for acceptance only after it is
   configured on the network. Earlier frozen versions remain unchanged.
   Version 3 rewords the software and network risk line, which now ends
@@ -708,7 +714,8 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   review and Terms. The global keeper pause stops every keeper-role action;
   a pause is disclosed separately from permanent revocation.
 - Settings show Terms acceptance as current version and fingerprint, not
-  accepted, or unread; acceptance is collected on the gated action. Repayment,
+  accepted, or unread. The connection journey below collects acceptance
+  before wallet data; close-out-only access remains available. Repayment,
   claims, and withdrawals are never held for Terms. Browser records can be
   counted and downloaded without exporting wallet sessions. Erasing disconnects
   first and removes shared preferences, local records, and saved app code,
@@ -720,6 +727,149 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
 - The test faucet states that its token and NFT outputs have no value and
   are not protocol minting. Outcomes are measured. Discount opt-in requires
   Terms when enabled, not disabled, and the protocol pause is disclosed.
+
+## Connection consent and fresh wallet evidence
+
+- Before Connect, the app presents the pinned Terms version and complete
+  fingerprint, privacy notice, and six approved risk statements. Connection
+  follows the acknowledgement. Once connected, the account accepts on each
+  network by its own transaction before wallet data loads. No signature or
+  remembered browser checkbox stands in for chain acceptance.
+- If that transaction cannot be sent, the app states the low-gas need or other
+  hold and offers close-out-only access or disconnect. Close-out access keeps
+  repayment, claim, withdrawal, and cancellation available without inventing
+  consent to new exposure. The app names other-network offers or intents that
+  may be affected by Terms; it does not claim to have checked all loan
+  extensions and instructions when those checks are not built.
+- Before every write or signature, the app checks the live wallet account and
+  network again. A changed binding figure clears consent and explicitly says
+  no wallet prompt was opened. Wallet-provider checks have a fifteen-second
+  budget before trying another source.
+- After token or NFT approval, the dry run uses a source that has reached at
+  least the approval's receipt block and pins the call to that source's head.
+  Lagging sources are retried briefly or skipped. If all lag, the result is
+  unread, never a protocol refusal based on stale approval state.
+- A fixed-terms approval can use thirty minutes, twenty-four hours, three days,
+  or seven days; price-sensitive approvals remain thirty minutes. Signature
+  and transaction share the selected deadline, but this does not merge the
+  separate approval rounds. Asset-adoption declarations retain their supported
+  thirty-minute or twenty-four-hour choice and single-key support limit.
+
+## Auto-lend management and market comparison
+
+- Setup reviews the asset, amount, rate floor, maximum LTV and term, optional
+  end date, pro-rata choice, exposure cap, and minimum fill. Amounts parse
+  exactly, use the live minimum and maximum, and receive exact approvals with
+  restoration after failure. Terms and funding are atomic. Eligibility still
+  waits the protocol's terms age; setup never guarantees a borrower match.
+- Add funds requires an active, unexpired intent and unpaused assets and
+  protocol. Withdrawing unlent capital remains available during an asset pause
+  but not global pause; stopping remains available during global pause.
+  Stop and withdraw is atomic where allowed. A stopped slot with no reserved
+  capital leaves the manageable list even if it still has outstanding loans;
+  a completed action's result stays visible after the row disappears.
+- Editing or restarting preserves unchanged exposure, minimum fill, and
+  restricted-keeper choices, allows zero added funding, restarts terms age,
+  and renews the relevant priority choice. Existing loans do not change.
+  A cap at or below principal already out admits no more fills until capacity
+  returns. A minimum above the cap or usable capital prevents a fill.
+- Summaries keep assets separate and use downward-rounded shares. Slot
+  principal means exact outstanding principal, not the original fill or a
+  sold position. Partial repayment lowers it immediately; terminal settlement
+  releases it before claim. Dropped slots' loans may be absent from the
+  on-chain slot list; the app discloses that coverage gap rather than claiming
+  a complete loan inventory. Stopped or ended capital waiting is separate.
+- Declared limits, funded Available, and principal Lent keep their distinct
+  [platform meanings](ProjectDetailsREADME.md). Fullness divides slot
+  principal by that principal plus Available, never by Declared. Date-bound
+  aggregates state their UTC-day basis and seasoning does not itself remove
+  declared or reserved capital. A fill's fresh preview remains authoritative.
+- Indexed history can show a slot's capital usage and comparable-rate samples,
+  naming sample size, time, and coverage. Missing slot events make this
+  unavailable, never a speculative average or a recommendation.
+- Instant-borrow comparison lets the borrower choose the best rate or fewer
+  lenders within their own stated rate difference. Both alternatives show
+  principal, number of loans, and estimated weighted rate. No option is
+  recommended and an allocation preview does not prove loan admission.
+
+## Account, embedded use, and personal context
+
+- Unrecognised assets are closed by default with a count. Indexed candidates
+  are verified against the exact vault and asset at one chain block. The app
+  shows plain labels and addresses without images or external links and sends
+  no alert about unsolicited assets. Adopt and Disown are neutral choices.
+- Position approval shows the full approved operator and offers per-token
+  revocation. A deployment needing two protection prompts says when protected
+  mode succeeded but NFT locking failed, and offers retry; it cannot claim
+  full protection. The intended atomic contract rule remains in Vault Operations.
+- Outflow alerts offer Default, Always, and Never. Default enables them for
+  protected accounts; it is not a delivery guarantee or an authority grant.
+- A registered integrator link names its origin and network, and reads active,
+  suspended, unregistered, or unread status from the registry. The user can
+  remove attribution or stop the link. Borrow reviews show the actual fee;
+  lender attribution earns no share, and rentals carry no integrator share.
+- A third-party payer acknowledges the current borrower before paying; the
+  app rechecks the holder before send. Watchers and alerts grant no authority.
+  A guided lender-position giveaway states that future claims follow the
+  receiver while past seller interest remains owed to the seller.
+- Local saving goals and borrowing-for-someone notes stay on this device;
+  they neither lock funds nor bind another person. Partial or unread history
+  makes goal progress unknown, not an invented completed target.
+- Multisig embedding permits exactly one approved HTTPS parent origin.
+  Cross-origin manifest and icon access is limited to that parent, and an
+  ancestor handshake is required. A hidden or wrong parent cannot connect.
+- Shared token-label and export rules follow
+  [public data and diagnostics](PublicDataAndDiagnostics.md#issuer-powers-and-token-labels).
+
+## Multisig alert authorization
+
+- An own-key authorization, including a delegated account, lasts ten minutes.
+  A contract-only authorization uses that contract's signature check on the
+  named network and may last seven days. A timestamp more than ten minutes
+  ahead is refused; replay protection lasts the full authorized window.
+- The browser binds a secret's hash into the signed request and keeps the
+  secret locally. Only that browser can finish the pending request. Pending
+  work survives until the service records its answer; an early rate refusal
+  or service error is retryable. Exporting pending records excludes the key.
+- Link and unlink ordering is per wallet and network. A global own-key unlink
+  advances every network's order, and settings have their own ordering record.
+  An older request cannot undo a newer change. Test alerts are not settings
+  updates; unlinking voids outstanding link codes.
+- A Safe request waits while proposed and finishes when approval is confirmed
+  on chain or its service supplies the combined signature. Account or network
+  changes hold the request. New alert links and Push consent require current Terms.
+  Discarding clears only this browser's pending request, never another tab's
+  newer one. A remembered Push refusal is not overwritten by a later refresh.
+
+## Alert phrase and chat-change notices
+
+- An owner with a linked private Telegram chat may set or remove a phrase by
+  a signed alert request. The service accepts the phrase exactly as typed,
+  from three to thirty-two permitted plain characters, without surrounding
+  spaces, links, slashes, colons, or at signs. Invalid text is refused, never
+  silently cleaned. The signed text contains a request-key-bound fingerprint,
+  not the phrase; a mismatch is refused. Phrase changes have their own ordering.
+- A request signed with the wallet's own key sets the phrase across networks,
+  replacing network-specific phrases. A contract-only approval sets it only on
+  the named network, where a private chat must already be linked. That phrase
+  takes precedence there. The newest applicable request wins across scopes;
+  an old request cannot undo a newer network or global setting.
+- Each private chat starts messages with the phrase it was last told for that
+  wallet and network. A phrase change first sends a notice led by the phrase
+  the chat knew, and switches only when Telegram accepts that notice. A newly
+  linked chat receives no phrase until it is set again; the same chat linked
+  on another network already knows it. A manager's chat uses the manager's
+  phrase. Groups and Push never receive the phrase, and the app explains this.
+- Status shows only whether a phrase is set, since when, and its scope. A
+  pending contract-wallet request keeps no phrase in browser storage; finishing
+  requires typing it again and matching the approved fingerprint. Applying the
+  phrase on another network requires a separate approval and re-entry there.
+- An unprotected account's old chat is notified when it stops receiving alerts;
+  existing chats are notified when another chat is added. Notices use each
+  chat's known phrase, try immediately, and retry for at most one hour. An old
+  chat identity is kept only for that notice. Consented Push gives a notice
+  naming only the network. Protected accounts retain the delayed chat-change
+  procedure, with the known phrase on its notices as well.
 
 ## Sources
 
@@ -737,3 +887,9 @@ Additional dated sources: [November 12](../ReleaseNotes/ReleaseNotes-2026-11-12.
 and [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md). No November 13
 or 14 dated release exists in this range. Later intent already present in the
 platform specification remains governing, including newer Auto-lend controls.
+
+The [November 15–22 source map](README.md#release-note-consolidation-november-15-through-november-22-2026)
+adds Auto-lend management, receipt-aware approval reads, Terms, vault-only
+rewards, account context, and multisig alert authorization. Later intent
+already present in this document, including default journeys and the
+price-move pause, remains in force.
