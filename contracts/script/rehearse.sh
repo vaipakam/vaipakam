@@ -74,6 +74,8 @@ REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/load-env.sh"
 # shellcheck source=lib/rehearsal-forks.sh
 source "$SCRIPT_DIR/lib/rehearsal-forks.sh"
+# shellcheck source=lib/predeploy-once.sh
+source "$SCRIPT_DIR/lib/predeploy-once.sh"
 
 RH_FORGE="${RH_FORGE:-forge}"
 RH_NODE="${RH_NODE:-node}"
@@ -357,7 +359,13 @@ done
 stage build
 (cd "$CONTRACTS_DIR" && FOUNDRY_PROFILE=default "$RH_FORGE" build --skip test) 2>&1 | rh_redact >> "$LOGS/build.log"
 (cd "$CONTRACTS_DIR" && "$RH_NODE" "$RH_LAYOUT_GUARD" check) 2>&1 | rh_redact >> "$LOGS/build.log"
-(cd "$CONTRACTS_DIR" && bash "$RH_PREDEPLOY") 2>&1 | rh_redact >> "$LOGS/build.log"
+# The pre-deploy check once per tree (#3896): a verdict a passing run already
+# recorded for this tree is reused, and the deploy that follows reuses the one
+# this run records. A mainnet rehearsal runs the full check, as the mainnet
+# deploy does; the full check is never reused.
+predeploy_mode=()
+[ "$NETWORK" = mainnet ] && predeploy_mode=(--full)
+(cd "$CONTRACTS_DIR" && predeploy_check_once_with "$RH_PREDEPLOY" "${predeploy_mode[@]+"${predeploy_mode[@]}"}") 2>&1 | rh_redact >> "$LOGS/build.log"
 log "  ✓ built once; storage-layout guard and pre-deploy check passed for this tree"
 
 # ── 3. snapshot ────────────────────────────────────────────────────────

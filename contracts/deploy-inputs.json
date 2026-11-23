@@ -321,6 +321,10 @@
     {
       "pattern": "REHEARSAL_GATE_*",
       "reason": "The rehearsal gate's own state (#3896): the plan, the override and the gate's result, set by the deploy script from its flags. The gate compares the inputs; it is not one."
+    },
+    {
+      "pattern": "STORAGE_LAYOUT_BASE",
+      "reason": "A baseline golden file the pre-deploy check compares the storage layout against (CI's merge check). It adds a check and changes nothing the deploy sends; the once-per-tree helper always runs the check when it is set."
     }
   ],
   "hashedPatterns": [

@@ -17,10 +17,13 @@
  *       may write.
  *
  *   digest
- *       The tree digest a verdict and the real deploy's gate compare: the
- *       commit plus a hash of every TRACKED file as it is on disk, excluding
- *       `contracts/deployments` (the one boundary the deploy scripts already
- *       use for their records). Printed as hex.
+ *       The tree digest a verdict, the real deploy's gate and the pre-deploy
+ *       check's own verdict compare: the commit plus a hash of every file git
+ *       would see, tracked or untracked but not ignored, as it is on disk,
+ *       excluding `contracts/deployments` (the one boundary the deploy scripts
+ *       already use for their records). An untracked source file changes what
+ *       a deploy builds, so it changes the digest too, and so does a submodule's
+ *       commit or working tree, digested the same way (#3896). Printed as hex.
  *
  * The left-out list may never hide deploy state: an entry at or under
  * `contracts/deployments`, a `broadcast` folder or a forge `cache` folder is
@@ -28,7 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -135,26 +138,52 @@ export function compare(before, after) {
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** The tree digest (§18): commit + every tracked file outside
- *  contracts/deployments, by path and content as on disk. */
+/**
+ * One listed entry's content, decided by the read itself rather than by a
+ * stat taken before it, so nothing can change between the check and the use:
+ * a symlink is its target text, a file its sha256, and a directory (a
+ * submodule, contracts/lib/*) the digest of its own checked-out tree, taken
+ * the same way, recursively (#3896).
+ */
+function entryContent(abs) {
+  try {
+    return `link:${readlinkSync(abs)}`;
+  } catch (e) {
+    if (e.code !== 'EINVAL') throw e; // not a symlink
+  }
+  try {
+    return sha256(readFileSync(abs));
+  } catch (e) {
+    if (e.code !== 'EISDIR') throw e;
+  }
+  return existsSync(join(abs, '.git')) ? `submodule:${treeDigest(abs).digest}` : 'submodule:not checked out';
+}
+
+/** The tree digest (§18): commit + every tracked or untracked, not ignored,
+ *  file outside contracts/deployments, by path, by whether it is in the
+ *  index, and by content as on disk. */
 export function treeDigest(root = REPO_ROOT) {
   const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
   const commit = git('rev-parse', 'HEAD').trim();
-  const tracked = git('ls-files', '-z', '--', '.', ':(exclude)contracts/deployments')
-    .split('\0')
-    .filter(Boolean)
-    .sort();
+  // --cached and --others can both name a tracked file that is deleted and
+  // re-created, so the list is de-duplicated.
+  const scope = ['--', '.', ':(exclude)contracts/deployments'];
+  const list = (...flags) => git('ls-files', '-z', ...flags, ...scope).split('\0').filter(Boolean);
+  // Whether a path is in the index is part of the tree as well as its
+  // content: the pre-deploy check refuses a required file that is present but
+  // untracked, so `git rm --cached` must change the digest (#3896).
+  const inIndex = new Set(list('--cached'));
+  const tracked = [...new Set([...inIndex, ...list('--others', '--exclude-standard')])].sort();
   const h = createHash('sha256');
   h.update(`commit ${commit}\n`);
   for (const p of tracked) {
     let content;
     try {
-      const st = lstatSync(join(root, p));
-      content = st.isSymbolicLink() ? `link:${readlinkSync(join(root, p))}` : sha256(readFileSync(join(root, p)));
+      content = entryContent(join(root, p));
     } catch {
       content = 'missing';
     }
-    h.update(`${p}\0${content}\n`);
+    h.update(`${p}\0${inIndex.has(p) ? 'tracked' : 'untracked'}\0${content}\n`);
   }
   return { commit, digest: h.digest('hex') };
 }

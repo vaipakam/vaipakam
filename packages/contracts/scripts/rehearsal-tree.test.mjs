@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compare, readLeftOut, snapshot, treeDigest, validateLeftOut } from '../../../contracts/script/rehearsal-tree.mjs';
@@ -95,4 +96,56 @@ test('the tree digest is stable and names the commit', () => {
   const b = treeDigest();
   assert.equal(a.digest, b.digest);
   assert.match(a.commit, /^[0-9a-f]{40}$/);
+});
+
+test('an untracked file changes the tree digest; an ignored one does not', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rehearsal-tree-git-'));
+  try {
+    const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8' });
+    git('init', '-q');
+    writeFileSync(join(root, '.gitignore'), 'out/\n');
+    writeFileSync(join(root, 'a.sol'), 'a');
+    git('add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'x');
+    const base = treeDigest(root).digest;
+    mkdirSync(join(root, 'out'));
+    writeFileSync(join(root, 'out', 'b.json'), 'b');
+    assert.equal(treeDigest(root).digest, base, 'an ignored file is not in the digest');
+    writeFileSync(join(root, 'New.sol'), 'n');
+    assert.notEqual(treeDigest(root).digest, base, 'an untracked source file is');
+    mkdirSync(join(root, 'contracts', 'deployments'), { recursive: true });
+    rmSync(join(root, 'New.sol'));
+    writeFileSync(join(root, 'contracts', 'deployments', 'r.json'), 'r');
+    assert.equal(treeDigest(root).digest, base, 'the deploy records are outside it');
+    git('rm', '-q', '--cached', 'a.sol');
+    assert.notEqual(treeDigest(root).digest, base, 'a file taken out of the index, still on disk, is a change');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a change inside a submodule changes the tree digest', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rehearsal-tree-sub-'));
+  try {
+    const git = (dir, ...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'protocol.file.allow=always', ...a], { encoding: 'utf8' });
+    const lib = join(root, 'lib-src');
+    const top = join(root, 'top');
+    mkdirSync(lib);
+    mkdirSync(top);
+    git(lib, 'init', '-q');
+    writeFileSync(join(lib, 'L.sol'), 'v1');
+    git(lib, 'add', '.');
+    git(lib, 'commit', '-qm', 'lib');
+    git(top, 'init', '-q');
+    git(top, 'submodule', '-q', 'add', lib, 'lib/dep');
+    git(top, 'commit', '-qm', 'top');
+    const base = treeDigest(top).digest;
+    writeFileSync(join(top, 'lib', 'dep', 'L.sol'), 'v2');
+    const edited = treeDigest(top).digest;
+    assert.notEqual(edited, base, 'an edit inside the submodule');
+    git(join(top, 'lib', 'dep'), 'commit', '-qam', 'v2');
+    assert.notEqual(treeDigest(top).digest, base, 'another submodule commit');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
