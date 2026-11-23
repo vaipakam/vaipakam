@@ -171,6 +171,12 @@ drive relaydeliver "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay" STUB_RELAY_FAIL=deli
 [ "$RC" -ne 0 ] && grep -q '"failedStage": "steps (plan:3 relay base-sepolia to arb-sepolia)"' "$RUNDIR/verdict.json" \
   && ok "a delivery that fails fails the step" || bad "a failed delivery passed: rc $RC $(grep failedStage "$RUNDIR/verdict.json")"
 
+drive relayreport "$RELAY_PLAN" RH_RELAY="$WORK/bin/relay" STUB_RELAY_FAIL=report
+[ "$RC" -ne 0 ] && grep -q '"failedStage": "steps (relay report)"' "$RUNDIR/verdict.json" \
+  && ok "a relay report that cannot be written fails the run" || bad "a failed relay report passed: rc $RC"
+grep -q "The relay report could not be written" "$RUNDIR/report.md" && ! grep -q "stub lanes" "$RUNDIR/report.md" \
+  && ok "the report says the relay section is unavailable, never an older one" || bad "relay report failure not disclosed"
+
 drive norelay "$GOOD" RH_RELAY="$WORK/bin/relay"
 [ ! -f "$RUNDIR/logs/relay-install.log" ] && grep -q "the plan has no relay step" "$RUNDIR/report.md" \
   && ok "a plan with no relay step installs nothing and says so" || bad "relay installed for a plan without relay steps"

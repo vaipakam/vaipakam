@@ -444,7 +444,27 @@ restamp_feeds() {
 
 # ── 6. steps ───────────────────────────────────────────────────────────
 stage steps
-relay_report() { $RH_RELAY report --state "$RELAY_STATE" 2>/dev/null | rh_redact > "$RELAY_STATE/report.md.new" && mv "$RELAY_STATE/report.md.new" "$RELAY_STATE/report.md"; }
+# The relay's report section, rewritten after the install and each relay step.
+# A report that cannot be written never leaves an older one standing (it could
+# say no message was delivered when one was): the section says the report is
+# unavailable, and the caller fails the run.
+relay_report() {
+  rm -f "$RELAY_STATE/report.md"
+  if $RH_RELAY report --state "$RELAY_STATE" 2> >(rh_redact > "$LOGS/relay-report.log") | rh_redact > "$RELAY_STATE/report.md.new" \
+     && [ -s "$RELAY_STATE/report.md.new" ]; then
+    mv "$RELAY_STATE/report.md.new" "$RELAY_STATE/report.md"
+    return 0
+  fi
+  rm -f "$RELAY_STATE/report.md.new"
+  printf '## Cross-chain relay\n\nThe relay report could not be written (logs/relay-report.log), so this run does not state which messages were delivered or what they cost.\n' > "$RELAY_STATE/report.md"
+  return 1
+}
+relay_report_or_fail() {
+  relay_report && return 0
+  FAILED_STAGE="steps (relay report)"
+  log "  ✗ the relay report could not be written; see logs/relay-report.log"
+  exit 1
+}
 if [ "$HAS_RELAY" = 1 ]; then
   # Every fork of the run takes part, so each lane between them is found and
   # each destination gets the stand-in once. Each router is CCIP_ROUTER_<PREFIX>
@@ -458,7 +478,7 @@ if [ "$HAS_RELAY" = 1 ]; then
     tail -20 "$LOGS/relay-install.log" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
     exit 1
   fi
-  relay_report || true
+  relay_report_or_fail
 fi
 n=0
 for s in "${STEP_LINES[@]}"; do
@@ -528,7 +548,7 @@ for s in "${STEP_LINES[@]}"; do
         tail -20 "$steplog" | sed 's/^/      /' | tee -a "$LOGS/driver.log"
         exit 1
       fi
-      relay_report || true
+      relay_report_or_fail
       ;;
     cmd)
       # The hand step runs under `set -eo pipefail`: a compound step stops at
