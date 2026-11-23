@@ -654,7 +654,7 @@ contract का `_validatePostParallelSale` reject करेगा, इसलि
   creator-fee legs को पहले उनके configured recipients पर सीधे
   route करता है; executor केवल **net proceeds** (listed price
   minus उन marketplace / creator fee legs) diamond को pass
-  करता है। Diamond उस net amount को आपके vault में escrow
+  करता है। Diamond उस net amount को आपके vault में जमा
   करता है, NFT buyer को transfer होता है, और offer
   `consumed_by_sale` से mark होता है (My Offers, Activity, और
   Offer Details में distinct "Sold" status के रूप में दिखाई

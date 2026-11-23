@@ -150,7 +150,7 @@
     "statNftValue": "NFT",
     "statNftLabel": "Seguimiento de posiciones",
     "statVaultValue": "1:1",
-    "statVaultLabel": "Custodia aislada",
+    "statVaultLabel": "Vaults de Vaipakam",
     "demoLendTitle": "Prestar 1,000 USDC",
     "demoLendMeta": "5% APR · 30 días · garantía ETH",
     "demoLendStatus": "Activo",
@@ -168,9 +168,9 @@
     "p2pTitle": "Préstamos vault-to-vault",
     "p2pDesc": "Crea o acepta ofertas de tokens ERC-20 con las condiciones que tú fijas: tasa de interés, tipo de colateral y duración del préstamo. La tasa acordada se mantiene durante todo el préstamo. Solo cambia si ambas partes acuerdan prorrogarlo cerca de su fin, o si el prestatario traspasa el préstamo a un nuevo prestatario; en ese caso, el prestamista recibe cualquier interés que perdería. Sin pools intermediarios.",
     "nftTitle": "Alquiler de NFT (ERC-4907)",
-    "nftDesc": "Alquilar NFT ERC-721 y ERC-1155 con tarifa diaria. El prestatario obtiene los derechos de uso mientras el NFT permanece de forma segura en custodia.",
-    "vaultTitle": "Custodia aislada por usuario",
-    "vaultDesc": "Cada usuario recibe su propio proxy de custodia actualizable UUPS. Sin mezcla de fondos: los activos siempre permanecen aislados.",
+    "nftDesc": "Alquilar NFT ERC-721 y ERC-1155 con tarifa diaria. El prestatario obtiene los derechos de uso mientras el NFT permanece de forma segura en el vault.",
+    "vaultTitle": "Vaults de Vaipakam",
+    "vaultDesc": "Cada usuario recibe su propio proxy de vault actualizable UUPS. Sin mezcla de fondos: los activos siempre permanecen aislados.",
     "nftPositionTitle": "Seguimiento de posiciones por NFT",
     "nftPositionDesc": "Cada oferta y préstamo emite un NFT único de Vaipakam con metadatos on-chain. Permite probar la propiedad, reclamar fondos y verificar el estado en cualquier marketplace.",
     "liquidityTitle": "Activos líquidos vs ilíquidos",
@@ -187,7 +187,7 @@
     "title": "De la oferta a la liquidación en cuatro pasos",
     "subtitle": "Cada acción queda registrada on-chain. Los NFT de posición sirven como prueba de propiedad y son necesarios para reclamar los fondos.",
     "step1Title": "Crear una oferta",
-    "step1Desc": "Como prestamista, se especifica el activo, la tasa de interés, los requisitos de colateral y la duración. Como prestatario, se indica lo que se necesita y el colateral que se puede aportar. Los activos quedan bloqueados en la custodia personal.",
+    "step1Desc": "Como prestamista, se especifica el activo, la tasa de interés, los requisitos de colateral y la duración. Como prestatario, se indica lo que se necesita y el colateral que se puede aportar. Los activos quedan bloqueados en el Vault de Vaipakam.",
     "step1Detail1": "Préstamo ERC-20 o alquiler de NFT",
     "step1Detail2": "Términos personalizables",
     "step1Detail3": "NFT de Vaipakam emitido para la posición",
@@ -206,7 +206,7 @@
     "step4Detail1": "Presentar el NFT para reclamar fondos",
     "step4Detail2": "Recargos por mora limitados al 5%",
     "step4Detail3": "Comisión de inicio según el plazo (0,2% hasta 30 días) + 10% de comisión sobre el rendimiento",
-    "step4Detail4": "Descuento VPFI por niveles: 10% / 15% / 20% / 24% en ambas comisiones según el saldo en custodia"
+    "step4Detail4": "Descuento VPFI por niveles: 10% / 15% / 20% / 24% en ambas comisiones según el saldo del vault"
   },
   "security": {
     "sectionLabel": "Seguridad y confianza",
@@ -214,8 +214,8 @@
     "subtitle": "Desde la arquitectura del contrato inteligente hasta la mecánica de liquidación, cada decisión de diseño prioriza la seguridad de los activos. Cada tarjeta a continuación enlaza al artefacto on-chain que la respalda: el estándar puede verificarse de forma independiente.",
     "diamondTitle": "Diamond Standard (EIP-2535)",
     "diamondDesc": "Arquitectura de proxy modular. Permite actualizar facetas individuales sin interrumpir el protocolo. Todas las llamadas se enrutan a través de un único punto de entrada del Diamond.",
-    "vaultTitle": "Custodia aislada por usuario",
-    "vaultDesc": "Cada usuario recibe un proxy de custodia UUPS dedicado. Sin mezcla de fondos. Las actualizaciones obligatorias bloquean las interacciones hasta que el usuario actualice.",
+    "vaultTitle": "Vaults de Vaipakam",
+    "vaultDesc": "Cada usuario recibe un proxy de vault UUPS dedicado. Sin mezcla de fondos. Las actualizaciones obligatorias bloquean las interacciones hasta que el usuario actualice.",
     "transparencyTitle": "Transparencia on-chain",
     "transparencyDesc": "Cada oferta, préstamo y cambio de estado queda registrado on-chain. Los NFT de Vaipakam funcionan como prueba verificable de la propiedad de la posición.",
     "slippageTitle": "Seguridad ante slippage y liquidación",
@@ -254,7 +254,7 @@
       "basics-what-is-vaipakam": {
         "q": "¿Qué es Vaipakam, en lenguaje sencillo?",
         "a1": "Vaipakam es un mercado vault-to-vault para prestar criptomonedas y alquilar artículos digitales (NFT). Una persona publica una oferta con las condiciones que le resultan cómodas — importe, interés, duración — y otra persona la acepta. Sin banco, sin gestor de fondos, sin intermediario entre las dos contrapartes. La tasa de interés que acuerdan es fija durante todo el préstamo. Solo cambia si ambos acuerdan prorrogarlo, o si el prestatario lo traspasa a un nuevo prestatario, en cuyo caso el prestamista recibe cualquier interés que perdería.",
-        "a2": "Lo que mantiene la honestidad de todos es un conjunto de contratos inteligentes en una blockchain. Mantienen los activos en custodia individual durante el préstamo y los liberan automáticamente cuando se cumplen las condiciones. Cada usuario conserva el control de sus propios fondos; el protocolo se limita a hacer cumplir el acuerdo pactado."
+        "a2": "Lo que mantiene la honestidad de todos es un conjunto de contratos inteligentes en una blockchain. Mantienen los activos en el vault de cada usuario durante el préstamo y los liberan automáticamente cuando se cumplen las condiciones. Cada usuario conserva el control de sus propios fondos; el protocolo se limita a hacer cumplir el acuerdo pactado."
       },
       "basics-wallet": {
         "q": "¿Necesito una billetera de criptomonedas y qué es eso?",
@@ -288,8 +288,8 @@
         "a2": "Vaipakam nunca se queda con una parte del gas — va directamente a la red. Usar una L2 (Base, Arbitrum, Optimism, Polygon) suele mantener el gas en unos pocos céntimos por acción, por lo que la mayoría de los usuarios prefieren estas redes a Ethereum mainnet para la actividad cotidiana."
       },
       "basics-custody": {
-        "q": "¿Quién custodia realmente mi dinero mientras un préstamo está activo?",
-        "a1": "Nadie en el sentido tradicional. Los activos viven en una custodia mediante contrato inteligente que solo el usuario y las propias reglas del protocolo pueden mover. Cada usuario tiene su propia custodia aislada — los fondos nunca se mezclan con los de extraños — y cada liberación de esos fondos sigue una regla publicada en cadena antes de que se pulsara \"aceptar\".",
+        "q": "¿Quién tiene realmente mi dinero mientras un préstamo está activo?",
+        "a1": "Nadie en el sentido tradicional. Los activos viven en un vault de contrato inteligente que solo el usuario y las propias reglas del protocolo pueden mover. Cada usuario tiene su propio vault aislado — los fondos nunca se mezclan con los de extraños — y cada liberación de esos fondos sigue una regla publicada en cadena antes de que se pulsara \"aceptar\".",
         "a2": "Los contratos son de código abierto y requieren auditorías de terceros antes del despliegue en mainnet. Vaipakam no puede redirigir ni recuperar saldos; como máximo, el equipo puede pausar acciones nuevas en una emergencia mientras las rutas existentes de repago, reclamación o salida siguen disponibles."
       },
       "basics-vpfi-intro": {
@@ -300,12 +300,12 @@
         "q": "¿Qué activos puedo prestar o pedir prestado?",
         "a1": "Vaipakam admite dos tipos de préstamo: préstamos ERC-20 (prestar un token fungible) y alquileres de NFT (alquilar un ERC-721 o ERC-1155).",
         "li1": "<s>Préstamos ERC-20:</s> el principal es cualquier ERC-20 (USDC, ETH, WBTC, etc.); el colateral puede ser cualquier ERC-20 o cualquier NFT.",
-        "li2": "<s>Alquileres de NFT:</s> el NFT alquilado es el principal; el colateral es un ERC-20. El soporte nativo ERC-4907 en el NFT es opcional — el envoltorio de custodia por usuario expone igualmente una superficie uniforme <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c>."
+        "li2": "<s>Alquileres de NFT:</s> el NFT alquilado es el principal; el colateral es un ERC-20. El soporte nativo ERC-4907 en el NFT es opcional — el envoltorio del Vault de Vaipakam expone igualmente una superficie uniforme <c>userOf</c> / <c>userExpires</c> / <c>userQuantity</c>."
       },
       "vault": {
-        "q": "¿Cómo funciona la custodia por usuario?",
-        "a1": "Cada usuario obtiene su propio proxy de custodia UUPS actualizable, desplegado en el primer uso por <c>VaultFactoryFacet</c> (patrón clone-factory). Los activos nunca se mezclan con los de nadie más.",
-        "a2": "El Diamond orquesta los movimientos entre custodias, pero los derechos de reclamación están atados al NFT de posición de Vaipakam — por lo que la custodia está estrictamente condicionada por el estado de la posición en cadena."
+        "q": "¿Cómo funciona el Vault de Vaipakam?",
+        "a1": "Cada usuario obtiene su propio proxy de vault UUPS actualizable, desplegado en el primer uso por <c>VaultFactoryFacet</c> (patrón clone-factory). Los activos nunca se mezclan con los de nadie más.",
+        "a2": "El Diamond orquesta los movimientos entre vaults, pero los derechos de reclamación están atados al NFT de posición de Vaipakam — por lo que lo que sale de un vault está estrictamente condicionado por el estado de la posición en cadena."
       },
       "default": {
         "q": "¿Qué pasa si un prestatario incumple?",
@@ -377,7 +377,7 @@
         "q": "¿Cómo funciona el descuento VPFI?",
         "a1": "El VPFI mantenido en tu vault de Vaipakam en la cadena canónica obtiene un nivel de descuento — un depósito que sólo está en una cadena espejo no lo sube, porque el nivel se lee del vault canónico y se replica hacia fuera. Un consentimiento cubre la rama del prestatario (iniciación) y la del prestamista (rendimiento) — pero es por cadena: la ruta de comisiones lee la bandera en la cadena donde se liquida el préstamo, así que actívalo en cada cadena donde quieras el descuento. El nivel no es inmediato: un depósito nuevo debe mantenerse un periodo mínimo (tres días por defecto) antes de contar, y se aplica el nivel MÁS BAJO que hayas mantenido en la ventana de historial reciente, así que recargar justo antes de un préstamo no lo sube. Para el prestatario el descuento es una reducción directa de la comisión de iniciación, cobrada en el activo del préstamo al aceptarse; no se descuenta VPFI para pagarla y no se devuelve nada después. Requiere además el consentimiento y un activo prestado líquido; sin cualquiera de ellos no se aplica el descuento por nivel de tenencia — y sin un arancel Full de por medio, eso significa la comisión completa. Adherirse al arancel Full no sustituye al consentimiento: autoriza su propia parte, que se suma, pero el descuento por nivel de tenencia sigue exigiendo el consentimiento activado — quien paga el arancel sin él recibe solo la parte del arancel, no además su nivel. El descuento de rendimiento del prestamista se entrega igual por defecto. Si hay una referencia de precio de VPFI configurada, se liquida en VPFI desde su vault en la cadena donde se liquida el préstamo — y si no tiene suficiente, pierde el descuento por nivel de tenencia y paga la comisión de rendimiento sin él, en lugar de volver a la reducción directa — un arancel Full ya pagado conserva su propia parte. Un paso más si prestas o pides prestado en una cadena espejo: tu primer depósito difunde un nivel cero mientras corre el periodo de tenencia, y el mero paso del tiempo no envía ningún mensaje nuevo — así que, cumplido el plazo, empuja el nivel a las cadenas espejo desde el panel (o haz un depósito o retiro de VPFI en la cadena canónica, que recalcula el nivel y lo vuelve a difundir) antes de que se aplique allí. El envío también lee tu consentimiento en la cadena canónica: si está desactivado allí, difunde nivel 0 sea cual sea tu saldo, así que actívalo tanto en la cadena canónica como en la cadena donde liquidas. Un nivel enviado también tiene fecha de caducidad: la cadena espejo deja de honrarlo 60 días después del último envío que le llegó (el valor por defecto) y te trata como nivel 0 hasta que llegue uno nuevo. Lo que lo renueva es más estrecho de lo que parece. Solo se envía cuando tu nivel, su tasa o la propia tabla de niveles han cambiado — un envío idéntico se omite a propósito — así que volver a pulsar el botón del panel, o hacer un depósito o retiro que deje tu nivel igual, no envía nada ni amplía los 60 días. Una tenencia que simplemente dejas quieta pierde por tanto el descuento en esa cadena espejo al agotarse el plazo. No hay una forma admitida de renovar un nivel que no ha cambiado. Cada envío consume presupuesto cross-chain financiado por el protocolo, y por eso se omite uno idéntico y por eso no existe deliberadamente ninguna actualización rutinaria. Cuenta entonces con que un descuento en cadena espejo dura 60 días desde el envío que lo estableció; vuelve con el siguiente envío que lleve un nivel válido — y ten en cuenta que un retiro por debajo del Nivel 1 también es un cambio, que envía nivel 0 y te deja sin descuento alguno. Hay un caso en que merece la pena pulsar el botón, y es aquel en que pulsarlo funciona: cuando la gobernanza reajusta la tasa de tu nivel o publica una nueva tabla, el cambio no viaja solo a las cadenas espejo, así que un envío con el mismo nivel pasa a ser posible y es lo que lo lleva. Hazlo pronto. Tu descuento no caduca con el reajuste en sí, pero el primer envío posterior de CUALQUIER usuario lleva la nueva versión a esa cadena espejo, y desde entonces toda caché que siga en la versión antigua se lee como nivel 0 hasta que llegue la suya. En una cadena espejo con otros usuarios eso ocurre rápido: no es algo que dejar pendiente. Es la única condición de esta página que puede costarte el descuento sin culpa tuya, y se está trabajando en resolverla como corresponde.",
         "tableTier": "Nivel",
-        "tableVault": "VPFI en custodia",
+        "tableVault": "VPFI en el vault",
         "tableDiscount": "Descuento",
         "tableInitiation": "Iniciación efectiva",
         "tableYield": "Comisión de rendimiento efectiva",
@@ -407,7 +407,7 @@
       },
       "integrator-rental": {
         "q": "¿Cómo leo el estado de alquiler de un NFT alquilado en Vaipakam?",
-        "a1": "Consultar el <s>envoltorio de custodia de Vaipakam</s> del prestamista — no el NFT subyacente — a través del Diamond. Para alquileres ERC-1155 con varios arrendatarios concurrentes en el mismo <c>(nftContract, tokenId)</c>, <c2>vaultGetNFTQuantity</c2> devuelve la cantidad <em>agregada activa</em> y <c3>vaultGetNFTUserExpires</c3> devuelve el vencimiento mínimo activo.",
+        "a1": "Consultar el <s>envoltorio del Vault de Vaipakam</s> del prestamista — no el NFT subyacente — a través del Diamond. Para alquileres ERC-1155 con varios arrendatarios concurrentes en el mismo <c>(nftContract, tokenId)</c>, <c2>vaultGetNFTQuantity</c2> devuelve la cantidad <em>agregada activa</em> y <c3>vaultGetNFTUserExpires</c3> devuelve el vencimiento mínimo activo.",
         "a2": "El envoltorio mantiene el estado autoritativo de alquiler incluso cuando el NFT subyacente <s>no</s> implementa ERC-4907, de modo que los integradores obtienen una superficie uniforme para todo activo alquilado."
       },
       "integrator-events": {

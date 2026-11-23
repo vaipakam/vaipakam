@@ -358,7 +358,7 @@
       "vault": {
         "q": "How does the Vaipakam Vault work?",
         "a1": "Every user gets their own UUPS upgradeable proxy vault, deployed on first use by the <c>VaultFactoryFacet</c> (clone-factory pattern). Assets are never commingled with anyone else's.",
-        "a2": "The Diamond orchestrates moves across vaults, but claim rights are tied to the Vaipakam position NFT — so vault custody is strictly constrained by on-chain position state."
+        "a2": "The Diamond orchestrates moves across vaults, but claim rights are tied to the Vaipakam position NFT — so what leaves a vault is strictly constrained by on-chain position state."
       },
       "default": {
         "q": "What happens if a borrower defaults?",
