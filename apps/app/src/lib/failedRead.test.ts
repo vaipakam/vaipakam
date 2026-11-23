@@ -12,22 +12,28 @@ describe('ReadFailures', () => {
 
   it('keeps the first failed request\'s reference', () => {
     const f = new ReadFailures();
-    f.indexer('AAAAAAAAAA');
-    f.indexer('BBBBBBBBBB');
-    expect(f.verdict(false)).toEqual({ source: 'indexer', reference: 'AAAAAAAAAA' });
+    f.indexer({ answered: true, reference: 'AAAAAAAAAA' });
+    f.indexer({ answered: true, reference: 'BBBBBBBBBB' });
+    expect(f.verdict(false)).toEqual({ source: 'indexer', indexer: { answered: true, reference: 'AAAAAAAAAA' } });
   });
 
-  it('keeps a first failure with no reference as none, even if a later one has one', () => {
+  it('keeps a first failure with no answer as such, even if a later one has a reference', () => {
     const f = new ReadFailures();
-    f.indexer(null);
-    f.indexer('BBBBBBBBBB');
-    expect(f.verdict(false)).toEqual({ source: 'indexer', reference: null });
+    f.indexer({ answered: false, reference: null });
+    f.indexer({ answered: true, reference: 'BBBBBBBBBB' });
+    expect(f.verdict(false)).toEqual({ source: 'indexer', indexer: { answered: false, reference: null } });
+  });
+
+  it('keeps an answer without a reference apart from no answer', () => {
+    const f = new ReadFailures();
+    f.indexer({ answered: true, reference: null });
+    expect(f.verdict(false)).toEqual({ source: 'indexer', indexer: { answered: true, reference: null } });
   });
 
   it('names both sources when the chain fallback failed too', () => {
     const f = new ReadFailures();
-    f.indexer('AAAAAAAAAA');
-    expect(f.verdict(true)).toEqual({ source: 'both', indexerReference: 'AAAAAAAAAA' });
+    f.indexer({ answered: true, reference: 'AAAAAAAAAA' });
+    expect(f.verdict(true)).toEqual({ source: 'both', indexer: { answered: true, reference: 'AAAAAAAAAA' } });
   });
 
   it('names the chain alone when only the chain was asked and failed', () => {

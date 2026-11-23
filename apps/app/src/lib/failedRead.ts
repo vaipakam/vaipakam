@@ -8,8 +8,9 @@
  * state says which source failed, shows the indexer's reference when it has
  * one, and says plainly when there is none, rather than leaving it blank.
  *
- * - `indexer`: only the indexer was asked, and it failed. `reference` is
- *   null when nothing answered (a network failure or timeout).
+ * - `indexer`: only the indexer was asked, and it failed. Whether a
+ *   response arrived is kept apart from whether it carried a reference, so
+ *   an answer without one never reads as no answer.
  * - `chain`: only the chain was asked, and it failed.
  * - `both`: the indexer failed and the chain fallback failed too. A hook
  *   whose fallback SUCCEEDED shows no unavailable state, so it has no
@@ -20,13 +21,22 @@
  */
 import { BaseError, ContractFunctionRevertedError } from 'viem';
 
-export type FailedRead =
-  | { source: 'indexer'; reference: string | null }
-  | { source: 'chain' }
-  | { source: 'both'; indexerReference: string | null };
+/** How a failed indexer request ended. `answered`: a response arrived (an
+ *  error status, or a body that was not JSON), as against no response at
+ *  all (a network failure or timeout). `reference`: the reference that
+ *  response carried, null when it carried no valid one or none arrived. */
+export interface IndexerFailure {
+  readonly answered: boolean;
+  readonly reference: string | null;
+}
 
-/** Told the reference of a failed indexer read (null when nothing answered). */
-export type IndexerFailureSink = (reference: string | null) => void;
+export type FailedRead =
+  | { source: 'indexer'; indexer: IndexerFailure }
+  | { source: 'chain' }
+  | { source: 'both'; indexer: IndexerFailure };
+
+/** Told how a failed indexer request ended. */
+export type IndexerFailureSink = (failure: IndexerFailure) => void;
 
 /**
  * The failures of ONE read, which may make several indexer requests (pages,
@@ -34,26 +44,24 @@ export type IndexerFailureSink = (reference: string | null) => void;
  * one failed request makes the whole read unavailable.
  */
 export class ReadFailures {
-  private failed = false;
-  private reference: string | null = null;
+  private first: IndexerFailure | null = null;
 
   /** Pass to every indexer fetch the read makes. */
-  readonly indexer: IndexerFailureSink = (reference) => {
-    if (this.failed) return;
-    this.failed = true;
-    this.reference = reference;
+  readonly indexer: IndexerFailureSink = (failure) => {
+    if (this.first) return;
+    this.first = { answered: failure.answered, reference: failure.reference };
   };
 
   get indexerFailed(): boolean {
-    return this.failed;
+    return this.first !== null;
   }
 
   /** The failure to show for an unavailable result. `chainFailed`: the chain
    *  was asked and failed. Null when no request failed (for example a build
    *  with no indexer, which made no request). */
   verdict(chainFailed: boolean): FailedRead | null {
-    if (this.failed && chainFailed) return { source: 'both', indexerReference: this.reference };
-    if (this.failed) return { source: 'indexer', reference: this.reference };
+    if (this.first && chainFailed) return { source: 'both', indexer: this.first };
+    if (this.first) return { source: 'indexer', indexer: this.first };
     if (chainFailed) return { source: 'chain' };
     return null;
   }

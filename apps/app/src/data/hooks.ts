@@ -47,6 +47,7 @@ import {
   ReadFailures,
   unavailable,
   unwrapRead,
+  type IndexerFailureSink,
   type UnavailableRead,
 } from '../lib/failedRead';
 
@@ -307,7 +308,7 @@ export interface MyLoanRows extends MyRows<PositionLoan> {
 async function fetchIndexedLoans(
   chainId: number,
   address: string,
-  onFailure?: (reference: string | null) => void,
+  onFailure?: IndexerFailureSink,
 ): Promise<PositionLoan[] | null> {
   const [asLender, asBorrower] = await Promise.all([
     fetchAllPages<IndexedLoan>((before) =>

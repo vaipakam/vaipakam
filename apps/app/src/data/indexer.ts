@@ -54,10 +54,12 @@ export async function getJson<T>(path: string, onFailure?: IndexerFailureSink): 
   const outcome = await probeIndexerRead(path, () => fetchIndexerJson<T>(path));
   if (outcome.ok) return outcome.value;
   // #3922 option A — a caller that shows an unavailable state is told the
-  // read failed, with the reference the indexer's answer carried (null when
-  // nothing answered). A build with no indexer made no request: nothing to
-  // report.
-  if (outcome.failure !== 'unconfigured') onFailure?.(outcome.reference ?? null);
+  // read failed, whether the indexer answered, and the reference its answer
+  // carried (null when it carried none). A build with no indexer made no
+  // request: nothing to report.
+  if (outcome.failure !== 'unconfigured') {
+    onFailure?.({ answered: outcome.answered === true, reference: outcome.reference ?? null });
+  }
   return null;
 }
 
@@ -87,13 +89,13 @@ async function fetchIndexerJson<T>(path: string): Promise<IndexerReadOutcome<T>>
     reference = null;
   }
   try {
-    if (!res.ok) return { ok: false, failure: 'http', status: res.status, reference };
+    if (!res.ok) return { ok: false, failure: 'http', status: res.status, reference, answered: true };
     return { ok: true, value: (await res.json()) as T };
   } catch {
     // The body is read under the same timer, so an abort mid-body is a
     // timeout, and anything else is a body that was not JSON. Either way
     // the indexer answered, so its reference is kept.
-    return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'body', reference };
+    return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'body', reference, answered: true };
   } finally {
     clearTimeout(timer);
   }

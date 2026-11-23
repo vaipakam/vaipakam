@@ -151,6 +151,9 @@ export type IndexerReadOutcome<T> =
        *  a failure that got an answer (an HTTP error, or a body that was
        *  not JSON); null when nothing answered. Never sent to the probe. */
       reference?: string | null;
+      /** #3922 — a response arrived (as against none at all). Never sent
+       *  to the probe. */
+      answered?: boolean;
     };
 
 const MAX_CHAIN = 8;

@@ -89,25 +89,25 @@ describe('getJson tells its caller the failed read\'s reference (#3922)', () => 
     const events = installDriver();
     const onFailure = vi.fn();
     expect(await getJson('/loans/7?chainId=84532', onFailure)).toBeNull();
-    expect(onFailure).toHaveBeenCalledWith(REF);
+    expect(onFailure).toHaveBeenCalledWith({ answered: true, reference: REF });
     // The probe never carries the reference.
     expect(JSON.stringify(events)).not.toContain(REF);
   });
 
-  it('passes null when the answer carried no valid reference', async () => {
+  it('says the indexer answered when its answer carried no valid reference', async () => {
     vi.stubEnv('VITE_INDEXER_ORIGIN', ORIGIN);
     vi.stubGlobal('fetch', async () => new Response('x', { status: 500, headers: { 'x-request-ref': 'not-a-ref' } }));
     const onFailure = vi.fn();
     await getJson('/loans/7?chainId=84532', onFailure);
-    expect(onFailure).toHaveBeenCalledWith(null);
+    expect(onFailure).toHaveBeenCalledWith({ answered: true, reference: null });
   });
 
-  it('passes null when nothing answered', async () => {
+  it('says nothing answered when no response arrived', async () => {
     vi.stubEnv('VITE_INDEXER_ORIGIN', ORIGIN);
     vi.stubGlobal('fetch', async () => Promise.reject(new TypeError('Failed to fetch')));
     const onFailure = vi.fn();
     await getJson('/loans/7?chainId=84532', onFailure);
-    expect(onFailure).toHaveBeenCalledWith(null);
+    expect(onFailure).toHaveBeenCalledWith({ answered: false, reference: null });
   });
 
   it('reports nothing for a served read or a build with no indexer', async () => {

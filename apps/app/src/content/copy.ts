@@ -7553,6 +7553,7 @@ const copySource = {
     // #3922 — a failed read says when there is no reference to quote,
     // rather than leaving it blank.
     readNoAnswer: 'The indexer did not answer, so there is no reference for this read.',
+    readNoReference: 'The indexer answered with an error but gave no reference for this read.',
     chainReadFailed: 'The network read failed; there is no reference for it.',
     chainReadAlsoFailed: 'The network read failed too; there is no reference for it.',
     waitingForWallet: 'Waiting for wallet…',

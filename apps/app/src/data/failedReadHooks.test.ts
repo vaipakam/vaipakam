@@ -42,7 +42,7 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   publicClient = {};
   vi.mocked(fetchLoanById).mockImplementation(async (_c, _id, onFailure) => {
-    onFailure?.(REF);
+    onFailure?.({ answered: true, reference: REF });
     return null;
   });
 });
@@ -67,7 +67,7 @@ describe('useLoan names the failed source (#3922)', () => {
     vi.mocked(readLoanRowLive).mockRejectedValue(new BaseError('HTTP request failed'));
     const r = await loan();
     expect(r.data).toBeNull();
-    expect(r.failedRead).toEqual({ source: 'both', indexerReference: REF });
+    expect(r.failedRead).toEqual({ source: 'both', indexer: { answered: true, reference: REF } });
   });
 
   it('keeps the indexer verdict when the chain reverts (no such loan)', async () => {
@@ -75,12 +75,12 @@ describe('useLoan names the failed source (#3922)', () => {
     vi.mocked(readLoanRowLive).mockRejectedValue(new BaseError('call failed', { cause: revert }));
     const r = await loan();
     expect(r.data).toBeNull();
-    expect(r.failedRead).toEqual({ source: 'indexer', reference: REF });
+    expect(r.failedRead).toEqual({ source: 'indexer', indexer: { answered: true, reference: REF } });
   });
 
   it('keeps the indexer verdict when there is no chain client to ask', async () => {
     publicClient = undefined;
     const r = await loan();
-    expect(r.failedRead).toEqual({ source: 'indexer', reference: REF });
+    expect(r.failedRead).toEqual({ source: 'indexer', indexer: { answered: true, reference: REF } });
   });
 });

@@ -3172,6 +3172,7 @@
       "amountBelowOfferFloor": "La plus petite offre que le protocole accepte dans ce jeton est de {{min}} {{symbol}}. Saisissez au moins ce montant.",
       "serviceReference": "Référence {{reference}}. Indiquez-la si vous contactez le support.",
       "readNoAnswer": "L’indexeur n’a pas répondu, il n’y a donc pas de référence pour cette lecture.",
+      "readNoReference": "L’indexeur a répondu par une erreur mais n’a donné aucune référence pour cette lecture.",
       "chainReadFailed": "La lecture sur le réseau a échoué ; il n’y a pas de référence pour elle.",
       "chainReadAlsoFailed": "La lecture sur le réseau a aussi échoué ; il n’y a pas de référence pour elle."
     },
