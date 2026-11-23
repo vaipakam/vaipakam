@@ -297,8 +297,14 @@ guard; `[1e]` permissionless-steps ledger; `[2/4]` deploy-sanity suite
 `[3/4]` deploy shell-script lint; `[4/4]`/`[4b]` committed ABIs and TS
 `Deployment` keys match.
 
-The `contracts` phase re-runs this same check per chain (`[1b]`), ~30 min each
-(FreshDeployHardeningPlan lesson 10; not yet cached).
+A passing run records its verdict against the tree digest (every tracked or
+untracked file outside `contracts/deployments`, plus the commit) under the
+ignored `deployments/.forge-test/predeploy/`. The rehearsal driver and the
+`contracts` phase's step `[1b]` reuse that verdict while the tree and the forge
+version are unchanged, so the check runs once per tree instead of once per
+chain (FreshDeployHardeningPlan lesson 10, #3896). A full-regression verdict
+(`--full`) covers the default check; the default one never covers the mainnet
+deploy's `--full`. Any edit to the tree runs the check again.
 
 ### 2.3 Storage-layout records
 

@@ -200,6 +200,8 @@ source "$SCRIPT_DIR/lib/worker-secrets.sh"
 source "$SCRIPT_DIR/lib/artifact-code-check.sh"
 # shellcheck source=lib/rehearsal-gate.sh
 source "$SCRIPT_DIR/lib/rehearsal-gate.sh"
+# shellcheck source=lib/predeploy-once.sh
+source "$SCRIPT_DIR/lib/predeploy-once.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -761,9 +763,14 @@ fi
 # wrote the marker then failed at step [2] could, on a later rerun
 # after edits, broadcast the Diamond without re-validating it. It is
 # cheap relative to the deploy itself.
+#
+# Keyed on the tree instead (#3896): a verdict recorded by a passing run of
+# the check is reused only while the tree digest is unchanged (any tracked or
+# untracked file outside deployments/), with the same toolchain, so an edit
+# always runs the check again.
 echo
 echo "[1b] Pre-deploy sanity check"
-bash "$SCRIPT_DIR/predeploy-check.sh"
+predeploy_check_once
 
 # ── Arbitrum L2-block override (#853 Codex P2) ────────────────────────
 # forge sim can't emulate `ArbSys(0x64)`, so `Deployments.currentL2Block()`

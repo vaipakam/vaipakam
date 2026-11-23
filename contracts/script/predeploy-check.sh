@@ -88,6 +88,15 @@
 # `deploy-chain.sh`, `deploy-testnet.sh` and `deploy-mainnet.sh`, so a
 # deploy physically cannot proceed past a failing sanity check.
 #
+# Once per tree (#3896). The check reads a property of the tree, not of a
+# chain, so a passing run records its verdict against the tree digest
+# (`predeploy-verdict.mjs`, under the ignored deployments/.forge-test/), and
+# the deploy scripts and the rehearsal driver reuse it through
+# `lib/predeploy-once.sh` when it covers the present tree, toolchain and mode.
+# Not recorded: a shard of the regression (one shard is no verdict), a run
+# that honours acknowledged storage breaks (a weaker check), and a run during
+# which the tree changed.
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -117,6 +126,12 @@ if (( ${#REGRESSION_ARGS[@]} )) && [ "$MODE_FULL" -ne 1 ]; then
 fi
 
 FAIL=0
+
+# The tree as the check starts, for the once-per-tree verdict (#3896).
+PREDEPLOY_START=""
+if (( ${#REGRESSION_ARGS[@]} == 0 )) && [ "${STORAGE_LAYOUT_HONOUR_ACKS:-}" != "1" ]; then
+  PREDEPLOY_START=$(node "$SCRIPT_DIR/predeploy-verdict.mjs" start 2>/dev/null) || PREDEPLOY_START=""
+fi
 
 # ── 1. Build ──────────────────────────────────────────────────────────
 # `--skip test` is load-bearing, not an optimisation (#636). A deploy
@@ -1123,3 +1138,10 @@ if (( ${#REGRESSION_ARGS[@]} )); then
   exit 0
 fi
 echo "✓ pre-deploy sanity check passed — safe to proceed with the deploy."
+if [ -n "$PREDEPLOY_START" ]; then
+  start_digest=$(printf '%s' "$PREDEPLOY_START" | sed -n 's/.*"treeDigest":"\([0-9a-f]\{64\}\)".*/\1/p')
+  start_tool=$(printf '%s' "$PREDEPLOY_START" | sed -n 's/.*"toolchain":"\([^"]*\)".*/\1/p')
+  if [ "$MODE_FULL" -eq 1 ]; then verdict_mode=full; else verdict_mode=default; fi
+  node "$SCRIPT_DIR/predeploy-verdict.mjs" record --mode "$verdict_mode" --start "$start_digest" --toolchain "$start_tool" \
+    || echo "  · the pre-deploy verdict could not be recorded; the next step runs the check again"
+fi

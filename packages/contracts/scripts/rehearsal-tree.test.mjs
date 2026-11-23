@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compare, readLeftOut, snapshot, treeDigest, validateLeftOut } from '../../../contracts/script/rehearsal-tree.mjs';
@@ -95,4 +96,28 @@ test('the tree digest is stable and names the commit', () => {
   const b = treeDigest();
   assert.equal(a.digest, b.digest);
   assert.match(a.commit, /^[0-9a-f]{40}$/);
+});
+
+test('an untracked file changes the tree digest; an ignored one does not', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rehearsal-tree-git-'));
+  try {
+    const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8' });
+    git('init', '-q');
+    writeFileSync(join(root, '.gitignore'), 'out/\n');
+    writeFileSync(join(root, 'a.sol'), 'a');
+    git('add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'x');
+    const base = treeDigest(root).digest;
+    mkdirSync(join(root, 'out'));
+    writeFileSync(join(root, 'out', 'b.json'), 'b');
+    assert.equal(treeDigest(root).digest, base, 'an ignored file is not in the digest');
+    writeFileSync(join(root, 'New.sol'), 'n');
+    assert.notEqual(treeDigest(root).digest, base, 'an untracked source file is');
+    mkdirSync(join(root, 'contracts', 'deployments'), { recursive: true });
+    rmSync(join(root, 'New.sol'));
+    writeFileSync(join(root, 'contracts', 'deployments', 'r.json'), 'r');
+    assert.equal(treeDigest(root).digest, base, 'the deploy records are outside it');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

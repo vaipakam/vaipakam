@@ -321,6 +321,10 @@
     {
       "pattern": "REHEARSAL_GATE_*",
       "reason": "The rehearsal gate's own state (#3896): the plan, the override and the gate's result, set by the deploy script from its flags. The gate compares the inputs; it is not one."
+    },
+    {
+      "pattern": "PREDEPLOY_CHECK_SCRIPT",
+      "reason": "Which pre-deploy check script the once-per-tree helper runs (#3896): the rehearsal driver points it at RH_PREDEPLOY. It selects the check, never what the deploy sends."
     }
   ],
   "hashedPatterns": [

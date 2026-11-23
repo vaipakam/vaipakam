@@ -17,10 +17,12 @@
  *       may write.
  *
  *   digest
- *       The tree digest a verdict and the real deploy's gate compare: the
- *       commit plus a hash of every TRACKED file as it is on disk, excluding
- *       `contracts/deployments` (the one boundary the deploy scripts already
- *       use for their records). Printed as hex.
+ *       The tree digest a verdict, the real deploy's gate and the pre-deploy
+ *       check's own verdict compare: the commit plus a hash of every file git
+ *       would see, tracked or untracked but not ignored, as it is on disk,
+ *       excluding `contracts/deployments` (the one boundary the deploy scripts
+ *       already use for their records). An untracked source file changes what
+ *       a deploy builds, so it changes the digest too (#3896). Printed as hex.
  *
  * The left-out list may never hide deploy state: an entry at or under
  * `contracts/deployments`, a `broadcast` folder or a forge `cache` folder is
@@ -135,15 +137,20 @@ export function compare(before, after) {
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** The tree digest (§18): commit + every tracked file outside
- *  contracts/deployments, by path and content as on disk. */
+/** The tree digest (§18): commit + every tracked or untracked, not ignored,
+ *  file outside contracts/deployments, by path and content as on disk. */
 export function treeDigest(root = REPO_ROOT) {
   const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
   const commit = git('rev-parse', 'HEAD').trim();
-  const tracked = git('ls-files', '-z', '--', '.', ':(exclude)contracts/deployments')
-    .split('\0')
-    .filter(Boolean)
-    .sort();
+  // --cached and --others can both name a tracked file that is deleted and
+  // re-created, so the list is de-duplicated.
+  const tracked = [
+    ...new Set(
+      git('ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.', ':(exclude)contracts/deployments')
+        .split('\0')
+        .filter(Boolean),
+    ),
+  ].sort();
   const h = createHash('sha256');
   h.update(`commit ${commit}\n`);
   for (const p of tracked) {
