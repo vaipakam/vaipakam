@@ -1,4 +1,4 @@
-## Thread — three facet splits for contract size room (PR #<n>)
+## Thread — three facet splits for contract size room (PR #3842)
 
 Two facets had come close to the 24 KB size limit every contract on the
 chain must stay under, which left no room for the next change to either.

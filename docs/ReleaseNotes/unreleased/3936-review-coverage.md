@@ -1,4 +1,4 @@
-## Local testing — tooling for the review coverage pass (PR #TBD)
+## Local testing — tooling for the review coverage pass (PR #4004)
 
 The review coverage pass (ReviewCoveragePassDesign) now has its tooling. Every declaration under contracts/src gets a hash of its text with comments and spacing removed. A function moved to another file keeps its coverage, a comment-only edit keeps it, and one changed operator loses it. The ledger (contracts/review-coverage/ledger.json) records, per hash, four marks as opaque review numbers: the reader pass, the reviewer loop, the specification mark and the cross review. A declaration counts as covered only with all four. The ledger holds no findings.
 

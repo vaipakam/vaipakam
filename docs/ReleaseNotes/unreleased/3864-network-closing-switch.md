@@ -1,4 +1,4 @@
-## Thread — The network closing switch (PR #<n>)
+## Thread — The network closing switch (PR #3842)
 
 A network can now be put into a Closing state by one on-chain switch. While it is closing, no step may commit a wallet's money or its standing consent to a new position there, whatever the wallet's Terms standing, and every position already open runs to its own end on its own terms. The Pauser or governance may switch it on at once; only governance or the Unpauser may switch it off, the same split the per-asset pause uses. Switching it on twice keeps the first time it started. One view says whether the network is closing and since when, and one event is emitted each way. It gives the platform a second incident tool beside the global pause: it stops growth without stopping a repayment, a claim, a liquidation or a default, and it moves no deadline.
 

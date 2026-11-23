@@ -1,4 +1,4 @@
-## Local testing — refactor reports and the event-category lint (PR #TBD)
+## Local testing — refactor reports and the event-category lint (PR #4004)
 
 The refactor pass (RefactorRulesDesign) now has four of its five reports, built from the compiler's own syntax tree in the pre-deploy gate's existing one-job build. Nothing is recompiled for them. The four are:
 

@@ -1,4 +1,4 @@
-## Local testing — the mechanical entry gate check (PR #TBD)
+## Local testing — the mechanical entry gate check (PR #4004)
 
 Some rules belong to no one facet: every entry point of a certain kind must carry a certain check. Examples are refusing a flagged wallet, refusing under a pause, holding the re-entry guard, asking the Terms rule, or being callable only by the Diamond. Those rules are now written down once, in one rules file the Security thread keeps, and a new check compares every entry point with it.
 

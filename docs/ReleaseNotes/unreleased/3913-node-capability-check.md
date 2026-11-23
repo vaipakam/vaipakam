@@ -1,4 +1,4 @@
-# Node capability check per network (#3913)
+## Thread — Node capability check per network (PR #3842)
 
 A new read-only operator command asks the node behind each network what it can answer. It checks a trace of one transaction, a trace of a call that was never sent, a trace filter over the platform's contracts, a call at a past block, and every receipt of a block in one request. For each, it records how far back the node reaches, and it measures what a full block scan would cost per day.
 

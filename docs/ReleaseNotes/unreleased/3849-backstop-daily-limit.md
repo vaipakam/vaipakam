@@ -1,4 +1,4 @@
-## Thread — The backstop's daily lending limit (PR #<n>)
+## Thread — The backstop's daily lending limit (PR #3842)
 
 The backstop (Role A, the protocol's lender of last resort) now lends at most a governed share of its lending capital in each lending asset per UTC day. The capital is the funded capital waiting across the asset's pairs plus the principal out on the backstop's open loans. The share starts at one fifth (2,000 basis points) and may be set between 500 and 5,000. A Diamond that never set it reads the default; there is no value that means "no limit".
 
