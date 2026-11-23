@@ -9,6 +9,12 @@
  *                             "No Open Offers / 6 hidden" class of bug
  *                             from the 2026-07-02 naive-user audit)
  *   - `data === {...}`      → real result (empty arrays mean truly empty)
+ *
+ * #3922 (design option A) — beside `data`, the hooks that can be
+ * unavailable return `failedRead`: which source failed and the indexer's
+ * request reference when it answered, for the unavailable state to show.
+ * It is null whenever `data` is not null: a fallback that answered shows no
+ * unavailable state, so it has nothing to quote.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
@@ -36,6 +42,14 @@ import {
   readOwnOfferRowsLive,
 } from './chainPositions';
 import { signalAware, tipAware } from '../chain/railHealth';
+import {
+  chainAnswered,
+  ReadFailures,
+  unavailable,
+  unwrapRead,
+  type IndexerFailureSink,
+  type UnavailableRead,
+} from '../lib/failedRead';
 
 const REFRESH_MS = 30_000;
 
@@ -73,7 +87,8 @@ export function useActiveOffers(opts: { enabled?: boolean } = {}) {
     // RPC read-diet PR A — push-covered root: 180s net while the
     // rail is healthy, today's idle-aware 30s otherwise (§4.1.1).
     refetchInterval: signalAware(REFRESH_MS),
-    queryFn: async (): Promise<ActiveOffersWalk | null> => {
+    queryFn: async (): Promise<ActiveOffersWalk | UnavailableRead> => {
+      const failures = new ReadFailures();
       // Freshness cursor snapshotted BEFORE the page walk: an ingest
       // landing mid-walk could advance the cursor past a terminal
       // block whose stale row is already collected, and the catch-up
@@ -88,16 +103,19 @@ export function useActiveOffers(opts: { enabled?: boolean } = {}) {
       const all: IndexedOffer[] = [];
       let before: number | undefined;
       for (let i = 0; i < ACTIVE_OFFERS_MAX_PAGES; i++) {
-        const page = await fetchActiveOffers(readChain.chainId, {
-          limit: ACTIVE_OFFERS_PAGE,
-          before,
-        });
-        if (page === null) return null;
+        const page = await fetchActiveOffers(
+          readChain.chainId,
+          { limit: ACTIVE_OFFERS_PAGE, before },
+          failures.indexer,
+        );
+        if (page === null) return unavailable(failures.verdict(false));
         all.push(...page.offers);
         if (page.nextBefore === null) break;
         before = page.nextBefore;
         if (i === ACTIVE_OFFERS_MAX_PAGES - 1) {
-          return null; // cap reached with more pages remaining → truncated
+          // Cap reached with more pages remaining → truncated. No request
+          // failed, so there is no reference to show.
+          return unavailable(null);
         }
       }
       return { offers: all, freshness };
@@ -116,7 +134,7 @@ export function useActiveOffers(opts: { enabled?: boolean } = {}) {
   // EarlyExit) gets only stripped rows. Fail-open: scan trouble yields
   // an empty set — the strip can make the book more honest, never
   // unavailable.
-  const walkData = walk.data;
+  const { data: walkData, failedRead } = unwrapRead(walk.data);
   const strip = useQuery({
     queryKey: [
       'bookGhostStrip',
@@ -177,7 +195,7 @@ export function useActiveOffers(opts: { enabled?: boolean } = {}) {
   // the strip's first pass.
   const isLoading =
     walk.isLoading || (enabled && data === undefined && !walk.isLoading);
-  return { ...walk, data, isLoading, isPending: isLoading };
+  return { ...walk, data, isLoading, isPending: isLoading, failedRead };
 }
 
 export interface PositionLoan extends IndexedLoan {
@@ -290,15 +308,16 @@ export interface MyLoanRows extends MyRows<PositionLoan> {
 async function fetchIndexedLoans(
   chainId: number,
   address: string,
+  onFailure?: IndexerFailureSink,
 ): Promise<PositionLoan[] | null> {
   const [asLender, asBorrower] = await Promise.all([
     fetchAllPages<IndexedLoan>((before) =>
-      fetchLoansByLender(chainId, address, { limit: 100, before }).then(
+      fetchLoansByLender(chainId, address, { limit: 100, before }, onFailure).then(
         (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
       ),
     ),
     fetchAllPages<IndexedLoan>((before) =>
-      fetchLoansByBorrower(chainId, address, { limit: 100, before }).then(
+      fetchLoansByBorrower(chainId, address, { limit: 100, before }, onFailure).then(
         (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
       ),
     ),
@@ -321,13 +340,13 @@ async function fetchIndexedLoans(
 export function useMyLoansFull() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+  const query = useQuery({
     queryKey: ['myLoans', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
     // RPC read-diet PR A — list root, deliberately NOT tip-nudged
     // (§4.1.2): push + receipt + focus + 180s net carry it.
     refetchInterval: signalAware(REFRESH_MS),
-    queryFn: async (): Promise<MyLoanRows | null> => {
+    queryFn: async (): Promise<MyLoanRows | UnavailableRead> => {
       if (!address)
         return {
           rows: [],
@@ -336,6 +355,7 @@ export function useMyLoansFull() {
           rowSet: 'complete',
           indexedLoanIds: [],
         };
+      const failures = new ReadFailures();
       const [chainRows, indexedRows] = await Promise.all([
         publicClient
           ? readOwnLoanRowsLive(
@@ -345,9 +365,9 @@ export function useMyLoansFull() {
               address,
             )
           : Promise.resolve(null),
-        fetchIndexedLoans(readChain.chainId, address),
+        fetchIndexedLoans(readChain.chainId, address, failures.indexer),
       ]);
-      if (chainRows === null && indexedRows === null) return null;
+      if (chainRows === null && indexedRows === null) return unavailable(failures.verdict(Boolean(publicClient)));
       // See MyRows: the live enumeration, when it answers, is the
       // sole source — an indexed row absent from it is a ghost
       // (transferred/burned position) or no longer the wallet's,
@@ -371,6 +391,7 @@ export function useMyLoansFull() {
       };
     },
   });
+  return { ...query, ...unwrapRead(query.data) };
 }
 
 /** Slim view of {@link useMyLoansFull} — same cache entry, rows only.
@@ -395,15 +416,16 @@ export function useMyLoans() {
 export function useOffer(offerId: number | undefined) {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+  const query = useQuery({
     queryKey: ['offer', readChain.chainId, offerId],
     enabled: offerId !== undefined && Number.isFinite(offerId),
     // RPC read-diet PR A — detail-page action root: stretches only
     // when BOTH rails cover it (indexer push healthy + chain WS tip
     // nudge); on an HTTP-only chain deploy it keeps todays 30s.
     refetchInterval: tipAware('offer', REFRESH_MS, Boolean(readChain.wsUrl)),
-    queryFn: async (): Promise<IndexedOffer | null> => {
-      const row = await fetchOfferById(readChain.chainId, offerId!);
+    queryFn: async (): Promise<IndexedOffer | UnavailableRead> => {
+      const failures = new ReadFailures();
+      const row = await fetchOfferById(readChain.chainId, offerId!, failures.indexer);
       if (row) return row;
       // Indexer miss (ingest lag on a just-posted offer, or indexer
       // down) — fall back to the live chain read so a shared
@@ -412,39 +434,43 @@ export function useOffer(offerId: number | undefined) {
       // window (#1042; live-repro'd during the #1035 verification).
       // Same pattern as useLoan: a revert (no such offer) keeps the
       // not-found verdict, transport failure keeps "unavailable".
-      if (!publicClient) return null;
+      if (!publicClient) return unavailable(failures.verdict(false));
       try {
-        return await readOfferRowLive(
+        const live = await readOfferRowLive(
           publicClient,
           readChain.diamondAddress,
           readChain.chainId,
           offerId!,
         );
-      } catch {
-        return null;
+        return live ?? unavailable(failures.verdict(false));
+      } catch (e) {
+        // A revert is the chain's answer (no such offer), not a failed read.
+        return unavailable(failures.verdict(!chainAnswered(e)));
       }
     },
   });
+  return { ...query, ...unwrapRead(query.data) };
 }
 
 /** One loan by id on the read chain. */
 export function useLoan(loanId: number | undefined) {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+  const query = useQuery({
     queryKey: ['loan', readChain.chainId, loanId],
     enabled: loanId !== undefined && Number.isFinite(loanId),
     // RPC read-diet PR A — detail-page action root (see useOffer).
     refetchInterval: tipAware('loan', REFRESH_MS, Boolean(readChain.wsUrl)),
-    queryFn: async (): Promise<IndexedLoan | null> => {
-      const row = await fetchLoanById(readChain.chainId, loanId!);
+    queryFn: async (): Promise<IndexedLoan | UnavailableRead> => {
+      const failures = new ReadFailures();
+      const row = await fetchLoanById(readChain.chainId, loanId!, failures.indexer);
       if (row) return row;
       // Indexer miss (lag on a brand-new loan, or indexer down) — fall
       // back to the live chain read so the detail page a chain-only
       // Claim Center entry deep-links to actually renders (#982
       // review). A revert (no such loan) or transport failure keeps
       // the indexer verdict: null = unavailable/not found.
-      if (!publicClient) return null;
+      if (!publicClient) return unavailable(failures.verdict(false));
       try {
         const live = await readLoanRowLive(
           publicClient,
@@ -452,7 +478,7 @@ export function useLoan(loanId: number | undefined) {
           readChain.chainId,
           loanId!,
         );
-        if (!live) return null;
+        if (!live) return unavailable(failures.verdict(false));
         // A chain row carries no deadlines of its own (#2808): date it on
         // the loan clock the same way the positions list dates its chain
         // rows, or this page would call the due date unknown whenever the
@@ -463,11 +489,13 @@ export function useLoan(loanId: number | undefined) {
           [live],
         );
         return dated;
-      } catch {
-        return null;
+      } catch (e) {
+        // A revert is the chain's answer (no such loan), not a failed read.
+        return unavailable(failures.verdict(!chainAnswered(e)));
       }
     },
   });
+  return { ...query, ...unwrapRead(query.data) };
 }
 
 /** Open offers the wallet is involved in: UNION of offers it CREATED
@@ -486,15 +514,16 @@ export function useLoan(loanId: number | undefined) {
 export function useMyOffersFull() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+  const query = useQuery({
     queryKey: ['myOffers', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address),
     // RPC read-diet PR A — list root (see useMyLoansFull). The
     // cancel/amend rows rendered straight from this list get a
     // blocking click-time preflight instead of tip freshness (§4.1.2).
     refetchInterval: signalAware(REFRESH_MS),
-    queryFn: async (): Promise<MyRows<IndexedOffer> | null> => {
+    queryFn: async (): Promise<MyRows<IndexedOffer> | UnavailableRead> => {
       if (!address) return { rows: [], chainOk: true, indexerOk: true, rowSet: 'complete' };
+      const failures = new ReadFailures();
       const [chainLive, created, held] = await Promise.all([
         publicClient
           ? readOwnOfferRowsLive(
@@ -505,24 +534,28 @@ export function useMyOffersFull() {
             )
           : Promise.resolve(null),
         fetchAllPages<IndexedOffer>((before) =>
-          fetchOffersByCreator(readChain.chainId, address, {
-            limit: 100,
-            before,
-          }).then((p) =>
+          fetchOffersByCreator(
+            readChain.chainId,
+            address,
+            { limit: 100, before },
+            failures.indexer,
+          ).then((p) =>
             p === null ? null : { rows: p.offers, nextBefore: p.nextBefore },
           ),
         ),
         fetchAllPages<IndexedOffer>((before) =>
-          fetchOffersByCurrentHolder(readChain.chainId, address, {
-            limit: 100,
-            before,
-          }).then((p) =>
+          fetchOffersByCurrentHolder(
+            readChain.chainId,
+            address,
+            { limit: 100, before },
+            failures.indexer,
+          ).then((p) =>
             p === null ? null : { rows: p.offers, nextBefore: p.nextBefore },
           ),
         ),
       ]);
       const indexerOk = created !== null && held !== null;
-      if (chainLive === null && !indexerOk) return null;
+      if (chainLive === null && !indexerOk) return unavailable(failures.verdict(Boolean(publicClient)));
       // See MyRows: chain leg is the sole source when it answers —
       // it covers created AND held offers, and a cancelled offer
       // simply isn't in it (no tombstone bookkeeping needed, and no
@@ -574,6 +607,7 @@ export function useMyOffersFull() {
       };
     },
   });
+  return { ...query, ...unwrapRead(query.data) };
 }
 
 /** Slim view of {@link useMyOffersFull} — rows only. Same rule as

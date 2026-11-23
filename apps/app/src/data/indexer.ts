@@ -14,6 +14,8 @@ import type { SignedOfferPlacement } from '@vaipakam/lib/signedOfferWire';
 import { indexerOrigin, indexerWsOrigin as wsOriginOf } from '../lib/endpoints';
 import { probeIndexerRead, type IndexerReadOutcome } from '../lib/readProbe';
 import { referenceOf, serviceFetch } from '../lib/serviceRequest';
+import { readRequestReference } from '@vaipakam/lib/requestReference';
+import type { IndexerFailureSink } from '../lib/failedRead';
 
 const TIMEOUT_MS = 4_000;
 
@@ -48,9 +50,17 @@ export function indexerWsOrigin(): string | null {
  * to the page and a success to the query cache, so this is the only place
  * an unserved indexer read can be seen.
  */
-export async function getJson<T>(path: string): Promise<T | null> {
+export async function getJson<T>(path: string, onFailure?: IndexerFailureSink): Promise<T | null> {
   const outcome = await probeIndexerRead(path, () => fetchIndexerJson<T>(path));
-  return outcome.ok ? outcome.value : null;
+  if (outcome.ok) return outcome.value;
+  // #3922 option A — a caller that shows an unavailable state is told the
+  // read failed, whether the indexer answered, and the reference its answer
+  // carried (null when it carried none). A build with no indexer made no
+  // request: nothing to report.
+  if (outcome.failure !== 'unconfigured') {
+    onFailure?.({ answered: outcome.answered === true, reference: outcome.reference ?? null });
+  }
+  return null;
 }
 
 /** One indexer GET, with the reason it failed when it did. */
@@ -70,13 +80,22 @@ async function fetchIndexerJson<T>(path: string): Promise<IndexerReadOutcome<T>>
     clearTimeout(timer);
     return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'network' };
   }
+  // A read sends no reference; the indexer makes one and returns it.
+  // Reading it never changes how the read failed.
+  let reference: string | null = null;
   try {
-    if (!res.ok) return { ok: false, failure: 'http', status: res.status };
+    reference = readRequestReference(res);
+  } catch {
+    reference = null;
+  }
+  try {
+    if (!res.ok) return { ok: false, failure: 'http', status: res.status, reference, answered: true };
     return { ok: true, value: (await res.json()) as T };
   } catch {
     // The body is read under the same timer, so an abort mid-body is a
-    // timeout, and anything else is a body that was not JSON.
-    return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'body' };
+    // timeout, and anything else is a body that was not JSON. Either way
+    // the indexer answered, so its reference is kept.
+    return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'body', reference, answered: true };
   } finally {
     clearTimeout(timer);
   }
@@ -210,6 +229,7 @@ export function fetchActiveOffers(
     excludeSaleVehicles?: boolean;
     excludeOffsetVehicles?: boolean;
   } & MarketScope = {},
+  onFailure?: IndexerFailureSink,
 ): Promise<ActiveOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
@@ -218,7 +238,7 @@ export function fetchActiveOffers(
   if (opts.excludeSaleVehicles) params.set('excludeSaleVehicles', '1');
   if (opts.excludeOffsetVehicles) params.set('excludeOffsetVehicles', '1');
   applyMarketScope(params, opts);
-  return getJson<ActiveOffersPage>(`/offers/active?${params}`);
+  return getJson<ActiveOffersPage>(`/offers/active?${params}`, onFailure);
 }
 
 /** One market row from `GET /offers/markets` — a distinct ERC-20/ERC-20
@@ -263,20 +283,23 @@ export interface CreatorOffersPage {
 export function fetchOfferById(
   chainId: number,
   offerId: number,
+  onFailure?: IndexerFailureSink,
 ): Promise<IndexedOffer | null> {
-  return getJson<IndexedOffer>(`/offers/${offerId}?chainId=${chainId}`);
+  return getJson<IndexedOffer>(`/offers/${offerId}?chainId=${chainId}`, onFailure);
 }
 
 export function fetchOffersByCreator(
   chainId: number,
   creator: string,
   opts: { limit?: number; before?: number } = {},
+  onFailure?: IndexerFailureSink,
 ): Promise<CreatorOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', String(opts.before));
   return getJson<CreatorOffersPage>(
     `/offers/by-creator/${creator.toLowerCase()}?${params}`,
+    onFailure,
   );
 }
 
@@ -293,12 +316,14 @@ export function fetchOffersByCurrentHolder(
   chainId: number,
   holder: string,
   opts: { limit?: number; before?: number } = {},
+  onFailure?: IndexerFailureSink,
 ): Promise<HolderOffersPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', String(opts.before));
   return getJson<HolderOffersPage>(
     `/offers/by-current-holder/${holder.toLowerCase()}?${params}`,
+    onFailure,
   );
 }
 
@@ -406,12 +431,14 @@ export function fetchLoansByLender(
   chainId: number,
   lender: string,
   opts: { limit?: number; before?: number } = {},
+  onFailure?: IndexerFailureSink,
 ): Promise<ParticipantLoansPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', String(opts.before));
   return getJson<ParticipantLoansPage>(
     `/loans/by-lender/${lender.toLowerCase()}?${params}`,
+    onFailure,
   );
 }
 
@@ -419,20 +446,23 @@ export function fetchLoansByBorrower(
   chainId: number,
   borrower: string,
   opts: { limit?: number; before?: number } = {},
+  onFailure?: IndexerFailureSink,
 ): Promise<ParticipantLoansPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', String(opts.before));
   return getJson<ParticipantLoansPage>(
     `/loans/by-borrower/${borrower.toLowerCase()}?${params}`,
+    onFailure,
   );
 }
 
 export function fetchLoanById(
   chainId: number,
   loanId: number,
+  onFailure?: IndexerFailureSink,
 ): Promise<IndexedLoan | null> {
-  return getJson<IndexedLoan>(`/loans/${loanId}?chainId=${chainId}`);
+  return getJson<IndexedLoan>(`/loans/${loanId}?chainId=${chainId}`, onFailure);
 }
 
 export interface RecentLoansPage {

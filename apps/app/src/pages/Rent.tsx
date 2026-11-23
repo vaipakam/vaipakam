@@ -106,6 +106,7 @@ import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 import { StepNav } from '../components/StepNav';
 import { useEligibility } from '../components/useEligibility';
 import { useReviewConsent } from '../hooks/useReviewConsent';
+import { FailedReadNote } from '../components/ServiceReference';
 
 type Path = 'own' | 'want' | null;
 
@@ -1294,6 +1295,7 @@ function RentNftFlow() {
           ) : listings === null ? (
             <>
               <p className="muted">{copy.rent.browseUnavailable}</p>
+              <FailedReadNote failed={activeOffers.failedRead} />
               <button
                 type="button"
                 className="btn btn-secondary"

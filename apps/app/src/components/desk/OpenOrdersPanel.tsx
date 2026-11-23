@@ -1604,7 +1604,7 @@ export function OpenOrdersPanel({
     return <EmptyState icon={LoaderCircle} title={text.loading} />;
   }
   if (offers.data == null || rows === null) {
-    return <UnavailableState body={text.unavailable} />;
+    return <UnavailableState body={text.unavailable} failed={offers.failedRead} />;
   }
   if (rows.length === 0) {
     return (

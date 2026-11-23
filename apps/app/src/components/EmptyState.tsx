@@ -7,6 +7,8 @@ import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { CloudOff, LoaderCircle } from 'lucide-react';
 import { copy } from '../content/copy';
+import type { FailedRead } from '../lib/failedRead';
+import { FailedReadNote } from './ServiceReference';
 
 export function EmptyState({
   icon: Icon,
@@ -46,14 +48,21 @@ export function EmptyState({
 export function UnavailableState({
   body,
   onRetry,
+  failed,
 }: {
   body: string;
   onRetry?: () => void;
+  /** #3922 — what failed, so the state can show the reference to quote
+   *  (or say there is none). */
+  failed?: FailedRead | null | readonly (FailedRead | null)[];
 }) {
   return (
     <div className="empty-state">
       <CloudOff aria-hidden />
       <p>{body}</p>
+      {(Array.isArray(failed) ? failed : [failed]).map((f, i) => (
+        <FailedReadNote key={i} failed={f} />
+      ))}
       {onRetry ? (
         <button type="button" className="btn btn-secondary" onClick={onRetry}>
           {copy.common.tryAgain}

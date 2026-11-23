@@ -74,3 +74,49 @@ describe('getJson reports each indexer read (#2784)', () => {
     expect(settled(events)).toEqual([expect.objectContaining({ ok: false, failure: 'unconfigured' })]);
   });
 });
+
+describe('getJson tells its caller the failed read\'s reference (#3922)', () => {
+  const REF = '0123456789';
+  const withRef = (status: number, body = 'nope') =>
+    async () => new Response(body, { status, headers: { 'x-request-ref': REF } });
+
+  it.each([
+    ['an HTTP error', withRef(503)],
+    ['a body that was not JSON', withRef(200, '<html>')],
+  ] as const)('passes the reference of %s', async (_label, answer) => {
+    vi.stubEnv('VITE_INDEXER_ORIGIN', ORIGIN);
+    vi.stubGlobal('fetch', answer);
+    const events = installDriver();
+    const onFailure = vi.fn();
+    expect(await getJson('/loans/7?chainId=84532', onFailure)).toBeNull();
+    expect(onFailure).toHaveBeenCalledWith({ answered: true, reference: REF });
+    // The probe never carries the reference.
+    expect(JSON.stringify(events)).not.toContain(REF);
+  });
+
+  it('says the indexer answered when its answer carried no valid reference', async () => {
+    vi.stubEnv('VITE_INDEXER_ORIGIN', ORIGIN);
+    vi.stubGlobal('fetch', async () => new Response('x', { status: 500, headers: { 'x-request-ref': 'not-a-ref' } }));
+    const onFailure = vi.fn();
+    await getJson('/loans/7?chainId=84532', onFailure);
+    expect(onFailure).toHaveBeenCalledWith({ answered: true, reference: null });
+  });
+
+  it('says nothing answered when no response arrived', async () => {
+    vi.stubEnv('VITE_INDEXER_ORIGIN', ORIGIN);
+    vi.stubGlobal('fetch', async () => Promise.reject(new TypeError('Failed to fetch')));
+    const onFailure = vi.fn();
+    await getJson('/loans/7?chainId=84532', onFailure);
+    expect(onFailure).toHaveBeenCalledWith({ answered: false, reference: null });
+  });
+
+  it('reports nothing for a served read or a build with no indexer', async () => {
+    const onFailure = vi.fn();
+    vi.stubEnv('VITE_INDEXER_ORIGIN', ORIGIN);
+    vi.stubGlobal('fetch', async () => new Response('{"n":1}', { status: 200 }));
+    await getJson('/loans/7?chainId=84532', onFailure);
+    vi.stubEnv('VITE_INDEXER_ORIGIN', '');
+    await getJson('/loans/7?chainId=84532', onFailure);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+});

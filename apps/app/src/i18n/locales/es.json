@@ -3170,7 +3170,11 @@
       "unknown": "desconocido",
       "amountTooPrecise": "{{symbol}} no se puede dividir tanto: usa como máximo {{decimals}} decimales.",
       "amountBelowOfferFloor": "La oferta más pequeña que acepta el protocolo en este token es de {{min}} {{symbol}}. Introduce al menos esa cantidad.",
-      "serviceReference": "Referencia {{reference}}. Indícala si contactas con soporte."
+      "serviceReference": "Referencia {{reference}}. Indícala si contactas con soporte.",
+      "readNoAnswer": "El indexador no respondió, así que no hay referencia para esta lectura.",
+      "readNoReference": "El indexador respondió con un error, pero no dio ninguna referencia para esta lectura.",
+      "chainReadFailed": "La lectura de la red falló; no hay referencia para ella.",
+      "chainReadAlsoFailed": "La lectura de la red también falló; no hay referencia para ella."
     },
     "stepNav": {
       "progressAria": "Progreso",
