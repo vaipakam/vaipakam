@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseStoredOrderJson, canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { createParams } from '../post/postModel';
-import type { IndexerPoster } from '../reads/world/indexerClient';
+import { IndexerUnavailable, type IndexerPoster } from '../reads/world/indexerClient';
 import {
   identityOf,
   listSignedOrder,
@@ -196,11 +196,12 @@ describe('the review', () => {
 describe('listing on the offer book', () => {
   const sign = signDraftFrom(draftOf(), 84532, ME, TERMS, 9n);
   const rec = { identity: sign.identity, chainId: 84532, order: sign.order, orderHash: sign.orderHash, signature: '0xabcd' as Hex };
-  const poster = (answer: () => Promise<{ status: number; body: unknown }>, seen: unknown[] = []): IndexerPoster => ({
+  const poster = (answer: () => Promise<{ status: number; body: unknown; reference?: string | null }>, seen: unknown[] = []): IndexerPoster => ({
     origin: 'https://index.test',
     postJson: async (path, body) => {
       seen.push({ path, body });
-      return answer();
+      const a = await answer();
+      return { ...a, reference: a.reference ?? null };
     },
   });
 
@@ -215,6 +216,7 @@ describe('listing on the offer book', () => {
       kind: 'listed',
       orderHash: sign.orderHash,
       fresh: true,
+      reference: null,
     });
     expect(seen).toEqual([{ path: '/signed-offers', body: { chainId: 84532, order: sign.order, signature: '0xabcd' } }]);
     expect(
@@ -228,7 +230,28 @@ describe('listing on the offer book', () => {
         poster(async () => ({ status: 409, body: { error: 'nonce-used' } })),
         rec,
       ),
-    ).toEqual({ kind: 'refused', code: 'nonce-used' });
+    ).toEqual({ kind: 'refused', code: 'nonce-used', reference: null });
+  });
+
+  it('keeps the reference of the send, so a refusal or a lost answer can be quoted (#3922)', async () => {
+    expect(await listSignedOrder(poster(async () => ({ status: 409, body: { error: 'nonce-used' }, reference: 'ABCDEFGH23' })), rec)).toEqual({
+      kind: 'refused',
+      code: 'nonce-used',
+      reference: 'ABCDEFGH23',
+    });
+    expect(await listSignedOrder(poster(async () => ({ status: 503, body: null, reference: 'ABCDEFGH24' })), rec)).toMatchObject({
+      kind: 'unknown',
+      reference: 'ABCDEFGH24',
+    });
+    // No answer at all: the reference the app sent, carried by the failure.
+    expect(
+      await listSignedOrder(
+        poster(async () => {
+          throw new IndexerUnavailable('network', 'offline', null, null, 'ABCDEFGH25');
+        }),
+        rec,
+      ),
+    ).toEqual({ kind: 'unknown', reason: 'offline', reference: 'ABCDEFGH25' });
   });
 
   it('never reads a listing that names another order, a 5xx or no answer as anything but unknown', async () => {
@@ -263,7 +286,7 @@ describe('listing on the offer book', () => {
         }),
         rec,
       ),
-    ).toEqual({ kind: 'unknown', reason: 'offline' });
+    ).toEqual({ kind: 'unknown', reason: 'offline', reference: null });
   });
 
   it('bookAnswer needs the order it was sent', () => {

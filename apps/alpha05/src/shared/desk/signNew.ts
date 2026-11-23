@@ -275,14 +275,21 @@ export function signNewReceipt(d: SignDraft, r: SignReview, amount: AmountWords,
   return { title: text('signNew.title'), rows, consequences, ifWrong: text(loanRiskKey(d.draft.side, 'unknown')), prompts: 1, readAt: r.readAt };
 }
 
+/** The book's answer with the request reference (#3922) of the send that
+ *  produced it, for the person to quote: the service's own when it answered,
+ *  else the one this app sent, null when no request went out. */
+export type ListAnswer = BookAnswer & { reference: string | null };
+
 /** Send a signed order to the offer book. A refusal is an answer; no
  *  answer at all leaves whether it was listed unknown. */
-export async function listSignedOrder(indexer: IndexerPoster, rec: SignedRecord): Promise<BookAnswer> {
+export async function listSignedOrder(indexer: IndexerPoster, rec: SignedRecord): Promise<ListAnswer> {
   try {
     const res = await indexer.postJson('/signed-offers', { chainId: rec.chainId, order: rec.order, signature: rec.signature });
-    return bookAnswer(res.status, res.body, rec.orderHash);
+    return { ...bookAnswer(res.status, res.body, rec.orderHash), reference: res.reference };
   } catch (e) {
-    return { kind: 'unknown', reason: e instanceof IndexerUnavailable ? e.message : (e as Error).message };
+    return e instanceof IndexerUnavailable
+      ? { kind: 'unknown', reason: e.message, reference: e.reference }
+      : { kind: 'unknown', reason: (e as Error).message, reference: null };
   }
 }
 

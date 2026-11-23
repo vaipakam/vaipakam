@@ -5,6 +5,8 @@
  * refuses every call with a stated reason, so a world surface renders a
  * degraded-source warning and never a confident empty list (RB-FUNDS).
  */
+import { REQUEST_REF_HEADER, newRequestReference, readRequestReference } from '@vaipakam/lib/requestReference';
+
 export type IndexerFailure = 'not-configured' | 'network' | 'status' | 'shape';
 
 export class IndexerUnavailable extends Error {
@@ -17,12 +19,16 @@ export class IndexerUnavailable extends Error {
    *  outage page). A route's stated refusal is read from this code, never
    *  from the status alone. */
   readonly code: string | null;
-  constructor(why: IndexerFailure, message: string, status: number | null = null, code: string | null = null) {
+  /** #3922 — the reference a write sent when no answer came (the book may
+   *  still have received it); null otherwise. */
+  readonly reference: string | null;
+  constructor(why: IndexerFailure, message: string, status: number | null = null, code: string | null = null, reference: string | null = null) {
     super(message);
     this.name = 'IndexerUnavailable';
     this.why = why;
     this.status = status;
     this.code = code;
+    this.reference = reference;
   }
 }
 
@@ -42,7 +48,7 @@ export interface IndexerPoster {
   /** POST `body` as JSON to `path`. Returns the status and the parsed body
    *  (null when it was not JSON); throws {@link IndexerUnavailable} only when
    *  there is no origin or no answer at all. */
-  postJson(path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<{ status: number; body: unknown }>;
+  postJson(path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<{ status: number; body: unknown; reference: string | null }>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -79,27 +85,30 @@ export function createIndexerClient(origin: string | null, fetchImpl: typeof fet
         throw new IndexerUnavailable('shape', `The indexer's answer for ${path} was not JSON.`);
       }
     },
-    async postJson(path: string, body: unknown, opts: { timeoutMs?: number } = {}): Promise<{ status: number; body: unknown }> {
+    async postJson(path: string, body: unknown, opts: { timeoutMs?: number } = {}): Promise<{ status: number; body: unknown; reference: string | null }> {
       if (origin === null) throw new IndexerUnavailable('not-configured', 'This build has no indexer origin.');
       if (!path.startsWith('/')) throw new Error(`indexer path must start with "/": ${path}`);
+      // #3922 — the write carries a fresh reference; the answer returns it.
+      const sent = newRequestReference();
       let res: Response;
       try {
         res = await fetchImpl(`${origin}${path}`, {
           method: 'POST',
           signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          headers: { accept: 'application/json', 'content-type': 'application/json', [REQUEST_REF_HEADER]: sent },
           body: JSON.stringify(body),
         });
       } catch (e) {
-        throw new IndexerUnavailable('network', `The indexer did not answer: ${(e as Error).message}`);
+        throw new IndexerUnavailable('network', `The indexer did not answer: ${(e as Error).message}`, null, null, sent);
       }
+      const reference = readRequestReference(res) ?? sent;
       let parsed: unknown = null;
       try {
         parsed = await res.json();
       } catch {
         parsed = null;
       }
-      return { status: res.status, body: parsed };
+      return { status: res.status, body: parsed, reference };
     },
   };
 }

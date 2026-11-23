@@ -11,13 +11,15 @@ type Hex = `0x${string}`;
 
 /** Where one signed alert action stands. `declined`: the wallet refused to
  *  sign, and nothing was sent. `unreachable`: the service could not be
- *  asked (or this build has none), and nothing is known to have changed. */
+ *  asked (or this build has none), and nothing is known to have changed.
+ *  An answer and an unreachable request carry the request reference (#3922)
+ *  when one is known: null when nothing was sent. */
 export type AlertRun =
   | { phase: 'idle' }
   | { phase: 'signing' | 'sending'; action: AlertAction }
-  | { phase: 'answered'; action: AlertAction; answer: AlertAnswer }
+  | { phase: 'answered'; action: AlertAction; answer: AlertAnswer; reference: string | null }
   | { phase: 'declined'; action: AlertAction }
-  | { phase: 'unreachable'; action: AlertAction; message: string };
+  | { phase: 'unreachable'; action: AlertAction; message: string; reference: string | null };
 
 /** The last `issuedAt` this browser signed. The service accepts a signed
  *  message once, and a wallet signs the same message to the same signature,
@@ -171,7 +173,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       } catch (e) {
         const declined = isUserRejection(e);
         if (declined) drop();
-        setRun(identity, { run: declined ? { phase: 'declined', action } : { phase: 'unreachable', action, message: (e as Error).message } });
+        setRun(identity, { run: declined ? { phase: 'declined', action } : { phase: 'unreachable', action, message: (e as Error).message, reference: null } });
         return null;
       }
       setRun(identity, { run: { phase: 'sending', action } });
@@ -189,10 +191,10 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
             : answer.ok && (answer.action === 'test-alert' || answer.action === 'unlink')
               ? null
               : (runs.get(identity)?.code ?? null);
-        setRun(identity, { run: { phase: 'answered', action, answer }, code });
+        setRun(identity, { run: { phase: 'answered', action, answer, reference: res.reference }, code });
         return answer;
       } catch (e) {
-        setRun(identity, { run: { phase: 'unreachable', action, message: e instanceof AgentUnavailable ? e.message : (e as Error).message } });
+        setRun(identity, { run: { phase: 'unreachable', action, message: e instanceof AgentUnavailable ? e.message : (e as Error).message, reference: e instanceof AgentUnavailable ? e.reference : null } });
         return null;
       }
     },

@@ -11,15 +11,21 @@
  * refused, not linked, try again shortly), so the answer is handed back.
  */
 import { agentOrigin } from '../../chain/endpoints';
+import { REQUEST_REF_HEADER, appSendsReference, newRequestReference, readRequestReference } from '@vaipakam/lib/requestReference';
 
 export type AgentFailure = 'not-configured' | 'network';
 
 export class AgentUnavailable extends Error {
   readonly why: AgentFailure;
-  constructor(why: AgentFailure, message: string) {
+  /** #3922 — the request reference a write sent when no answer came: the
+   *  service may still have received it. Null for a read or a build with no
+   *  origin. */
+  readonly reference: string | null;
+  constructor(why: AgentFailure, message: string, reference: string | null = null) {
     super(message);
     this.name = 'AgentUnavailable';
     this.why = why;
+    this.reference = reference;
   }
 }
 
@@ -28,6 +34,10 @@ export class AgentUnavailable extends Error {
 export interface AgentAnswer {
   status: number;
   data: Record<string, unknown> | null;
+  /** #3922 — the request reference the answer carried (else, for a write,
+   *  the one it sent), shown beside a failure so support can find the
+   *  service's record of it. Memory only. */
+  reference: string | null;
 }
 
 export interface AgentClient {
@@ -47,17 +57,23 @@ export function createAgentClient(origin: string | null, fetchImpl: typeof fetch
     async request(method, path, body, opts = {}) {
       if (origin === null) throw new AgentUnavailable('not-configured', 'This build has no alert service origin.');
       if (!path.startsWith('/')) throw new Error(`agent path must start with "/": ${path}`);
+      // #3922 — a write carries a fresh reference; a read carries none, so
+      // it is not preflighted, and the service makes one.
+      const sent = appSendsReference(method) ? newRequestReference() : null;
+      const headers: Record<string, string> = body === undefined ? { accept: 'application/json' } : { accept: 'application/json', 'content-type': 'application/json' };
+      if (sent !== null) headers[REQUEST_REF_HEADER] = sent;
       let res: Response;
       try {
         res = await fetchImpl(`${origin}${path}`, {
           method,
           signal: AbortSignal.timeout(opts.timeoutMs ?? AGENT_TIMEOUT_MS),
-          headers: body === undefined ? { accept: 'application/json' } : { accept: 'application/json', 'content-type': 'application/json' },
+          headers,
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
       } catch (e) {
-        throw new AgentUnavailable('network', `The alert service did not answer: ${(e as Error).message}`);
+        throw new AgentUnavailable('network', `The alert service did not answer: ${(e as Error).message}`, sent);
       }
+      const reference = readRequestReference(res) ?? sent;
       let data: Record<string, unknown> | null = null;
       try {
         const parsed: unknown = await res.json();
@@ -65,7 +81,7 @@ export function createAgentClient(origin: string | null, fetchImpl: typeof fetch
       } catch {
         data = null;
       }
-      return { status: res.status, data };
+      return { status: res.status, data, reference };
     },
   };
 }

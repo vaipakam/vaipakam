@@ -17,6 +17,7 @@ import {
 } from '../../shared/alerts/watch';
 import { useCopy } from '../../shared/copy/useCopy';
 import { formatUtc } from '../../shared/ui/format';
+import { ServiceReference } from '../../shared/ui/ServiceReference';
 
 type Hex = `0x${string}`;
 type Run = SignedRun<WatchAnswer>;
@@ -102,7 +103,13 @@ function RunLine({ run }: { run: Run }) {
   }
   if (run.phase === 'declined') return <p className="tier-b" data-testid="watch-run">{text('watch.declined')}</p>;
   if (run.phase === 'not-offered') return <p className="tier-a" data-testid="watch-run" data-offered="false">{text('watch.notOffered')}</p>;
-  if (run.phase === 'unreachable') return <p className="tier-a" data-testid="watch-run">{format('watch.unreachable', { reason: run.message })}</p>;
+  if (run.phase === 'unreachable')
+    return (
+      <p className="tier-a" data-testid="watch-run">
+        {format('watch.unreachable', { reason: run.message })}
+        <ServiceReference reference={run.reference} />
+      </p>
+    );
   if (run.phase !== 'answered') return null;
   const a = run.answer;
   if (a.ok && a.kind === 'watch') {
@@ -155,6 +162,7 @@ function RunLine({ run }: { run: Run }) {
   return (
     <p className="tier-a" data-testid="watch-run" data-outcome={a.problem}>
       {line}
+      <ServiceReference reference={run.reference} />
     </p>
   );
 }
