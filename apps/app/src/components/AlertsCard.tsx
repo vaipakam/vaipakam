@@ -62,6 +62,8 @@ import {
   type PendingAlertRequest,
 } from '../data/alertRequest';
 import { AlertPhraseSection } from './AlertPhraseSection';
+import { ServiceReference } from './ServiceReference';
+import { referenceOf } from '../lib/serviceRequest';
 
 export function AlertsCard() {
   const { address } = useAccount();
@@ -84,7 +86,14 @@ export function AlertsCard() {
   const [phraseBusy, setPhraseBusy] = useState(false);
   const anyBusy = busy || phraseBusy;
   const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorText] = useState<string | null>(null);
+  // #3922 — the agent's request reference for the failure shown, if it came
+  // from the agent; cleared with the message.
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const setError = (text: string | null, reference: string | null = null) => {
+    setErrorText(text);
+    setErrorRef(text === null ? null : reference);
+  };
   // #3836 — a request this browser started and the wallet has not answered
   // yet (a multi-signature wallet's owners may take days). Re-read after
   // every request, since sending one keeps or drops it.
@@ -227,7 +236,7 @@ export function AlertsCard() {
         }
       });
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -259,7 +268,7 @@ export function AlertsCard() {
       const issued = await issueTelegramLink(address, chainId, signForRequest, resume);
       shown.ifShowing(mine, () => setLink(issued));
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -293,13 +302,11 @@ export function AlertsCard() {
           setLink(null);
           setNotice(copy.alerts.testAlertSent);
         });
-      } else if (result === 'not-linked') {
-        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked));
       } else {
-        shown.ifShowing(mine, () => setError(copy.alerts.testAlertError));
+        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked));
       }
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -336,7 +343,7 @@ export function AlertsCard() {
         resume,
       );
       if (outcome.protectionUnknown) {
-        shown.ifShowing(mine, () => setError(copy.alerts.unlinkProtectionUnknown));
+        shown.ifShowing(mine, () => setError(copy.alerts.unlinkProtectionUnknown, outcome.reference));
         return;
       }
       // #3246 — under protected mode a chat is not removed at once: it
@@ -371,7 +378,7 @@ export function AlertsCard() {
         );
       });
     } catch (e) {
-      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e)));
+      shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));
     } finally {
       setBusy(false);
       refreshPending(mine, chainId, address);
@@ -689,7 +696,10 @@ export function AlertsCard() {
           {notice ? <p className="muted" style={{ margin: 0 }}>{notice}</p> : null}
           {error ? (
             <div className="banner banner-danger" role="alert">
-              <span className="banner-body">{error}</span>
+              <span className="banner-body">
+                {error}
+                <ServiceReference reference={errorRef} />
+              </span>
             </div>
           ) : null}
         </div>

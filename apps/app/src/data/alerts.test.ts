@@ -346,6 +346,7 @@ describe('unlinkTelegram scope (#2013 r4)', () => {
       scope: 'wallet',
       pending: [{ chainId: 84532, effectiveAt: 1_800_000_000 }, { chainId: 97, effectiveAt: null }],
       protectionUnknown: false,
+      reference: null,
     });
   });
 

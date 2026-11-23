@@ -3169,7 +3169,8 @@
       "networkFallback": "Netzwerk #{{id}}",
       "unknown": "unbekannt",
       "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen.",
-      "amountBelowOfferFloor": "Das kleinste Angebot, das das Protokoll in diesem Token annimmt, beträgt {{min}} {{symbol}}. Gib mindestens diesen Betrag ein."
+      "amountBelowOfferFloor": "Das kleinste Angebot, das das Protokoll in diesem Token annimmt, beträgt {{min}} {{symbol}}. Gib mindestens diesen Betrag ein.",
+      "serviceReference": "Referenz {{reference}}. Geben Sie sie an, wenn Sie den Support kontaktieren."
     },
     "stepNav": {
       "progressAria": "Fortschritt",

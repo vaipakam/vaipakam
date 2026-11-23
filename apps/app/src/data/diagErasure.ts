@@ -35,6 +35,7 @@ import {
   buildErasureStatusMessage,
 } from '@vaipakam/lib/erasureMessage';
 import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
+import { serviceFetch } from '../lib/serviceRequest';
 
 const TIMEOUT_MS = 10_000;
 
@@ -93,6 +94,10 @@ export type DiagErasureOutcome =
 export interface DiagErasureResult {
   outcome: DiagErasureOutcome;
   chainId: number | null;
+  /** #3922 — the agent's request reference, for an outcome the service
+   *  refused or failed (`unavailable`, `unverifiable`, `error`); null
+   *  otherwise. */
+  reference: string | null;
 }
 
 /** The status call adds one more: the operator-disclosed legal
@@ -101,14 +106,16 @@ export interface DiagErasureResult {
 export type DiagErasureStatus =
   | { status: 'processed' }
   | { status: 'retained_by_law'; note: string }
-  | { status: 'unavailable' }
+  | { status: 'unavailable'; reference: string | null }
   | { status: 'expired' }
-  | { status: 'unverifiable' }
-  | { status: 'error' };
+  | { status: 'unverifiable'; reference: string | null }
+  | { status: 'error'; reference: string | null };
 
 interface SignedPostResult {
   ok: boolean;
   httpStatus: number;
+  /** #3922 — the request reference the agent returned, or the one sent. */
+  reference: string | null;
   /** True when the signature outlived the replay window before it
    *  could be sent — see the check in `postSigned`. */
   expired?: boolean;
@@ -155,12 +162,14 @@ async function postSigned(
     Math.floor(Date.now() / 1000) - issuedAt >
     ERASURE_SIGNATURE_MAX_AGE_SECONDS - TRANSPORT_MARGIN_SECONDS
   ) {
-    return { ok: false, httpStatus: 0, data: null, expired: true };
+    return { ok: false, httpStatus: 0, data: null, expired: true, reference: null };
   }
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${origin}${path}`, {
+    // A network failure throws `ServiceUnreachableError`, carrying the
+    // reference this write sent (#3922).
+    const { res, reference } = await serviceFetch(`${origin}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(
@@ -177,7 +186,7 @@ async function postSigned(
       string,
       unknown
     > | null;
-    return { ok: res.ok, httpStatus: res.status, data };
+    return { ok: res.ok, httpStatus: res.status, data, reference };
   } finally {
     clearTimeout(t);
   }
@@ -228,7 +237,7 @@ export async function requestDiagErasure(
     buildErasureMessage,
     chainId,
   );
-  if (res.expired) return { outcome: 'expired', chainId: null };
+  if (res.expired) return { outcome: 'expired', chainId: null, reference: null };
   if (res.ok) {
     // A 2xx alone is not the service's acknowledgement (#2008 round
     // 1 P1): a misconfigured origin or an intermediary can return a
@@ -244,18 +253,19 @@ export async function requestDiagErasure(
             typeof echoed === 'number' && Number.isInteger(echoed) && echoed > 0
               ? echoed
               : null,
+          reference: null,
         };
       }
-      return { outcome: 'processed', chainId: null };
+      return { outcome: 'processed', chainId: null, reference: null };
     }
-    return { outcome: 'error', chainId: null };
+    return { outcome: 'error', chainId: null, reference: res.reference };
   }
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
-    return { outcome: 'unavailable', chainId: null };
+    return { outcome: 'unavailable', chainId: null, reference: res.reference };
   }
-  if (verifyUnavailable(res)) return { outcome: 'unverifiable', chainId: null };
-  if (staleRejected(res)) return { outcome: 'expired', chainId: null };
-  return { outcome: 'error', chainId: null };
+  if (verifyUnavailable(res)) return { outcome: 'unverifiable', chainId: null, reference: res.reference };
+  if (staleRejected(res)) return { outcome: 'expired', chainId: null, reference: null };
+  return { outcome: 'error', chainId: null, reference: res.reference };
 }
 
 /**
@@ -289,12 +299,12 @@ export async function requestDiagErasureStatus(
     // answer — an unparseable or unknown 2xx body is a failure, not
     // a green light.
     if (res.data?.status === 'processed') return { status: 'processed' };
-    return { status: 'error' };
+    return { status: 'error', reference: res.reference };
   }
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
-    return { status: 'unavailable' };
+    return { status: 'unavailable', reference: res.reference };
   }
-  if (verifyUnavailable(res)) return { status: 'unverifiable' };
+  if (verifyUnavailable(res)) return { status: 'unverifiable', reference: res.reference };
   if (staleRejected(res)) return { status: 'expired' };
-  return { status: 'error' };
+  return { status: 'error', reference: res.reference };
 }

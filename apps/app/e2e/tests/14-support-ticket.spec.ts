@@ -56,7 +56,8 @@ test.beforeAll(async () => {
     const cors = {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      // #3922 — the app's writes carry a request reference, as the Worker allows.
+      'Access-Control-Allow-Headers': 'Content-Type, x-request-ref',
     };
     if (req.method === 'OPTIONS') {
       res.writeHead(204, cors);
@@ -70,7 +71,14 @@ test.beforeAll(async () => {
       });
       req.on('end', () => {
         if (stubMode === 'unavailable') {
-          res.writeHead(503, { ...cors, 'content-type': 'application/json' });
+          // #3922 — the Worker returns the reference the write carried,
+          // exposed to the browser.
+          res.writeHead(503, {
+            ...cors,
+            'content-type': 'application/json',
+            'x-request-ref': String(req.headers['x-request-ref'] ?? ''),
+            'Access-Control-Expose-Headers': 'x-request-ref',
+          });
           res.end(JSON.stringify({ error: 'unavailable' }));
           return;
         }
@@ -220,6 +228,17 @@ test('inbox down → plain-words failure with the mailto fallback, no ticket cla
   await expect(
     page.getByRole('link', { name: /email support@vaipakam\.com/i }),
   ).toBeVisible();
+  // #3922 — the failure shows the request reference the write carried and
+  // the service returned, and nothing is kept in browser storage.
+  const reference = page.getByTestId('service-reference');
+  await expect(reference).toHaveText(/Reference [0-9A-HJKMNP-TV-Z]{10}\./);
+  const ref = (await reference.textContent())!.match(/[0-9A-HJKMNP-TV-Z]{10}/)![0];
+  const stored = await page.evaluate(() =>
+    [localStorage, sessionStorage]
+      .flatMap((s) => Array.from({ length: s.length }, (_, i) => s.getItem(s.key(i) ?? '') ?? ''))
+      .join('\n'),
+  );
+  expect(stored).not.toContain(ref);
 });
 
 test('control: the standard build (no agent origin) says so and offers mail only', async ({

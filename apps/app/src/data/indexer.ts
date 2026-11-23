@@ -13,6 +13,7 @@ import type { SignedOrderWire } from '../lib/signedOffer';
 import type { SignedOfferPlacement } from '@vaipakam/lib/signedOfferWire';
 import { indexerOrigin, indexerWsOrigin as wsOriginOf } from '../lib/endpoints';
 import { probeIndexerRead, type IndexerReadOutcome } from '../lib/readProbe';
+import { referenceOf, serviceFetch } from '../lib/serviceRequest';
 
 const TIMEOUT_MS = 4_000;
 
@@ -889,7 +890,9 @@ export function fetchSignedOffers(
  *  failure (`null` — retrying may succeed; nothing can be claimed). */
 export type SignedOfferPostResult =
   | { kind: 'ok'; orderHash: string }
-  | { kind: 'rejected'; error: string };
+  // #3922 — a refusal or failure carries the indexer's request reference.
+  | { kind: 'rejected'; error: string; reference: string | null }
+  | { kind: 'unavailable'; reference: string | null };
 
 export async function postSignedOffer(
   chainId: number,
@@ -900,8 +903,9 @@ export async function postSignedOffer(
   if (!root) return null;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+  let reference: string | null = null;
   try {
-    const res = await fetch(root + '/signed-offers', {
+    const sent = await serviceFetch(root + '/signed-offers', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -910,6 +914,8 @@ export async function postSignedOffer(
       body: JSON.stringify({ chainId, order, signature }),
       signal: ac.signal,
     });
+    const res = sent.res;
+    reference = sent.reference;
     const body = (await res.json().catch(() => null)) as
       | { orderHash?: string; error?: string }
       | null;
@@ -919,11 +925,11 @@ export async function postSignedOffer(
     // 4xx/409 carry a machine-readable reason; 5xx is a transport-class
     // failure (the order may be fine — treat as unavailable).
     if (res.status >= 400 && res.status < 500) {
-      return { kind: 'rejected', error: body?.error ?? `http-${res.status}` };
+      return { kind: 'rejected', error: body?.error ?? `http-${res.status}`, reference };
     }
-    return null;
-  } catch {
-    return null;
+    return { kind: 'unavailable', reference };
+  } catch (e) {
+    return { kind: 'unavailable', reference: referenceOf(e) ?? reference };
   } finally {
     clearTimeout(timer);
   }

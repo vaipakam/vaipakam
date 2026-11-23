@@ -190,13 +190,13 @@ export interface AlertServiceAnswer {
  * `unkept` is sent with the request and never stored: the alert phrase
  * (#3346), which the owner types again to finish a request that waited.
  */
-export async function signAndSendAlertRequest(
+export async function signAndSendAlertRequest<A extends AlertServiceAnswer>(
   req: PendingAlertRequest,
   signMessage: (message: string) => Promise<string>,
-  send: (path: string, body: Record<string, unknown>) => Promise<AlertServiceAnswer>,
+  send: (path: string, body: Record<string, unknown>) => Promise<A>,
   how: 'start' | 'resume' = 'start',
   unkept: Record<string, unknown> = {},
-): Promise<AlertServiceAnswer> {
+): Promise<A> {
   // Only a new request is written. Finishing one sends what is already
   // kept and writes nothing: a stale card finishing an older request must
   // not overwrite a newer one another tab started for the same wallet.

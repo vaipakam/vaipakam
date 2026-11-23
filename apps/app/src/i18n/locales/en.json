@@ -3788,6 +3788,7 @@
     "common": {
       "back": "Back",
       "tryAgain": "Try again",
+      "serviceReference": "Reference {{reference}}. Quote it if you contact support.",
       "waitingForWallet": "Waiting for wallet…",
       "networkFallback": "network #{{id}}",
       "unknown": "unknown",

@@ -29,6 +29,8 @@ import {
   redactCap,
   type ReportContext,
 } from '../diagnostics/reportIssue';
+import { ServiceReference } from './ServiceReference';
+import { referenceOf } from '../lib/serviceRequest';
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -49,7 +51,13 @@ export function SupportTicketCard({
   // about the send that happened, not the checkbox's current mood
   // (Codex round-2 P3).
   const [sentWithDiagnostics, setSentWithDiagnostics] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorText] = useState<string | null>(null);
+  // #3922 — the agent's request reference for the failure shown, if any.
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const setError = (text: string | null, reference: string | null = null) => {
+    setErrorText(text);
+    setErrorRef(text === null ? null : reference);
+  };
 
   if (!supportConfigured()) {
     return (
@@ -145,6 +153,7 @@ export function SupportTicketCard({
           : kind === 'unavailable'
             ? copy.support.unavailable
             : copy.support.failed,
+        referenceOf(e),
       );
     } finally {
       setSending(false);
@@ -203,7 +212,8 @@ export function SupportTicketCard({
       {error !== null ? (
         <div className="banner banner-warn" role="alert">
           <span className="banner-body">
-            {error}{' '}
+            {error}
+            <ServiceReference reference={errorRef} />{' '}
             {/* EVERY failure branch ends at the mail path — a user
                 behind a shared NAT hitting the per-IP cap must not be
                 stranded on "wait a minute" (Codex round-1 P3). */}

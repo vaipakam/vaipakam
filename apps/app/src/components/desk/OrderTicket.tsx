@@ -85,6 +85,8 @@ import {
   randomSignedOfferNonce,
   wireFromCreatePayload,
 } from '../../lib/signedOffer';
+import { ServiceReference } from '../ServiceReference';
+import { noteReference, referenceOf } from '../../lib/serviceRequest';
 
 /** LibVaipakam.FillMode (#125): Partial default, Aon, Ioc. */
 const FILL_PARTIAL = 0;
@@ -207,7 +209,15 @@ export function OrderTicket({
   // signed with the order. Ignored on the on-chain path.
   const [makerFull, setMakerFull] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorText] = useState<string | null>(null);
+  // #3922 — the indexer's request reference when the failure shown came
+  // from it (the gasless post); kept apart from the message, which goes to
+  // the app's error record unchanged.
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const setError = (text: string | null, reference: string | null = null) => {
+    setErrorText(text);
+    setErrorRef(text === null ? null : reference);
+  };
   const [postedHash, setPostedHash] = useState<string | null>(null);
   /** Gasless success is an ORDER HASH (nothing mined). */
   const [gaslessPosted, setGaslessPosted] = useState<string | null>(null);
@@ -1025,16 +1035,19 @@ export function OrderTicket({
         order,
         signature,
       );
-      if (res === null) {
-        throw new Error(copy.desk.ticket.gaslessUnavailable);
+      if (res === null || res.kind === 'unavailable') {
+        throw noteReference(new Error(copy.desk.ticket.gaslessUnavailable), res?.reference ?? null);
       }
       if (res.kind === 'rejected') {
-        throw new Error(
-          res.error === 'below-offer-floor'
-            ? copy.desk.ticket.gaslessBelowFloor
-            : res.error === 'below-cancel-floor'
-              ? copy.desk.ticket.gaslessBelowCancelFloor
-              : copy.desk.ticket.gaslessRejected(res.error),
+        throw noteReference(
+          new Error(
+            res.error === 'below-offer-floor'
+              ? copy.desk.ticket.gaslessBelowFloor
+              : res.error === 'below-cancel-floor'
+                ? copy.desk.ticket.gaslessBelowCancelFloor
+                : copy.desk.ticket.gaslessRejected(res.error),
+          ),
+          res.reference,
         );
       }
       setGaslessPosted(res.orderHash);
@@ -1048,7 +1061,7 @@ export function OrderTicket({
       // on-chain path, not on the next 30s poll (Codex #1145 r7 P3).
       void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
     } catch (err) {
-      setError(captureTxError(err));
+      setError(captureTxError(err), referenceOf(err));
     } finally {
       setBusy(false);
       lockRef.current = false;
@@ -1538,7 +1551,10 @@ export function OrderTicket({
       ) : null}
 
       {error ? (
-        <p style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>{error}</p>
+        <p style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>
+          {error}
+          <ServiceReference reference={errorRef} />
+        </p>
       ) : null}
       {postedHash ? (
         <p className="cluster" style={{ alignItems: 'center', gap: 6, color: 'var(--ok)' }}>

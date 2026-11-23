@@ -3169,7 +3169,8 @@
       "networkFallback": "réseau #{{id}}",
       "unknown": "inconnu",
       "amountTooPrecise": "{{symbol}} ne peut pas être divisé aussi finement — utilisez au plus {{decimals}} décimales.",
-      "amountBelowOfferFloor": "La plus petite offre que le protocole accepte dans ce jeton est de {{min}} {{symbol}}. Saisissez au moins ce montant."
+      "amountBelowOfferFloor": "La plus petite offre que le protocole accepte dans ce jeton est de {{min}} {{symbol}}. Saisissez au moins ce montant.",
+      "serviceReference": "Référence {{reference}}. Indiquez-la si vous contactez le support."
     },
     "stepNav": {
       "progressAria": "Progression",

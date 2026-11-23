@@ -2039,3 +2039,8 @@ The rest is the agent's: the phrase rule, the order of phrase requests, the per-
 
 **Gap.** Add a fork drive with no token registered when the VPFI surface next gets a spec: assert the banner, and that no tier row or explainer renders.
 
+<a id="cov-request-reference"></a>
+
+## Request reference (#3922)
+
+Every write the app sends to its own services (the agent, and the indexer's signed-offer post) carries a fresh ten-character reference in `x-request-ref`; a read carries none and the service makes one. The response returns it, exposed to the browser, and the app shows it beside a failure from that service and nowhere else: the Alerts card and its phrase section, the support ticket form, the diagnostics erasure card and the desk's gasless post. The reference lives in memory only, never in browser storage, and it is kept apart from the message the app's own error record captures, so that record is unchanged. The e2e stubs that answer the app's writes allow the header, as the Workers do. Reads showing it follow in a later change.

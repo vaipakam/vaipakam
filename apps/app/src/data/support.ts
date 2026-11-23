@@ -9,6 +9,7 @@
  * silently pointing at another environment's backend.
  */
 import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
+import { noteReference, referenceOf, serviceFetch } from '../lib/serviceRequest';
 
 const TIMEOUT_MS = 8_000;
 
@@ -54,29 +55,33 @@ export async function submitSupportTicket(
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${origin}/support/ticket`, {
+    // #3922 — every failure carries the agent's request reference (or, with
+    // no response at all, the one this write sent), so the card can show it.
+    const { res, reference } = await serviceFetch(`${origin}/support/ticket`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
       signal: ctrl.signal,
     });
+    const refused = (kind: SupportTicketError['kind'], message: string) =>
+      noteReference(new SupportTicketError(kind, message), reference);
     if (res.status === 429) {
-      throw new SupportTicketError('rate_limited', 'rate limited');
+      throw refused('rate_limited', 'rate limited');
     }
     if (res.status === 503) {
-      throw new SupportTicketError('unavailable', 'inbox unavailable');
+      throw refused('unavailable', 'inbox unavailable');
     }
     if (!res.ok) {
-      throw new SupportTicketError('failed', `submit failed (${res.status})`);
+      throw refused('failed', `submit failed (${res.status})`);
     }
-    const body = (await res.json()) as { ticketId?: unknown };
-    if (typeof body.ticketId !== 'string' || body.ticketId === '') {
-      throw new SupportTicketError('failed', 'malformed response');
+    const body = (await res.json().catch(() => null)) as { ticketId?: unknown } | null;
+    if (typeof body?.ticketId !== 'string' || body.ticketId === '') {
+      throw refused('failed', 'malformed response');
     }
     return { ticketId: body.ticketId };
   } catch (e) {
     if (e instanceof SupportTicketError) throw e;
-    throw new SupportTicketError('failed', 'network failure');
+    throw noteReference(new SupportTicketError('failed', 'network failure'), referenceOf(e));
   } finally {
     clearTimeout(t);
   }
