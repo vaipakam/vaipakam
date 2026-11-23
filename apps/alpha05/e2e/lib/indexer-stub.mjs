@@ -918,7 +918,12 @@ function cors(req, res) {
     res.setHeader('vary', 'origin');
   }
   res.setHeader('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
-  res.setHeader('access-control-allow-headers', 'content-type');
+  // #3922 — as the real services do: the app's write carries its request
+  // reference, and the answer returns it (exposed, so the page can read it).
+  res.setHeader('access-control-allow-headers', 'content-type, x-request-ref');
+  res.setHeader('access-control-expose-headers', 'x-request-ref');
+  const ref = req.headers['x-request-ref'];
+  if (typeof ref === 'string' && /^[0-9A-HJKMNP-TV-Z]{10}$/.test(ref)) res.setHeader('x-request-ref', ref);
   res.setHeader('cache-control', 'no-store');
 }
 
