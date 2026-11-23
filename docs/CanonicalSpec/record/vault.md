@@ -21,9 +21,10 @@ RA `docs/DesignsAndPlans/RecoveryAddressClawbackDesign.md`;
 PT `docs/DesignsAndPlans/ProtectionThresholdDesign.md`;
 LK the owner's decision of 2026-11-22 on what a lock ends;
 SP `docs/DesignsAndPlans/ScheduledPaymentsDesign.md`;
-OL `docs/DesignsAndPlans/OutflowLimiterDesign.md`.
-The sources of section 5 were read at commit `4ce59b35aa` of the main branch, and those of
-section 6 at commit `4d50b6c542`.
+OL `docs/DesignsAndPlans/OutflowLimiterDesign.md`;
+RC `docs/DesignsAndPlans/RecoveryClaimDesign.md`.
+The sources of section 5 were read at commit `4ce59b35aa` of the main branch, those of
+section 6 at commit `4d50b6c542`, and those of section 7 at commit `142401bf75`.
 
 ## Statements
 
@@ -85,12 +86,12 @@ section 6 at commit `4d50b6c542`.
 | VLT-091 | K | VO "Pause escape and implementation pinning", first and second items, with the recovery address. Mistake VLT-M20. | 2c87e3f9463cbbfd |
 | VLT-092 | K | Owner decision 2026-11-06, OP "2", "The owner's allowlist never gates protocol classes". VO "Optional account protection": "never delays payments it owes to counterparties", and "A settlement to a locked owner stays in the vault" | d33e7355fb318fae |
 | VLT-100 | K | VO "Deposits, ownership, and free funds", first two items. PLT-012. Changed with section 5: a wallet may manage a second vault, one it owns by a replacement. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. | c88a158c48dd1a21 |
-| VLT-101 | C | Kept: OP "3.7.1", OP "3.7.9", VO "Vault-owned authority and signed changes", first item. OP "3.7.5", first paragraph, and PD "4.7" for the holder's voice. Changed: the old line that a vault "takes instructions from one caller only" and "has no separate owner record" (VO "Deposits", fifth item) is dropped, because the later decisions gave the vault its own owner record. Changed with the owner's approval of 2026-11-22, 09:56 UTC. Changed with section 5: after a replacement the authority is the owner of VLT-455. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. | d80696fa98bd6779 |
+| VLT-101 | C | Kept: OP "3.7.1", OP "3.7.9", VO "Vault-owned authority and signed changes", first item. OP "3.7.5", first paragraph, and PD "4.7" for the holder's voice. Changed: the old line that a vault "takes instructions from one caller only" and "has no separate owner record" (VO "Deposits", fifth item) is dropped, because the later decisions gave the vault its own owner record. Changed with the owner's approval of 2026-11-22, 09:56 UTC. Changed with section 5: after a replacement the authority is the owner of VLT-455. Confirmed by the owner with section 5 on 2026-11-23, 01:42 UTC. Changed with section 7: no other caller chooses where an asset goes, and a step one of them may run pays only the payee the vault's own record names. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 4536903f1c32307d |
 | VLT-102 | N | New. Raised by mistake VLT-M01; the conflict read. Approved by the owner on 2026-11-22, 09:56 UTC. | c99107d25b7c4953 |
 | VLT-103 | K | OP "3.7.2", "One record, not two", which also names the pledged total. The market's lending figures are the instant market's ledger. | b6965fe0dbc6c969 |
 | VLT-110 | K | OP "3.7.2", item 1. PR "Tracked Vault Holdings (every asset kind)" | 806601436e113d78 |
-| VLT-111 | K | OP "3.7.2", item 1. PR "Depository Vault", for a reward and a payment put into the vault. The fee of a loan for one transaction: the one-transaction loan design, as VLT-043. | b53ee1bcc7fed01d |
-| VLT-112 | K | OP "3.7.2", item 1, "It falls by a withdrawal or a new commitment", and item 4 for a repayment and a purchase paid from free balance, item 5 for an amount held in the paying vault. PR "Depository Vault", for a fee A payment under a standing commitment: the due-date plan design, "the payment reserve first, then other free vault balance". Changed with section 6: a scheduled payment lowers the free balance, and it cites VLT-325 and VLT-510 where it cited sections 4 and 6. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. | cbd23369fd05a45f |
+| VLT-111 | K | OP "3.7.2", item 1. PR "Depository Vault", for a reward and a payment put into the vault. The fee of a loan for one transaction: the one-transaction loan design, as VLT-043. Changed with section 7: it no longer says that section 7 adds ways of an arrival, for a recovery adds none. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 05dd51266043a1f4 |
+| VLT-112 | K | OP "3.7.2", item 1, "It falls by a withdrawal or a new commitment", and item 4 for a repayment and a purchase paid from free balance, item 5 for an amount held in the paying vault. PR "Depository Vault", for a fee A payment under a standing commitment: the due-date plan design, "the payment reserve first, then other free vault balance". Changed with section 6: a scheduled payment lowers the free balance, and it cites VLT-325 and VLT-510 where it cited sections 4 and 6. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. Changed with section 7: the clawback and the sweep lower the free balance. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 1b3f389b219f9309 |
 | VLT-113 | N | New. Raised by the security review. Approved by the owner on 2026-11-22, 09:56 UTC. Changed with section 4: the watch reads a multi-unit NFT's holding as VLT-354 states. Confirmed by the owner with section 4 on 2026-11-23, 01:42 UTC. | dd05c63d2f5139cb |
 | VLT-114 | K | PR "Tracked-Holding Display and Utility Rule" | 3037e12193dac678 |
 | VLT-115 | K | OP "3.7.2", item 1, for the releases and the adoption. PR "Depository Vault", for a cancelled payout. The return from the Ready balance: PR "Protected Account Mode". Changed with section 6: it cites VLT-512 and VLT-326 where it cited sections 4 and 6. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. | fe108fad7a22fea9 |
@@ -115,9 +116,9 @@ section 6 at commit `4d50b6c542`.
 | VLT-137 | K | OP "3.7.3", "A loan that pays off another". OP "3.7.2", item 4, the payment with two purposes. OP "3.7.7" | f688238fee0206e6 |
 | VLT-138 | K | Same three places. | ecb9d022946ab557 |
 | VLT-139 | K | OP "3.7.3", "An NFT rental". OI "The NFT rental", for the daily rent. | a653b9bc317fa40f |
-| VLT-140 | C | OP "3.7.2", item 2, last sentence, and OP "3.7.4", the row on a mandate or a reserve: "the owner's own call". A loan reserve: PR "Standing Instructions", "The reserve belongs to whoever deposited it .. whether or not they still hold the position .. an extension draws only the current holder's reserve". Drawn only while its owner holds the token: the same line, the due-date plan design ("live for the current holder") and the exit instruction's skip "the holder is no longer the wallet that set it". Changed: the statement lists the commitments it covers. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. Changed again with section 5, and after its approval: after a replacement the holding of the wallet whose own vault it is counts as the owner's. The owner confirmed the clause with section 5 on 2026-11-23, 01:42 UTC; its present words, raised by the review of this folder, are entered for his confirmation with this folder. | 245c384b4ac775d8 |
+| VLT-140 | C | OP "3.7.2", item 2, last sentence, and OP "3.7.4", the row on a mandate or a reserve: "the owner's own call". A loan reserve: PR "Standing Instructions", "The reserve belongs to whoever deposited it .. whether or not they still hold the position .. an extension draws only the current holder's reserve". Drawn only while its owner holds the token: the same line, the due-date plan design ("live for the current holder") and the exit instruction's skip "the holder is no longer the wallet that set it". Changed: the statement lists the commitments it covers. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. Changed again with section 5, and after its approval: after a replacement the holding of the wallet whose own vault it is counts as the owner's. The owner confirmed the clause with section 5 on 2026-11-23, 01:42 UTC; its present words, raised by the review of this folder, are entered for his confirmation with this folder. Changed with section 7: on a recovered account anyone may also release an amount set aside to lend. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 63f720ff9f9d8098 |
 | VLT-141 | K | OP "3.7.2", item 2 (the lending mandate, a loan's two reserves) and "A borrowing holds no lien". | b40abafdeab3eb70 |
-| VLT-142 | K | OP "3.7.4", the rows "A lien released into free balance", "A payment to the other side" and "What is left of a lien". OP "3.7.6". OI "The backstop's buyout". | 04ab51fecb99b961 |
+| VLT-142 | K | OP "3.7.4", the rows "A lien released into free balance", "A payment to the other side" and "What is left of a lien". OP "3.7.6". OI "The backstop's buyout". Changed with section 7: a recovery ends no collateral lien, so it is no longer named among the ways one ends. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 7ac02c727fc16d82 |
 | VLT-143 | K | OI "The held-amount families" (the custody after a failed sale stays under the collateral lien) and "The backstop's buyout" (the split, the slice, valued once when the split is recorded). Changed: the record keeps the price read and the amount owed that the slice was valued against. Entered for the owner's confirmation with this folder, under his approval of the section on 2026-11-22, 09:56 UTC. | 97a0d326e26f39af |
 | VLT-144 | K | OI "The backstop's buyout", all of it. | a9d74d00dc452037 |
 | VLT-145 | N | New. Raised by the conflict read. Approved by the owner on 2026-11-22, 09:56 UTC. Changed with section 4: it cites VLT-333 for the Ready balance. Confirmed by the owner with section 4 on 2026-11-23, 01:42 UTC. | eb59bee3ac1cbcb3 |
@@ -203,23 +204,23 @@ section 6 at commit `4d50b6c542`.
 | VLT-353 | N | New. Raised by mistakes VLT-M48, VLT-M50. Approved by the owner on 2026-11-23, 01:42 UTC. | a7480576a7c419b5 |
 | VLT-354 | K | The reading of what a vault holds of a multi-unit NFT is written once here, for VLT-011, VLT-038, VLT-113 to VLT-115 and VLT-162. OP, the build notes, "The free-balance check reads the tracked holding for NFTs": a lot in the vault's own listing-locker is still the vault's and still under its lien. VLT-014 and VLT-013 for the withdrawal. Mistake VLT-M47. | 46ac393f8ccdeaa1 |
 | VLT-355 | N | New. Raised by mistake VLT-M49. The listing-locker obeying only its vault: OP "3.5", item 3. Naming the true source: VLT-170 and VLT-173. Approved by the owner on 2026-11-23, 01:42 UTC. | f2d2e0598142f49a |
-| VLT-400 | K | VO "Optional account protection", first item. VO "Recovery address and clawback", first item, and RA "3.5": switching on needs a recovery address set, in force or waiting. The pin delay: VLT-232. Mistake VLT-M33. Changed with section 6: it cites VLT-500 where it cited the payout of a protected account in the owed form. Form only, entered with section 6, which the owner approved on 2026-11-23, 05:16 UTC. | b7dbe8ff78e0b44f |
+| VLT-400 | K | VO "Optional account protection", first item. VO "Recovery address and clawback", first item, and RA "3.5": switching on needs a recovery address set, in force or waiting. The pin delay: VLT-232. Mistake VLT-M33. Changed with section 6: it cites VLT-500 where it cited the payout of a protected account in the owed form. Form only, entered with section 6, which the owner approved on 2026-11-23, 05:16 UTC. Changed with section 7: it cites VLT-600 where it cited it in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | a50478b8fd1739c0 |
 | VLT-401 | K | VO "Optional account protection", first item, for the bounds. RA "3.5". Mistake VLT-M25. | 82b1197dec4cf845 |
 | VLT-402 | C | VO "Delayed changes and account replacement", first item. Mistake VLT-M26. Changed: a change that already waits takes the longer of its own wait and a delay raised since, which no document states. Raised by the security review. Approved by the owner on 2026-11-23, 01:42 UTC. | 96209409eee84539 |
-| VLT-403 | K | VO "Delayed changes and account replacement", first item. RA "3.4": switching off removes the signers and keeps the address. VO "Recovery address and clawback": never on a recovered account. Changed with section 6: it cites VLT-515 where it cited the payout queue in the owed form. Form only, entered with section 6, which the owner approved on 2026-11-23, 05:16 UTC. | cc9e0337e00570af |
-| VLT-410 | K | VO "Delayed changes and account replacement", first item. The list is gathered from VO "Optional account protection", VO "Ready balance" and the position move's item. Changed with section 6: switching co-signing off, and setting a scheduled payment or a change that can make it pay more, are loosening changes. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. | e5aa9716d9d1dd25 |
+| VLT-403 | K | VO "Delayed changes and account replacement", first item. RA "3.4": switching off removes the signers and keeps the address. VO "Recovery address and clawback": never on a recovered account. Changed with section 6: it cites VLT-515 where it cited the payout queue in the owed form. Form only, entered with section 6, which the owner approved on 2026-11-23, 05:16 UTC. Changed with section 7: the recovery address in force stays set, a setting or a change of it that waits ends, and it cites VLT-630 where it cited a recovered account in the owed form. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | c9fc5ac6bbc1b5f2 |
+| VLT-410 | K | VO "Delayed changes and account replacement", first item. The list is gathered from VO "Optional account protection", VO "Ready balance" and the position move's item. Changed with section 6: switching co-signing off, and setting a scheduled payment or a change that can make it pay more, are loosening changes. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. Changed with section 7: switching the recovery claim on, and shortening its wait, are loosening changes. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | f3a2fe4237a9ba4f |
 | VLT-411 | C | VO "Delayed changes and account replacement", first item: "may be cancelled meanwhile", "A matured addition expires if not applied within one further delay". VO states the lapse for an addition and for the position move. Here it holds for every loosening change, measured by the delay in force when the wait ended. Changed with the owner's approval of 2026-11-23, 01:42 UTC. | 9723687f60bcd6fc |
 | VLT-412 | K | VO "Delayed changes and account replacement", first item. VLT-184, approved. | de284afe31f5fb11 |
 | VLT-413 | N | New. Raised by mistake VLT-M28, the conflict read and the security review. An unlock stays open in a pause so that VLT-091 keeps its promise to a locked account. A void in a pause: VLT-183. The Ready balance in a pause: VLT-326. Approved by the owner on 2026-11-23, 01:42 UTC. | da004225c033e313 |
-| VLT-414 | N | New. Raised by threat VLT-T39 and the security review. VO "Vault-owned authority and signed changes": "Each lock cancels the work pending at that lock. A later unlock cannot revive it". VLT-184. Approved by the owner on 2026-11-23, 01:42 UTC. | 94e4db0aa7e77d9f |
+| VLT-414 | N | New. Raised by threat VLT-T39 and the security review. VO "Vault-owned authority and signed changes": "Each lock cancels the work pending at that lock. A later unlock cannot revive it". VLT-184. Approved by the owner on 2026-11-23, 01:42 UTC. Changed with section 7: a lock ends a recovery address or a change of it that waits, and a recovered account's change of its recovery address comes into force while it is locked. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 4771f925f0b137d6 |
 | VLT-420 | K | VO "Optional account protection", second item. VO "Vault-owned authority and signed changes" for the relayed signature. RA "2", the decision of 2026-11-18, for an approval that can only lock. | 703c475a0b8d4ceb |
 | VLT-421 | K | VO "Optional account protection": "A lock cancels queued payouts, applies the position-NFT holder lock, and blocks new payouts and positions". VLT-184 and VLT-328, approved. Mistake VLT-M30. Changed with section 6: a lock ends every scheduled payment (VLT-543), and it cites VLT-513 where it cited the payout queue in the owed form. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. | ed0b9f92d2dfe6ee |
 | VLT-422 | K | VO "Optional account protection", the lock's item. The four steps not refused, and the refusal of a part release of collateral and of a deposit into the Ready balance, are stated nowhere: the conflict read and the security review. | 19571c43cb191dee |
 | VLT-423 | K | VO "Optional account protection": "It does not block loan servicing. A settlement to a locked owner stays in the vault instead of preventing settlement". LK for the setting that keeps running. | 2b6c3087fc5e9898 |
-| VLT-424 | K | VO "Optional account protection": "The owner may ask to unlock, which waits the delay". RA "2", the decision of 2026-11-18: a lock stays firm, no lock lapses by time, and the clawback is the exit. Mistake VLT-M30. | d56364480db094e1 |
+| VLT-424 | K | VO "Optional account protection": "The owner may ask to unlock, which waits the delay". RA "2", the decision of 2026-11-18: a lock stays firm, no lock lapses by time, and the clawback is the exit. Mistake VLT-M30. Changed with section 7: it cites VLT-620 where it cited it in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | 7e5d18a981a67103 |
 | VLT-425 | K | LK, whole. | 7e4f3078d484b79d |
-| VLT-430 | K | VO "Optional account protection", second item. RA "3.5". Mistake VLT-M29. | 44911da89b311169 |
-| VLT-431 | K | VO "Optional account protection", second item. VO "Delayed changes and account replacement", second item, for the majority. VLT-326. Changed with section 6: a signer may also co-sign the setting of a scheduled payment or a change that can make it pay more, and end one, and it cites VLT-512 for the cancel of a payout. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. | b4f8018f316ed73c |
+| VLT-430 | K | VO "Optional account protection", second item. RA "3.5". Mistake VLT-M29. Changed with section 7: it cites VLT-600 where it cited it in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | 4c4f5c135a7a186d |
+| VLT-431 | K | VO "Optional account protection", second item. VO "Delayed changes and account replacement", second item, for the majority. VLT-326. Changed with section 6: a signer may also co-sign the setting of a scheduled payment or a change that can make it pay more, and end one, and it cites VLT-512 for the cancel of a payout. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. Changed with section 7: a signer may also cancel a waiting change of the recovery address or an open recovery claim, and claw the account back; a signer moves value only by the clawback. Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 3eefe1e4a43001ff |
 | VLT-440 | K | VO "Optional account protection", second item. VO "Vault-owned authority and signed changes": "The vault enforces its destinations and lock independently". VLT-050, VLT-180. Mistake VLT-M27. | f120e009d0612693 |
 | VLT-441 | K | VO "Optional account protection", third item. Changed with section 6: it cites VLT-520 where it cited co-signing in the owed form. Form only, entered with section 6, which the owner approved on 2026-11-23, 05:16 UTC. | b960170449f11af3 |
 | VLT-442 | K | VO "Optional account protection", fourth item. | 8d91d3e2b7ecd1fc |
@@ -231,17 +232,17 @@ section 6 at commit `4d50b6c542`.
 | VLT-455 | K | VO "Delayed changes and account replacement": "Who may act on a position is its holder's manager", and "managing one's own recovered position earns no keeper reward". It adds a case to VLT-185. | 0cd30abdb5f837d2 |
 | VLT-456 | K | VO "Delayed changes and account replacement": "A replaced account's open offers can only be cancelled". VO "Optional account protection": "A locked or replaced account cannot post it". That a replaced account opens no position is gathered from both. That it takes no deposit is stated nowhere. Changed with section 6: a replaced account adds no destination. Raised by the conflict read and agreed by the security review. Confirmed by the owner with section 6 on 2026-11-23, 05:16 UTC. | 8612039d74cef483 |
 | VLT-457 | K | VO "Delayed changes and account replacement", the position move, the owner's decision of 2026-11-18. Mistake VLT-M44. | ef4fbf7ff24054d0 |
-| VLT-458 | K | VO "Delayed changes and account replacement", the position move. VO "Recovery address and clawback" for a recovered account. Mistakes VLT-M45 and VLT-M46. | 2e9e1150295124dd |
+| VLT-458 | K | VO "Delayed changes and account replacement", the position move. VO "Recovery address and clawback" for a recovered account. Mistakes VLT-M45 and VLT-M46. Changed with section 7: it cites VLT-630 where it cited it in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | 63c57bf226667283 |
 | VLT-459 | K | VO "Delayed changes and account replacement", the position move, its last sentence. | f0fb4465c3c8c670 |
 | VLT-460 | C | PT "1" stated a rule that refused an owner's step above a value until the account had decided on protection. The owner took that rule out of the platform on 2026-11-08: the asking and its record are the app's. The statement keeps what is left for the vault. | e8cb64271842b149 |
 | VLT-470 | K | VO "Optional account protection": "NFT protection is the position-NFT contract's holder lock", "there is no queue of NFT transfers", "The owner may ask to unlock, which waits the delay, without disabling the account's other protection". The owner's choice of 2026-11-19: the lock is a choice of its own, offered already chosen when protection is switched on. | 1e8e41c9e7ebfc94 |
-| VLT-500 | K | PR "Protected Account Mode", first item: every payout to the owner's own wallet waits the delay, and a payment to the owner's wallet from elsewhere is credited to the vault. VO "Optional account protection", first item. PD for the routes left. PR "Escape Route During a Long Pause" and VLT-091 for the escape. SP 2 for a scheduled payment's period, and SP 4.1 for its setting, which waits. PR "Escape Route During a Long Pause": the escape is "bounded exactly as a depository withdrawal", so a protected owner's escape is queued, and only the escape to a recovery address in force pays at once (VLT-091). The clawback pays at once by the owner's decision of 2026-11-18 (section 7). The outflow limits: OL, for section 8. | f815c1d7e5b600bb |
+| VLT-500 | K | PR "Protected Account Mode", first item: every payout to the owner's own wallet waits the delay, and a payment to the owner's wallet from elsewhere is credited to the vault. VO "Optional account protection", first item. PD for the routes left. PR "Escape Route During a Long Pause" and VLT-091 for the escape. SP 2 for a scheduled payment's period, and SP 4.1 for its setting, which waits. PR "Escape Route During a Long Pause": the escape is "bounded exactly as a depository withdrawal", so a protected owner's escape is queued, and only the escape to a recovery address in force pays at once (VLT-091). The clawback pays at once by the owner's decision of 2026-11-18 (section 7). The outflow limits: OL, for section 8. Changed with section 7: it cites VLT-620 where it cited it in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | 69eae31e3cecfe03 |
 | VLT-501 | K | PR "Protected Account Mode": a payment to the owner's wallet from elsewhere is credited to the vault. VLT-092 for what is owed another party. VLT-442 for a protected destination. PR "Protected Account Mode", "COLLATERAL AND PARALLEL-SALE LISTINGS", for a listing's fee recipients, owed to the exits domain. | 56766eabf7547ca0 |
 | VLT-502 | N | New. Raised by the conflict read: VLT-413 states the pause for section 5 only. VLT-090 and PLT-040 for what a pause refuses. Approved by the owner on 2026-11-23, 05:16 UTC. | 3352d4c672f0dd0a |
 | VLT-510 | C | VO "Optional account protection" and PR "Depository Vault" for the queue and the hold. OP 3.7.9: the vault holds the amount while the payout waits. That a payout waits the longer of its own wait and a delay raised since is new, by VLT-402, approved. Changed with the owner's approval of 2026-11-23, 05:16 UTC. | 507f3e76b8560123 |
 | VLT-511 | K | PR "Protected Account Mode". OL 2: a payout is released by anyone once due. PR "Escape Route During a Long Pause" and VLT-091 for the pause: a protected account's queued payouts keep releasing. Section 1's table of conditions for a flagged sender, and PLT-060 for the owner. | ef3e5193b3a1b055 |
 | VLT-512 | K | VO "Optional account protection", second item. PR: "Secondary signers may cancel any queued payout". VLT-413 for a pause. Mistake VLT-M28. | 4ad428ffed34e192 |
-| VLT-513 | K | PR "LOCK": a lock cancels every queued payout, and payouts from before a lock stay dead in any case. PR "REPLACEMENT": every queued row is cancelled. SP 4.2: a removed destination ends what it was queued for, as a queued payout does. VLT-184, approved, for the lock and the replacement. The clawback and the recovery claim: section 7. | 6bac2be0279fc5af |
+| VLT-513 | K | PR "LOCK": a lock cancels every queued payout, and payouts from before a lock stay dead in any case. PR "REPLACEMENT": every queued row is cancelled. SP 4.2: a removed destination ends what it was queued for, as a queued payout does. VLT-184, approved, for the lock and the replacement. The clawback and the recovery claim: section 7. Changed with section 7: it cites VLT-620 and VLT-644 where it cited them in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | 680f4c34a17cdfb5 |
 | VLT-514 | N | New. Raised by threat VLT-T40. Approved by the owner on 2026-11-23, 05:16 UTC. | 6ca30b904a61d331 |
 | VLT-515 | K | PR, the item on loosening changes: switching off needs no queued payout to remain, waits while one does, and never holds back another change that is due. VLT-411 for the lapse. | b054394c38c5176b |
 | VLT-520 | K | PR "VERIFIED DESTINATIONS". VO "Optional account protection", third item. PR: co-signing is required for release when the owner switches it on. | bb41c4d4a92c5e3f |
@@ -251,11 +252,32 @@ section 6 at commit `4d50b6c542`.
 | VLT-540 | N | New. SP 2 and 4.1, the design of the feature the owner approved for design and build on 2026-11-19. That a destination must have shown it is controlled: the security review. Approved by the owner on 2026-11-23, 05:16 UTC. | e3df597822157d20 |
 | VLT-541 | N | New. SP 3 rule 4, 4.1 and 4.2. A signer's own address and its signature's standing: the conflict read and the security review. Mistakes VLT-M52, VLT-M55 and VLT-M56. Approved by the owner on 2026-11-23, 05:16 UTC. | 673eafd5dc4fd08f |
 | VLT-542 | N | New. SP 4.3 and 5. PLT-051 for a token's pause: the conflict read. Mistakes VLT-M53, VLT-M54 and VLT-M57. Approved by the owner on 2026-11-23, 05:16 UTC. | fcdf260c41da6da6 |
-| VLT-543 | N | New. SP 4.2: a lock, a replacement, a switch-off, a clawback, a recovery claim and a removed destination each end it, by the vault's own record. The report before such a change: mistake VLT-M58 and the conflict read. Approved by the owner on 2026-11-23, 05:16 UTC. | 000c3c5a7b9a8458 |
+| VLT-543 | N | New. SP 4.2: a lock, a replacement, a switch-off, a clawback, a recovery claim and a removed destination each end it, by the vault's own record. The report before such a change: mistake VLT-M58 and the conflict read. Approved by the owner on 2026-11-23, 05:16 UTC. Changed with section 7: it cites VLT-620 and VLT-644 where it cited them in the owed form. Form only, entered with section 7, which the owner approved on 2026-11-23, 06:03 UTC. | 355ac6ebcb12a318 |
 | VLT-544 | N | New. SP 2, 3 rule 3 and 4.3, as a never. Raised by threat VLT-T41. Approved by the owner on 2026-11-23, 05:16 UTC. | 780652a7255e325c |
 | VLT-545 | N | New. SP 4.1 and 4.2, the refusals of a setting gathered as one refusal that names which holds. Mistakes VLT-M59 and VLT-M60. Approved by the owner on 2026-11-23, 05:16 UTC. | 91b34c4a0e6db4ec |
+| VLT-600 | K | RA "3.1", "3.2", "3.3". VO, first and second items. That twice the delay is the delay as it stands when asked is stated nowhere. The alerts: RA "3.3" and "6". With protection off, the lower bound of PRM-005: the conflict read. Mistake VLT-M62. | fe9e6a82e882f8b5 |
+| VLT-601 | K | RA "3.1", both sides, at the request and when finalized. RA "3.2", third Default: nothing can become one of the roles while an address waits. VO, first item. | cf3b737a8430a90f |
+| VLT-602 | C | RA "3.2" and "3.5": what a waiting setting counts for, its cancel, and an account left with no clawback. VO, second item, for the switch-off. VLT-184 for the change's own transaction. Changed: on a recovered account the recovery address in force may also cancel a change, and each step of it is announced to that address and the signers, raised by the conflict read and the security review; the cancel is open in a pause. Changed with the owner's approval of 2026-11-23, 06:03 UTC. | fc16adc467657d45 |
+| VLT-603 | K | RA "3.2", first and second Defaults: a dropped setting never comes into force by time, and a matured one is never dropped. RA test 10. VO, second item. | afa7f402861a6e5e |
+| VLT-604 | K | RA "3.4" and its Default. VO, third item. That clearing applies at once is stated nowhere. | 34e3a8274e27b2cf |
+| VLT-605 | K | The refusals of RA "3.1", "3.4" and "4.4", fourth Default: a change after recovery stays open. RA "4.5": a change after a replacement waits the same time. The pause: PLT-040, stated nowhere for this step. That neither a setting nor a change is a change of VLT-410: the conflict read. Mistakes VLT-M34, VLT-M61 and VLT-M65. | 7354b2bebff568b0 |
+| VLT-620 | K | RA "2" (2026-11-08, 2026-11-18, 2026-11-19) and "4.1". RC "3" and "4.5" for the claim. The linked chat's own grant: RA "2", 2026-11-18. That the owner's own trigger waits for nothing: the mistake list's question Q3, with its recommendation. That a lock does not end the linked chat's grant: the conflict read. Mistake VLT-M35. | f14983365093a811 |
+| VLT-621 | C | RA "4.2". VO, fourth item. The outflow limits: section 8. Changed: in a pause it is refused until the escape route opens, and a flagged trigger is refused, as a flagged signer's co-signature is (VLT-522). The payee screened, and PLT-065's default kept for the owner's and a signer's clawback: the security review. Changed with the owner's approval of 2026-11-23, 06:03 UTC. | bb6c43825a4b94dd |
+| VLT-622 | K | RA "4.3" and its Defaults, "4.4", "5". VO, fourth and fifth items. A lock's effects: VLT-421. What keeps running on a locked account: VLT-423 and VLT-425 (LK), in place of RA's Default that standing instructions are dead. The Ready balance the lock returns (VLT-328): the conflict read. Mistake VLT-M63. | 30fed263678d3d31 |
+| VLT-623 | N | New. The refusals of RA "4.1" and "4.2", and of VLT-621, gathered as one refusal that names which holds. It answers the owed line of section 2's model of a vault. Mistake VLT-M66. Approved by the owner on 2026-11-23, 06:03 UTC. | c243e4829837507f |
+| VLT-624 | N | New. RA "4.1": the clawback pays only the recovery address in force, which no trigger can choose. RA "4.3" and "5" for the sweep. VLT-091 for the escape. Raised by threat VLT-T42 and the conflict read. A flagged recovery address, and the screen unreadable at a sweep or a claim's run: the security review. Approved by the owner on 2026-11-23, 06:03 UTC. | b34d99ef9963cd3e |
+| VLT-630 | C | RA "4.4" and its Default, "4.5". VO, fifth and sixth items. VLT-422, VLT-423, VLT-185 and VLT-455 for what a locked account still does. VLT-425's limit restated for the recovered state: the security review and the conflict read. Changed: the recovery address in force may cancel a change of itself, raised by the conflict read and the security review. Mistake VLT-M64. Changed with the owner's approval of 2026-11-23, 06:03 UTC. | 5c5e512577b79135 |
+| VLT-631 | K | RA "4.3", first Default, "4.4" and "4.5", and RA's Default of 2026-11-18. VO, fifth and sixth items. Which tokens are the account's: VLT-454's reading. The release open to a flagged caller: the conflict read. Mistake VLT-M71. | a37af16d0d33076f |
+| VLT-632 | K | RA "5", Default, and "4.3", third Default. VO, seventh item. The pause: refused until the escape route opens, with the owner's approval of 2026-11-23, 06:03 UTC. Refused while the screen cannot be read: the security review. A flagged owner, recovery address or caller refused, as for the release and the scheduled payment (VLT-511, VLT-542): the conflict read and the security review. Mistake VLT-M70. | 55d734416f92419f |
+| VLT-633 | N | New. RA "4.4" and "4.5" gathered as a never. PLT-060 for the platform's own retirement of a token. Raised by threat VLT-T43. The Auto-lend slot, the buy offer, the takeover and the sale: the security review. Approved by the owner on 2026-11-23, 06:03 UTC. | 4532c7ab4c1d7e44 |
+| VLT-640 | K | RC "4.1". RC "4.6" for the statement of whether alerts are sent. Mistake VLT-M36. | c092e2d0dcfdc12c |
+| VLT-641 | K | RC "4.2" and "4.3". The pause: PLT-040, stated nowhere for this step. RC "8" for the claim's warning: the conflict read. Mistake VLT-M72. | d6f3f6279b1ef29b |
+| VLT-642 | C | RC "4.4", and "11", item 1, as narrowed by the docs review: only the owner's direct call ends a claim as a side effect. The pause: RC "4.4" and "11", item 4. Changed: in a pause only the cancel, switching the claim off, lengthening its wait and a lock end a claim, which narrows RC "11", item 4; the cancel answers every claim, and the run is refused in a pause. Changed with the owner's approval of 2026-11-23, 06:03 UTC. | df5367e047ac92d3 |
+| VLT-643 | K | RC "4.4", for what ends no claim and the time before a new request. RC "4.5": a claim belongs to the address that asked, and a lapsed claim is void. Mistake VLT-M68. | bb1812808e923005 |
+| VLT-644 | K | RC "4.5", "11", items 3 to 5, and "12". The time after an outage counts from the end of its recovery window (PLT-090). Refused while the screen cannot be read: the security review. Mistake VLT-M69. | bd00c9913de19aac |
+| VLT-645 | N | New. RC "3", "4.3" and "4.5" gathered as a never. Raised by threat VLT-T44. Approved by the owner on 2026-11-23, 06:03 UTC. | a65d6d7cff05127f |
 
-225 statements. Kept: 167. Changed: 21. New: 37.
+246 statements. Kept: 180. Changed: 25. New: 41.
 
 ## Approvals
 
@@ -269,6 +291,8 @@ section 6 at commit `4d50b6c542`.
   the points put to him on each.
 - Section 6 was approved by the owner on 2026-11-23 at 05:16 UTC, with his answers to the four
   points put to him, among them the clauses it adds to statements of sections 1, 2 and 5.
+- Section 7 was approved by the owner on 2026-11-23 at 06:03 UTC, with his answers to the five
+  points put to him, among them the clauses it adds to statements of sections 2, 5 and 6.
 
 ## Changed after an approval
 
@@ -377,6 +401,9 @@ owner's confirmation. Each was read for conflict before it was entered.
 | VLT-M31 | Undo | VLT-450 |
 | VLT-M32 | Undo | VLT-183 |
 | VLT-M33 | Bound | VLT-400 |
+| VLT-M34 | Refuse | VLT-605 |
+| VLT-M35 | Bound | VLT-620 |
+| VLT-M36 | Refuse | VLT-640 |
 | VLT-M37 | Undo | VLT-230 |
 | VLT-M38 | Refuse | VLT-171 |
 | VLT-M39 | Warn only | VLT-173 |
@@ -401,6 +428,18 @@ owner's confirmation. Each was read for conflict before it was entered.
 | VLT-M58 | Warn only | VLT-543 |
 | VLT-M59 | Refuse | VLT-545 |
 | VLT-M60 | Refuse | VLT-545 |
+| VLT-M61 | Refuse | VLT-605 |
+| VLT-M62 | Warn only | VLT-600 |
+| VLT-M63 | Warn only | VLT-622 |
+| VLT-M64 | Refuse | VLT-630 |
+| VLT-M65 | Refuse | VLT-605 |
+| VLT-M66 | Refuse | VLT-623 |
+| VLT-M67 | Warn only | VLT-642 |
+| VLT-M68 | Warn only | VLT-643 |
+| VLT-M69 | Refuse | VLT-644 |
+| VLT-M70 | Warn only | VLT-632 |
+| VLT-M71 | Refuse | VLT-631 |
+| VLT-M72 | Warn only | VLT-641 |
 
 ## Retired ids
 
@@ -413,6 +452,7 @@ when that domain is entered.
 
 | Owed | Cited by |
 | --- | --- |
+| APP owed: the claim's warning | VLT-640 |
 | APP owed: the move's warning | VLT-459 |
 | APP owed: the protection prompt | VLT-460 |
 | AUT owed: a change to the platform is tested against every registered version first. | VLT-227 |
@@ -422,6 +462,7 @@ when that domain is entered.
 | DPL owed: the treasury's address is never the platform's own | VLT-042 |
 | DPL owed: which of the two holds between each pair of networks. | VLT-102 |
 | EXT owed: a protected account's listing | VLT-501 |
+| EXT owed: a recovered account's sale or handover | VLT-631 |
 | EXT owed: the ends an exit adds | VLT-142 |
 | EXT owed: what a lock ends of a listing | VLT-425 |
 | EXT owed: when a listing ends | VLT-352 |
@@ -430,17 +471,20 @@ when that domain is entered.
 | FEE owed: the fee paid from a vault in the platform's token | VLT-323 |
 | FEE owed: the share's size. | VLT-143 |
 | FEE owed: the treasury vault's own rules. | VLT-212 |
+| KPR owed: the alerts of a recovery address | VLT-600 |
+| KPR owed: the alerts of a recovery claim | VLT-641 |
+| KPR owed: the grant for a clawback from the linked chat | VLT-620 |
 | KPR owed: the lock-only approval | VLT-420 |
+| KPR owed: the pass that releases and sweeps a recovered account | VLT-632 |
 | KPR owed: the pass that releases payouts and makes scheduled payments | VLT-511, VLT-542 |
 | LON owed: a standing instruction's skip | VLT-155 |
 | LON owed: what a lock ends of a plan | VLT-425 |
 | LON owed: what such a fall does to a lien | VLT-113 |
+| MKT owed: a recovered account's lending slot | VLT-631 |
 | MKT owed: what a lock ends of a lending slot | VLT-425 |
+| OFR owed: a recovered account's offer | VLT-631 |
 | OFR owed: what a lock ends of an offer | VLT-425 |
+| POS owed: a recovered account's tokens | VLT-631 |
 | POS owed: the holder lock | VLT-421, VLT-470 |
 | RNT owed: its size and payee | VLT-148 |
-| VLT owed: a recovered account | VLT-403, VLT-458, VLT-513, VLT-543 |
-| VLT owed: the clawback | VLT-424, VLT-500, VLT-513, VLT-543 |
-| VLT owed: the outflow limits | VLT-500 |
-| VLT owed: the recovery address | VLT-400, VLT-414, VLT-430 |
-| VLT owed: the refusals of a recovery | Model: a vault |
+| VLT owed: the outflow limits | VLT-500, VLT-621 |

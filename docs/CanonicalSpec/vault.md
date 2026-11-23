@@ -2,8 +2,7 @@
 
 A vault holds one owner's assets, and nothing leaves it except as these statements allow.
 Figures are named by parameter id and are in the parameters table (`parameters.md`).
-Sections 1 to 6 are entered. Sections 7 and 8 follow: the recovery address, the clawback and a
-recovered account; the limits on outflow over time.
+Sections 1 to 7 are entered. Section 8 follows: the limits on outflow over time.
 
 ## Section 1: what may leave a vault
 
@@ -774,14 +773,13 @@ No vault holds another owner's free balance.
 **Who:** the platform, a vault's owner and its signers, and the holder of a position's token.
 **When:** a vault is asked to do something.
 
-A vault answers to three voices, and none can speak for another.
-The platform alone asks it to move an asset, and only within section 1.
-The owner alone, with the signers the owner named, gives its authority: what the owner
-commits, and the owner record of VLT-180.
-A position's holder alone (after a replacement, the owner of VLT-455) gives the authority for
-that position's own lien (VLT-131, VLT-185), and for nothing else there. The platform gives none.
-Every other caller a vault answers is named in its own statement, and none of them can
-move an asset out except as section 7 states.
+A vault answers to three voices, and none can speak for another. The platform alone asks it to move
+an asset, and only within section 1. The owner alone, with the signers the owner named, gives its
+authority: what the owner commits, and the owner record of VLT-180. A position's holder alone (after
+a replacement, the owner of VLT-455) gives the authority for that position's own lien (VLT-131,
+VLT-185), and for nothing else there. The platform gives none. Every other caller a vault answers is
+named in its own statement, and none of them chooses where an asset goes: a step one of them may run
+pays only the payee the vault's own record names (VLT-511, VLT-542, VLT-620, VLT-632, VLT-644).
 
 - **Tests owed:** the defaults for a rule, with each voice attempting each other's part.
 
@@ -824,7 +822,7 @@ Any figure the platform gives for a vault's balance is a read of the vault.
 - Not created (start): the wallet has no vault on this network yet.
 - Open: the vault is created, and is not locked.
 - Locked: the vault's owner record carries a lock.
-- Recovered (end): the recovery address has recovered the vault, as section 7 states.
+- Recovered (end): the account was clawed back, and is locked for good (VLT-630).
 
 **Steps:**
 
@@ -833,8 +831,8 @@ Any figure the platform gives for a vault's balance is a read of the vault.
 | Not created | Create | As section 3 states | VLT-200, VLT-034, PLT-060 | Open |
 | Open | Lock | The owner or a signer | Section 5, VLT-184 | Locked |
 | Locked | Unlock | As section 5 states | Section 5, VLT-184 | Open |
-| Open | Recover | The recovery address | Section 7, which VLT-111 and VLT-112 name | Recovered |
-| Locked | Recover | The recovery address | Section 7, which VLT-111 and VLT-112 name | Recovered |
+| Open | Claw back | The owner, a signer, or the recovery address by its claim | VLT-620, VLT-621, VLT-622, VLT-644 | Recovered |
+| Locked | Claw back | The owner, a signer, or the recovery address by its claim | VLT-620, VLT-621, VLT-622, VLT-644 | Recovered |
 
 **Refusals out of state:**
 
@@ -843,13 +841,13 @@ Any figure the platform gives for a vault's balance is a read of the vault.
 | Create | A vault that exists is returned and not created again, VLT-200. An address that cannot have a vault, a flagged wallet, or a pause, VLT-202 |
 | Lock | By anyone but the owner, a signer or a keeper the owner approved for locking only, VLT-420. The platform's side is applied whole or the change is refused, VLT-184 |
 | Unlock | By anyone but the owner, before its wait is over, after it lapsed, or cancelled by a signer, VLT-411, VLT-424. As for a lock, VLT-184 |
-| Recover | Section 7 states them (VLT owed: the refusals of a recovery). Until then a recovery is named only by VLT-111 and VLT-112 |
+| Claw back | By anyone VLT-620 does not name, with protection off or no recovery address in force, in a pause before the escape route opens, or for a flagged party, VLT-623. A claim's run, VLT-644 |
 
 ### Notes on the life of a vault
 
 In every state after creation the vault keeps its records (VLT-103), receives payments for the
 positions it backs (VLT-150), and pays what it owes the other side (VLT-092).
-What a lock and a recovery stop is stated in sections 5 and 7.
+What a lock stops is stated in section 5, and what a recovery stops in VLT-630 and VLT-633.
 
 ## 2.2 The balance record
 
@@ -876,7 +874,6 @@ its owner's own send of an NFT, or of a token booked inside the owner's own step
 the lender's part of the fee of a loan for one transaction (VLT-043);
 a release from another genuine vault for a position its owner holds (VLT-154);
 and from outside any position, a usage reward or a non-party's payment under PLT-003.
-Section 7 adds the ways of a recovery.
 
 - **Tests owed:** the defaults for a rule, one path for each way, and a path for every other
   arrival showing the free balance unchanged.
@@ -892,8 +889,8 @@ a commitment the owner made, which moves the amount under a lien or a reserved c
 a payment the owner authorized from it, then or by a standing commitment: a repayment,
 a purchase, a fee (VLT-151) or a scheduled payment (VLT-542);
 an amount moved into the held record when a token refuses its delivery (VLT-072);
-and a move into the Ready balance or into a queued payout (VLT-325, VLT-510).
-Section 7 adds the ways of a recovery.
+a move into the Ready balance or into a queued payout (VLT-325, VLT-510);
+and the clawback and the sweep of a recovered account (VLT-622, VLT-632).
 
 - **Tests owed:** the defaults for a rule, one path for each way.
 
@@ -1251,14 +1248,14 @@ How it ends is stated in VLT-148.
 **Who:** whoever a commitment answers to.
 **When:** a commitment is lowered or cancelled.
 
-Each of these commitments answers to the owner of the vault that holds it: an amount set
-aside to lend, a loan reserve, a due-date plan, standing instructions, and a lender's standing
-consent.
-One made for a loan is drawn only while that owner holds that side's token of the loan. After
-a replacement, the holding of the wallet whose own vault it is counts as the owner's (VLT-454).
-Lowering or cancelling is that one's own step alone: an owner who sold a loan's token still
-takes back its reserve. It takes effect at once for what is not drawn, which is released to
-the vault's free balance. What was drawn stays under its lien.
+Each of these commitments answers to the owner of the vault that holds it: an amount set aside to
+lend, a loan reserve, a due-date plan, standing instructions, and a lender's standing consent. One
+made for a loan is drawn only while that owner holds that side's token of the loan. After a
+replacement, the holding of the wallet whose own vault it is counts as the owner's (VLT-454).
+Lowering or cancelling is that one's own step alone: an owner who sold a loan's token still takes
+back its reserve. On a recovered account anyone may also release an amount set aside to lend
+(VLT-631). It takes effect at once for what is not drawn, which is released to the vault's free
+balance. What was drawn stays under its lien.
 
 - **Tests owed:** the defaults for a rule, with a draw in the same block before and after,
   with a loan's token sold while its reserve and its plan stand (no draw, and the seller takes
@@ -1285,8 +1282,8 @@ What is not drawn is released by the one it answers to (VLT-140).
 **Who:** the vault that holds a loan's collateral.
 **When:** a collateral lien ends.
 
-A collateral lien ends in these ways only, with a recovery's (section 7) and those an exit
-adds (EXT owed: the ends an exit adds):
+A collateral lien ends in these ways only, with those an exit adds
+(EXT owed: the ends an exit adds):
 its principal still owed is nil, and what it holds is released to its own side (VLT-128);
 it is carried whole to a new loan, where it continues (VLT-137);
 a close-out has taken all it holds within VLT-017, and nothing is left to release;
@@ -1295,7 +1292,7 @@ or the loan is closed out in kind: the lender's side's slice is handed over or b
 A custody move is not an end (VLT-045). A rental's prepayment lien ends as VLT-148 states.
 
 - **Tests owed:** the defaults for a rule, one path for each way, and a path showing that no
-  step outside these, a recovery's and an exit's ends a lien.
+  step outside these and an exit's ends a lien, a clawback included.
 
 ### VLT-143 · rule
 
@@ -3158,14 +3155,12 @@ the owner wallet.
 **Who:** a vault's owner.
 **When:** the owner chooses whether the account is protected.
 
-Protection is the owner's choice. The owner switches it on with a delay within its bounds
-[PRM-005], and it applies at once, for it only tightens.
-It is switched on only once a recovery address is set for the account, in force or still
-waiting (VLT owed: the recovery address).
-From then on a payout to the owner's wallet waits the delay
-(VLT-500), a balance is committed at once only from the
-Ready balance (VLT-321), and the vault's pin delay is raised (VLT-232).
-Protection never delays what the account owes another party (VLT-092).
+Protection is the owner's choice. The owner switches it on with a delay within its bounds [PRM-005],
+and it applies at once, for it only tightens. It is switched on only once a recovery address is set
+for the account, in force or still waiting (VLT-600). From then on a payout to the owner's wallet
+waits the delay (VLT-500), a balance is committed at once only from the Ready balance (VLT-321), and
+the vault's pin delay is raised (VLT-232). Protection never delays what the account owes another
+party (VLT-092).
 
 - **For the mistake:** VLT-M33, bound. Switching it on only tightens, and the delay is bounded.
 - **Tests owed:** the defaults for a rule, with protection switched on at each bound of the
@@ -3212,9 +3207,9 @@ Switching protection off is a loosening change (VLT-410). Only the owner asks fo
 Until it is applied the account counts as protected in every rule.
 When it is applied the account has no signers, and nothing asks for a co-signature. The Ready
 balance ends (VLT-328), and every waiting change of a destination or a signer ends (VLT-412).
-The recovery address stays set. What happens to payouts that wait is stated with them
-(VLT-515).
-It is refused for good on a recovered account (VLT owed: a recovered account).
+The recovery address in force stays set, and a setting or a change of it that waits ends
+(VLT-602). What happens to payouts that wait is stated with them (VLT-515).
+It is refused for good on a recovered account (VLT-630).
 
 - **Tests owed:** the defaults for a rule, with a payout asked while the switch-off waits, a
   switch-off cancelled by a signer, and the account's state straight after it is applied.
@@ -3231,9 +3226,9 @@ longer if the delay is raised meanwhile (VLT-402). A tightening applies at once.
 changes are: adding a destination, adding or removing a signer, lowering the delay, an unlock,
 switching protection off, switching the holder lock off (VLT-470), a move into the Ready balance and
 a longer idle period (VLT-325, VLT-329), a move of position tokens (VLT-457), switching co-signing
-off (VLT-521), and setting a scheduled payment or a change that can make it pay more (VLT-541). Only
-the owner asks for one. Each is refused while the account is locked, an unlock apart, and during the
-cool-down of a replacement (VLT-453).
+off (VLT-521), setting a scheduled payment or a change that can make it pay more (VLT-541), and
+switching the recovery claim on or shortening its wait (VLT-640). Only the owner asks for one. Each
+is refused while the account is locked, an unlock apart, and in a replacement's cool-down (VLT-453).
 
 - **Tests owed:** the defaults for a rule, with each loosening change asked, each tightening
   change applied at once, and each loosening change asked while locked and in a cool-down.
@@ -3289,14 +3284,13 @@ neither stops nor lengthens them.
 **Who:** the owner of a locked account, and anyone acting for it.
 **When:** the account is locked.
 
-No change that loosens a protected account, in any domain, takes effect while the account is
-locked. A lock ends every such change, whether it still waits, has waited and is not applied,
-or would count by time alone, and nothing comes to count while locked.
-An unlock is the one loosening change asked for and applied while locked (VLT-424).
-A replacement by the signers loosens nothing, and a lock does not end it (VLT-451).
-A lock also ends a first recovery address that still waits
-(VLT owed: the recovery address).
-Every delayed loosening stated elsewhere follows this statement.
+No change that loosens a protected account, in any domain, takes effect while the account is locked.
+A lock ends every such change, whether it still waits, has waited and is not applied, or would count
+by time alone, and nothing comes to count while locked. An unlock is the one loosening change asked
+for and applied while locked (VLT-424). A replacement by the signers loosens nothing, and a lock
+does not end it (VLT-451). A lock also ends a recovery address, or a change of it, that still waits
+(VLT-602). A change of a recovered account's recovery address comes into force while locked
+(VLT-630). Every delayed loosening stated elsewhere follows this statement.
 
 - **Against:** VLT-T39.
 - **Watch:** every loosening change that takes effect against the account's lock at that
@@ -3417,13 +3411,12 @@ A setting that only applies the owner's own funds to the owner's own loan keeps 
 **Who:** the owner of a locked account.
 **When:** the owner asks to unlock.
 
-An unlock is a loosening change (VLT-410). Only the owner asks for it, and it is the one
-loosening change that may be asked while the account is locked.
-The owner or any signer may cancel it while it waits. A lock never lapses with time.
-A lock placed again while an unlock waits ends that unlock (VLT-184).
-When it is applied the account is open again. Nothing the lock ended returns (VLT-184).
-A lock that a signer keeps in place is left by a recovery (VLT owed: the clawback), or by
-the signers' replacement of the owner wallet (VLT-450).
+An unlock is a loosening change (VLT-410). Only the owner asks for it, and it is the one loosening
+change that may be asked while the account is locked. The owner or any signer may cancel it while it
+waits. A lock never lapses with time. A lock placed again while an unlock waits ends that unlock
+(VLT-184). When it is applied the account is open again. Nothing the lock ended returns (VLT-184). A
+lock that a signer keeps in place is left by a recovery (VLT-620), or by the signers' replacement of
+the owner wallet (VLT-450).
 
 - **Tests owed:** the defaults for a rule, with an unlock asked by a signer, cancelled by a
   signer, applied after the wait, a second lock placed while the unlock waits, and a lock left
@@ -3457,7 +3450,7 @@ An account has no more than its most signers [PRM-087].
 The owner nominates a wallet, which needs a recovery address set for the account. The wallet
 counts as a signer only after it has accepted with its own key and the wait of a loosening
 change is over (VLT-410), and only if a recovery address is then in force
-(VLT owed: the recovery address). Otherwise the addition waits on until it lapses.
+(VLT-600). Otherwise the addition waits on until it lapses.
 A nominee may withdraw before it counts.
 The account's first owner wallet and its owner wallet on record are never signers.
 
@@ -3472,17 +3465,20 @@ The account's first owner wallet and its owner wallet on record are never signer
 **Who:** a signer of a protected account.
 **When:** it acts on the account.
 
-A signer may lock the account (VLT-420), cancel a change or a payout that waits (VLT-411, VLT-512),
-co-sign a payout, the setting of a scheduled payment or a change that can make it pay more (VLT-522,
-VLT-541), end a scheduled payment (VLT-541), move the Ready balance back (VLT-326), and, with a
-majority of the signers, replace the owner wallet (VLT-450). A signer never moves value, never names
-a destination, and never loosens anything. Removing a signer is a loosening change the owner asks
-for. Any other signer may cancel it. The signer being removed may not.
+A signer may lock the account (VLT-420), cancel a change or a payout that waits, or an open recovery
+claim (VLT-411, VLT-512, VLT-602, VLT-642), claw the account back (VLT-620), co-sign a payout, the
+setting of a scheduled payment or a change that can make it pay more (VLT-522, VLT-541), end a
+scheduled payment (VLT-541), move the Ready balance back (VLT-326), and, with a majority of the
+signers, replace the owner wallet (VLT-450). A signer never moves value but by the clawback, which
+pays only the recovery address in force (VLT-624), never names a destination, and never loosens
+anything. Removing a signer is a loosening change the owner asks for. Any other signer may cancel
+it. The signer being removed may not.
 
 - **Against:** VLT-T35.
 - **Watch:** every payout, every destination added and every loosening change of a protected
   account against who asked for it. Each names the owner as the one who asked. A signer
-  appears on a payout only as its co-signer, and on a replacement only as one of a majority.
+  appears on a payout only as its co-signer, on a clawback only as its trigger, and on a
+  replacement only as one of a majority.
 - **Tests owed:** the defaults for a never, with each step a signer may take, each it may not,
   and a signer cancelling its own removal.
 
@@ -3680,7 +3676,7 @@ while the account is locked or in a cool-down, or on an account that was recover
 The move is refused, and no token moves.
 A lock, a further replacement and a clawback each end a move that waits. A move is refused
 while the account is locked, whether it has waited or not.
-On a recovered account it is refused for good (VLT owed: a recovered account).
+On a recovered account it is refused for good (VLT-630).
 
 - **Refused as:** the move is not open to this caller, or not at this time, with the reason.
 - **For the mistake:** VLT-M45 and VLT-M46, refuse.
@@ -3764,11 +3760,11 @@ every account, to section 8.
 
 A payout from a protected account's vault to a wallet is never paid at once, with three exceptions:
 a scheduled payment's period (VLT-542), never its setting, which waits the delay (VLT-541); the
-escape withdrawal to a recovery address in force (VLT-091); and the clawback
-(VLT owed: the clawback). Every other such payout is queued, and released once the account's delay
-has passed (VLT-510, VLT-511): the owner's own withdrawal, on every route that pays a wallet from
-the vault, and the escape withdrawal when no recovery address is in force. Each queued payout and
-each scheduled payment counts against the account's outflow limits (VLT owed: the outflow limits).
+escape withdrawal to a recovery address in force (VLT-091); and the clawback (VLT-620). Every other
+such payout is queued, and released once the account's delay has passed (VLT-510, VLT-511): the
+owner's own withdrawal, on every route that pays a wallet from the vault, and the escape withdrawal
+when no recovery address is in force. Each queued payout and each scheduled payment counts against
+the account's outflow limits (VLT owed: the outflow limits).
 
 - **Tests owed:** the defaults for a rule, with each route of the owner's withdrawal, each of the
   three exceptions, a scheduled payment's setting tried at once, and an escape withdrawal with and
@@ -3868,11 +3864,10 @@ or the account is clawed back or recovered.
 
 A lock and a completed replacement each cancel every payout that waits, in the change's own
 transaction (VLT-184). A removal of a destination cancels every payout that waits for it. The
-clawback (VLT owed: the clawback) and a claim by the recovery address
-(VLT owed: a recovered account) cancel every one. Each is cancelled as VLT-512 cancels. The vault
-reads this from its own record, so a payout queued before such a change is never released after it:
-its release cancels it instead. An unlock, or the same destination added again, never brings one
-back.
+clawback (VLT-620) and a claim by the recovery address (VLT-644) cancel every one. Each is cancelled
+as VLT-512 cancels. The vault reads this from its own record, so a payout queued before such a
+change is never released after it: its release cancels it instead. An unlock, or the same
+destination added again, never brings one back.
 
 - **Tests owed:** the defaults for a rule, with payouts to the owner and to two destinations, each
   change with the platform's side brought in line afterwards, a payout to a destination queued
@@ -4092,11 +4087,11 @@ off, a destination is removed, or the account is clawed back or recovered.
 
 A lock, a completed replacement and a switch-off each end every scheduled payment, waiting, live or
 paused, with the platform's side (VLT-184). A removal of a destination ends every one that pays it.
-The clawback (VLT owed: the clawback) and a claim by the recovery address
-(VLT owed: a recovered account) end them too. The vault reads this from its own record. Nothing
-brings one back, not an unlock, the destination added again or a new owner wallet: the owner sets it
-again, and it waits again. Before such a change is asked, the platform reports the scheduled
-payments it would end and the payouts that wait which it would cancel (VLT-513).
+The clawback (VLT-620) and a claim by the recovery address (VLT-644) end them too. The vault reads
+this from its own record. Nothing brings one back, not an unlock, the destination added again or a
+new owner wallet: the owner sets it again, and it waits again. Before such a change is asked, the
+platform reports the scheduled payments it would end and the payouts that wait which it would cancel
+(VLT-513).
 
 - **For the mistake:** VLT-M58, warn only: the change must still apply at once, so the report before
   it is asked is the answer.
@@ -4212,3 +4207,505 @@ A cell names the statement that decides it. "Open" means the condition does not 
 | A period's payment | Refused, and the period lapses (VLT-542) | Open (VLT-542, PLT-051) | PLT-060, for the owner and the sender (VLT-542) | PLT-060 (VLT-542) | PLT-065 | Open (PLT-071) |
 
 Asking a payout and every step of 6.3 and 6.5 but a period's payment move nothing out of a vault.
+
+## Section 7: recovery
+
+The platform's rules (PLT) and sections 1 to 6 apply throughout and are cited by id.
+This section states a protected account's recovery address, the clawback that pays it, the
+account it leaves recovered, the sweep, and the recovery address's own claim. A recovered account
+is locked, so what section 5 states of a lock holds for it as well. The limits on outflow over
+time belong to section 8.
+
+## 7.1 The recovery address
+
+### VLT-600 · rule
+
+**Who:** a vault's owner, and the address the owner names.
+**When:** the owner sets or changes the account's recovery address.
+
+An account has at most one recovery address in force, kept in the vault's own record. Only the owner
+sets or changes it. A setting or a change counts only with the named address's own proof that it is
+controlled: its own call, or its own signature bound to the network, the vault and this purpose,
+which expires and is used once. A first setting comes into force once twice [PRM-095] the account's
+delay as it stands when asked has passed; with protection off, twice the lower bound of [PRM-005]. A
+change comes into force once [PRM-096] has passed. Each comes into force by its wait alone, with no
+further step, and is announced (KPR owed: the alerts of a recovery address).
+
+- **For the mistake:** VLT-M62, warn only: a change waits so that a stolen owner key cannot move
+  the clawback's payee, and the clawback stays open meanwhile, paying the address in force
+  (VLT-624).
+- **Tests owed:** the defaults for a rule, with a proof by a call and by a signature, a signature
+  for another network, vault or purpose, expired or used again, a first setting with protection on
+  and off read an instant before and after its wait, and a change read the same way.
+
+### VLT-601 · never
+
+**Who:** a vault's owner, and every party the account names.
+**When:** a recovery address, a signer, a nominee or a destination is asked for or applied.
+
+The recovery address, in force or waiting, is never the owner wallet on record, the account's
+first owner wallet, a signer, a wallet whose addition as a signer waits, the nominee of a
+replacement that waits, or a destination, in force or waiting. It is checked from both sides,
+when asked and again when applied: such an address is refused as a recovery address, and such a
+signer, nominee or destination is refused while it is the recovery address.
+
+- **Against:** VLT-T42.
+- **Watch:** every recovery address against the account's other roles at every step that adds
+  either. No address holds two of them.
+- **Tests owed:** the defaults for a never, with each role tried as the recovery address, and the
+  recovery address, in force and waiting, tried in each role.
+
+### VLT-602 · rule
+
+**Who:** a vault's owner, its signers, a recovered account's recovery address, and the changes
+that end a setting.
+**When:** a first setting or a change of the recovery address waits.
+
+While it waits it is never paid and it starts nothing. A first setting that waits counts as set for
+switching protection on (VLT-400), for nominating a signer (VLT-430) and for the claim's setting
+(VLT-640); a signer counts only once an address is in force (VLT-430). The owner or any signer may
+cancel it, in a pause too, and on a recovered account so may the recovery address in force, each
+step of such a change being announced to it and to the signers (VLT-600). A lock, a completed
+replacement, a switch-off of protection and a clawback end it, in the change's own transaction
+(VLT-184). An account whose first setting is cancelled or ended has no clawback until one is set
+again and comes into force.
+
+- **Tests owed:** the defaults for a rule, with a cancel by the owner and by a signer, in a pause,
+  each change that ends it, a signer's addition applied while the first setting waits, a
+  clawback tried after the first setting was ended, and a change on a recovered account
+  cancelled by the recovery address an instant before it comes into force.
+
+### VLT-603 · never
+
+**Who:** the vault.
+**When:** a lock, a replacement, a switch-off, a clawback or a cancel follows an address that waits.
+
+An address whose wait has passed is in force, and nothing that follows ends it, even where no
+step has yet recorded it as in force. An address that was cancelled or ended never comes into
+force by the passing of time. Which address is in force is read from the vault's own record at
+each step that pays it or needs it.
+
+- **Against:** VLT-T42.
+- **Watch:** every step that pays a recovery address or needs one in force, against the address
+  whose wait last passed and was not ended before it passed.
+- **Tests owed:** the defaults for a never, with an address that matures and a lock, a
+  replacement or a cancel in the next block, a change still waiting at that moment, and an ended
+  setting read after its wait would have passed.
+
+### VLT-604 · rule
+
+**Who:** a vault's owner.
+**When:** the owner clears the recovery address.
+
+The recovery address is cleared only while protection is off, which is never while the account
+has a signer and never on a recovered account (VLT-630). Switching protection off keeps it
+(VLT-403). Clearing applies at once.
+
+- **Tests owed:** the defaults for a rule, with a clear tried with protection on, with a signer
+  whose addition waits, after a switch-off, and on a recovered account.
+
+### VLT-605 · refusal
+
+**Who:** anyone who sets, changes or clears a recovery address.
+**When:** it is asked by anyone but the owner, without the address's own proof, for an address
+VLT-601 refuses, while the account is locked, or in a pause; or a clear is asked while protection
+is on.
+
+The step is refused, and nothing changes. On a recovered account a change is still open, though the
+account is locked (VLT-630). A change stays open in a replacement's cool-down. Neither a setting nor
+a change is a change of VLT-410: each has its own wait and its own refusals.
+
+- **Refused as:** which holds: not the owner; no proof, or a proof that does not match; an address
+  that holds another role, naming it; the account is locked; the platform is paused; or protection
+  is on, where a change is open instead.
+- **For the mistake:** VLT-M34, VLT-M61 and VLT-M65, refuse. An address nobody controls never
+  shows control, a setting that waits can be cancelled, an address of another role is named, and
+  a clear while protection is on points to a change.
+- **Tests owed:** the defaults for a refusal, with each case, and a change asked on a recovered
+  account and in a cool-down.
+
+## 7.2 The clawback
+
+### VLT-620 · rule
+
+**Who:** the owner, any signer, or the recovery address by its claim.
+**When:** a protected account is clawed back.
+
+The owner and any signer may claw the account back, locked or not, by a direct call or by a
+signature anyone submits. The recovery address may do so only by a claim the owner allowed, once its
+wait has passed (VLT-644). A keeper acting on the owner's linked chat may do so only under a grant
+the owner gave for the clawback alone, never under one given for a lock (VLT-420), and a lock does
+not end it (KPR owed: the grant for a clawback from the linked chat). Nobody else may. No trigger
+names where it pays (VLT-624). It is one step, and once sent it is neither cancelled nor undone.
+
+- **For the mistake:** VLT-M35, bound. It pays only the address the owner proved in advance, and
+  its finality is its purpose. No wait is added to the owner's own trigger, for it answers a
+  stolen key.
+- **Tests owed:** the defaults for a rule, with each trigger by a call and by a signature, on an
+  open and on a locked account, and a stranger, a nominee and the recovery address with no claim.
+
+### VLT-621 · rule
+
+**Who:** whoever triggers a clawback.
+**When:** a clawback is asked.
+
+It needs protection on and a recovery address in force. It needs no co-signature (VLT-520), no proof
+from the address at that moment, and no wait: it passes through no queue, and it is not held by the
+outflow limits (VLT owed: the outflow limits). It runs while the account is locked, whoever placed
+the lock, and in a replacement's cool-down. In a pause it is refused until the escape route opens
+(VLT-091), and open from then. A flagged owner or trigger is refused, and so is a flagged recovery
+address, the payee (PLT-060). While the screen cannot be read, it stays open for a wallet never
+confirmed flagged (PLT-065).
+
+- **Tests owed:** the defaults for a rule, with a lock placed by a signer, a cool-down, a pause an
+  instant before and after the escape route opens, co-signing in force, each flagged party, and
+  the screen unreadable.
+
+### VLT-622 · rule
+
+**Who:** the platform and the vault.
+**When:** a clawback runs.
+
+The account is locked for good, with every effect of a lock (VLT-421), and recovered (VLT-630). Then
+the free balance of each asset the trigger names moves to the recovery address in force, the amounts
+of the payouts the lock cancelled and of the Ready balance it returned (VLT-328) included. A
+recovery address that is itself a protected account is paid in its own vault (VLT-442). Nothing
+under a lien, held for a position, set aside to lend or kept in a reserve moves: what is released
+later reaches the vault and is swept (VLT-632). The clawback may be run again for further assets.
+Each movement's record (VLT-003) names the trigger: the owner, a signer, the linked chat or a claim.
+
+- **For the mistake:** VLT-M63, warn only: what a lien or a position holds is owed to or held for
+  another party, so it moves only once released, and the sweep then carries it on (VLT-632).
+- **Tests owed:** the defaults for a rule, with one of each thing a lock ends present, several
+  assets with some not named, a payout that waited, a collateral lien, an amount held for a
+  position, a protected recovery address, and a second clawback for another asset.
+
+### VLT-623 · refusal
+
+**Who:** anyone who asks for a clawback.
+**When:** it is asked by anyone VLT-620 does not name, on an account that is not protected, with
+no recovery address in force, in a pause before the escape route opens, or for a flagged owner,
+recovery address or trigger.
+
+The clawback is refused, and nothing moves or changes.
+
+- **Refused as:** which holds: not a trigger of this account; not protected; no recovery address
+  in force, with the time a waiting one comes into force; paused, with the time the escape route
+  opens; or flagged, naming the wallet.
+- **For the mistake:** VLT-M66, refuse. The refusal gives the time the escape route opens.
+- **Tests owed:** the defaults for a refusal, with each case, and a clawback asked in the block
+  in which protection was switched on and a first setting asked.
+
+### VLT-624 · never
+
+**Who:** anyone.
+**When:** a step pays a recovery address.
+
+An account's vault pays its recovery address only by the clawback, the sweep (VLT-632) and the
+escape withdrawal (VLT-091). Each pays only the address in force at that moment, read from the
+vault's own record, never one that waits, never one a caller names and never a flagged one
+(PLT-060); the sweep and a claim's run never pay while the screen cannot be read (VLT-632, VLT-644).
+Each moves only free balance: nothing a lien owes another party, nothing under a lien and nothing
+held for a position (VLT-092).
+
+- **Against:** VLT-T42.
+- **Watch:** every payment to a recovery address against the account's record at that moment:
+  the address in force and not flagged, a step of this statement, and free balance only.
+- **Tests owed:** the defaults for a never, with a change of address waiting at the clawback,
+  the sweep and the escape, a flagged recovery address, the screen unreadable at a sweep and at a
+  claim's run, and each kind of amount that is not free.
+
+## 7.3 A recovered account
+
+### VLT-630 · rule
+
+**Who:** a recovered account, its owner wallet on record and its signers.
+**When:** the account has been clawed back once.
+
+The account is recovered for good. It is locked and its lock never lifts: an unlock and switching
+protection off are each refused as recovered (VLT-403). It opens nothing new (VLT-422, VLT-633). Its
+loans are serviced and settle as on any locked account (VLT-423), and what they pay the owner
+reaches the vault and is swept on (VLT-632). Only a setting that applies the account's own funds to
+its own loan, at terms the loan fixed, keeps running; every other standing permission has ended and
+never returns (VLT-425). The holder of its position tokens acts on those positions for it (VLT-185),
+after a replacement the owner of VLT-455. A change of its recovery address stays open (VLT-605), and
+the address in force may cancel it (VLT-602).
+
+- **For the mistake:** VLT-M64, refuse. The refusal says the account is recovered for good.
+- **Tests owed:** the defaults for a rule, with an unlock and a switch-off tried, a new position, a
+  fill of its open offer, a repayment and a collection on each side, a setting of each kind run
+  after the clawback, a change of address and its cancel by the recovery address.
+
+### VLT-631 · rule
+
+**Who:** anyone, and the holders of a recovered account's positions.
+**When:** a recovered account holds position tokens, open offers or amounts set aside to lend.
+
+Its position tokens, those held by the wallet whose own vault it is (VLT-200), stay where they are.
+A transfer, a sale and a handover of them are each refused, read from the account's own record
+whatever the token's holder lock says (POS owed: a recovered account's tokens) (EXT owed: a
+recovered account's sale or handover), and a replacement's move of them is refused (VLT-458),
+whichever of the two came first. Anyone may cancel its open offers and release what it set aside to
+lend, with no wait, into its own vault only (OFR owed: a recovered account's offer) (MKT owed: a
+recovered account's lending slot). That release is open to a flagged caller, for nothing leaves the
+account.
+
+- **For the mistake:** VLT-M71, refuse.
+- **Tests owed:** the defaults for a rule, with each move of a token tried after the holder lock
+  is lifted, replaced then recovered and recovered then replaced, and a release by a stranger and
+  by a flagged caller.
+
+### VLT-632 · rule
+
+**Who:** anyone.
+**When:** a recovered account's vault holds a free balance.
+
+Anyone may move the free balance of an asset from a recovered account's vault to its recovery
+address in force, and receives nothing for it (KPR owed: the pass that releases and sweeps a
+recovered account). The sweep moves only free balance, only from a recovered account, only to the
+address its own record names. With nothing free it is refused. In a pause it is refused until the
+escape route opens. A flagged owner, recovery address or caller is refused (PLT-060), and so is
+every sweep while the screen cannot be read. A protected recovery address is paid in its own vault,
+and if that account is recovered too, its own sweep moves the amount on. Its record (VLT-003) names
+the caller.
+
+- **For the mistake:** VLT-M70, warn only: a protected account is paid in its own vault, as every
+  payout to it is (VLT-442), so the recovery address keeps its own protection.
+- **Tests owed:** the defaults for a rule, with a sweep by a stranger, with nothing free, from an
+  account that is not recovered, in a pause, with the screen unreadable, with a flagged owner, a
+  flagged recovery address and a flagged caller, and on to a recovered recovery address.
+
+### VLT-633 · never
+
+**Who:** anyone.
+**When:** an account has been recovered.
+
+A recovered account is never unlocked, never left unprotected, and never opens a position: its
+Auto-lend slot never fills, its offers, a buy offer included, are never filled, and none of its
+positions is taken over in the instant market or sold. Its position tokens never leave it, whichever
+wallet acts and in whichever order a replacement and the clawback came. Only the platform's own
+retirement of a token at the end of its loan takes one from it (PLT-060). Neither its owner wallet
+on record nor a replaced one is ever paid from it.
+
+- **Against:** VLT-T43.
+- **Watch:** every step on a recovered account: no unlock, no switch-off, no new position, no
+  fill, takeover or sale, no token leaving but by retirement, and no payment to an owner wallet.
+- **Tests owed:** the defaults for a never, with each step tried by each wallet and by a stranger,
+  in both orders of a replacement and the clawback, a fill of its Auto-lend slot and of its buy
+  offer, a takeover in the instant market and a sale of its loan.
+
+## 7.4 The recovery address's claim
+
+### VLT-640 · rule
+
+**Who:** a vault's owner.
+**When:** the owner sets whether the recovery address may claim the account, and its wait.
+
+It is off unless the owner switches it on. Only the owner switches it on and sets its wait, within
+its bounds [PRM-097], with protection on and a recovery address set. Switching it on and shortening
+the wait are loosening changes (VLT-410). Switching it off and lengthening the wait apply at once,
+also while locked and in a pause. Switching protection off switches it off, and switching protection
+on again leaves it off. On a recovered account it never changes. Every surface that offers it
+states, as read, whether alerts are sent on that network (APP owed: the claim's warning).
+
+- **For the mistake:** VLT-M36, refuse. A wait outside its bounds is refused.
+- **Tests owed:** the defaults for a rule, with each change of the setting, a wait at and beyond
+  each bound, a switch-on cancelled by a signer, and protection switched off and on again.
+
+### VLT-641 · rule
+
+**Who:** the recovery address in force.
+**When:** it asks to claim the account.
+
+Only the recovery address in force asks, by its own call or signature, while the claim is on. It
+is refused while a claim is open, while a change of the address waits, within [PRM-099] of a
+claim's cancel or end (VLT-643), in a pause, and on a recovered account; it is open on a locked
+account. The claim records who asked, when, the time from which it may run (the request plus the
+wait then in force) and its lapse, [PRM-098] after that. A later change of the wait moves neither.
+An open claim holds nothing back (KPR owed: the alerts of a recovery claim).
+
+- **For the mistake:** VLT-M72, warn only: the lapse never moves, so that no claim stays runnable
+  past the window it was asked with; the claim's warning tells the recovery address so (VLT-640).
+- **Tests owed:** the defaults for a rule, with a request by the owner, a signer, a stranger, a
+  waiting address and the address in force, on a locked account, and a withdrawal, a loan and a
+  change of settings made while a claim is open.
+
+### VLT-642 · rule
+
+**Who:** the owner, any signer, and the steps that end a claim.
+**When:** a claim is open.
+
+The owner or any signer may cancel it at any moment before it runs, after its wait has passed too,
+while the account is locked and in a pause, by a direct call or by a signature anyone submits. A
+signed cancel names the claim, so one signed earlier or for another claim never ends it. A lock, a
+replacement, a clawback and switching the claim off each end it, and so does every write to the
+account's protection that the owner's own key sends in that call.
+
+- **For the mistake:** VLT-M67, warn only: a claim is for an owner who can no longer act, so it
+  never waits on the owner's answer; the owner or any signer may cancel it until it runs, and
+  every surface that offers it states whether alerts are sent (VLT-640).
+- **Tests owed:** the defaults for a rule, with a cancel by each party before and after the wait,
+  locked and paused, a signed cancel for an earlier claim, and each step that ends it.
+
+### VLT-643 · rule
+
+**Who:** the vault.
+**When:** something happens to an account while a claim is open.
+
+Only VLT-642's steps end a claim. An owner's write that someone else submits ends one only where
+ending it is the write's meaning. A signer's other writes, a step anyone may call that brings an
+earlier change into force, the linked chat's hold and every use of the platform end none. After a
+cancel or an end, the recovery address may ask again once [PRM-099] has passed. A claim lapses at
+its lapse time, and is void when its asker is no longer the address in force; after either it may
+ask again at once.
+
+- **For the mistake:** VLT-M68, warn only: a claim ends only by a step meant to end it, so that
+  nothing another party causes or submits ends it unseen.
+- **Tests owed:** the defaults for a rule, with each step that ends none, an owner's signed write
+  submitted after the claim opened, a request an instant before and after the pause, a lapse, and
+  a change of address that comes into force.
+
+### VLT-644 · rule
+
+**Who:** the recovery address that asked.
+**When:** a claim's wait has passed.
+
+Only the recovery address that asked runs it, while it is the address in force, from the claim's run
+time until its lapse. The run is refused while a change of the address waits, in a pause, while the
+screen cannot be read, and until [PRM-100] after the recovery window of the network's latest
+sequencer outage ends (PLT-090), where the network reports one; it is refused when that cannot be
+read. The lapse never moves. What runs is the clawback (VLT-621, VLT-622), its record naming a
+claim, and the account is recovered.
+
+- **For the mistake:** VLT-M69, refuse. The refusal names which holds, with the run time or the
+  lapse.
+- **Tests owed:** the defaults for a rule, with a run an instant before the wait passes and after
+  the lapse, by another caller, with a change waiting, in a pause, an instant before and after the
+  wait after an outage, with the outage unreadable, and with the screen unreadable.
+
+### VLT-645 · never
+
+**Who:** anyone.
+**When:** a recovery claim is open.
+
+A claim never runs before its wait has passed, after its lapse, by any caller but the recovery
+address that asked, while a change of the address waits, in a pause, or once it was cancelled or
+ended. An open claim never holds back, freezes or delays anything on the account.
+
+- **Against:** VLT-T44.
+- **Watch:** every run against its claim's record: the asker, still in force, inside its window,
+  no change waiting, no pause, and no cancel or end since the request.
+- **Tests owed:** the defaults for a never, with each case, and every step of the account taken
+  while a claim is open.
+
+### Model: a recovery address
+
+**States:**
+
+- None (start): the account has no recovery address set.
+- Waiting: a first setting waits, and no address is in force.
+- In force: an address is in force, and no change of it waits.
+- Changing: an address is in force, and a change of it waits.
+- Gone (end): a first setting was cancelled or ended, or the address was cleared.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| None | Set | The owner, with the address's proof | VLT-600, VLT-601, VLT-605 | Waiting |
+| Waiting | Come into force | Nobody: the clock | VLT-600, VLT-603 | In force |
+| Waiting | Cancel | The owner or a signer | VLT-602 | Gone |
+| Waiting | End with a lock, a replacement or a switch-off | The vault, with the change | VLT-602 | Gone |
+| In force | Ask a change | The owner, with the new address's proof | VLT-600, VLT-601, VLT-605 | Changing |
+| Changing | Come into force | Nobody: the clock | VLT-600, VLT-603 | In force |
+| Changing | Cancel | The owner or a signer; on a recovered account also the recovery address | VLT-602 | In force |
+| Changing | End with a lock, a replacement, a switch-off or a clawback | The vault, with the change | VLT-602 | In force |
+| In force | Clear | The owner | VLT-604, VLT-605 | Gone |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Set | By anyone but the owner, without the proof, an address of another role, locked or paused, VLT-605 |
+| Come into force | A setting that was cancelled or ended, VLT-603 |
+| Cancel | By anyone but the owner, a signer or, on a recovered account, the recovery address, or with nothing waiting, VLT-602 |
+| End with a lock, a replacement or a switch-off | A change applied in part, VLT-184 |
+| Ask a change | As for a setting, VLT-605. Open on a recovered account, VLT-630 |
+| End with a lock, a replacement, a switch-off or a clawback | A change applied in part, VLT-184 |
+| Clear | While protection is on, or on a recovered account, VLT-604, VLT-605 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| Protection | Off; on | VLT-600, VLT-604 |
+| The account | Open; locked; in a cool-down; recovered | VLT-605, VLT-630 |
+| The proof | A call; a signature; none; another network, vault or purpose; expired; used | VLT-600 |
+| The address | A wallet; a contract wallet; a protected account | VLT-600, VLT-622 |
+| The account's delay | As when asked; raised since; lowered since | VLT-600 |
+
+### Model: a recovery claim
+
+**States:**
+
+- Not open (start): no claim is open.
+- Waiting: the recovery address asked, and the wait has not passed.
+- Due: the wait has passed, and the claim has not lapsed.
+- Run (end): the recovery address ran it, and the account is recovered.
+- Cancelled (end): the owner or a signer cancelled it, or a step of VLT-642 ended it.
+- Void (end): it lapsed, or its asker is no longer the recovery address in force.
+
+**Steps:**
+
+| From | Step | Who | Guarded by | To |
+| --- | --- | --- | --- | --- |
+| Not open | Ask | The recovery address in force | VLT-640, VLT-641 | Waiting |
+| Waiting | The wait passes | Nobody: the clock | VLT-641 | Due |
+| Waiting | Cancel | The owner or a signer | VLT-642 | Cancelled |
+| Due | Cancel | The owner or a signer | VLT-642 | Cancelled |
+| Waiting | End with a lock, a replacement, a clawback, a switch-off or an owner's call | The vault, with that step | VLT-642, VLT-643 | Cancelled |
+| Due | End with a lock, a replacement, a clawback, a switch-off or an owner's call | The vault, with that step | VLT-642, VLT-643 | Cancelled |
+| Waiting | A change of the address comes into force | Nobody: the clock | VLT-643 | Void |
+| Due | A change of the address comes into force | Nobody: the clock | VLT-643 | Void |
+| Due | Run | The recovery address that asked | VLT-644, VLT-645 | Run |
+| Due | Lapse | Nobody: the clock | VLT-641, VLT-643 | Void |
+
+**Refusals out of state:**
+
+| Step | Refused by |
+| --- | --- |
+| Ask | The claim off, a claim open, a change waiting, within the pause after an end, in a pause, a recovered account, or not the address in force, VLT-641 |
+| The wait passes | Nothing refuses it: the clock alone, VLT-641 |
+| Cancel | By anyone but the owner or a signer, or a signed cancel naming another claim, VLT-642 |
+| End with a lock, a replacement, a clawback, a switch-off or an owner's call | A change applied in part, VLT-184 |
+| A change of the address comes into force | Nothing refuses it: the claim is void, VLT-643 |
+| Run | Before the wait, after the lapse, by another caller, with a change waiting, in a pause, with the screen unreadable, or after an outage, VLT-644 |
+| Lapse | Nothing refuses it: the clock alone, VLT-641, VLT-643 |
+
+**Dimensions:**
+
+| Dimension | Values | Named by |
+| --- | --- | --- |
+| The account | Open; locked; replaced; in a cool-down | VLT-641, VLT-642 |
+| The owner's write | Its own call; its signature sent by another | VLT-642, VLT-643 |
+| The wait | As asked; changed since | VLT-641 |
+| The platform | Running; paused; inside the wait after an outage | VLT-644 |
+| The network | Reports its sequencer; does not | VLT-644 |
+
+## Outcome under each condition of the platform (section 7)
+
+A cell names the statement that decides it. "Open" means the condition does not refuse the step.
+
+| Step | Paused | Asset paused | Caller flagged | Payee flagged | Screen cannot be read | Terms not current | Sequencer was down |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Setting, changing or clearing a recovery address | PLT-040 (VLT-605) | Open | Open. The clawback screens (VLT-621) | Never pays | Open | Open (PLT-071) | Open |
+| Cancelling a setting or a change | Open (VLT-602) | Open | Open | Never pays | Open | Open (PLT-071) | Open |
+| The clawback | Refused until the escape route opens (VLT-621) | Open (PLT-051) | PLT-060, for the owner and the trigger (VLT-621) | PLT-060 (VLT-621) | Open for a wallet never confirmed flagged (PLT-065, VLT-621) | Open (PLT-071) | Open |
+| The sweep | Refused until the escape route opens (VLT-632) | Open (PLT-051) | PLT-060, for the owner and the caller (VLT-632) | PLT-060 (VLT-624, VLT-632) | Refused while the screen cannot be read (VLT-632) | Open (PLT-071) | Open |
+| Releasing a recovered account's offers and amounts set aside to lend | PLT-040 | Open | Open: nothing leaves the account (VLT-631) | Never pays a wallet | Open | Open (PLT-071) | Open |
+| Switching the claim on, or shortening its wait | PLT-040 (VLT-410) | Open | Open | Never pays | Open | Open (PLT-071) | Open |
+| Switching the claim off, lengthening its wait, and a cancel | Open (VLT-640, VLT-642) | Open | Open | Never pays | Open | Open (PLT-071) | Open |
+| Asking a claim | PLT-040 (VLT-641) | Open | Open. The run screens (VLT-644) | Never pays | Open | Open (PLT-071) | Open |
+| Running a claim | Refused (VLT-644) | Open (PLT-051) | PLT-060 (VLT-621) | PLT-060 (VLT-621) | Refused while the screen cannot be read (VLT-644) | Open (PLT-071) | Refused until the wait after the outage (VLT-644) |
+
+Only the clawback, a claim's run and the sweep move an asset out of a vault in this section.

@@ -355,7 +355,7 @@ An address no one controls can never prove control.
 **Wanted statement:** a recovery address counts only after it proves its own control and its wait
 passes.
 It can be cancelled until then.
-**Waits for:** vault section 7
+**Answered by:** VLT-605.
 
 ### VLT-M35 · Clawing back by mistake
 
@@ -366,7 +366,7 @@ It pays only the recovery address the owner proved control of.
 The finality is the purpose of the step, so no undo is offered.
 **Wanted statement:** a clawback pays only the recovery address in force, and it is final.
 The account stays locked for good.
-**Waits for:** vault section 7
+**Answered by:** VLT-620.
 
 ### VLT-M36 · A recovery claim wait in the wrong unit
 
@@ -374,7 +374,137 @@ The account stays locked for good.
 **Does:** sets the recovery claim's wait as days where seconds are meant, or out of range.
 **Proposed answer:** Refuse.
 **Wanted statement:** a recovery claim wait outside its bounds [PRM] is refused.
-**Waits for:** vault section 7
+**Answered by:** VLT-640.
+
+### VLT-M61 · Naming your own wallet or a signer as the recovery address
+
+**Who:** the owner.
+**Does:** sets the recovery address to the owner wallet, a signer, a nominee or a destination,
+thinking a second key of the same person is enough.
+**Proposed answer:** Refuse.
+**Wanted statement:** the recovery address is never the owner wallet, a signer, a nominee or a
+destination, waiting or in force. The refusal names the role it holds.
+**Answered by:** VLT-605.
+
+### VLT-M62 · Expecting a changed recovery address to apply at once
+
+**Who:** the owner.
+**Does:** changes the recovery address after losing the key of the one in force, then claws back at
+once, expecting the new address to be paid.
+**Proposed answer:** Warn only.
+A clawback must stay open while a change waits, so it cannot follow the waiting address.
+**Wanted statement:** a change comes into force only after its wait. Until then every clawback,
+sweep and escape pays the address in force, never the waiting one.
+**Answered by:** VLT-600.
+
+### VLT-M63 · Expecting the clawback to take everything
+
+**Who:** the owner, or a signer.
+**Does:** claws back expecting collateral, offered amounts, a reserve and lent principal to reach
+the recovery address in the same step.
+**Proposed answer:** Stated.
+**Wanted statement:** the clawback moves only the free balance of the assets named. What a lien
+or a position holds stays, and once released it reaches the vault and anyone may sweep it on. The
+clawback can be run again for assets left out.
+(Section 7 states it. The clawback screen should list what moves now and what stays.)
+**Answered by:** VLT-622.
+
+### VLT-M64 · Trying to undo a recovered account
+
+**Who:** the owner wallet on record, or a signer.
+**Does:** after a clawback, tries to unlock the account or switch protection off to use it again.
+**Proposed answer:** Refuse.
+**Wanted statement:** a recovered account is never unlocked and never left unprotected. The
+refusal says the account is recovered for good.
+(Section 7 states it.)
+**Answered by:** VLT-630.
+
+### VLT-M65 · Clearing the recovery address while protection is on
+
+**Who:** the owner.
+**Does:** clears the recovery address to replace it, with protection still on.
+**Proposed answer:** Refuse.
+**Wanted statement:** the address is cleared only while protection is off. To replace it, the
+owner asks a change, which keeps the old one in force until the new one is. The refusal points to
+a change.
+**Answered by:** VLT-605.
+
+### VLT-M66 · A clawback asked during a pause
+
+**Who:** the owner, or a signer.
+**Does:** claws back while the platform is paused, expecting it to go through at once.
+**Proposed answer:** Refuse.
+**Wanted statement:** in a pause the clawback is refused until the escape route opens, and is open
+from then. The refusal gives the time the escape route opens.
+(Section 7 states it.)
+**Answered by:** VLT-623.
+
+### VLT-M67 · Not noticing an open recovery claim
+
+**Who:** the owner, and every signer.
+**Does:** switched the claim on, then does not watch the account while the recovery address asks.
+**Proposed answer:** Warn only.
+A claim exists for an owner who can no longer act, so it cannot wait on the owner's answer.
+**Wanted statement:** while a claim is open the owner or any signer may cancel it, after its wait
+too. Every surface that offers the claim states whether alerts are sent on this network.
+(Section 7 states it. The app should show an open claim on every page of the account.)
+**Answered by:** VLT-642.
+
+### VLT-M68 · Thinking ordinary use cancels a claim
+
+**Who:** the owner.
+**Does:** keeps using the account, repays a loan or has a signer act, expecting that to show the
+claim is unwanted.
+**Proposed answer:** Warn only.
+A claim ends only by a step meant to end it, so that nothing another party causes ends it unseen.
+**Wanted statement:** only the steps section 7 lists end a claim; use of the platform, a signer's
+other writes and the linked chat's hold end none.
+(Section 7 states it. The claim's alert should say "cancel it to stop it".)
+**Answered by:** VLT-643.
+
+### VLT-M69 · Running a claim early, late or from another wallet
+
+**Who:** the recovery address.
+**Does:** runs the claim before its wait has passed, after its lapse, from another wallet, or while
+a change of the address waits.
+**Proposed answer:** Refuse.
+**Wanted statement:** only the address that asked, while still in force, runs it, and only inside
+its window. After a lapse it may ask again at once.
+(Section 7 states it. The refusal gives the run time or the lapse.)
+**Answered by:** VLT-644.
+
+### VLT-M70 · A protected recovery address looking in its wallet
+
+**Who:** the holder of a recovery address that is itself a protected account.
+**Does:** expects a clawback or a sweep to arrive in the wallet.
+**Proposed answer:** Stated.
+**Wanted statement:** a protected recovery address is paid in its own vault, as every payout to a
+protected account is.
+(Section 7 states it.)
+**Answered by:** VLT-632.
+
+### VLT-M71 · Trying to move a recovered account's positions
+
+**Who:** the owner wallet on record, or a buyer.
+**Does:** sells, hands over or transfers a position token held by a recovered account.
+**Proposed answer:** Refuse.
+**Wanted statement:** a recovered account's position tokens never leave it but by the platform's
+retirement of a token at the end of its loan. Anyone may cancel its offers into its own vault.
+(Section 7 states it.)
+**Answered by:** VLT-631.
+
+### VLT-M72 · Expecting a pause to move a claim's lapse
+
+**Who:** the recovery address.
+**Does:** asks a claim, and expects the window to run it to move when the platform is paused or
+the network was down during it.
+**Proposed answer:** Warn only.
+The lapse is fixed so that no claim stays runnable past the window it was asked with.
+**Wanted statement:** the lapse never moves. A claim whose window ends while its run is refused
+lapses, and asking again waits for the pause to end and then the full wait. The claim's warning
+says so.
+(Section 7 states it. Raised by the conflict read.)
+**Answered by:** VLT-641.
 
 ## 8. Version pin
 

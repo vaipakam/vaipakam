@@ -26,8 +26,8 @@ For an amount owed to a position, the party is whoever holds that position's tok
 Only two steps pay a party's own wallet:
 the owner's own withdrawal from their own vault, and the release of a payout that owner queued.
 With protection on, either may instead pay a destination the owner set for that account.
-A protected account's recovery address is paid only by the steps of a recovery
-(VLT owed: the steps of a protected account's recovery).
+An account's recovery address is paid from that account only by the steps of a recovery
+(VLT-624).
 A caller's unspent network fee, sent with a call, is returned to that caller in the same call.
 
 - **Tests owed:** the defaults for a rule.

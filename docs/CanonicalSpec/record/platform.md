@@ -21,7 +21,7 @@ FL `docs/DesignsAndPlans/FlashLendingDesign.md`.
 | Id | Mark | Sources | Approved |
 | --- | --- | --- | --- |
 | PLT-001 | K | Owner decision 2026-11-19 ("all to the vault, one Withdraw"). PD "2. The rule", item 1, and "4.2 Own action, or someone else's" | afeaf51a8287a43f |
-| PLT-002 | K | PD "2. The rule", item 2; "4.3 One door to a wallet"; "4.6", the rows for the recovery address and a caller's unspent fee. | 3af373ed0be026ca |
+| PLT-002 | K | PD "2. The rule", item 2; "4.3 One door to a wallet"; "4.6", the rows for the recovery address and a caller's unspent fee. Changed with section 7: an account's recovery address is paid from that account only by the steps of a recovery, which it cites (VLT-624). Confirmed by the owner with section 7 on 2026-11-23, 06:03 UTC. | 43ff89d54575a440 |
 | PLT-003 | K | PD "2. The rule", item 3, and "4.6" (the last paragraph for the protected payee). OP "3.7.4", the row for an integrator's or a referred user's share: a budget set from the opening fee, paid to a vault. | eeff9c5e4204b2cd |
 | PLT-004 | K | PD "4.1": "No step names a payee" | edc27ee9cfde63fe |
 | PLT-010 | K | Owner decision 2026-11-19 (idle funds are never routed outside, except a loan that completes in one transaction). FL "2. The rule", item 1, as amended 2026-11-19 (the part not lent of a lending balance). For the treasury: the repository's architecture notes, the treasury row ("deploys nothing into external yield venues") | 8cffcc379e45ed4a |
@@ -108,4 +108,3 @@ when that domain is entered.
 | DPL owed: where that is allowed | PLT-065 |
 | FCL owed: the order among the lender's side, the fees and a caller's reward. | PLT-122 |
 | FEE owed: the schedule, and how it applies to an NFT rental. | PLT-030 |
-| VLT owed: the steps of a protected account's recovery | PLT-002 |

@@ -85,6 +85,12 @@ The ids are permanent.
 | PRM-092 | The most periods a scheduled payment may have | 60 | periods | Fixed | Nobody | None | VLT-540 |
 | PRM-093 | The most scheduled payments a protected account may hold that have not ended | 5 | scheduled payments | Fixed | Nobody | None | VLT-540, VLT-545 |
 | PRM-094 | The shortest period of a scheduled payment | 1 | days | Fixed | Nobody | None | VLT-540 |
+| PRM-095 | The multiple of the account's delay that a first recovery address waits | 2 | times | Fixed | Nobody | None | VLT-600 |
+| PRM-096 | The wait of a change of a recovery address | 30 | days | Fixed | Nobody | None | VLT-600 |
+| PRM-097 | The least and the most wait of a recovery claim | 30 to 365 | days | Fixed bounds | The account's owner, within the bounds | The account's delay, to switch the claim on or shorten its wait | VLT-640 |
+| PRM-098 | The time a recovery claim may be run once its wait has passed, before it lapses | 30 | days | Fixed | Nobody | None | VLT-641, VLT-644 |
+| PRM-099 | The time before the recovery address may ask again after a claim is cancelled or ended | 30 | days | Fixed | Nobody | None | VLT-641, VLT-643 |
+| PRM-100 | The wait after the recovery window of a sequencer outage before a claim may be run | 24 | hours | Fixed | Nobody | None | VLT-644 |
 
 The sale slippage setting that lies inside PRM-003, and the liquidation discount of each tier
 that lies inside PRM-004, are other parameters. They are owed by the close-out rules.
