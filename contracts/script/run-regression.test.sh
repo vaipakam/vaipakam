@@ -23,10 +23,17 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/forge" <<'STUB'
 #!/usr/bin/env bash
 # Stub forge: record the --match-path glob, fail when it equals $STUB_FAIL_GLOB.
+# Prints forge's closing line, so the manifest's test counts can be checked.
 while (( $# )); do
-  if [ "$1" = "--match-path" ]; then echo "$2" >> "$STUB_LOG"; [ "$2" = "${STUB_FAIL_GLOB:-}" ] && exit 1; fi
+  if [ "$1" = "--match-path" ]; then
+    echo "$2" >> "$STUB_LOG"
+    if [ "$2" = "${STUB_FAIL_GLOB:-}" ]; then
+      echo "Ran 1 test suite in 1ms (1ms CPU time): 2 tests passed, 1 failed, 0 skipped (3 total tests)"; exit 1
+    fi
+  fi
   shift
 done
+echo "Ran 1 test suite in 1ms (1ms CPU time): 3 tests passed, 0 failed, 1 skipped (4 total tests)"
 exit 0
 STUB
 chmod +x "$WORK/bin/forge"
@@ -64,6 +71,30 @@ for i in 1 2 3; do
 done
 if [ "$(sort "$WORK/union")" = "$(sort "$WORK/plan.globs")" ]; then ok "three shards run every chunk exactly once"; else bad "three shards do not partition the plan"; fi
 rr --verify-shards "$WORK/m3" > /dev/null 2>&1; expect "--verify-shards accepts a complete set" 0 $?
+
+# #3964 — every chunk a shard ran carries its test counts (run = passed +
+# failed; skipped is not run), for the baseline record.
+if [ "$(cat "$WORK"/m3/*.tsv | grep -cP '^tests\t')" = "$TOTAL" ] \
+   && ! cat "$WORK"/m3/*.tsv | grep -P '^tests\t' | grep -vqP '\t3\t3$'; then
+  ok "each chunk records its tests run and passed"
+else
+  bad "the manifests do not carry one 'tests <glob> 3 3' line per chunk"
+fi
+
+# #3964 — the manifest names the plan's inputs (the chunk sizes and the NAMES
+# of the FORK_URL_* set), never a URL's value.
+rm -rf "$WORK/inputs"; mkdir -p "$WORK/inputs"
+FORK_URL_SECRET_PROBE='https://rpc.example/key-1234' CHUNK_SIZE=7 rr --manifest "$WORK/inputs/full.tsv" > /dev/null 2>&1
+if grep -qP '^input\tCHUNK_SIZE\t7$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^input\tSUBDIR_CHUNK_SIZE\t3$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^input\tINVARIANTS\t0$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^source\t\S+\t(clean|dirty)$' "$WORK/inputs/full.tsv" \
+   && grep -qP '^input\tFORK_URL_SECRET_PROBE\tset$' "$WORK/inputs/full.tsv" \
+   && ! grep -q 'key-1234' "$WORK/inputs/full.tsv"; then
+  ok "the manifest names the plan's inputs and no URL"
+else
+  bad "the manifest does not name the plan's inputs, or carries a URL"
+fi
 
 # Round-robin: shard 1 takes plan positions 0, 3, 6, ...
 awk 'NR%3==1' "$WORK/plan.globs" > "$WORK/expect1"

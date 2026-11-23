@@ -145,9 +145,18 @@ run() {  # run(label, glob) -> 0 pass, 1 fail
   esac
   echo ""
   echo "===== $label : forge test --match-path '$glob' ${extra[*]} ====="
-  if "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}"; then
-    return 0
-  fi
+  # The chunk's test counts (#3964: the baseline record carries them) come
+  # from forge's own closing line, "N tests passed, M failed, K skipped";
+  # a chunk that printed none (a compile failure) counts as 0 run.
+  local log rc
+  log=$(mktemp)
+  "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  LAST_PASSED=$(sed -nE 's/.* ([0-9]+) tests passed, ([0-9]+) failed.*/\1/p' "$log" | tail -n 1)
+  LAST_FAILED=$(sed -nE 's/.* ([0-9]+) tests passed, ([0-9]+) failed.*/\2/p' "$log" | tail -n 1)
+  rm -f "$log"
+  LAST_PASSED=${LAST_PASSED:-0}; LAST_FAILED=${LAST_FAILED:-0}
+  (( rc == 0 )) && return 0
   echo "CHUNK FAILED: $label" >&2
   return 1
 }
@@ -337,13 +346,32 @@ fi
 if [ -n "$MANIFEST" ]; then
   : > "$MANIFEST" || die "cannot write manifest '$MANIFEST'"
   printf 'plan\t%s\nshard\t%s/%s\n' "$PLAN_DIGEST" "$SHARD_I" "$SHARD_N" >> "$MANIFEST"
+  # The tree this run tested (#3964): the commit, and whether tracked files
+  # differed from it. The plan digest covers file NAMES, not contents, so
+  # this is what binds the results to a source.
+  src=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+  if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then tree=dirty; else tree=clean; fi
+  printf 'source\t%s\t%s\n' "$src" "$tree" >> "$MANIFEST"
+  # The inputs the plan was built from, so a verifier elsewhere can rebuild
+  # the same plan (#3964): the chunk sizes, whether the invariant suites are
+  # in it, and the NAMES of the FORK_URL_* variables that were set. Never a
+  # URL: it can carry a provider key.
+  printf 'input\tCHUNK_SIZE\t%s\ninput\tSUBDIR_CHUNK_SIZE\t%s\ninput\tINVARIANTS\t%s\n' "$CHUNK_SIZE" "$SUBDIR_CHUNK_SIZE" "$RUN_INVARIANTS" >> "$MANIFEST"
+  while IFS= read -r v; do
+    if [ -n "${!v:-}" ]; then printf 'input\t%s\tset\n' "$v" >> "$MANIFEST"; fi
+  done < <(compgen -v FORK_URL_ | LC_ALL=C sort)
 fi
 MINE=0
 for k in "${!PLAN_GLOBS[@]}"; do
   (( k % SHARD_N == SHARD_I - 1 )) || continue
   MINE=$((MINE+1))
   if run "${PLAN_LABELS[$k]}" "${PLAN_GLOBS[$k]}"; then st=pass; else st=fail; FAILED=1; fi
-  [ -n "$MANIFEST" ] && printf '%s\t%s\n' "$st" "${PLAN_GLOBS[$k]}" >> "$MANIFEST"
+  if [ -n "$MANIFEST" ]; then
+    printf '%s\t%s\n' "$st" "${PLAN_GLOBS[$k]}" >> "$MANIFEST"
+    # tests <glob> <run> <passed> — read by the baseline record (#3964);
+    # --verify-shards reads only the pass/fail lines.
+    printf 'tests\t%s\t%s\t%s\n' "${PLAN_GLOBS[$k]}" "$((LAST_PASSED + LAST_FAILED))" "$LAST_PASSED" >> "$MANIFEST"
+  fi
 done
 # Written last, so a manifest without it is a shard that died mid-run.
 [ -n "$MANIFEST" ] && printf 'complete\t%s\n' "$MINE" >> "$MANIFEST"
