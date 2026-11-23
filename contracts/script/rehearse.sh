@@ -365,7 +365,7 @@ stage build
 # deploy does; the full check is never reused.
 predeploy_mode=()
 [ "$NETWORK" = mainnet ] && predeploy_mode=(--full)
-(cd "$CONTRACTS_DIR" && PREDEPLOY_CHECK_SCRIPT="$RH_PREDEPLOY" predeploy_check_once "${predeploy_mode[@]+"${predeploy_mode[@]}"}") 2>&1 | rh_redact >> "$LOGS/build.log"
+(cd "$CONTRACTS_DIR" && predeploy_check_once_with "$RH_PREDEPLOY" "${predeploy_mode[@]+"${predeploy_mode[@]}"}") 2>&1 | rh_redact >> "$LOGS/build.log"
 log "  ✓ built once; storage-layout guard and pre-deploy check passed for this tree"
 
 # ── 3. snapshot ────────────────────────────────────────────────────────

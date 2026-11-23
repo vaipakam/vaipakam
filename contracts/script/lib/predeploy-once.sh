@@ -11,15 +11,24 @@
 # another digest, so an edit always runs the check again.
 #
 #   predeploy_check_once [--full]
-#       Returns the check's status. PREDEPLOY_CHECK_SCRIPT overrides the
-#       script (the rehearsal driver's tests pass a stand-in). With
-#       STORAGE_LAYOUT_BASE set it always runs the check, since the baseline
-#       it compares against is not part of the tree digest.
+#       Runs the repository's predeploy-check.sh once per tree and returns its
+#       status. With STORAGE_LAYOUT_BASE set it always runs the check, since
+#       the baseline it compares against is not part of the tree digest.
+#   predeploy_check_once_with <script> [--full]
+#       The same with the script named as an argument: only the rehearsal
+#       driver uses it (its tests pass a stand-in). The script is never read
+#       from the environment, so no deploy env file can choose what runs as
+#       the check.
 
 PREDEPLOY_ONCE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 predeploy_check_once() {
-  local mode=default found script="${PREDEPLOY_CHECK_SCRIPT:-$PREDEPLOY_ONCE_LIB_DIR/../predeploy-check.sh}"
+  predeploy_check_once_with "$PREDEPLOY_ONCE_LIB_DIR/../predeploy-check.sh" "$@"
+}
+
+predeploy_check_once_with() {
+  local mode=default found script="$1"
+  shift
   [ "${1:-}" = "--full" ] && mode=full
   # Never answered from a verdict: the full check (its live-fork suites read
   # chains and deployment records outside the tree), and a requested

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkContext, KIND, main, verdictPath, whyNot } from '../../../contracts/script/predeploy-verdict.mjs';
+import { checkContext, contextDigest, KIND, main, verdictPath, whyNot } from '../../../contracts/script/predeploy-verdict.mjs';
 import { treeDigest } from '../../../contracts/script/rehearsal-tree.mjs';
 
 const H = (c) => c.repeat(64);
@@ -64,12 +64,12 @@ test('record then covers over the real tree; a stronger verdict is not replaced 
   try {
     const { digest } = treeDigest();
     assert.equal(quiet(() => main(['covers', '--mode', 'default', '--dir', dir], { context })).code, 1);
-    assert.equal(quiet(() => main(['record', '--mode', 'full', '--start', digest, '--dir', dir], { context })).code, 0);
+    assert.equal(quiet(() => main(['record', '--mode', 'full', '--start', digest, '--start-context', contextDigest(CTX), '--dir', dir], { context })).code, 0);
     assert.equal(quiet(() => main(['covers', '--mode', 'full', '--dir', dir], { context })).code, 1, 'a full step always runs');
     const r = quiet(() => main(['covers', '--mode', 'default', '--dir', dir], { context }));
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, new RegExp(`${digest}\\.json$`));
-    quiet(() => main(['record', '--mode', 'default', '--start', digest, '--dir', dir], { context }));
+    quiet(() => main(['record', '--mode', 'default', '--start', digest, '--start-context', contextDigest(CTX), '--dir', dir], { context }));
     assert.equal(JSON.parse(readFileSync(verdictPath(dir, digest), 'utf8')).mode, 'full');
     assert.equal(quiet(() => main(['covers', '--mode', 'default', '--dir', dir], { context: ctxFn({ ...CTX, toolchain: 'forge Version: other' }) })).code, 1);
   } finally {
@@ -80,9 +80,22 @@ test('record then covers over the real tree; a stronger verdict is not replaced 
 test('a tree that changed while the check ran records nothing', () => {
   const dir = mkdtempSync(join(tmpdir(), 'predeploy-verdict-'));
   try {
-    const r = quiet(() => main(['record', '--mode', 'default', '--start', H('9'), '--dir', dir], { context: ctxFn() }));
+    const r = quiet(() => main(['record', '--mode', 'default', '--start', H('9'), '--start-context', contextDigest(CTX), '--dir', dir], { context: ctxFn() }));
     assert.equal(r.code, 0);
     assert.match(r.out, /tree changed while the pre-deploy check ran/);
+    assert.equal(quiet(() => main(['covers', '--mode', 'default', '--dir', dir], { context: ctxFn() })).code, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a configuration that changed while the check ran records nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'predeploy-verdict-'));
+  try {
+    const startContext = contextDigest({ ...CTX, forgeConfig: 'quick-profile' });
+    const r = quiet(() => main(['record', '--mode', 'default', '--start', treeDigest().digest, '--start-context', startContext, '--dir', dir], { context: ctxFn() }));
+    assert.equal(r.code, 0);
+    assert.match(r.out, /forge configuration changed while the pre-deploy check ran/);
     assert.equal(quiet(() => main(['covers', '--mode', 'default', '--dir', dir], { context: ctxFn() })).code, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });

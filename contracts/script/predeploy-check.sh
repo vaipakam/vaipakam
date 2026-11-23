@@ -1145,7 +1145,8 @@ fi
 echo "✓ pre-deploy sanity check passed — safe to proceed with the deploy."
 if [ -n "$PREDEPLOY_START" ]; then
   start_digest=$(printf '%s' "$PREDEPLOY_START" | sed -n 's/.*"treeDigest":"\([0-9a-f]\{64\}\)".*/\1/p')
+  start_context=$(printf '%s' "$PREDEPLOY_START" | sed -n 's/.*"contextDigest":"\([0-9a-f]\{64\}\)".*/\1/p')
   if [ "$MODE_FULL" -eq 1 ]; then verdict_mode=full; else verdict_mode=default; fi
-  node "$SCRIPT_DIR/predeploy-verdict.mjs" record --mode "$verdict_mode" --start "$start_digest" \
+  node "$SCRIPT_DIR/predeploy-verdict.mjs" record --mode "$verdict_mode" --start "$start_digest" --start-context "$start_context" \
     || echo "  · the pre-deploy verdict could not be recorded; the next step runs the check again"
 fi

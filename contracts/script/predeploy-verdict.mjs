@@ -11,12 +11,13 @@
  * when it covers the present tree in a mode at least as strong.
  *
  *   start
- *       The tree digest, printed as one JSON line. The check calls it before
- *       its first step.
- *   record --mode <default|full> --start <digest> [--dir <d>]
+ *       The tree digest and the context digest, printed as one JSON line.
+ *       The check calls it before its first step.
+ *   record --mode <default|full> --start <digest> --start-context <digest> [--dir <d>]
  *       After a passing run: writes the verdict with the check's context,
- *       unless the tree changed while the check ran (the digest now differs
- *       from <digest>), in which case it says so and writes nothing.
+ *       unless the tree or the context changed while the check ran (either
+ *       digest now differs from the one taken at start), in which case it
+ *       says so and writes nothing.
  *   covers --mode default [--dir <d>]
  *       Exit 0 and print the verdict's path when a passing verdict (of the
  *       default or the full check) covers the present tree and the present
@@ -95,6 +96,9 @@ export function checkContext({ env = process.env, tool = toolchain, config = for
   return { toolchain: tool(), forgeConfig: config(), foundry: foundry.join(' ') || 'none' };
 }
 
+/** The digest of a context, as `start` prints it and `record` compares it. */
+export const contextDigest = (ctx) => createHash('sha256').update(JSON.stringify(ctx)).digest('hex');
+
 /**
  * Why `verdict` does not cover `present` ({treeDigest, mode, context}), or ''
  * when it does. Every key of the present context must equal the verdict's.
@@ -123,7 +127,7 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
   const mode = option(args, '--mode');
   if (cmd === 'start') {
     const { commit, digest } = treeDigest();
-    console.log(JSON.stringify({ commit, treeDigest: digest }));
+    console.log(JSON.stringify({ commit, treeDigest: digest, contextDigest: contextDigest(context()) }));
     return 0;
   }
   if ((cmd === 'record' && !MODES.includes(mode)) || (cmd === 'covers' && mode !== 'default' && mode !== 'full')) {
@@ -132,8 +136,9 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
   }
   if (cmd === 'record') {
     const start = option(args, '--start');
-    if (!/^[0-9a-f]{64}$/.test(start ?? '')) {
-      console.error('  ✗ predeploy-verdict: record needs --start <digest>');
+    const startContext = option(args, '--start-context');
+    if (!/^[0-9a-f]{64}$/.test(start ?? '') || !/^[0-9a-f]{64}$/.test(startContext ?? '')) {
+      console.error('  ✗ predeploy-verdict: record needs --start <digest> --start-context <digest>');
       return 2;
     }
     const { commit, digest } = treeDigest();
@@ -141,8 +146,15 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
       console.log('  · the tree changed while the pre-deploy check ran: no verdict recorded, the next step runs the check again');
       return 0;
     }
-    mkdirSync(dir, { recursive: true });
+    // The context (forge, its resolved configuration, contracts/.env) is
+    // outside the tree digest, so it is compared on its own: a verdict names
+    // only the configuration the whole run saw.
     const ctx = context();
+    if (contextDigest(ctx) !== startContext) {
+      console.log('  · the forge configuration changed while the pre-deploy check ran: no verdict recorded, the next step runs the check again');
+      return 0;
+    }
+    mkdirSync(dir, { recursive: true });
     const verdict = { kind: KIND, version: 1, result: 'pass', mode, commit, treeDigest: digest, context: ctx, passedAt: now().toISOString() };
     const f = verdictPath(dir, digest);
     // A full verdict is never replaced by a default one for the same tree.
@@ -179,7 +191,7 @@ export function main(argv = process.argv.slice(2), { now = () => new Date(), con
     console.log(relative(REPO_ROOT, f));
     return 0;
   }
-  console.error('usage: predeploy-verdict.mjs start | record --mode <m> --start <digest> | covers --mode <m> [--dir <d>]');
+  console.error('usage: predeploy-verdict.mjs start | record --mode <m> --start <digest> --start-context <digest> | covers --mode <m> [--dir <d>]');
   return 2;
 }
 
