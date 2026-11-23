@@ -117,6 +117,8 @@ test('an untracked file changes the tree digest; an ignored one does not', () =>
     rmSync(join(root, 'New.sol'));
     writeFileSync(join(root, 'contracts', 'deployments', 'r.json'), 'r');
     assert.equal(treeDigest(root).digest, base, 'the deploy records are outside it');
+    git('rm', '-q', '--cached', 'a.sol');
+    assert.notEqual(treeDigest(root).digest, base, 'a file taken out of the index, still on disk, is a change');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

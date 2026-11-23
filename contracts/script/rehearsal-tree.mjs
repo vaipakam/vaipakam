@@ -160,19 +160,20 @@ function entryContent(abs) {
 }
 
 /** The tree digest (§18): commit + every tracked or untracked, not ignored,
- *  file outside contracts/deployments, by path and content as on disk. */
+ *  file outside contracts/deployments, by path, by whether it is in the
+ *  index, and by content as on disk. */
 export function treeDigest(root = REPO_ROOT) {
   const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
   const commit = git('rev-parse', 'HEAD').trim();
   // --cached and --others can both name a tracked file that is deleted and
   // re-created, so the list is de-duplicated.
-  const tracked = [
-    ...new Set(
-      git('ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.', ':(exclude)contracts/deployments')
-        .split('\0')
-        .filter(Boolean),
-    ),
-  ].sort();
+  const scope = ['--', '.', ':(exclude)contracts/deployments'];
+  const list = (...flags) => git('ls-files', '-z', ...flags, ...scope).split('\0').filter(Boolean);
+  // Whether a path is in the index is part of the tree as well as its
+  // content: the pre-deploy check refuses a required file that is present but
+  // untracked, so `git rm --cached` must change the digest (#3896).
+  const inIndex = new Set(list('--cached'));
+  const tracked = [...new Set([...inIndex, ...list('--others', '--exclude-standard')])].sort();
   const h = createHash('sha256');
   h.update(`commit ${commit}\n`);
   for (const p of tracked) {
@@ -182,7 +183,7 @@ export function treeDigest(root = REPO_ROOT) {
     } catch {
       content = 'missing';
     }
-    h.update(`${p}\0${content}\n`);
+    h.update(`${p}\0${inIndex.has(p) ? 'tracked' : 'untracked'}\0${content}\n`);
   }
   return { commit, digest: h.digest('hex') };
 }
