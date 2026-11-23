@@ -45,7 +45,7 @@ type CardResult =
   | { kind: 'status'; status: DiagErasureStatus }
   // #3922 — a failure the agent answered carries its request reference.
   | { kind: 'unavailable'; reference: string | null }
-  | { kind: 'expired' }
+  | { kind: 'expired'; reference: string | null }
   | { kind: 'unverifiable'; reference: string | null }
   | { kind: 'error'; reference: string | null };
 
@@ -136,7 +136,7 @@ export function DiagErasureCard() {
               : res.outcome === 'unavailable'
                 ? { kind: 'unavailable', reference: res.reference }
                 : res.outcome === 'expired'
-                  ? { kind: 'expired' }
+                  ? { kind: 'expired', reference: res.reference }
                   : res.outcome === 'unverifiable'
                     ? { kind: 'unverifiable', reference: res.reference }
                     : { kind: 'error', reference: res.reference },
@@ -151,7 +151,7 @@ export function DiagErasureCard() {
           status.status === 'unavailable'
             ? { kind: 'unavailable', reference: status.reference }
             : status.status === 'expired'
-              ? { kind: 'expired' }
+              ? { kind: 'expired', reference: status.reference }
               : status.status === 'unverifiable'
                 ? { kind: 'unverifiable', reference: status.reference }
                 : status.status === 'error'
@@ -236,6 +236,7 @@ export function DiagErasureCard() {
           {shown?.kind === 'expired' ? (
             <div className="banner" role="alert">
               {copy.dataRights.diagExpired}
+              <ServiceReference reference={shown.reference} />
             </div>
           ) : null}
           {shown?.kind === 'unverifiable' ? (

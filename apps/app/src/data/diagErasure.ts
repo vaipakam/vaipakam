@@ -95,8 +95,9 @@ export interface DiagErasureResult {
   outcome: DiagErasureOutcome;
   chainId: number | null;
   /** #3922 — the agent's request reference, for an outcome the service
-   *  refused or failed (`unavailable`, `unverifiable`, `error`); null
-   *  otherwise. */
+   *  refused or failed (`unavailable`, `unverifiable`, `error`, and an
+   *  `expired` the service refused as stale); null otherwise, including an
+   *  `expired` decided in this browser before anything was sent. */
   reference: string | null;
 }
 
@@ -107,7 +108,7 @@ export type DiagErasureStatus =
   | { status: 'processed' }
   | { status: 'retained_by_law'; note: string }
   | { status: 'unavailable'; reference: string | null }
-  | { status: 'expired' }
+  | { status: 'expired'; reference: string | null }
   | { status: 'unverifiable'; reference: string | null }
   | { status: 'error'; reference: string | null };
 
@@ -264,7 +265,7 @@ export async function requestDiagErasure(
     return { outcome: 'unavailable', chainId: null, reference: res.reference };
   }
   if (verifyUnavailable(res)) return { outcome: 'unverifiable', chainId: null, reference: res.reference };
-  if (staleRejected(res)) return { outcome: 'expired', chainId: null, reference: null };
+  if (staleRejected(res)) return { outcome: 'expired', chainId: null, reference: res.reference };
   return { outcome: 'error', chainId: null, reference: res.reference };
 }
 
@@ -286,7 +287,7 @@ export async function requestDiagErasureStatus(
     buildErasureStatusMessage,
     chainId,
   );
-  if (res.expired) return { status: 'expired' };
+  if (res.expired) return { status: 'expired', reference: null };
   if (res.ok) {
     if (
       res.data?.status === 'retained_by_law' &&
@@ -305,6 +306,6 @@ export async function requestDiagErasureStatus(
     return { status: 'unavailable', reference: res.reference };
   }
   if (verifyUnavailable(res)) return { status: 'unverifiable', reference: res.reference };
-  if (staleRejected(res)) return { status: 'expired' };
+  if (staleRejected(res)) return { status: 'expired', reference: res.reference };
   return { status: 'error', reference: res.reference };
 }

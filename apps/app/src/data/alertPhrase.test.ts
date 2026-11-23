@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { alertPhraseFingerprint } from '@vaipakam/lib/alertsMessage';
-import { pendingPhraseMatches, setAlertPhrase } from './alerts';
+import { pendingPhraseMatches, sendTestTelegramAlert, setAlertPhrase } from './alerts';
 import { loadPendingAlertRequest } from './alertRequest';
 
 /** A wallet stand-in that records what it was asked to sign. */
@@ -55,9 +55,36 @@ describe('setAlertPhrase (#3346)', () => {
 
   it('says a private chat must be linked first, and refuses a phrase by its rule', async () => {
     vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'no-private-chat' }), { status: 409 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'no-private-chat' }), { status: 409, headers: { 'x-request-ref': 'ABCDE12345' } })));
     const { signMessage } = recordingSigner();
-    expect(await setAlertPhrase(WALLET, 84532, 'blue heron', signMessage)).toEqual({ kind: 'no-private-chat' });
+    // #3922 — the refusal carries the reference the agent returned.
+    expect(await setAlertPhrase(WALLET, 84532, 'blue heron', signMessage)).toEqual({ kind: 'no-private-chat', reference: 'ABCDE12345' });
     await expect(setAlertPhrase(WALLET, 84532, ' blue heron', signMessage)).rejects.toThrow();
+  });
+});
+
+describe('sendTestTelegramAlert (#3922)', () => {
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    localStorage.clear();
+  });
+
+  it('keeps the reference of a not-linked refusal', async () => {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: 'not-linked' }), { status: 404, headers: { 'x-request-ref': 'ABCDE12345' } })),
+    );
+    const { signMessage } = recordingSigner();
+    expect(await sendTestTelegramAlert(WALLET, 84532, signMessage)).toEqual({ kind: 'not-linked', reference: 'ABCDE12345' });
+  });
+
+  it('reports a delivered test alert as sent', async () => {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+    const { signMessage } = recordingSigner();
+    expect(await sendTestTelegramAlert(WALLET, 84532, signMessage)).toEqual({ kind: 'sent' });
   });
 });

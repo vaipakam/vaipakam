@@ -118,7 +118,7 @@ export function AlertPhraseSection({ address, chainId, signMessage, resume, onSe
     void run(async () => {
       const outcome = await setAlertPhrase(address, chainId, phrase, signMessage, retyping ? (resume ?? undefined) : undefined);
       if (outcome.kind === 'no-private-chat') {
-        setError(copy.alerts.phraseLinkFirst);
+        setError(copy.alerts.phraseLinkFirst, outcome.reference);
         return;
       }
       setPhrase('');

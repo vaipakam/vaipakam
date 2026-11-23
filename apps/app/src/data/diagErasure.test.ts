@@ -233,6 +233,9 @@ describe('requestDiagErasure', () => {
     expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('expired');
     expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
       status: 'expired',
+      // #3922 — a refusal the service answered keeps a reference (the one
+      // sent, when the response carries none).
+      reference: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{10}$/),
     });
     // Any OTHER verification failure stays the generic error — a bad
     // signature is not a retryable expiry.

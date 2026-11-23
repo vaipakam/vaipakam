@@ -294,7 +294,7 @@ export function AlertsCard() {
         signForRequest,
         resume,
       );
-      if (result === 'sent') {
+      if (result.kind === 'sent') {
         const next = { ...prefs, telegramLinked: true };
         storeAlertPrefs(chainId, address, next);
         shown.ifShowing(mine, () => {
@@ -303,7 +303,7 @@ export function AlertsCard() {
           setNotice(copy.alerts.testAlertSent);
         });
       } else {
-        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked));
+        shown.ifShowing(mine, () => setError(copy.alerts.testAlertNotLinked, result.reference));
       }
     } catch (e) {
       shown.ifShowing(mine, () => setError(e instanceof Error ? e.message : String(e), referenceOf(e)));

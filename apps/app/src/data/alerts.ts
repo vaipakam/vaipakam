@@ -559,9 +559,9 @@ export async function issueTelegramLink(
 
 /** Result of a test-alert round-trip (UX-012). `sent` proves delivery
  *  (gate "linked" on it); `not-linked` means the bot handshake never
- *  completed. A transient or backend failure is thrown (#3922), carrying
- *  the service's request reference. */
-export type TestAlertResult = 'sent' | 'not-linked';
+ *  completed, and carries the reference the agent's refusal returned
+ *  (#3922). A transient or backend failure is thrown, also carrying it. */
+export type TestAlertResult = { kind: 'sent' } | { kind: 'not-linked'; reference: string | null };
 
 /** Push ONE real test alert to the wallet's linked Telegram chat. Signs
  *  a free ownership proof first, then asks the agent to send. The agent
@@ -581,11 +581,11 @@ export async function sendTestTelegramAlert(
           buildTelegramTestMessage(wallet, chainId, issuedAt, keyHash),
         );
   const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start');
-  if (res.ok) return 'sent';
+  if (res.ok) return { kind: 'sent' };
   // Only a body-tagged `not-linked` is the fumbled-handshake case. A
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
   // as "your chat isn't linked" — fall through to the generic error.
-  if (res.status === 404 && res.data?.error === 'not-linked') return 'not-linked';
+  if (res.status === 404 && res.data?.error === 'not-linked') return { kind: 'not-linked', reference: res.reference };
   // #3922 — any other answer is a service failure: thrown with its
   // reference, so the card shows both.
   throw failure(res, copy.alerts.testAlertError);
@@ -696,7 +696,8 @@ export async function fetchAlertPhraseStatus(wallet: string, chainId: number): P
  *  (on this network, for a contract wallet), and nothing changed. */
 export type AlertPhraseOutcome =
   | { kind: 'set'; groupLinked: boolean; scope: AlertPhraseScope | null }
-  | { kind: 'no-private-chat' };
+  // #3922 — a refusal the agent answered carries its request reference.
+  | { kind: 'no-private-chat'; reference: string | null };
 
 /** The rule a typed phrase breaks, or null. The same rule the service
  *  applies: a phrase is never cleaned, only accepted or refused. */
@@ -732,7 +733,7 @@ export async function setAlertPhrase(
     };
   }
   const res = await signAndSendAlertRequest(req, signMessage, post, req === resume ? 'resume' : 'start', { phrase });
-  if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat' };
+  if (res.status === 409 && res.data?.error === 'no-private-chat') return { kind: 'no-private-chat', reference: res.reference };
   if (!res.ok) throw failure(res, signedRequestRefusal(res) ?? `setting the alert phrase failed (${res.status})`);
   return { kind: 'set', groupLinked: res.data?.groupLinked === true, scope: phraseScopeOf(res.data?.scope) };
 }
