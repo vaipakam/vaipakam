@@ -30,8 +30,10 @@
  * default step.
  *
  * The context is what outside the tree changes the default check's decision,
- * worked out in one place ({@link checkContext}): the forge version and every
- * FOUNDRY_* setting in the environment (a profile can leave tests out). A
+ * worked out in one place ({@link checkContext}): the forge version, forge's
+ * own resolved configuration (which folds in foundry.toml, the profile, the
+ * environment and contracts/.env; a profile can leave tests out), and every
+ * FOUNDRY_* setting in the environment. A
  * storage-layout baseline (STORAGE_LAYOUT_BASE) names a file outside the
  * tree, so a run with one is never recorded or reused (predeploy-check.sh,
  * lib/predeploy-once.sh). The deployment records are outside the tree digest
@@ -46,6 +48,7 @@
  * who means to skip the check.
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,13 +69,30 @@ export function toolchain() {
 
 export const verdictPath = (dir, digest) => join(dir, `${digest}.json`);
 
+/**
+ * forge's own resolved configuration, as the check's forge sees it (run from
+ * contracts/, like the check): foundry.toml, the selected profile, every
+ * FOUNDRY_* / DAPP_* setting and contracts/.env, which forge loads by itself,
+ * folded into one digest. Reading forge's answer instead of each source in
+ * turn is what keeps a setting from reaching forge without reaching the
+ * verdict (#3896).
+ */
+export function forgeConfig() {
+  try {
+    const out = execFileSync('forge', ['config', '--json'], { cwd: join(REPO_ROOT, 'contracts'), encoding: 'utf8', maxBuffer: 1 << 26 });
+    return createHash('sha256').update(out).digest('hex');
+  } catch {
+    return 'forge config unavailable';
+  }
+}
+
 /** Everything outside the tree that changes what the check decides. */
-export function checkContext({ env = process.env, tool = toolchain } = {}) {
+export function checkContext({ env = process.env, tool = toolchain, config = forgeConfig } = {}) {
   const foundry = Object.keys(env)
     .filter((k) => k.startsWith('FOUNDRY_') && !(k === 'FOUNDRY_PROFILE' && env[k] === 'default'))
     .sort()
     .map((k) => `${k}=${env[k]}`);
-  return { toolchain: tool(), foundry: foundry.join(' ') || 'none' };
+  return { toolchain: tool(), forgeConfig: config(), foundry: foundry.join(' ') || 'none' };
 }
 
 /**

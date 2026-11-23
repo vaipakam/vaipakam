@@ -10,7 +10,7 @@ import { treeDigest } from '../../../contracts/script/rehearsal-tree.mjs';
 
 const H = (c) => c.repeat(64);
 const TOOL = 'forge Version: 1.8.6-stable';
-const CTX = { toolchain: TOOL, foundry: 'none' };
+const CTX = { toolchain: TOOL, forgeConfig: 'cfg', foundry: 'none' };
 
 const pass = { kind: KIND, version: 1, result: 'pass', mode: 'default', commit: 'c'.repeat(40), treeDigest: H('a'), context: CTX };
 const ctxFn = (c = CTX) => () => c;
@@ -49,9 +49,13 @@ function quiet(fn) {
 }
 
 test('the context reads every FOUNDRY_ setting and treats the default profile as none', () => {
-  const opts = (env) => ({ env, tool: () => TOOL });
+  const opts = (env) => ({ env, tool: () => TOOL, config: () => 'cfg' });
   assert.deepEqual(checkContext(opts({ FOUNDRY_PROFILE: 'default', PATH: '/bin' })), CTX);
   assert.equal(checkContext(opts({ FOUNDRY_PROFILE: 'quick', FOUNDRY_FUZZ_RUNS: '5' })).foundry, 'FOUNDRY_FUZZ_RUNS=5 FOUNDRY_PROFILE=quick');
+});
+
+test("forge's resolved configuration is part of the context", () => {
+  assert.match(whyNot({ kind: KIND, result: 'pass', treeDigest: 'd', context: { ...CTX, forgeConfig: 'other' } }, { treeDigest: 'd', mode: 'default', context: CTX }), /forgeConfig was other, now cfg/);
 });
 
 test('record then covers over the real tree; a stronger verdict is not replaced by a weaker one', () => {
