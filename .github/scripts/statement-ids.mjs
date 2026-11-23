@@ -21,7 +21,7 @@
 // (the not-covered answer names no domain the author looked in) or "missing".
 // Exit code is 0 in every case: the workflow decides what to warn about.
 
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 // A statement id: a three-letter domain code, a dash, three digits.
@@ -48,25 +48,37 @@ const DOMAIN = new RegExp(`\\b(${DOMAINS.join('|')})\\b`, 'g');
 /** The ids the folder states, read from its statement headings. */
 export function folderIds(folder) {
   const ids = new Set();
-  if (!folder || !existsSync(folder)) return ids;
-  const walk = (dir) => {
-    for (const name of readdirSync(dir)) {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) {
-        // The record and the mistake lists cite ids; they do not state them.
-        continue;
-      }
-      if (!name.endsWith('.md')) continue;
-      for (const m of readFileSync(path, 'utf8').matchAll(HEADING)) ids.add(m[1]);
+  if (!folder) return ids;
+  let entries;
+  try {
+    entries = readdirSync(folder, { withFileTypes: true });
+  } catch {
+    return ids; // no folder: no ids
+  }
+  // Top-level files only: the record and the mistake lists, in
+  // subdirectories, cite ids; they do not state them.
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    for (const m of readFileSync(join(folder, entry.name), 'utf8').matchAll(HEADING)) {
+      ids.add(m[1]);
     }
-  };
-  walk(folder);
+  }
   return ids;
 }
 
-/** Strip HTML comments, so the template's own example ids never count. */
-function visible(body) {
-  return String(body ?? '').replace(/<!--[\s\S]*?-->/g, '');
+/**
+ * Strip HTML comments, so the template's own example ids never count. An
+ * unclosed comment hides the rest of the text, as it does when rendered, and
+ * the strip repeats until nothing changes, so a comment rebuilt by removing
+ * another (`<!<!-- x -->-- y -->`) goes too.
+ */
+export function visible(body) {
+  let text = String(body ?? '');
+  for (;;) {
+    const next = text.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+    if (next === text) return text;
+    text = next;
+  }
 }
 
 /**
@@ -132,6 +144,8 @@ function selftest() {
     ['template comment ignored', '<!-- e.g. VLT-001 -->\nFixes the thing.', 'missing', []],
     ['empty body', '', 'missing', []],
     ['lowercase is not an id', 'vlt-001', 'missing', []],
+    ['an unclosed comment hides the rest', 'Changes matching. <!-- VLT-001', 'missing', []],
+    ['a nested comment is stripped whole', '<!<!-- a -->-- VLT-001 -->', 'missing', []],
     ['an id outside the section declares nothing', '## What\n\nUnlike VLT-001, this changes matching.\n\n## Statements\n\n## Verification\n', 'missing', []],
     ['no Statements section reads as empty', '## What\n\nImplements VLT-001.\n', 'missing', []],
     ['the section ends at the next heading', '## Statements\n\nNo behaviour change.\n\n## Why\n\nVLT-001 matters.\n', 'no-behaviour-change', []],
@@ -161,7 +175,14 @@ function main(argv) {
     return i >= 0 ? argv[i + 1] : undefined;
   };
   const bodyPath = arg('--body');
-  const body = bodyPath && existsSync(bodyPath) ? readFileSync(bodyPath, 'utf8') : '';
+  let body = '';
+  if (bodyPath) {
+    try {
+      body = readFileSync(bodyPath, 'utf8');
+    } catch {
+      body = ''; // an unreadable description reads as empty
+    }
+  }
   const folder = arg('--folder') ?? 'docs/CanonicalSpec';
   console.log(JSON.stringify(evaluate(body, folderIds(folder))));
 }
