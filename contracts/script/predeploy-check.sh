@@ -92,7 +92,8 @@
 # chain, so a passing run records its verdict against the tree digest
 # (`predeploy-verdict.mjs`, under the ignored deployments/.forge-test/), and
 # the deploy scripts and the rehearsal driver reuse it through
-# `lib/predeploy-once.sh` when it covers the present tree, toolchain and mode.
+# `lib/predeploy-once.sh` when it covers the present tree, mode and context (forge version, FOUNDRY_*
+# settings, the full check's gas-budget base).
 # Not recorded: a shard of the regression (one shard is no verdict), a run
 # with a storage-layout baseline (STORAGE_LAYOUT_BASE names a file outside
 # the tree digest, so its comparison is always run, never reused), a run that
@@ -1142,8 +1143,7 @@ fi
 echo "✓ pre-deploy sanity check passed — safe to proceed with the deploy."
 if [ -n "$PREDEPLOY_START" ]; then
   start_digest=$(printf '%s' "$PREDEPLOY_START" | sed -n 's/.*"treeDigest":"\([0-9a-f]\{64\}\)".*/\1/p')
-  start_tool=$(printf '%s' "$PREDEPLOY_START" | sed -n 's/.*"toolchain":"\([^"]*\)".*/\1/p')
   if [ "$MODE_FULL" -eq 1 ]; then verdict_mode=full; else verdict_mode=default; fi
-  node "$SCRIPT_DIR/predeploy-verdict.mjs" record --mode "$verdict_mode" --start "$start_digest" --toolchain "$start_tool" \
+  node "$SCRIPT_DIR/predeploy-verdict.mjs" record --mode "$verdict_mode" --start "$start_digest" \
     || echo "  · the pre-deploy verdict could not be recorded; the next step runs the check again"
 fi

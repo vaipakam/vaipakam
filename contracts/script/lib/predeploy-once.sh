@@ -5,7 +5,8 @@
 # pre-deploy check reads a property of the tree, not of a chain. A passing run
 # of `predeploy-check.sh` records its verdict against the tree digest
 # (`predeploy-verdict.mjs`); this helper reuses that verdict when it covers the
-# present tree, the present toolchain and a mode at least as strong, and runs
+# present tree, a mode at least as strong and the present context (forge
+# version, FOUNDRY_* settings, the full check's gas-budget base), and runs
 # the check otherwise. A tree changed in any tracked or untracked file has
 # another digest, so an edit always runs the check again.
 #
