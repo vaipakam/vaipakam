@@ -26,7 +26,7 @@
     "@vaipakam/lend-kit": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "connectkit": "^1.9.2",
-    "i18next": "^26.0.8",
+    "i18next": "^26.3.4",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
